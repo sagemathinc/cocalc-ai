@@ -279,6 +279,13 @@ function startWrite(req) {
   // noReplace: placed only if nothing is at the name (link, then unlink the
   // temp: link() never replaces); times: set on the open file before placing
   w.noReplace = req.noReplace === true;
+  // the mode exactly (the creation mode is cut by the umask): fchmod'ed on
+  // the open file before it is placed, never by path
+  try {
+    w.mode = req.mode == null ? null : int(req.mode, "mode") & 0o7777;
+  } catch (err) {
+    w.failed = err;
+  }
   try {
     w.times = req.mtime == null ? null : { atime: int(req.atime, "atime"), mtime: int(req.mtime, "mtime") };
   } catch (err) {
@@ -311,6 +318,7 @@ async function finishWrite(id, w) {
   writes.delete(id);
   try {
     if (w.failed) throw w.failed;
+    if (w.mode != null) await w.fh.chmod(w.mode);
     if (w.times) await w.fh.utimes(w.times.atime, w.times.mtime);
     await w.fh.close();
     w.fh = null;

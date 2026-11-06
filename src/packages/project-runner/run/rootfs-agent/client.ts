@@ -49,7 +49,20 @@ export const LIMITS = {
   maxPathBytes: 4096,
   spawnsPerMinute: 3,
   cooldownMs: 10_000,
+  // byte-aware admission (@review, @vanta): what the clients buffer at
+  // once (write data queued to an agent, read data an agent announced) is
+  // bounded host-wide, and per project so that one can't starve the rest;
+  // an operation that doesn't fit is refused (EAGAIN), never queued
+  maxHostBufferedBytes: 256 * 1024 * 1024,
+  maxProjectBufferedBytes: 128 * 1024 * 1024,
 };
+
+// shared by every project's client on this host
+let hostBuffered = 0;
+/** For tests: the host-wide bytes in use. */
+export function hostBufferedBytes(): number {
+  return hostBuffered;
+}
 
 export interface AgentGeneration {
   containerId: string;
@@ -249,6 +262,11 @@ export interface AgentError {
 
 interface Pending {
   op: string;
+  // bytes of the budgets this request holds (its write data, or its read's
+  // announced size)
+  reserved: number;
+  // a read that didn't fit: its chunks are counted and dropped
+  discard?: boolean;
   resolve: (value: { result: unknown; data?: Buffer }) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
@@ -276,13 +294,60 @@ export class RootfsAgentClient {
     private readonly deps: AgentDeps,
   ) {}
 
+  private buffered = 0;
+
+  private reserve(n: number): boolean {
+    if (n === 0) return true;
+    if (
+      this.buffered + n > LIMITS.maxProjectBufferedBytes ||
+      hostBuffered + n > LIMITS.maxHostBufferedBytes
+    ) {
+      return false;
+    }
+    this.buffered += n;
+    hostBuffered += n;
+    return true;
+  }
+
+  private unreserve(n: number): void {
+    this.buffered -= n;
+    hostBuffered -= n;
+  }
+
+  /** For tests: this project's buffered bytes and pending requests. */
+  inFlight(): { bufferedBytes: number; pending: number } {
+    return { bufferedBytes: this.buffered, pending: this.pending.size };
+  }
+
   /** One operation; data is a writeFile's content. */
   async request(
     op: string,
     args: Record<string, unknown>,
     data?: Buffer,
   ): Promise<{ result: unknown; data?: Buffer }> {
+    // never queue more than the agent would accept (@review): refused here,
+    // before any spawn, request id or pipe write
+    if (data != null && data.length > LIMITS.maxFileBytes) {
+      throw codedError("EFBIG", `rootfs operation ${op} too large`);
+    }
+    return await this.requestNow(op, args, data);
+  }
+
+  private async requestNow(
+    op: string,
+    args: Record<string, unknown>,
+    data?: Buffer,
+  ): Promise<{ result: unknown; data?: Buffer }> {
     await this.ensureReady();
+    if (this.child == null) {
+      throw new AgentUnavailableError("the rootfs agent went away", true);
+    }
+    // a write's data counts until its request ends (its queued pipe bytes
+    // included, so stdin can't hold more than the budget)
+    const reserved = data?.length ?? 0;
+    if (!this.reserve(reserved)) {
+      throw codedError("EAGAIN", "the rootfs agent is busy; try again");
+    }
     const gen = await this.deps.generation();
     if (!sameGeneration(gen, this.gen)) {
       this.dispose("the project's container changed");
@@ -296,7 +361,7 @@ export class RootfsAgentClient {
       const timer = setTimeout(() => {
         this.violation(`request ${op} timed out`);
       }, LIMITS.requestTimeoutMs);
-      this.pending.set(id, { op, resolve, reject, timer });
+      this.pending.set(id, { op, reserved, resolve, reject, timer });
       try {
         this.child!.stdin.write(
           encodeJsonFrame({
@@ -440,6 +505,13 @@ export class RootfsAgentClient {
           true,
         );
       }
+      // it may have exited (or been disposed) during the checks above
+      if (this.child !== child) {
+        throw new AgentUnavailableError(
+          "the rootfs agent went away while it started",
+          true,
+        );
+      }
     } catch (err) {
       this.dispose(
         `start failed: ${err instanceof Error ? err.name : "error"}`,
@@ -459,7 +531,7 @@ export class RootfsAgentClient {
         if (p?.expect == null || frame.data.length > p.expect) {
           throw new ProtocolError(`unexpected chunk for ${frame.id}`);
         }
-        p.parts!.push(frame.data);
+        if (!p.discard) p.parts!.push(frame.data);
         p.expect -= frame.data.length;
         if (p.expect === 0) this.settle(frame.id, p);
         return;
@@ -476,6 +548,10 @@ export class RootfsAgentClient {
           p.result = result;
           p.expect = (result as { size: number }).size;
           p.parts = [];
+          // the announced size must fit the budgets, else the chunks are
+          // dropped as they come and the read is refused (EAGAIN)
+          if (this.reserve(p.expect)) p.reserved += p.expect;
+          else p.discard = true;
           if (p.expect === 0) this.settle(id, p);
           return;
         }
@@ -490,8 +566,7 @@ export class RootfsAgentClient {
         ) {
           throw new ProtocolError("malformed error");
         }
-        this.pending.delete(id);
-        clearTimeout(p.timer);
+        this.finish(id, p);
         const err = new Error(`${e.code}: rootfs operation ${p.op} failed`);
         (err as any).code = e.code;
         p.reject(err);
@@ -503,9 +578,20 @@ export class RootfsAgentClient {
     }
   }
 
-  private settle(id: number, p: Pending): void {
+  // every end of a request comes through here: its timer and its budget
+  private finish(id: number, p: Pending): void {
     this.pending.delete(id);
     clearTimeout(p.timer);
+    this.unreserve(p.reserved);
+    p.reserved = 0;
+  }
+
+  private settle(id: number, p: Pending): void {
+    this.finish(id, p);
+    if (p.discard) {
+      p.reject(codedError("EAGAIN", "the rootfs agent is busy; try again"));
+      return;
+    }
     p.resolve(
       p.parts
         ? { result: p.result, data: Buffer.concat(p.parts) }
@@ -514,7 +600,11 @@ export class RootfsAgentClient {
   }
 
   private violation(why: string): void {
-    if (this.disposed || !this.child) return;
+    if (this.disposed || !this.child) {
+      // already gone: whatever is still pending fails now, never hangs
+      this.rejectPending(why);
+      return;
+    }
     // counts and the class only: nothing the agent sent is logged
     logger.warn("rootfs agent disposed", {
       project_id: this.project_id,
@@ -532,12 +622,7 @@ export class RootfsAgentClient {
     this.child = undefined;
     this.ready = undefined;
     this.downUntil = this.deps.now() + LIMITS.cooldownMs;
-    for (const [id, p] of this.pending) {
-      clearTimeout(p.timer);
-      this.tracker.abandon(id);
-      p.reject(new AgentUnavailableError(`rootfs agent: ${why}`, true));
-    }
-    this.pending.clear();
+    this.rejectPending(why);
     if (!child) return;
     try {
       child.stdin.end();
@@ -555,11 +640,25 @@ export class RootfsAgentClient {
     }
   }
 
+  private rejectPending(why: string): void {
+    for (const [id, p] of [...this.pending]) {
+      this.finish(id, p);
+      this.tracker.abandon(id);
+      p.reject(new AgentUnavailableError(`rootfs agent: ${why}`, true));
+    }
+  }
+
   /** For good: no more spawns. */
   close(): void {
     this.dispose("closed");
     this.disposed = true;
   }
+}
+
+function codedError(code: string, message: string): Error {
+  const err = new Error(`${code}: ${message}`);
+  (err as any).code = code;
+  return err;
 }
 
 function sameGeneration(

@@ -472,14 +472,116 @@ describe("project-host pending copies", () => {
       return { agent: { call }, calls };
     };
 
+    let readiness: string;
     beforeEach(async () => {
       container = await mkdtemp(
         path.join(os.tmpdir(), "cocalc-copy-container-"),
       );
       await mkdir(path.join(container, "etc"));
+      readiness = "agent";
+      const { copyDeps } = await import("./pending-copies");
+      copyDeps.rootfsCopyReadiness = (async () => readiness) as any;
     });
     afterEach(async () => {
       await rm(container, { recursive: true, force: true });
+    });
+
+    const rootfsRow = (copy_id: string, exact = false) => {
+      mockCallHub = jest.fn(async ({ name, args }) => {
+        if (name === "hosts.claimPendingCopies") {
+          return [
+            {
+              copy_id,
+              src_project_id: "src-project",
+              src_path: "test.ipynb",
+              dest_project_id: "dest-project",
+              dest_path: "/etc/foo",
+              snapshot_id: "snap-1",
+              options: { force: true },
+              exact,
+            },
+          ];
+        }
+        if (name === "hosts.updateCopyStatus")
+          return void mockStatusUpdates.push(args[0]);
+        throw new Error(`unexpected ${name}`);
+      });
+    };
+
+    it("defers a rootfs copy while the project's rootfs isn't live: queued, nothing restored or written (B5)", async () => {
+      readiness = "defer";
+      mockAgentDest = jest.fn(() => undefined);
+      rootfsRow("copy-d");
+      const { applyPendingCopies } = await import("./pending-copies");
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates).toEqual([
+        expect.objectContaining({ copy_id: "copy-d", status: "queued" }),
+      ]);
+      expect(mockRustic).not.toHaveBeenCalled();
+      expect(mockResolveAnchored).not.toHaveBeenCalled();
+      expect(await readdir(projectRoot)).toEqual([]);
+      expect(await readdir(path.join(container, "etc"))).toEqual([]);
+    });
+
+    it("runs a deferred rootfs copy once the project runs: queued before the start, done after it (B5)", async () => {
+      const { agent } = fsAgent();
+      mockAgentDest = jest.fn((p: string) =>
+        readiness === "agent" ? { agent, containerPath: p } : undefined,
+      );
+      const { applyPendingCopies } = await import("./pending-copies");
+      readiness = "defer";
+      rootfsRow("copy-l");
+      await applyPendingCopies({ limit: 1 });
+      readiness = "agent";
+      rootfsRow("copy-l");
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates.map((u) => u.status)).toEqual([
+        "queued",
+        "done",
+      ]);
+      expect(await readFile(path.join(container, "etc", "foo"), "utf8")).toBe(
+        "notebook payload",
+      );
+      expect(mockResolveAnchored).not.toHaveBeenCalled();
+      expect(await readdir(projectRoot)).toEqual([]);
+    });
+
+    it("defers, not fails, when the agent should be there but isn't, or goes away (B5)", async () => {
+      const { applyPendingCopies } = await import("./pending-copies");
+      mockAgentDest = jest.fn(() => undefined);
+      rootfsRow("copy-n");
+      await applyPendingCopies({ limit: 1 });
+      const gone = {
+        call: async () => {
+          throw Object.assign(new Error("the rootfs agent went away"), {
+            name: "AgentUnavailableError",
+            retryable: true,
+          });
+        },
+      };
+      mockAgentDest = jest.fn(() => ({
+        agent: gone,
+        containerPath: "/etc/foo",
+      }));
+      rootfsRow("copy-g");
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates.map((u) => [u.copy_id, u.status])).toEqual([
+        ["copy-n", "queued"],
+        ["copy-g", "queued"],
+      ]);
+      expect(mockResolveAnchored).not.toHaveBeenCalled();
+    });
+
+    it("keeps HOME copies as before, whatever the rootfs readiness (B5)", async () => {
+      readiness = "defer";
+      const { applyPendingCopies } = await import("./pending-copies");
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates).toEqual([
+        expect.objectContaining({ copy_id: "copy-1", status: "done" }),
+      ]);
+      expect(await readFile(path.join(projectRoot, "foo"), "utf8")).toBe(
+        "notebook payload",
+      );
     });
 
     it("installs through the agent, never on the host, and removes the staging", async () => {

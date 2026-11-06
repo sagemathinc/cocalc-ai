@@ -181,8 +181,10 @@ export interface HostGeneration extends AgentGeneration {
 export function hostAgentDeps(project_id: string): AgentDeps {
   return {
     generation: async () => {
-      // only while the rootfs is mounted for the separate uid
-      if (rootfsIdmapUid(project_id) == null) return undefined;
+      // only while the rootfs is mounted for a known separate uid (-1 marks
+      // an idmapped mount of unknown uid being detached: never a generation)
+      const uid = rootfsIdmapUid(project_id);
+      if (uid == null || uid <= 0) return undefined;
       const container = await inspect(project_id);
       if (container == null) return undefined;
       const gen: HostGeneration = {

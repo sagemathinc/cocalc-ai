@@ -12,6 +12,7 @@ const mockIdmapUid = jest.fn<number | undefined, [string]>();
 jest.mock("../rootfs", () => ({
   getRootfsMountpoint: (id: string) => `/run/cocalc/project-rootfs/${id}/root`,
   rootfsIdmapUid: (id: string) => mockIdmapUid(id),
+  isMounted: async () => false,
 }));
 const mockClients: string[] = [];
 const mockRequest = jest.fn(async () => ({ result: null }));
@@ -27,6 +28,7 @@ jest.mock("./client", () => ({
 jest.mock("./host", () => ({ hostAgentDeps: jest.fn(() => ({})) }));
 
 import {
+  rootfsCopyReadiness,
   rootfsSandboxOptions,
   rootfsSandboxOptionsWithoutAgent,
 } from "./registry";
@@ -66,5 +68,47 @@ describe("rootfs agent registry", () => {
     // keep-id projects: unchanged
     mockIdmapUid.mockReturnValue(undefined);
     expect(rootfsAgent()).toBeUndefined();
+  });
+
+  it("never gives an agent for the -1 marker (an idmapped mount of unknown uid being detached)", () => {
+    mockIdmapUid.mockReturnValue(-1);
+    expect(rootfsSandboxOptions("p3").rootfsAgent()).toBeUndefined();
+    expect(mockClients).toEqual([]);
+  });
+
+  it("says when a copy may go into the rootfs: never from the mount cache alone (B5)", async () => {
+    const running = async () => "running";
+    const stopped = async () => "stopped";
+    const mounted = async () => true;
+    const unmounted = async () => false;
+    // stopped (or starting/stopping): wait, whatever the cache says
+    mockIdmapUid.mockReturnValue(P);
+    expect(
+      await rootfsCopyReadiness("p", { state: stopped, isMounted: mounted }),
+    ).toBe("defer");
+    expect(
+      await rootfsCopyReadiness("p", {
+        state: async () => "starting",
+        isMounted: mounted,
+      }),
+    ).toBe("defer");
+    // running with a known separate uid: the agent
+    expect(
+      await rootfsCopyReadiness("p", { state: running, isMounted: unmounted }),
+    ).toBe("agent");
+    // the -1 marker is never ready
+    mockIdmapUid.mockReturnValue(-1);
+    expect(
+      await rootfsCopyReadiness("p", { state: running, isMounted: mounted }),
+    ).toBe("defer");
+    // keep-id: only with its plain rootfs mounted
+    mockIdmapUid.mockReturnValue(undefined);
+    expect(
+      await rootfsCopyReadiness("p", { state: running, isMounted: mounted }),
+    ).toBe("host");
+    // running, but nothing known here (separate, after a daemon restart): wait
+    expect(
+      await rootfsCopyReadiness("p", { state: running, isMounted: unmounted }),
+    ).toBe("defer");
   });
 });

@@ -172,8 +172,8 @@ class AgentCopier {
           ...(this.force ? {} : { noReplace: true }),
           ...(this.options.preserveTimestamps
             ? {
-                atime: Math.floor(st.atimeMs / 1000),
-                mtime: Math.floor(st.mtimeMs / 1000),
+                atime: Math.max(0, Math.floor(st.atimeMs / 1000)),
+                mtime: Math.max(0, Math.floor(st.mtimeMs / 1000)),
               }
             : {}),
         },
@@ -292,7 +292,10 @@ class AgentCopier {
       return await this.copyDir(
         src,
         st.mode,
-        [Math.floor(st.atimeMs / 1000), Math.floor(st.mtimeMs / 1000)],
+        [
+          Math.max(0, Math.floor(st.atimeMs / 1000)),
+          Math.max(0, Math.floor(st.mtimeMs / 1000)),
+        ],
         dest,
       );
     }

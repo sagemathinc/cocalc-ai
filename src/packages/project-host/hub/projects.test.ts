@@ -584,7 +584,7 @@ describe("project host start ordering", () => {
     ]);
   });
 
-  it("applies pending copies before runner start on start()", async () => {
+  it("applies pending copies before runner start on start(), and again once it runs (B5: rootfs copies)", async () => {
     const order: string[] = [];
     const runnerApi = {
       start: jest.fn(async () => {
@@ -602,7 +602,14 @@ describe("project host start ordering", () => {
     await hubApi.projects.start({ project_id });
     await flushMicrotasks();
 
-    expect(order).toEqual(["applyPendingCopies", "runner:start"]);
+    // before the start (HOME copies, as before), then once it runs: copies
+    // into its rootfs wait for its live rootfs (B5)
+    expect(order).toEqual([
+      "applyPendingCopies",
+      "runner:start",
+      "applyPendingCopies",
+    ]);
+    expect(applyPendingCopies).toHaveBeenLastCalledWith({ project_id });
     expect(upsertProjectStopState).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id,

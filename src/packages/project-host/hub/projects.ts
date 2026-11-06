@@ -2586,6 +2586,15 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           secret_names: startMetadata.secret_names,
         });
       });
+      if (status?.state === "running" && apply_pending_copies) {
+        // copies into its rootfs wait for its live rootfs (B5): now
+        void applyPendingCopies({ project_id }).catch((err) =>
+          logger.warn("post-start pending copies failed", {
+            project_id,
+            err: `${err}`,
+          }),
+        );
+      }
       publishStartProgress({
         activity_id,
         project_id,

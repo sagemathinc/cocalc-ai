@@ -15,7 +15,11 @@ import {
   getScratchMountpoint,
   resolveRusticRepo,
 } from "./file-server";
-import { rootfsSandboxOptions } from "@cocalc/project-runner/run/rootfs-agent/registry";
+import {
+  rootfsCopyReadiness,
+  rootfsSandboxOptions,
+} from "@cocalc/project-runner/run/rootfs-agent/registry";
+import { rootfsContainerPath } from "@cocalc/backend/sandbox/rootfs-agent-routes";
 import type { ProjectCopyRow } from "@cocalc/conat/hub/api/projects";
 import {
   PROJECT_RUNTIME_HOME_ALIASES,
@@ -133,6 +137,20 @@ function remainingMs(deadline: number): number {
   return remaining;
 }
 
+// A rootfs copy that can't be installed yet (B5): the row goes back to
+// "queued" (nothing was written), and runs once the project is running.
+class DeferredCopy extends Error {}
+
+// for tests
+export const copyDeps = { rootfsCopyReadiness };
+
+function isRetryableAgentError(err: unknown): boolean {
+  return (
+    (err as { name?: string })?.name === "AgentUnavailableError" &&
+    (err as { retryable?: boolean })?.retryable === true
+  );
+}
+
 async function applyCopyRow(
   row: ProjectCopyRow,
   deadline: number,
@@ -164,7 +182,31 @@ async function applyCopyRow(
   // tree. Otherwise the destination project's user can plant symlinks
   // anywhere in its tree: the install below is anchored beneath its root
   // and refuses them.
-  const viaAgent = destFs.rootfsAgentDestination(destPath);
+  // B5: a destination in the rootfs is installed only into the project's
+  // live rootfs, never into a directory that isn't (or isn't yet) it
+  const intoRootfs =
+    rootfsContainerPath(destPath, {
+      homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
+      hasScratch: true,
+      hasSharedScratch: false,
+      containerHome: "/home/user",
+    }) != null;
+  const readiness = intoRootfs
+    ? await copyDeps.rootfsCopyReadiness(row.dest_project_id)
+    : "host";
+  if (readiness === "defer") {
+    throw new DeferredCopy(
+      "the destination project's rootfs isn't live yet; the copy runs once the project is running",
+    );
+  }
+  const viaAgent = intoRootfs
+    ? destFs.rootfsAgentDestination(destPath)
+    : undefined;
+  if (readiness === "agent" && viaAgent == null) {
+    throw new DeferredCopy(
+      "the destination project's rootfs agent isn't available yet",
+    );
+  }
   const destination = viaAgent
     ? undefined
     : await destFs.resolveAnchoredPath(destPath);
@@ -269,7 +311,7 @@ async function applyCopyRow(
 
 async function reportCopyStatus(
   row: ProjectCopyRow,
-  status: "done" | "failed",
+  status: "done" | "failed" | "queued",
   last_error?: string,
 ) {
   const client = getMasterConatClient();
@@ -342,6 +384,15 @@ export async function applyPendingCopies({
       await applyCopyRow(row, deadline);
       await reportCopyStatus(row, "done");
     } catch (err) {
+      if (err instanceof DeferredCopy || isRetryableAgentError(err)) {
+        // nothing of it was placed: queued again, never "done" or "failed"
+        logger.debug("pending copy deferred", {
+          dest_project_id: row.dest_project_id,
+          err: `${err}`,
+        });
+        await reportCopyStatus(row, "queued", `${err}`);
+        continue;
+      }
       logger.warn("pending copy failed", {
         src_project_id: row.src_project_id,
         dest_project_id: row.dest_project_id,

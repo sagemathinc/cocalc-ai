@@ -19,14 +19,17 @@ import {
   rootfsNotAvailableError,
   type RootfsAgentOps,
 } from "@cocalc/backend/sandbox/rootfs-agent-routes";
-import { getRootfsMountpoint, rootfsIdmapUid } from "../rootfs";
+import { getRootfsMountpoint, isMounted, rootfsIdmapUid } from "../rootfs";
 import { RootfsAgentClient } from "./client";
 import { hostAgentDeps } from "./host";
 
 const clients = new Map<string, RootfsAgentClient>();
 
 export function rootfsAgentFor(project_id: string): RootfsAgentOps | undefined {
-  if (rootfsIdmapUid(project_id) == null) return undefined;
+  // a known separate uid only: -1 marks an idmapped mount of unknown uid
+  // that is being detached (never a live agent)
+  const uid = rootfsIdmapUid(project_id);
+  if (uid == null || uid <= 0) return undefined;
   let client = clients.get(project_id);
   if (client == null) {
     client = new RootfsAgentClient(project_id, hostAgentDeps(project_id));
@@ -65,6 +68,34 @@ export function rootfsSandboxOptionsWithoutAgent(project_id: string): {
     rootfsAgent: () =>
       rootfsIdmapUid(project_id) == null ? undefined : REFUSING,
   };
+}
+
+/**
+ * Whether a copy may be installed into the project's rootfs now (B5), from
+ * the project's running state and its live mount, never from the mount
+ * cache alone:
+ * - "agent": running, with a known separate uid: through its agent;
+ * - "host": running keep-id, its plain rootfs mounted: as before;
+ * - "defer": anything else (stopped, starting, stopping, the -1 marker, a
+ *   separate-uid project this daemon hasn't reattached yet, whose plain
+ *   path isn't mounted): the copy waits; nothing is written.
+ */
+export async function rootfsCopyReadiness(
+  project_id: string,
+  deps: {
+    state?: (project_id: string) => Promise<string>;
+    isMounted?: (opts: { project_id: string }) => Promise<boolean>;
+  } = {},
+): Promise<"agent" | "host" | "defer"> {
+  const state =
+    deps.state ??
+    (async (id: string) => await (await import("../podman")).state(id));
+  if ((await state(project_id)) !== "running") return "defer";
+  const uid = rootfsIdmapUid(project_id);
+  if (uid != null) return uid > 0 ? "agent" : "defer";
+  return (await (deps.isMounted ?? isMounted)({ project_id }))
+    ? "host"
+    : "defer";
 }
 
 /** For good (e.g. the project left this host). */

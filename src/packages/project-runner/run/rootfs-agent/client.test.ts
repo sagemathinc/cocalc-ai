@@ -14,6 +14,7 @@ import {
   AgentUnavailableError,
   checkAgentAuthority,
   checkResult,
+  hostBufferedBytes,
   LIMITS,
   RootfsAgentClient,
   type AgentDeps,
@@ -280,6 +281,149 @@ describe("RootfsAgentClient", () => {
     }));
     await expect(done).rejects.toMatchObject({ code: "ENOENT" });
     await expect(done).rejects.not.toThrow("/host/secret");
+  });
+
+  it("refuses a write over the per-file cap before any spawn or request (B2)", async () => {
+    const t = setup();
+    await expect(
+      t.client.request(
+        "writeFile",
+        { path: "/etc/big" },
+        Buffer.alloc(LIMITS.maxFileBytes + 1),
+      ),
+    ).rejects.toMatchObject({ code: "EFBIG" });
+    expect(t.children).toHaveLength(0);
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+  });
+
+  it("rejects promptly, leaking nothing, when the agent exits during its authority check (B3)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const t = setup({
+      hostFacts: async () => {
+        await gate;
+        return { ...FACTS };
+      },
+    });
+    const done = t.client.request("stat", { path: "/x" });
+    const c = await t.child();
+    // hello has been sent; it exits while the host reads its facts
+    while (c.listenerCount("exit") === 0) await t.tick();
+    await t.tick();
+    c.emit("exit", 0);
+    release();
+    let hung: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      done.then(
+        () => "resolved",
+        (err) => `rejected:${err.name}`,
+      ),
+      new Promise((r) => {
+        hung = setTimeout(() => r("hung"), 2000);
+      }),
+    ]);
+    clearTimeout(hung);
+    expect(outcome).toBe("rejected:AgentUnavailableError");
+    // refused by the start itself, which saw its child go
+    await expect(done).rejects.toThrow("went away while it started");
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+    expect(c.received).toEqual([]);
+  });
+
+  it("bounds buffered bytes per project, releasing on success, error and dispose (B4)", async () => {
+    LIMITS.maxProjectBufferedBytes = 10;
+    const t = setup();
+    const w1 = t.client.request("writeFile", { path: "/a" }, Buffer.alloc(8));
+    const c = await t.child();
+    while (c.received.length < 1) await t.tick();
+    expect(t.client.inFlight().bufferedBytes).toBe(8);
+    // the next one doesn't fit: refused, the first undisturbed
+    await expect(
+      t.client.request("writeFile", { path: "/b" }, Buffer.alloc(8)),
+    ).rejects.toMatchObject({ code: "EAGAIN" });
+    c.say({ id: c.received[0].id, ok: true, result: null });
+    await w1;
+    expect(t.client.inFlight().bufferedBytes).toBe(0);
+    // released on an error reply
+    const w2 = t.client.request("writeFile", { path: "/c" }, Buffer.alloc(8));
+    while (c.received.length < 2) await t.tick();
+    c.say({
+      id: c.received[1].id,
+      ok: false,
+      error: { code: "EACCES", message: "x" },
+    });
+    await expect(w2).rejects.toMatchObject({ code: "EACCES" });
+    expect(t.client.inFlight().bufferedBytes).toBe(0);
+    // released on dispose
+    const w3 = t.client.request("writeFile", { path: "/d" }, Buffer.alloc(8));
+    while (c.received.length < 3) await t.tick();
+    expect(t.client.inFlight().bufferedBytes).toBe(8);
+    c.emit("exit", 0);
+    await expect(w3).rejects.toMatchObject({ name: "AgentUnavailableError" });
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+  });
+
+  it("refuses a read whose announced size doesn't fit, dropping its chunks, without disposing (B4)", async () => {
+    LIMITS.maxProjectBufferedBytes = 4;
+    const t = setup();
+    const read = t.client.request("readFile", { path: "/etc/x" });
+    const c = await t.child();
+    await t.answer((req) => ({ id: req.id, ok: true, result: { size: 6 } }));
+    const id = c.received[0].id;
+    c.raw(encodeChunkFrame(id, Buffer.from("abc")));
+    c.raw(encodeChunkFrame(id, Buffer.from("def")));
+    await expect(read).rejects.toMatchObject({ code: "EAGAIN" });
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+    // the agent is still in use
+    expect(c.killed).toBe(false);
+    const st = t.client.request("stat", { path: "/y" });
+    await t.answer(
+      (req) => ({
+        id: req.id,
+        ok: true,
+        result: {
+          type: "file",
+          mode: 0,
+          uid: 0,
+          gid: 0,
+          size: 0,
+          nlink: 1,
+          ino: 1,
+          mtimeMs: 0,
+          atimeMs: 0,
+          ctimeMs: 0,
+        },
+      }),
+      1,
+    );
+    await st;
+  });
+
+  it("bounds buffered bytes host-wide, across projects, with a share per project (B4)", async () => {
+    LIMITS.maxProjectBufferedBytes = 8;
+    LIMITS.maxHostBufferedBytes = 12;
+    const a = setup();
+    const b = setup();
+    const wa = a.client.request("writeFile", { path: "/a" }, Buffer.alloc(8));
+    const ca = await a.child();
+    while (ca.received.length < 1) await a.tick();
+    // a is at its share: refused, while b still gets its own
+    await expect(
+      a.client.request("writeFile", { path: "/a2" }, Buffer.alloc(1)),
+    ).rejects.toMatchObject({ code: "EAGAIN" });
+    const wb = b.client.request("writeFile", { path: "/b" }, Buffer.alloc(4));
+    const cb = await b.child();
+    while (cb.received.length < 1) await b.tick();
+    expect(hostBufferedBytes()).toBe(12);
+    // the host is full: b's next is refused even under its own share
+    await expect(
+      b.client.request("writeFile", { path: "/b2" }, Buffer.alloc(1)),
+    ).rejects.toMatchObject({ code: "EAGAIN" });
+    ca.say({ id: ca.received[0].id, ok: true, result: null });
+    cb.say({ id: cb.received[0].id, ok: true, result: null });
+    await wa;
+    await wb;
+    expect(hostBufferedBytes()).toBe(0);
   });
 
   it("refuses rootfs operations when the agent's authority is wrong, never falling back", async () => {

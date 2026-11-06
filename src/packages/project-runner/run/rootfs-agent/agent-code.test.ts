@@ -357,6 +357,35 @@ describe("rootfs agent code", () => {
     }
   });
 
+  it("installs the exact mode it was given, whatever the umask (T3)", async () => {
+    await agent.json();
+    for (const [name, mode] of [
+      ["a", 0o666],
+      ["b", 0o777],
+      ["c", 0o660],
+      ["d", 0o600],
+    ] as const) {
+      const r = await agent.write(`${dir}/${name}`, Buffer.from("x"), 3, {
+        mode,
+      });
+      expect(r.ok).toBe(true);
+      expect((await lstat(`${dir}/${name}`)).mode & 0o7777).toBe(mode);
+    }
+  });
+
+  it("never makes a noReplace symlink through a symlinked directory (V4)", async () => {
+    await agent.json();
+    await mkdir(`${dir}/outside`);
+    await symlink(`${dir}/outside`, `${dir}/via`);
+    const r = await agent.call("symlink", {
+      path: `${dir}/via/l`,
+      target: "z",
+      noReplace: true,
+    });
+    expect(["ELOOP", "ENOTDIR"]).toContain(r.error.code);
+    expect(await readdir(`${dir}/outside`)).toEqual([]);
+  });
+
   it("dies on a protocol error, cleaning up its writes", async () => {
     await agent.json();
     agent.send(

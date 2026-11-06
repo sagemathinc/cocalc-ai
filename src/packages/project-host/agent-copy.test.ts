@@ -21,7 +21,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOTFS_AGENT_CODE } from "@cocalc/project-runner/run/rootfs-agent/agent-code";
 import { RootfsAgentClient } from "@cocalc/project-runner/run/rootfs-agent/client";
-import { installThroughAgent, type AgentLike } from "./agent-copy";
+import {
+  AGENT_COPY_LIMITS,
+  installThroughAgent,
+  type AgentLike,
+} from "./agent-copy";
 
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
@@ -188,6 +192,132 @@ describe("installing a staged copy through the rootfs agent", () => {
     expect(await readFile(join(dest, "a.txt"), "utf8")).toBe("mine");
   });
 
+  // a real agent whose rename(s) matching `fail` throw EIO
+  const failingRenames = (fail: (a: any) => boolean): AgentLike => ({
+    call: async (op, args, data) => {
+      if (op === "rename" && fail(args)) {
+        throw Object.assign(new Error("EIO: injected"), { code: "EIO" });
+      }
+      return await agent.call(op, args, data);
+    },
+  });
+  const siblings = async () =>
+    (await readdir(join(root, "etc"))).filter((n) => n.startsWith(".cocalc-"));
+
+  it("puts the old destination back when placing an exact copy fails (T1)", async () => {
+    const dest = join(root, "etc", "tree");
+    await mkdir(dest);
+    await writeFile(join(dest, "precious"), "keep me");
+    // placing the incoming copy at dest fails
+    const a = failingRenames(
+      (args) =>
+        args.dest === dest && String(args.path).includes(".cocalc-incoming-"),
+    );
+    await expect(
+      installThroughAgent({
+        src: join(staging, "tree"),
+        agent: a,
+        dest,
+        exact: true,
+      }),
+    ).rejects.toThrow("EIO: injected");
+    expect(await readFile(join(dest, "precious"), "utf8")).toBe("keep me");
+    expect(await siblings()).toEqual([]);
+  });
+
+  it("names where the old destination is kept when putting it back fails too (T1)", async () => {
+    const dest = join(root, "etc", "tree");
+    await mkdir(dest);
+    await writeFile(join(dest, "precious"), "keep me");
+    // placing fails, and so does every rename back to dest
+    const a = failingRenames((args) => args.dest === dest);
+    let message = "";
+    await installThroughAgent({
+      src: join(staging, "tree"),
+      agent: a,
+      dest,
+      exact: true,
+    }).catch((err) => (message = `${err.message}`));
+    const left = await siblings();
+    // the incoming copy is removed; only the aside remains, and the error names it
+    expect(left.length).toBe(1);
+    expect(left[0]).toMatch(/^\.cocalc-previous0-/);
+    expect(message).toContain(left[0]);
+    expect(await readFile(join(root, "etc", left[0], "precious"), "utf8")).toBe(
+      "keep me",
+    );
+  });
+
+  it("refuses a copy over the total entry or byte cap (T2)", async () => {
+    const saved = { ...AGENT_COPY_LIMITS };
+    try {
+      AGENT_COPY_LIMITS.maxEntries = 3;
+      await expect(
+        installThroughAgent({
+          src: join(staging, "tree"),
+          agent,
+          dest: join(root, "etc", "e"),
+        }),
+      ).rejects.toMatchObject({ code: "E2BIG" });
+      AGENT_COPY_LIMITS.maxEntries = saved.maxEntries;
+      AGENT_COPY_LIMITS.maxBytes = 4;
+      await expect(
+        installThroughAgent({
+          src: join(staging, "tree"),
+          agent,
+          dest: join(root, "etc", "b"),
+        }),
+      ).rejects.toMatchObject({ code: "EFBIG" });
+    } finally {
+      Object.assign(AGENT_COPY_LIMITS, saved);
+    }
+  });
+
+  it("leaves no hidden incoming tree when an exact copy stops part way (V1)", async () => {
+    const dest = join(root, "etc", "tree");
+    await mkdir(dest);
+    await writeFile(join(dest, "precious"), "keep me");
+    let n = 0;
+    await expect(
+      installThroughAgent({
+        src: join(staging, "tree"),
+        agent,
+        dest,
+        exact: true,
+        options: {
+          checkpoint: () => {
+            if (++n > 3)
+              throw new Error("copy did not finish before its claim expired");
+          },
+        },
+      }),
+    ).rejects.toThrow("claim expired");
+    expect(await siblings()).toEqual([]);
+    expect(await readFile(join(dest, "precious"), "utf8")).toBe("keep me");
+  });
+
+  it("keeps a destination symlink without force where the source has a directory (V2)", async () => {
+    const dest = join(root, "etc", "tree");
+    await mkdir(join(root, "elsewhere"));
+    await symlink(join(root, "elsewhere"), dest);
+    await installThroughAgent({
+      src: join(staging, "tree"),
+      agent,
+      dest,
+      options: { force: false },
+    });
+    expect((await lstat(dest)).isSymbolicLink()).toBe(true);
+    expect(await readdir(join(root, "elsewhere"))).toEqual([]);
+  });
+
+  it("drops setgid from a copied directory (V3)", async () => {
+    await mkdir(join(staging, "sgid"));
+    await chmod(join(staging, "sgid"), 0o2775);
+    const dest = join(root, "etc", "sgid");
+    await installThroughAgent({ src: join(staging, "sgid"), agent, dest });
+    expect((await stat(dest)).mode & 0o7777).toBe(0o775);
+  });
+
   it("keeps the times with preserveTimestamps", async () => {
     await utimes(join(staging, "tree", "a.txt"), 1000000000, 1100000000);
     const dest = join(root, "etc", "tree");
@@ -215,9 +345,22 @@ describe("installing a staged copy through the rootfs agent", () => {
   it("refuses a file over the agent's per-file cap, writing nothing for it", async () => {
     await truncate(join(staging, "tree", "a.txt"), 64 * 1024 * 1024 + 1);
     const dest = join(root, "etc", "big");
+    const writes: string[] = [];
+    const recording: AgentLike = {
+      call: async (op, args, data) => {
+        if (op === "writeFile") writes.push(String(args.path));
+        return await agent.call(op, args, data);
+      },
+    };
     await expect(
-      installThroughAgent({ src: join(staging, "tree", "a.txt"), agent, dest }),
+      installThroughAgent({
+        src: join(staging, "tree", "a.txt"),
+        agent: recording,
+        dest,
+      }),
     ).rejects.toMatchObject({ code: "EFBIG" });
+    // refused by the copier itself, before reading it or asking the agent
+    expect(writes).toEqual([]);
     await expect(lstat(dest)).rejects.toThrow();
   });
 
