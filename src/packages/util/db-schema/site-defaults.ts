@@ -86,6 +86,7 @@ export type SiteSettingsKeys =
   | "codex_notification_toast_enabled"
   | "codex_notification_browser_enabled"
   | "computers_enabled"
+  | "claude_subscription_runtime"
   | "google_vertexai_enabled"
   | "mistral_enabled"
   | "anthropic_enabled"
@@ -1656,6 +1657,15 @@ export const site_settings_conf: SiteSettings = {
     tags: ["AI"],
     group: "AI & Agents",
     subgroup: "Computers",
+  },
+  claude_subscription_runtime: {
+    name: "Claude Subscription Runtime",
+    desc: "Where Claude agents paid by a person's Claude subscription run. 'project': Claude Code runs in the project like Codex (its processes show in the project, MCP servers and skills work as configured there), and the subscription token stays on the host, swapped in by a relay. 'controller': the isolated controller container, with project access through CoCalc's tool bridge.",
+    default: "controller",
+    valid: ["controller", "project"],
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Claude",
   },
   codex_notification_browser_enabled: {
     name: "Codex Browser Notifications",

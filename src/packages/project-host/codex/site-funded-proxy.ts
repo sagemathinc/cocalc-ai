@@ -9,7 +9,13 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import type { ClientRequest } from "node:http";
 import getLogger from "@cocalc/backend/logger";
+import {
+  forwardProviderRequest,
+  validateProviderRelayPolicy,
+  type ProviderRelayPolicy,
+} from "../acp/credential-http-relay";
 import {
   computeSiteFundedCodexRequestCost,
   siteFundedCodexFinalRequestHeadroomMicrousd,
@@ -412,8 +418,80 @@ function boundedProviderRequest({
   };
 }
 
+/**
+ * A credential relay session on this proxy: requests whose bearer is the
+ * session's token go to the provider with the real credential instead (for
+ * Claude subscription agents running in the project). It shares the proxy
+ * because projects may reach only this host-local port range
+ * (site-funded-proxy-port.ts).
+ */
+export type ProviderRelaySession = {
+  /** The base URL a project process uses, without a path. */
+  baseUrl: string;
+  /** What the process sends as `Authorization: Bearer <token>`. */
+  token: string;
+  /**
+   * A turn starts (the host calls it, never the project): the session is
+   * usable again, and is never idle while the turn runs, however long.
+   */
+  beginTurn(): void;
+  /**
+   * The turn ended: the session is suspended RELAY_IDLE_MS later, whatever
+   * it is used for meanwhile.
+   */
+  endTurn(): void;
+  close(): void;
+};
+
+/*
+A relay token is a bearer: anyone who obtains it can use the session, from
+any project on this host (the proxy listens on host loopback, and pasta or
+slirp4netns open each project connection anew from there, so the socket does
+not say which project sent it; unmeasured, from reading the network setup).
+So between turns a session is suspended RELAY_IDLE_MS after the turn ended:
+a hard deadline that requests do not move, so a process the agent left running
+cannot keep the session alive. Requests still in flight then are stopped, and
+the session refuses every request until the next turn begins. A turn itself
+has no time limit (a tool may run for long without a model request, and turns
+can be long).
+*/
+export const RELAY_IDLE_MS = 15 * 60_000;
+
+type RelaySession = {
+  policy: ProviderRelayPolicy;
+  requests: Set<ClientRequest>;
+  closed: boolean;
+  suspended: boolean;
+  /** Between beginTurn and endTurn: never suspended. */
+  inTurn: boolean;
+  idleMs: number;
+  /** Between turns: when the session is suspended. */
+  deadline: number;
+  timer?: ReturnType<typeof setTimeout>;
+  /** Bumped by every turn start and end, so a stale timer does nothing. */
+  generation: number;
+};
+
+function suspendRelaySession(session: RelaySession): void {
+  session.suspended = true;
+  for (const request of session.requests) request.destroy();
+}
+
+// Between turns: suspend the session idleMs from now, requests or not.
+function armRelayDeadline(session: RelaySession): void {
+  if (session.timer) clearTimeout(session.timer);
+  const generation = ++session.generation;
+  session.deadline = Date.now() + session.idleMs;
+  session.timer = setTimeout(() => {
+    if (session.generation === generation && !session.inTurn)
+      suspendRelaySession(session);
+  }, session.idleMs);
+  session.timer.unref?.();
+}
+
 class SiteFundedCodexProxy {
   private readonly sessions = new Map<string, Session>();
+  private readonly relaySessions = new Map<string, RelaySession>();
   private server?: ReturnType<typeof createServer>;
   private listening?: Promise<number>;
   // Tests listen on an ephemeral port instead of the host's fixed range.
@@ -566,8 +644,102 @@ class SiteFundedCodexProxy {
     };
   }
 
+  async startRelaySession({
+    upstream,
+    allowedPathPrefix,
+    allowedPaths,
+    allowedMethods,
+    credentialHeader,
+    credentialValue,
+    tokenPrefix = "",
+    allowHttpForTests,
+    idleMs = RELAY_IDLE_MS,
+  }: {
+    upstream: string;
+    allowedPathPrefix: string;
+    /** The only paths allowed, exactly, each within allowedPathPrefix. */
+    allowedPaths?: readonly string[];
+    allowedMethods?: readonly string[];
+    credentialHeader: string;
+    credentialValue: () => Promise<string> | string;
+    /** Prepended to the random token, e.g. so it looks like the provider's. */
+    tokenPrefix?: string;
+    allowHttpForTests?: boolean;
+    idleMs?: number;
+  }): Promise<ProviderRelaySession> {
+    if (!(idleMs > 0)) throw Error("Invalid relay session idle time");
+    const checked = validateProviderRelayPolicy({
+      upstream,
+      allowedPathPrefix,
+      credentialHeader,
+      allowedMethods,
+      allowHttpForTests,
+    });
+    if (!/^[A-Za-z0-9_-]*$/.test(tokenPrefix))
+      throw Error("Invalid relay token prefix");
+    if (
+      allowedPaths?.some(
+        (path) =>
+          !/^\/[A-Za-z0-9_/-]+$/.test(path) ||
+          path.includes("//") ||
+          !path.startsWith(allowedPathPrefix),
+      )
+    )
+      throw Error("Invalid relay paths");
+    const port = await this.ensureListening();
+    const token = `${tokenPrefix}${randomBytes(32).toString("base64url")}`;
+    const session: RelaySession = {
+      policy: {
+        ...checked,
+        allowedPathPrefix,
+        allowedPaths: allowedPaths ? new Set(allowedPaths) : undefined,
+        credentialHeader,
+        credentialValue,
+      },
+      requests: new Set(),
+      closed: false,
+      suspended: false,
+      inTurn: false,
+      idleMs,
+      deadline: 0,
+      generation: 0,
+    };
+    // until the first turn, as after every turn
+    armRelayDeadline(session);
+    this.relaySessions.set(token, session);
+    return {
+      baseUrl: `http://host.containers.internal:${port}`,
+      token,
+      beginTurn: () => {
+        if (session.closed) return;
+        if (session.timer) clearTimeout(session.timer);
+        session.generation++;
+        session.suspended = false;
+        session.inTurn = true;
+      },
+      endTurn: () => {
+        // only a turn's end starts the deadline: never a later call again
+        if (session.closed || !session.inTurn) return;
+        session.inTurn = false;
+        armRelayDeadline(session);
+      },
+      close: () => {
+        session.closed = true;
+        if (session.timer) clearTimeout(session.timer);
+        this.relaySessions.delete(token);
+        suspendRelaySession(session);
+      },
+    };
+  }
+
   async shutdown(): Promise<void> {
     this.sessions.clear();
+    for (const session of this.relaySessions.values()) {
+      session.closed = true;
+      if (session.timer) clearTimeout(session.timer);
+      suspendRelaySession(session);
+    }
+    this.relaySessions.clear();
     const server = this.server;
     this.server = undefined;
     this.listening = undefined;
@@ -575,6 +747,23 @@ class SiteFundedCodexProxy {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
+  }
+
+  // A relay session's token: the session, "suspended" while it may not be
+  // used, or undefined when the bearer is no relay token.
+  private relaySessionFor(
+    request: IncomingMessage,
+  ): RelaySession | "suspended" | undefined {
+    const match = /^Bearer\s+(.+)$/i.exec(
+      `${request.headers.authorization ?? ""}`,
+    );
+    const session = match ? this.relaySessions.get(match[1]) : undefined;
+    if (!session || session.closed) return undefined;
+    // the deadline holds even if its timer has not run yet
+    if (!session.suspended && !session.inTurn && Date.now() >= session.deadline)
+      suspendRelaySession(session);
+    if (session.suspended) return "suspended";
+    return session;
   }
 
   private sessionFor(request: IncomingMessage): Session | undefined {
@@ -666,6 +855,29 @@ class SiteFundedCodexProxy {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
+    const relay = this.relaySessionFor(request);
+    if (relay === "suspended") {
+      request.resume();
+      jsonResponse(response, 401, "Relay session is suspended");
+      return;
+    }
+    if (relay) {
+      // no request moves the between-turn deadline (armRelayDeadline)
+      try {
+        await forwardProviderRequest({
+          request,
+          response,
+          policy: relay.policy,
+          requests: relay.requests,
+          // suspended while the credential was looked up counts as closed
+          isClosed: () => relay.closed || relay.suspended,
+        });
+      } catch {
+        request.resume();
+        jsonResponse(response, 403, "Credential is unavailable or revoked");
+      }
+      return;
+    }
     const session = this.sessionFor(request);
     if (!session || session.closed) {
       jsonResponse(response, 401, "invalid or expired funded proxy credential");
@@ -903,6 +1115,13 @@ export async function startSiteFundedCodexProxySession(
   opts: Parameters<SiteFundedCodexProxy["startSession"]>[0],
 ): Promise<SiteFundedProxySession> {
   return await proxy.startSession(opts);
+}
+
+/** A credential relay session on the project-reachable provider proxy. */
+export async function startProviderRelaySession(
+  opts: Parameters<SiteFundedCodexProxy["startRelaySession"]>[0],
+): Promise<ProviderRelaySession> {
+  return await proxy.startRelaySession(opts);
 }
 
 export async function shutdownSiteFundedCodexProxyForTests(): Promise<void> {

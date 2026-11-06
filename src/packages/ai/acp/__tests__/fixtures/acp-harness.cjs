@@ -215,7 +215,52 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         });
       if (process.argv.includes("--claude-adapter")) {
         const options = message.params._meta?.claudeCode?.options;
-        if (
+        if (process.argv.includes("--in-project")) {
+          // A subscription session run in the project: a normal session
+          // there, without the controller's tools or settings overrides.
+          if (
+            message.params.cwd !== "/home/user/work" ||
+            message.params.mcpServers.length !== 0 ||
+            options?.tools !== undefined ||
+            options?.settingSources !== undefined ||
+            // no parent managed-settings tier from the client
+            options?.managedSettings !== undefined ||
+            options?.settings?.env?.CLAUDE_CODE_USE_FOUNDRY !== "0" ||
+            !message.params._meta?.systemPrompt?.append?.startsWith(
+              "[CoCalc session guidance]",
+            )
+          )
+            return send({
+              id: message.id,
+              error: { code: -32602, message: "in-project policy missing" },
+            });
+          // The relay route pinned at the flag-settings tier, on session/new
+          // and session/load alike; never the token itself.
+          const pin = process.argv
+            .find((arg) => arg.startsWith("--expect-pin="))
+            ?.slice("--expect-pin=".length);
+          const env = options?.settings?.env ?? {};
+          if (
+            pin &&
+            (env.ANTHROPIC_BASE_URL !== pin ||
+              options.settings.apiKeyHelper !== "" ||
+              !`${env.NO_PROXY}`.includes("host.containers.internal") ||
+              !`${env.no_proxy}`.includes("host.containers.internal") ||
+              env.HTTPS_PROXY !== "" ||
+              env.https_proxy !== "" ||
+              env.HTTP_PROXY !== "" ||
+              env.http_proxy !== "" ||
+              env.ALL_PROXY !== "" ||
+              env.all_proxy !== "" ||
+              env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== "1" ||
+              env.CLAUDE_CODE_ENABLE_TELEMETRY !== "0" ||
+              JSON.stringify(message).includes("CLAUDE_CODE_OAUTH_TOKEN"))
+          )
+            return send({
+              id: message.id,
+              error: { code: -32602, message: "relay route not pinned" },
+            });
+        } else if (
           message.params.cwd !== "/workspace" ||
           !options ||
           JSON.stringify(options.tools) !==
@@ -539,7 +584,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           claudeCode: { toolName: "Agent" },
           jetbrains: { air: { version: 1, subagent: true } },
         };
-        const child = { claudeCode: { toolName: "Bash", parentToolUseId: "agent-1" } };
+        const child = {
+          claudeCode: { toolName: "Bash", parentToolUseId: "agent-1" },
+        };
         for (const item of [
           {
             sessionUpdate: "tool_call",
@@ -590,7 +637,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             toolCallId: "agent-1",
             status: "completed",
             content: [
-              { type: "content", content: { type: "text", text: "There are 43." } },
+              {
+                type: "content",
+                content: { type: "text", text: "There are 43." },
+              },
             ],
             _meta: {},
           },

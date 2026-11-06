@@ -1147,6 +1147,11 @@ export async function createProjectCliTokenLease({
       if (closed) return;
       closed = true;
       if (timer) clearTimeout(timer);
+      // The bearer goes first, before anything below that may wait on the
+      // hub: no refresh writes once closed is set, so it stays gone.
+      try {
+        leaseDir.unlink("token");
+      } catch {}
       await refreshPromise?.catch(() => undefined);
       await endConnectorTurn().catch((err) => {
         logger.warn("managed CoCalc connector revocation unconfirmed", {

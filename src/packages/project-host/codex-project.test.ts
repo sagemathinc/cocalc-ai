@@ -1519,6 +1519,56 @@ describe("initCodexProjectRunner", () => {
     });
   });
 
+  it("close removes the bearer at once and stops its refresh, even while a refresh hangs", async () => {
+    const scratch = await mkTempDir("codex-project-scratch-close-");
+    let finish!: (value: unknown) => void;
+    hubApi.hosts.issueProjectHostAgentAuthToken
+      .mockResolvedValueOnce({
+        token: "first-project-token",
+        expires_at: Date.now() + 60_000,
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue({
+        token: "later-project-token",
+        expires_at: Date.now() + 60_000,
+      });
+    const { createProjectCliTokenLease } =
+      await import("./codex/codex-project");
+    const lease = (await createProjectCliTokenLease({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      currentEnv: {},
+      home: scratch,
+      scratch,
+      refreshMs: 10,
+    }))!;
+    const issue = hubApi.hosts.issueProjectHostAgentAuthToken;
+    for (let i = 0; i < 50 && issue.mock.calls.length < 2; i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(issue).toHaveBeenCalledTimes(2); // the refresh is in flight
+    const closing = lease.close();
+    // gone before the hung refresh settles
+    await expect(fs.stat(lease.hostPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    finish({ token: "late-project-token", expires_at: Date.now() + 60_000 });
+    await closing;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // the late token is never written, and nothing refreshes after close
+    await expect(fs.stat(lease.hostPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(issue).toHaveBeenCalledTimes(2);
+    // the bearer's lifetime is the hub's default: no ttl is ever requested
+    for (const [opts] of issue.mock.calls)
+      expect(opts).not.toHaveProperty("ttl_seconds");
+  });
+
   it("refuses a CLI token lease under the project home outside the workspace runtime", async () => {
     delete process.env.COCALC_PROJECT_PATH;
     const home = await mkTempDir("codex-project-no-scratch-");

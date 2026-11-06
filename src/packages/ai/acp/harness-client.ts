@@ -136,10 +136,30 @@ export interface HarnessProcess {
   /** Launcher must terminate the execution boundary, including descendants. */
   stop(): Promise<void>;
   /**
+   * Whether work the agent started in a shell (a background job, say) is
+   * still running: an idle agent is not disposed while it is. A launcher
+   * that knows nothing of such work leaves this out.
+   */
+  hasBackgroundWork?(): Promise<boolean>;
+  /**
    * Trusted launcher fact: the controller authenticates only with a
    * long-lived subscription token, which cannot report the account's plan.
    */
   subscriptionAuth?: "oauth-token";
+  /**
+   * Trusted launcher fact: how this process's sessions run, replacing the
+   * policy the caller chose from the credential. A subscription agent run in
+   * the project (not the controller) is a normal session in the project.
+   */
+  sessionPolicy?: HarnessSessionPolicy;
+  /**
+   * Trusted launcher fact: settings env pinned for every session of this
+   * process at Claude Code's flag-settings tier, which outranks the user's and
+   * the project's settings files. The launcher of a subscription agent in the
+   * project pins its relay route with it, so no settings file can send the
+   * relay token or the conversation anywhere else.
+   */
+  pinnedSettingsEnv?: Record<string, string>;
 }
 
 export type HarnessAsyncQuestionHandler = (input: unknown) => Promise<{
@@ -199,6 +219,7 @@ const CLAUDE_AUTH_STATUS_METHOD = "_auth/status_update";
 
 export function claudeAccountApiKeySessionMeta(
   systemPromptAppend?: string,
+  pinnedEnv?: Record<string, string>,
 ): Record<string, unknown> {
   return {
     ...(systemPromptAppend
@@ -208,7 +229,14 @@ export function claudeAccountApiKeySessionMeta(
       options: {
         // The pinned adapter resets Bedrock/Vertex when pinning a provider,
         // but does not yet reset Foundry. Settings env overrides process env.
-        settings: { env: { CLAUDE_CODE_USE_FOUNDRY: "0" } },
+        // A pinned route also turns off apiKeyHelper, so no settings file
+        // can swap in another credential.
+        settings: pinnedEnv
+          ? {
+              env: { CLAUDE_CODE_USE_FOUNDRY: "0", ...pinnedEnv },
+              apiKeyHelper: "",
+            }
+          : { env: { CLAUDE_CODE_USE_FOUNDRY: "0" } },
       },
     },
   };
@@ -447,9 +475,11 @@ export class AcpHarnessClient {
     const credential = parseAcpHarnessCredential(binding.credential, profile);
     if (!binding.projectId || !binding.accountId)
       throw Error("ACP principal binding is required");
+    const launched = await launch({ ...binding, profile, credential });
+    sessionPolicy = launched.sessionPolicy ?? sessionPolicy;
     const client = new AcpHarnessClient(
       { ...binding, profile, credential },
-      await launch({ ...binding, profile, credential }),
+      launched,
       timeoutMs,
       questionHandler,
       sessionPolicy,
@@ -483,7 +513,8 @@ export class AcpHarnessClient {
           "Harness did not negotiate ACP v1",
         );
       if (
-        sessionPolicy === "claude-subscription-controller" &&
+        (sessionPolicy === "claude-subscription-controller" ||
+          credential.mode === "account-subscription") &&
         (client.info.agentInfo?.name !==
           CLAUDE_CODE_QUALIFICATION.package.name ||
           client.info.agentInfo?.version !==
@@ -491,7 +522,7 @@ export class AcpHarnessClient {
       )
         throw new HarnessError(
           "unsupported",
-          "Subscription controller requires the qualified Claude adapter",
+          "Claude subscriptions require the qualified Claude adapter",
         );
       return client;
     } catch (error) {
@@ -818,6 +849,14 @@ export class AcpHarnessClient {
     }
   }
 
+  /** Funded by a Claude subscription, wherever it runs. */
+  private subscription(): boolean {
+    return (
+      this.sessionPolicy === "claude-subscription-controller" ||
+      this.binding.credential.mode === "account-subscription"
+    );
+  }
+
   private agentName(): string {
     return this.binding.profile.id === "claude-code" ||
       this.sessionPolicy === "claude-subscription-controller"
@@ -827,8 +866,7 @@ export class AcpHarnessClient {
 
   private rejectionMessage(error: unknown, method: RequestMethod): string {
     const { code, data } = error as { code: number; data?: { cwd?: unknown } };
-    const subscription =
-      this.sessionPolicy === "claude-subscription-controller";
+    const subscription = this.subscription();
     const agent = this.agentName();
     let recovery: string;
     if (code === -32000) {
@@ -843,9 +881,10 @@ export class AcpHarnessClient {
       (method === "session/new" || method === "session/load") &&
       typeof data?.cwd === "string"
     ) {
-      recovery = subscription
-        ? "The isolated Claude workspace is unavailable. Ask the site administrator to update or repair the Claude runtime; changing your project directory will not fix this."
-        : "The working directory is unavailable. Use the folder control to select an existing project directory, then retry.";
+      recovery =
+        this.sessionPolicy === "claude-subscription-controller"
+          ? "The isolated Claude workspace is unavailable. Ask the site administrator to update or repair the Claude runtime; changing your project directory will not fix this."
+          : "The working directory is unavailable. Use the folder control to select an existing project directory, then retry.";
     } else if (
       method === "session/set_mode" ||
       method === "session/set_config_option"
@@ -880,6 +919,17 @@ export class AcpHarnessClient {
               .join("\n\n")
           : "";
       this.instructionsUpdate = undefined;
+      // A subscription agent in the project needs its route pinned (see
+      // HarnessProcess.pinnedSettingsEnv): without it, refuse to start.
+      if (
+        this.sessionPolicy !== "claude-subscription-controller" &&
+        this.subscription() &&
+        !this.process.pinnedSettingsEnv?.ANTHROPIC_BASE_URL
+      )
+        throw new HarnessError(
+          "unsupported",
+          "This Claude subscription session has no pinned relay route",
+        );
       const params = {
         cwd:
           this.sessionPolicy === "claude-subscription-controller"
@@ -902,12 +952,16 @@ export class AcpHarnessClient {
                 projectToolServerName,
               }),
             }
-          : this.binding.credential.mode === "account-api-key"
+          : // In the project, a subscription session is configured like an
+            // API-key one: only the credential differs.
+            this.binding.credential.mode === "account-api-key" ||
+              this.subscription()
             ? {
                 _meta: claudeAccountApiKeySessionMeta(
                   harnessHasSessionGuidance(this.binding.profile)
                     ? harnessSessionGuidance(false)
                     : undefined,
+                  this.process.pinnedSettingsEnv,
                 ),
               }
             : harnessHasSessionGuidance(this.binding.profile)
@@ -1029,8 +1083,7 @@ export class AcpHarnessClient {
     this.canceled = false;
     this.listener = listener;
     try {
-      if (this.sessionPolicy === "claude-subscription-controller")
-        await this.verifySubscriptionIdentity();
+      if (this.subscription()) await this.verifySubscriptionIdentity();
       await beforeSend?.();
       if (this.canceled || this.disposed || this.failure)
         throw new HarnessError(
@@ -1314,6 +1367,12 @@ export class AcpHarnessClient {
         "session/cancel",
       ),
     ]);
+  }
+
+  /** See HarnessProcess.hasBackgroundWork; false once disposed. */
+  async hasBackgroundWork(): Promise<boolean> {
+    if (this.disposed || !this.process.hasBackgroundWork) return false;
+    return await this.process.hasBackgroundWork();
   }
 
   dispose(): Promise<void> {
