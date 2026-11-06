@@ -486,6 +486,18 @@ async function assertProviderComputeNetworkSecurity(config: ComputeVmConfig) {
   networkSecurityCheck = { key, checked_at: Date.now() };
 }
 
+/** Max-price mode only (#684): a Nebius Spot instance is created with the
+ * cap that its billed Spot rate was set from. Without one the provider
+ * refuses to create it. */
+export function nebiusSpotSpecMetadata(
+  vm: Pick<ComputeVmRow, "metadata">,
+  pricingModel: string,
+): { spot_max_price_per_gpu_hour?: string } {
+  if (pricingModel !== "spot") return {};
+  const cap = vm.metadata?.billing?.nebius_spot?.max_price_per_gpu_hour;
+  return cap ? { spot_max_price_per_gpu_hour: `${cap}` } : {};
+}
+
 function specFor(
   vm: ComputeVmRow,
   config: ComputeVmConfig,
@@ -555,6 +567,7 @@ function specFor(
           : {
               public_address_id: vm.public_address_id,
               shared_disk_device_id: "home",
+              ...nebiusSpotSpecMetadata(vm, pricingModel),
             }),
       ssh_user: vm.ssh_user,
       ssh_public_key: vm.ssh_public_key,
@@ -983,6 +996,27 @@ async function context(
   throw new Error(
     "managed compute VM provider credentials are not configured for this environment",
   );
+}
+
+/** Nebius's live spot price for a dedicated VM's cap (#684). */
+export async function quoteNebiusComputeSpotPrice(opts: {
+  region: string;
+  platform: string;
+}) {
+  const { creds } = await context("nebius", opts.region);
+  return await nebiusProvider.quoteSpotPrice(creds, opts);
+}
+
+/** For a Nebius Spot VM that the provider stopped: its cap when the stop was
+ * because the price rose above it, else undefined. */
+export async function nebiusComputeSpotPriceStopCap(
+  vm: ComputeVmRow,
+): Promise<string | undefined> {
+  if (vm.provider !== "nebius" || vm.effective_pricing_model !== "spot") {
+    return undefined;
+  }
+  const { creds } = await context("nebius", vm.region);
+  return await nebiusProvider.spotPriceStopCap(runtimeFor(vm), creds);
 }
 
 async function ensureNebiusManagedComputeSecurityGroup(region: string) {

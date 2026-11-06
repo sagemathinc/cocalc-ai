@@ -505,6 +505,66 @@ describe("project host pricing", () => {
     expect(breakdown?.total_usd_per_hour).toBeCloseTo(0.114183323, 9);
   });
 
+  it("bills a Nebius Spot GPU instance at its cap, not the catalog's spot price (#684)", () => {
+    const prices = [
+      {
+        product: "Preemptible NVIDIA H100",
+        region: "eu-north1",
+        price_usd: "0.79",
+        unit: "GPU hour",
+      },
+      {
+        product: "Network SSD disk",
+        region: "eu-north1",
+        price_usd: "0.0001",
+        unit: "GiB hour",
+      },
+    ];
+    const instance = {
+      name: "gpu-h100-sxm-8gpu",
+      platform: "gpu-h100-sxm",
+      gpus: 8,
+      vcpus: 128,
+      memory_gib: 1600,
+    } as any;
+    const breakdown = estimateNebiusCatalogRateBreakdown({
+      prices,
+      region: "eu-north1",
+      pricing_model: "spot",
+      instance,
+      disk_type: "ssd",
+      disk_gb: 100,
+      storage_mode: "persistent",
+      spot_max_price_per_gpu_hour: "2.400",
+    });
+    expect(breakdown?.items).toEqual([
+      expect.objectContaining({
+        key: "gpu",
+        usd_per_hour: 2.4 * 8,
+        billing_states: ["running"],
+      }),
+      expect.objectContaining({ key: "disk" }),
+    ]);
+    expect(breakdown?.total_usd_per_hour).toBeCloseTo(2.4 * 8 + 0.01, 9);
+    // no GPU, or no usable cap: no Spot price at all
+    for (const bad of [
+      { instance: { ...instance, gpus: 0 } },
+      { spot_max_price_per_gpu_hour: "0" },
+      { spot_max_price_per_gpu_hour: "abc" },
+    ]) {
+      expect(
+        estimateNebiusCatalogRateBreakdown({
+          prices,
+          region: "eu-north1",
+          pricing_model: "spot",
+          instance,
+          spot_max_price_per_gpu_hour: "2.400",
+          ...bad,
+        }),
+      ).toBeUndefined();
+    }
+  });
+
   it("prices an independent Nebius persistent disk without an instance", () => {
     const breakdown = estimateNebiusCatalogRateBreakdown({
       prices: [

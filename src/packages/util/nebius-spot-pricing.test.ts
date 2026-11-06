@@ -52,9 +52,7 @@ describe("nebiusSpotMaxPricePerGpuHour", () => {
           live_price_per_gpu_hour: "1.000",
           headroom_percent: headroom,
         }),
-      ).toBe(
-        (1 + DEFAULT_NEBIUS_SPOT_HEADROOM_PERCENT / 100).toFixed(3),
-      );
+      ).toBe((1 + DEFAULT_NEBIUS_SPOT_HEADROOM_PERCENT / 100).toFixed(3));
     }
     expect(normalizeNebiusSpotHeadroomPercent("35")).toBe(35);
   });

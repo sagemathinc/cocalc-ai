@@ -157,15 +157,16 @@ function mockSpotPolicy(opts: {
   platform?: string;
   maxPrice?: string;
 }) {
-  const {
-    PricingPolicyStatus_SchedulingState,
-    PricingPolicyStatus_State,
-  } = jest.requireActual("@nebius/js-sdk/api/nebius/billing/v1/index");
+  const { PricingPolicyStatus_SchedulingState, PricingPolicyStatus_State } =
+    jest.requireActual("@nebius/js-sdk/api/nebius/billing/v1/index");
   const policy = {
     metadata: { id: "policy-1", name: "cocalc-spot-spot-platform-2-400" },
     spec: {
       computeInstanceSpec: {
-        versions: { $case: "v1", v1: { platform: opts.platform ?? "spot-platform" } },
+        versions: {
+          $case: "v1",
+          v1: { platform: opts.platform ?? "spot-platform" },
+        },
       },
       pricing: {
         versions: {
@@ -411,17 +412,14 @@ describe("NebiusProvider", () => {
   it("creates preemptible instances for spot hosts", async () => {
     mockSpotPolicy({ scheduling: "allowed" });
     const provider = new NebiusProvider();
-    const runtime = await provider.createHost(
-      spotSpec(),
-      {
-        parentId: "project-1",
-        serviceAccountId: "svc-1",
-        publicKeyId: "pub-1",
-        privateKeyPem: "key",
-        sshPublicKey: "ssh-ed25519 AAAA",
-        subnetId: "subnet-1",
-      },
-    );
+    const runtime = await provider.createHost(spotSpec(), {
+      parentId: "project-1",
+      serviceAccountId: "svc-1",
+      publicKeyId: "pub-1",
+      privateKeyPem: "key",
+      sshPublicKey: "ssh-ed25519 AAAA",
+      subnetId: "subnet-1",
+    });
 
     const createArgs = instancesCreateMock.mock.calls[0][0];
     expect(createArgs.spec.preemptible).toBeDefined();

@@ -153,13 +153,17 @@ async function assertPreemptibleStartAllowed(
   }
   const region = `${runtime.zone ?? ""}`.trim();
   if (!region) {
-    throw new Error(`Nebius Spot instance '${runtime.instance_id}' has no region`);
+    throw new Error(
+      `Nebius Spot instance '${runtime.instance_id}' has no region`,
+    );
   }
   await assertNebiusSpotStartable(client, { policy_id: policyId, region });
 }
 
 function instanceSpotPolicyId(instance: {
-  spec?: { pricingModel?: { $case?: string; spotPricingPolicy?: { id?: string } } };
+  spec?: {
+    pricingModel?: { $case?: string; spotPricingPolicy?: { id?: string } };
+  };
 }): string | undefined {
   const model = instance.spec?.pricingModel;
   if (model?.$case !== "spotPricingPolicy") return undefined;

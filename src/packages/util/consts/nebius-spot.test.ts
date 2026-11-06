@@ -11,8 +11,12 @@ import {
 
 describe("assertNebiusProjectHostSpotRefused", () => {
   it("always refuses Nebius Spot for project hosts", () => {
-    expect(() => assertNebiusProjectHostSpotRefused("nebius", "spot")).toThrow();
-    expect(() => assertNebiusProjectHostSpotRefused("NEBIUS", "spot")).toThrow();
+    expect(() =>
+      assertNebiusProjectHostSpotRefused("nebius", "spot"),
+    ).toThrow();
+    expect(() =>
+      assertNebiusProjectHostSpotRefused("NEBIUS", "spot"),
+    ).toThrow();
   });
 
   it("allows Standard and other clouds", () => {

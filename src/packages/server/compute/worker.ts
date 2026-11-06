@@ -4,6 +4,7 @@
  */
 
 import { NEBIUS_SPOT_OFFERED } from "@cocalc/util/consts/nebius-spot";
+import { nebiusSpotPriceStopMessage } from "@cocalc/util/nebius-spot-pricing";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import net from "node:net";
@@ -84,6 +85,7 @@ import {
   inspectProviderComputeVolume,
   getProviderComputePublicEgressBytes,
   listProviderComputeInventory,
+  nebiusComputeSpotPriceStopCap,
   probeProviderComputeSpot,
   releaseProviderComputePublicAddress,
   replaceProviderComputeInstance,
@@ -2513,7 +2515,15 @@ export function computePostStopTransition(
   return { state: "stopped" as const, action: undefined };
 }
 
-async function stop(vm: ComputeVmRow) {
+// A stop for a Nebius Spot price stop keeps the VM's explanation (#684).
+export function stopWorkKeepsError(
+  idempotencyKey: string | undefined,
+): boolean {
+  return `${idempotencyKey ?? ""}`.startsWith("spot-price-stop:");
+}
+
+async function stop(vm: ComputeVmRow, keepError = false) {
+  const error = keepError ? (vm.error ?? null) : null;
   if (vm.stop_at && vm.stop_at.valueOf() <= Date.now()) {
     await withSessionAdvisoryLock({
       lockKey: scheduledStopLockKey(vm.id),
@@ -2527,16 +2537,16 @@ async function stop(vm: ComputeVmRow) {
           current.stop_at.valueOf() > Date.now()
         )
           return;
-        await stopCurrentVm(current);
+        await stopCurrentVm(current, error);
       },
     });
     return;
   }
-  await stopCurrentVm(vm);
+  await stopCurrentVm(vm, error);
 }
 
-async function stopCurrentVm(vm: ComputeVmRow) {
-  await updateComputeVm(vm.id, { state: "stopping", error: null });
+async function stopCurrentVm(vm: ComputeVmRow, error: string | null = null) {
+  await updateComputeVm(vm.id, { state: "stopping", error });
   await observeVmPhase(vm, "provider_stop", async () =>
     stopProviderComputeVm(vm),
   );
@@ -2565,7 +2575,7 @@ async function stopCurrentVm(vm: ComputeVmRow) {
     stopped_at: current.stopped_at ?? new Date(),
     public_ip:
       current.desired_state === "running" ? networkState.public_ip : null,
-    error: null,
+    error,
   }))!;
   await updateComputeInstance(next, { stopped: true });
   if (!hasCourseVmFunding(next)) await reconcileVmBilling(next, "stopped");
@@ -3002,6 +3012,18 @@ async function reconcile(vm: ComputeVmRow) {
     // another start while the provider is reconciling causes operation races.
     return;
   }
+  // Nebius stops a Spot VM when its price rises above the VM's cap (#684).
+  // That is not a capacity preemption: stop the VM for the user, with no
+  // automatic restart (a restart would be refused until the price falls).
+  if (
+    vm.state === "ready" &&
+    vm.provider === "nebius" &&
+    vm.desired_pricing_model === "spot" &&
+    vm.effective_pricing_model === "spot"
+  ) {
+    const cap = await nebiusComputeSpotPriceStopCap(vm);
+    if (cap) return await stopForNebiusSpotPrice(vm, cap, observed);
+  }
   // Spot preemption leaves the persistent-root instance terminated. Record it
   // only on the ready -> terminated edge so repeated provider observations do
   // not inflate the circuit-breaker counter.
@@ -3078,6 +3100,50 @@ async function reconcile(vm: ComputeVmRow) {
     action: "start",
     idempotency_key: `reconcile-start:${vm.id}:${Date.now()}`,
     not_before: new Date(Date.now() + 5000),
+  });
+}
+
+/** The user-visible stop after a Nebius Spot price stop: the VM is stopped as
+ * if the user had stopped it (compute charges end, disks are kept), and the
+ * reason is on the VM and in the stop notice. */
+export async function stopForNebiusSpotPrice(
+  vm: ComputeVmRow,
+  cap: string,
+  observed?: { status?: string; instance?: any },
+) {
+  const detectedAt = new Date().toISOString();
+  const stopped = (await updateComputeVm(vm.id, {
+    desired_state: "stopped",
+    state: "stopping",
+    public_ip: null,
+    error: nebiusSpotPriceStopMessage(cap),
+    spot_recovery_state: { phase: "idle" },
+  }))!;
+  await updateComputeInstance(stopped, {
+    preempted: true,
+    terminal_reason: "provider_spot_price_above_max",
+  });
+  await appendComputeEvent({
+    vm: stopped,
+    actor_kind: "worker",
+    action: "spot_price_stop",
+    idempotency_key: `spot-price-stop:${vm.id}:${vm.instance_generation}:${detectedAt}`,
+    old_state: vm.state,
+    new_state: "stopping",
+    status: "detected",
+    details: {
+      max_price_per_gpu_hour: cap,
+      provider_state:
+        observed?.instance?.metadata?.provider_state ??
+        observed?.instance?.status ??
+        observed?.status,
+    },
+  });
+  // the stop notice reads this key's prefix for its reason
+  await enqueueComputeWork({
+    resource_id: vm.id,
+    action: "stop",
+    idempotency_key: `spot-price-stop:${vm.id}:${vm.instance_generation}:${detectedAt}`,
   });
 }
 
@@ -3173,7 +3239,7 @@ export async function handleComputeWork(row: ComputeWorkRow) {
     case "start":
       return await start(vm);
     case "stop":
-      return await stop(vm);
+      return await stop(vm, stopWorkKeepsError(row.idempotency_key));
     case "delete":
       return await remove(vm);
     case "reconcile":

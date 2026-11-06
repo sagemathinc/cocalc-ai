@@ -35,7 +35,7 @@ import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import { randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
-import { assertNebiusSpotOffered } from "@cocalc/util/consts/nebius-spot";
+import { assertNebiusProjectHostSpotRefused } from "@cocalc/util/consts/nebius-spot";
 import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import {
   ensureConnectorRecord,
@@ -351,7 +351,7 @@ export async function createHostInternalHelper({
   if (pricing_model != null && !normalizedPricingModel) {
     throw new Error(`invalid pricing_model '${pricing_model}'`);
   }
-  assertNebiusSpotOffered(machineCloud, normalizedPricingModel);
+  assertNebiusProjectHostSpotRefused(machineCloud, normalizedPricingModel);
   const normalizedRestorePolicy = normalizeHostInterruptionRestorePolicy(
     interruption_restore_policy,
   );
@@ -578,7 +578,7 @@ export async function startHostInternalHelper({
     row.metadata?.pricing_model;
   if (!billing_rescue) {
     // billing rescue only takes final backups; it keeps working as before
-    assertNebiusSpotOffered(
+    assertNebiusProjectHostSpotRefused(
       machineCloud,
       row.metadata?.desired_pricing_model ?? effectivePricingModel,
     );
@@ -826,7 +826,7 @@ export async function restartHostInternalHelper({
   const owner = metadata.owner ?? account_id;
   const machine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
-  assertNebiusSpotOffered(
+  assertNebiusProjectHostSpotRefused(
     machineCloud,
     metadata.desired_pricing_model ??
       metadata.effective_pricing_model ??

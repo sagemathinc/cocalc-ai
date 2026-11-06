@@ -4,6 +4,7 @@
  */
 
 import {
+  nebiusSpotSpecMetadata,
   gcpInstanceIdForEgress,
   isProviderNotFound,
   managedVmBootstrapScript,
@@ -323,5 +324,19 @@ describe("probeProviderComputeSpot while Nebius Spot is off (#684)", () => {
     await expect(
       probeProviderComputeSpot({ provider: "nebius" } as ComputeVmRow),
     ).resolves.toBe(false);
+  });
+});
+
+describe("nebiusSpotSpecMetadata (#684)", () => {
+  const vm = {
+    metadata: { billing: { nebius_spot: { max_price_per_gpu_hour: "2.400" } } },
+  } as any;
+  it("passes the billed cap only for a Spot instance", () => {
+    expect(nebiusSpotSpecMetadata(vm, "spot")).toEqual({
+      spot_max_price_per_gpu_hour: "2.400",
+    });
+    expect(nebiusSpotSpecMetadata(vm, "on_demand")).toEqual({});
+    // no cap: nothing, so the provider refuses a price-taker instance
+    expect(nebiusSpotSpecMetadata({ metadata: {} } as any, "spot")).toEqual({});
   });
 });

@@ -29,7 +29,10 @@ import {
 } from "@cocalc/util/nebius-spot-pricing";
 import type { NebiusClient } from "./client";
 
-export type NebiusSpotClient = Pick<NebiusClient, "pricingPolicies" | "spotPrices">;
+export type NebiusSpotClient = Pick<
+  NebiusClient,
+  "pricingPolicies" | "spotPrices"
+>;
 
 export interface NebiusSpotQuote {
   region: string;
@@ -71,7 +74,9 @@ function isAlreadyExists(err: unknown): boolean {
   const message = String((err as any)?.message ?? err);
   const code = (err as any)?.code;
   return (
-    message.includes("ALREADY_EXISTS") || code === "ALREADY_EXISTS" || code === 6
+    message.includes("ALREADY_EXISTS") ||
+    code === "ALREADY_EXISTS" ||
+    code === 6
   );
 }
 
@@ -170,7 +175,9 @@ export async function ensureNebiusSpotPricingPolicy(
       );
     }
     if (policy?.status?.state === PricingPolicyStatus_State.STATE_DELETING) {
-      throw new Error(`Nebius pricing policy '${name}' is being deleted; retry`);
+      throw new Error(
+        `Nebius pricing policy '${name}' is being deleted; retry`,
+      );
     }
     const id = `${policy?.metadata?.id ?? ""}`.trim();
     if (!id) throw new Error(`Nebius pricing policy '${name}' has no ID`);

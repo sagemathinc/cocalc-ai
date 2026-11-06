@@ -593,6 +593,7 @@ export const HostCreateProviderFields: React.FC<
             </Form.Item>
             <NebiusCapacityPicker
               catalog={provider.catalog}
+              spotAllowed={false}
               selection={{
                 region: watchedRegion,
                 machine_type: watchedMachineType,
