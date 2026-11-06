@@ -122,7 +122,10 @@ export function parseMountinfo(text: string): MountEntry[] {
     entries.push({
       mountpoint: fields[4],
       // per-mount options (field 6) and the superblock options after " - "
-      options: [...(fields[5] ?? "").split(","), ...(after[2] ?? "").split(",")],
+      options: [
+        ...(fields[5] ?? "").split(","),
+        ...(after[2] ?? "").split(","),
+      ],
       fstype: after[0],
     });
   }
@@ -150,7 +153,9 @@ export function mountFor(
 export interface HostState {
   stat: (
     path: string,
-  ) => Promise<{ uid: number; gid: number; mode: number; isDirectory: boolean } | undefined>;
+  ) => Promise<
+    { uid: number; gid: number; mode: number; isDirectory: boolean } | undefined
+  >;
   mountinfo: () => Promise<string>;
   runtimeGid: number;
   // where the shared scratch dir of this host is, if it has one
@@ -190,7 +195,11 @@ export async function checkHostPreconditions(
     }
   };
   // the data root is hardened: only root and the runtime user get in
-  await expect(PROJECT_DATA_ROOT, { uid: 0, gid: host.runtimeGid, mode: 0o750 });
+  await expect(PROJECT_DATA_ROOT, {
+    uid: 0,
+    gid: host.runtimeGid,
+    mode: 0o750,
+  });
   await expect(PROJECT_VIEW_ROOT, {
     uid: 0,
     gid: host.runtimeGid,
@@ -293,7 +302,11 @@ export async function runtimeIdentityForStart({
   sharedScratch?: string;
 } = {}): Promise<RuntimeIdentity> {
   const key = `${process.env.COCALC_PROJECT_RUNTIME_UID_MODE ?? ""}|${sharedScratch ?? ""}`;
-  if (cached == null || cached.key !== key || Date.now() - cached.at > CACHE_MS) {
+  if (
+    cached == null ||
+    cached.key !== key ||
+    Date.now() - cached.at > CACHE_MS
+  ) {
     const identity = resolveRuntimeIdentity({
       helperProbe,
       liveMaps,
@@ -322,7 +335,10 @@ export async function runtimeIdentityForStart({
   const identity = await cached.identity;
   lastStatus = identity.status;
   if (identity.status.configured !== "keep-id" && identity.mode === "keep-id") {
-    logger.warn("separate runtime uid configured but not in effect", identity.status);
+    logger.warn(
+      "separate runtime uid configured but not in effect",
+      identity.status,
+    );
   }
   return identity;
 }
@@ -364,7 +380,9 @@ export async function projectHasViews(project_id: string): Promise<boolean> {
       (m) => m.mountpoint.startsWith(prefix),
     );
   } catch (err) {
-    logger.debug("projectHasViews: failed to read mountinfo", { err: `${err}` });
+    logger.debug("projectHasViews: failed to read mountinfo", {
+      err: `${err}`,
+    });
     return false;
   }
 }

@@ -77,7 +77,9 @@ export function keepIdUsernsArgs(): string[] {
   ];
 }
 
-export function configuredRuntimeUidMode(env: NodeJS.ProcessEnv = process.env): {
+export function configuredRuntimeUidMode(
+  env: NodeJS.ProcessEnv = process.env,
+): {
   configured: string;
   mode?: ProjectRuntimeUidMode;
 } {
@@ -144,7 +146,10 @@ export function separateInnerId(
     (e) => inner >= e.inside && inner < e.inside + e.length,
   );
   if (!back || back.outside + (inner - back.inside) !== hostId) {
-    return { reason: "map-collision", detail: `inner ${inner} doesn't map to ${hostId}` };
+    return {
+      reason: "map-collision",
+      detail: `inner ${inner} doesn't map to ${hostId}`,
+    };
   }
   // and it must not be one of the inner ids the container map already uses
   for (const e of CONTAINER_EXTENTS) {
@@ -158,7 +163,10 @@ export function separateInnerId(
   return { inner };
 }
 
-export function separateUsernsArgs(innerUid: number, innerGid: number): string[] {
+export function separateUsernsArgs(
+  innerUid: number,
+  innerGid: number,
+): string[] {
   const args: string[] = [];
   for (const [flag, inner, projectId] of [
     ["--uidmap", innerUid, DEFAULT_PROJECT_RUNTIME_UID],
@@ -216,9 +224,15 @@ export async function resolveRuntimeIdentity({
     probe = undefined;
   }
   const caps = parseHelperCapabilities(probe);
-  const missing = REQUIRED_HELPER_CAPABILITIES.filter((c) => !(caps.get(c)! >= 1));
+  const missing = REQUIRED_HELPER_CAPABILITIES.filter(
+    (c) => !(caps.get(c)! >= 1),
+  );
   if (missing.length > 0) {
-    return keepId(configured, "helper-old", `helper lacks ${missing.join(", ")}`);
+    return keepId(
+      configured,
+      "helper-old",
+      `helper lacks ${missing.join(", ")}`,
+    );
   }
   let maps: { uidMap: string; gidMap: string };
   try {

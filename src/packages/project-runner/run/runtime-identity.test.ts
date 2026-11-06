@@ -28,7 +28,8 @@ function inputs(
     unsafe: string[] | "throw";
   }> = {},
 ) {
-  const helper = "helper" in over ? over.helper : "project-view:1 overlay-idmap:1\n";
+  const helper =
+    "helper" in over ? over.helper : "project-view:1 overlay-idmap:1\n";
   return {
     env: { COCALC_PROJECT_RUNTIME_UID_MODE: over.mode ?? "separate" },
     helperProbe: async () => helper,
@@ -53,7 +54,9 @@ describe("runtime identity", () => {
       mode: "keep-id",
     });
     expect(
-      configuredRuntimeUidMode({ COCALC_PROJECT_RUNTIME_UID_MODE: " separate " }),
+      configuredRuntimeUidMode({
+        COCALC_PROJECT_RUNTIME_UID_MODE: " separate ",
+      }),
     ).toEqual({ configured: "separate", mode: "separate" });
     expect(
       configuredRuntimeUidMode({ COCALC_PROJECT_RUNTIME_UID_MODE: "sideways" }),
@@ -73,7 +76,9 @@ describe("runtime identity", () => {
   });
 
   it("finds the block's inner id in the live map", () => {
-    expect(separateInnerId(parseIdMap(LIVE_WITH_BLOCK)!)).toEqual({ inner: 4194305 });
+    expect(separateInnerId(parseIdMap(LIVE_WITH_BLOCK)!)).toEqual({
+      inner: 4194305,
+    });
     expect(separateInnerId(parseIdMap(LIVE_WITHOUT_BLOCK)!)).toEqual({
       reason: "map-missing-block",
     });
@@ -95,14 +100,22 @@ describe("runtime identity", () => {
 
   it("builds today's container map with 2001 pointed at the block", () => {
     expect(separateUsernsArgs(4194305, 4194305)).toEqual([
-      "--uidmap", "0:1:2001",
-      "--uidmap", "2001:4194305:1",
-      "--uidmap", "2002:2002:63535",
-      "--uidmap", "65537:65537:4128768",
-      "--gidmap", "0:1:2001",
-      "--gidmap", "2001:4194305:1",
-      "--gidmap", "2002:2002:63535",
-      "--gidmap", "65537:65537:4128768",
+      "--uidmap",
+      "0:1:2001",
+      "--uidmap",
+      "2001:4194305:1",
+      "--uidmap",
+      "2002:2002:63535",
+      "--uidmap",
+      "65537:65537:4128768",
+      "--gidmap",
+      "0:1:2001",
+      "--gidmap",
+      "2001:4194305:1",
+      "--gidmap",
+      "2002:2002:63535",
+      "--gidmap",
+      "65537:65537:4128768",
     ]);
   });
 
@@ -143,7 +156,12 @@ describe("runtime identity", () => {
     const helperProbe = jest.fn();
     const liveMaps = jest.fn();
     const hostPreconditions = jest.fn();
-    await resolveRuntimeIdentity({ env: {}, helperProbe, liveMaps, hostPreconditions });
+    await resolveRuntimeIdentity({
+      env: {},
+      helperProbe,
+      liveMaps,
+      hostPreconditions,
+    });
     expect(helperProbe).not.toHaveBeenCalled();
     expect(hostPreconditions).not.toHaveBeenCalled();
     expect(liveMaps).not.toHaveBeenCalled();

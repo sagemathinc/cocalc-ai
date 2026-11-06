@@ -499,9 +499,7 @@ export async function refreshProjectSecretsHostPath({
     );
     if (
       !mounted?.Source ||
-      !expectedSources.includes(
-        await realpath(mounted.Source).catch(() => ""),
-      )
+      !expectedSources.includes(await realpath(mounted.Source).catch(() => ""))
     ) {
       throw new Error("running project secrets mount identity mismatch");
     }
@@ -2101,7 +2099,9 @@ async function separateIdentityForStart({
   const wrong: string[] = [];
   const check = (kind: ProjectViewKind, path: string) => {
     if (path !== projectViewSource(project_id, kind)) {
-      wrong.push(`${kind} ${path} is not ${projectViewSource(project_id, kind)}`);
+      wrong.push(
+        `${kind} ${path} is not ${projectViewSource(project_id, kind)}`,
+      );
     }
   };
   check("home", home);
@@ -2658,7 +2658,10 @@ async function startUnlocked({
       }),
     );
     args.push(
-      mountArg({ source: views["browser-run"]!, target: SHARED_BROWSER_RUN_DIR }),
+      mountArg({
+        source: views["browser-run"]!,
+        target: SHARED_BROWSER_RUN_DIR,
+      }),
     );
 
     for (const key in env) {
@@ -2792,10 +2795,13 @@ async function startUnlocked({
       });
     });
     await umountViewsIfAny(project_id).catch((unmountErr) => {
-      logger.warn("start: failed to unmount project views after startup error", {
-        project_id,
-        err: `${unmountErr}`,
-      });
+      logger.warn(
+        "start: failed to unmount project views after startup error",
+        {
+          project_id,
+          err: `${unmountErr}`,
+        },
+      );
     });
     await cleanupProjectSecretsHostPath(project_id).catch((cleanupErr) => {
       logger.warn("start: failed to clean up project secrets after error", {

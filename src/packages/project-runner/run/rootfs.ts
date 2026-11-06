@@ -298,7 +298,9 @@ export async function mount({
       const sameWay =
         idmapUid == null
           ? mountedPlain && !mountedIdmap
-          : mountedIdmap && !mountedPlain && idmapUids.get(project_id) === idmapUid;
+          : mountedIdmap &&
+            !mountedPlain &&
+            idmapUids.get(project_id) === idmapUid;
       if (mountedImage.trim() === image && sameWay) {
         // Already mounted against the requested lowerdir. A quick restart can
         // cancel delayed disposal and safely reuse this mount.
@@ -394,11 +396,15 @@ export async function unmountAll(
   if (immediate) {
     // Either way it may be mounted, e.g. an idmapped rootfs mounted before
     // this daemon restarted (idmapUids is empty then).
-    if (await isMounted({ project_id, mountpoint: getMergedPath(project_id, -1) })) {
+    if (
+      await isMounted({ project_id, mountpoint: getMergedPath(project_id, -1) })
+    ) {
       idmapUids.set(project_id, idmapUids.get(project_id) ?? -1);
       await disposeMount(project_id);
     }
-    if (await isMounted({ project_id, mountpoint: getMergedPath(project_id) })) {
+    if (
+      await isMounted({ project_id, mountpoint: getMergedPath(project_id) })
+    ) {
       idmapUids.delete(project_id);
       await disposeMount(project_id);
     }

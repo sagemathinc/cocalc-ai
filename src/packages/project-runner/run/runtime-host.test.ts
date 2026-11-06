@@ -17,7 +17,9 @@ const MOUNTINFO = [
   "91 22 0:25 / /run rw,nosuid,nodev,noexec shared:5 - tmpfs tmpfs rw,mode=755",
 ].join("\n");
 
-function host(over: Partial<HostState> & { modes?: Record<string, number> } = {}): HostState {
+function host(
+  over: Partial<HostState> & { modes?: Record<string, number> } = {},
+): HostState {
   const owners: Record<string, { uid: number; gid: number; mode: number }> = {
     "/mnt/cocalc": { uid: 0, gid: RUNTIME_GID, mode: 0o40750 },
     "/run/cocalc/project-views": { uid: 0, gid: RUNTIME_GID, mode: 0o40710 },
@@ -38,7 +40,9 @@ function host(over: Partial<HostState> & { modes?: Record<string, number> } = {}
 
 describe("runtime host", () => {
   it("names the sources and views the root helper accepts", () => {
-    expect(projectViewSource(PROJECT, "home")).toBe(`/mnt/cocalc/project-${PROJECT}`);
+    expect(projectViewSource(PROJECT, "home")).toBe(
+      `/mnt/cocalc/project-${PROJECT}`,
+    );
     expect(projectViewSource(PROJECT, "scratch")).toBe(
       `/mnt/cocalc/project-${PROJECT}-scratch`,
     );
@@ -62,7 +66,9 @@ describe("runtime host", () => {
       expect.arrayContaining(["nosuid", "nodev"]),
     );
     expect(mountFor(mounts, "/mnt/cocalcx")?.mountpoint).toBe("/");
-    expect(mountFor(mounts, "/run/cocalc/project-views")?.mountpoint).toBe("/run");
+    expect(mountFor(mounts, "/run/cocalc/project-views")?.mountpoint).toBe(
+      "/run",
+    );
   });
 
   it("passes a hardened host", async () => {
@@ -77,7 +83,11 @@ describe("runtime host", () => {
           "/run/cocalc/project-views": 0o711,
           "/run/cocalc": 0o775,
         },
-        mountinfo: async () => MOUNTINFO.replace("rw,nosuid,nodev,relatime shared:50", "rw,relatime shared:50"),
+        mountinfo: async () =>
+          MOUNTINFO.replace(
+            "rw,nosuid,nodev,relatime shared:50",
+            "rw,relatime shared:50",
+          ),
         sharedScratch: "/mnt/cocalc/data/shared-scratch",
       }),
     );
@@ -95,7 +105,8 @@ describe("runtime host", () => {
     const base = host();
     const missing = (paths: string[]): HostState => ({
       ...base,
-      stat: async (path) => (paths.includes(path) ? undefined : await base.stat(path)),
+      stat: async (path) =>
+        paths.includes(path) ? undefined : await base.stat(path),
     });
     expect(
       await checkHostPreconditions(
