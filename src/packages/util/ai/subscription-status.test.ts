@@ -227,6 +227,47 @@ describe("aiSubscriptionStatus", () => {
     expect(a.week_percent_per_day).toBeGreaterThan(0);
   });
 
+  it("reports Codex usage as Codex last reported it, with its weekly rate", () => {
+    const resets = s(now + 72 * HOUR);
+    const history = Array.from({ length: 7 }, (_, i) => ({
+      at: now - (6 - i) * HOUR,
+      week: 0.3 + i * 0.01,
+      resets_at: resets,
+    }));
+    const [codex] = aiSubscriptionStatus(
+      [
+        {
+          id: "x",
+          provider: "openai",
+          kind: "codex-subscription-auth-json",
+          scope: "account",
+          metadata: {
+            label: "Work",
+            codex_usage: {
+              observed_at: new Date(now - HOUR).toISOString(),
+              windows: {
+                five_hour: { utilization: 0.4, resets_at: s(now + 2 * HOUR) },
+                seven_day: { utilization: 0.36, resets_at: resets },
+              },
+            },
+            codex_usage_history: history,
+          },
+        },
+      ],
+      now,
+    ).codex.subscriptions;
+    expect(codex).toMatchObject({
+      id: "x",
+      label: "Work",
+      observed_at: new Date(now - HOUR).toISOString(),
+      five_hour: { used_percent: 40 },
+      week: { used_percent: 36 },
+    });
+    // 1% an hour: 24% a day.
+    expect(codex.week_percent_per_day).toBeCloseTo(24, 0);
+    expect(codex.week_history).toHaveLength(7);
+  });
+
   it("says when the pool has room again", () => {
     const status = aiSubscriptionStatus(
       [claude("a", { [CLAUDE_USAGE_METADATA_KEY]: usage(0.99, 0.2) })],

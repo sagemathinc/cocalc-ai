@@ -9807,6 +9807,169 @@ describe("hosts.recordClaudeSubscriptionUsage", () => {
   });
 });
 
+describe("hosts.recordCodexSubscriptionUsage", () => {
+  const HOST_UUID = "00000000-0000-4000-8000-000000000301";
+  const ACCOUNT_UUID = "00000000-0000-4000-8000-000000000302";
+  const PROJECT_UUID = "00000000-0000-4000-8000-000000000303";
+  const CREDENTIAL_UUID = "00000000-0000-4000-8000-000000000304";
+  const now = Date.now();
+  const five = { utilization: 0.3, resets_at: Math.floor(now / 1000) + 3600 };
+  const week = {
+    utilization: 0.6,
+    resets_at: Math.floor(now / 1000) + 3 * 86400,
+  };
+  const observed_at = new Date(now - 60_000).toISOString();
+  const request = (usage: unknown) => ({
+    host_id: HOST_UUID,
+    project_id: PROJECT_UUID,
+    owner_account_id: ACCOUNT_UUID,
+    credential_id: CREDENTIAL_UUID,
+    usage,
+  });
+  const credentialRow = (metadata: Record<string, unknown>, extra = {}) => ({
+    id: CREDENTIAL_UUID,
+    provider: "openai",
+    kind: "codex-subscription-auth-json",
+    scope: "account",
+    owner_account_id: ACCOUNT_UUID,
+    metadata,
+    created: new Date(),
+    updated: new Date(),
+    revoked: null,
+    last_used: null,
+    ...extra,
+  });
+  const writes = () =>
+    queryMock.mock.calls
+      .filter(([sql]) => `${sql}`.includes("jsonb_set"))
+      .map(([, params]) => [params.at(-2), JSON.parse(params.at(-1))]);
+
+  it("merges the report into the stored snapshot and appends its weekly reading", async () => {
+    const stored = {
+      observed_at: new Date(now - 3600_000).toISOString(),
+      windows: { five_hour: five, seven_day: { ...week, utilization: 0.5 } },
+    };
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("SELECT owning_bay_id"))
+        return { rows: [{ owning_bay_id: null }], rowCount: 1 };
+      if (sql.includes("FROM external_credentials")) {
+        expect(params?.slice(0, 4)).toEqual([
+          ACCOUNT_UUID,
+          "openai",
+          "codex-subscription-auth-json",
+          "account",
+        ]);
+        return {
+          rows: [credentialRow({ label: "Work", codex_usage: stored })],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("jsonb_set")) return { rows: [], rowCount: 1 };
+      throw Error(`unexpected query ${sql}`);
+    });
+    const { recordCodexSubscriptionUsage } = await import("./hosts");
+    // A rolling update with only the weekly window (and something extra).
+    await expect(
+      recordCodexSubscriptionUsage(
+        request({
+          observed_at,
+          windows: { seven_day: week },
+          provider_response: "private",
+        }),
+      ),
+    ).resolves.toBe(true);
+    const [snapshot, history] = writes();
+    expect(snapshot).toEqual([
+      "codex_usage",
+      { observed_at, windows: { five_hour: five, seven_day: week } },
+    ]);
+    expect(history).toEqual([
+      "codex_usage_history",
+      [
+        {
+          at: Date.parse(observed_at),
+          week: 0.6,
+          resets_at: week.resets_at,
+        },
+      ],
+    ]);
+    expect(JSON.stringify(writes())).not.toMatch(/private/);
+  });
+
+  it("records no weekly reading from a report without one", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT owning_bay_id"))
+        return { rows: [{ owning_bay_id: null }], rowCount: 1 };
+      if (sql.includes("FROM external_credentials"))
+        return {
+          rows: [
+            credentialRow({
+              codex_usage: {
+                observed_at: new Date(now - 3600_000).toISOString(),
+                windows: { seven_day: week },
+              },
+            }),
+          ],
+          rowCount: 1,
+        };
+      if (sql.includes("jsonb_set")) return { rows: [], rowCount: 1 };
+      throw Error(`unexpected query ${sql}`);
+    });
+    const { recordCodexSubscriptionUsage } = await import("./hosts");
+    await expect(
+      recordCodexSubscriptionUsage(
+        request({ observed_at, windows: { five_hour: five } }),
+      ),
+    ).resolves.toBe(true);
+    // The kept weekly reading is in the snapshot, not in the history.
+    expect(writes()).toEqual([
+      [
+        "codex_usage",
+        { observed_at, windows: { five_hour: five, seven_day: week } },
+      ],
+    ]);
+  });
+
+  it("changes nothing for a credential the owner does not have", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT owning_bay_id"))
+        return { rows: [{ owning_bay_id: null }], rowCount: 1 };
+      if (sql.includes("FROM external_credentials"))
+        return {
+          rows: [
+            credentialRow({}, { id: "00000000-0000-4000-8000-000000000399" }),
+          ],
+          rowCount: 1,
+        };
+      throw Error(`unexpected query ${sql}`);
+    });
+    const { recordCodexSubscriptionUsage } = await import("./hosts");
+    await expect(
+      recordCodexSubscriptionUsage(
+        request({ observed_at, windows: { five_hour: five } }),
+      ),
+    ).resolves.toBe(false);
+    expect(writes()).toEqual([]);
+  });
+
+  it("rejects invalid usage and unauthorized hosts before writing", async () => {
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+    resolveProjectReferenceAllowRemoteMock = jest.fn(async () => ({
+      host_id: "another-host",
+    }));
+    const { recordCodexSubscriptionUsage } = await import("./hosts");
+    await expect(
+      recordCodexSubscriptionUsage(request({ windows: {} })),
+    ).rejects.toThrow("invalid Codex usage");
+    await expect(
+      recordCodexSubscriptionUsage(
+        request({ observed_at, windows: { five_hour: five } }),
+      ),
+    ).rejects.toThrow("host is not authorized");
+    expect(writes()).toEqual([]);
+  });
+});
+
 describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
   let installedArtifacts: any[];
   beforeEach(() => {
