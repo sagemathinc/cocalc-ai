@@ -179,6 +179,31 @@ describe("RefcountLeaseManager", () => {
       await mgr.close();
     });
 
+    test("does not dispose a resource reacquired while its eviction waited for its lock", async () => {
+      const disposed: string[] = [];
+      const mgr = new RefcountLeaseManager<string>({
+        delayMs: 60_000,
+        maxIdle: 1,
+        disposer: async (key) => {
+          disposed.push(key);
+        },
+      });
+      const releaseA = await mgr.acquire("a");
+      const releaseB = await mgr.acquire("b");
+      await releaseA(); // a idle, at the cap
+      // in the same tick: b's release evicts a, while an acquire of a is
+      // already queued on a's lock ahead of the eviction
+      const p1 = releaseB();
+      const p2 = mgr.acquire("a");
+      await p1;
+      const releaseA2 = await p2;
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mgr.getCount("a")).toBe(1);
+      expect(disposed).not.toContain("a");
+      await releaseA2();
+      await mgr.close();
+    });
+
     test("without maxIdle nothing is disposed before the delay", async () => {
       const disposed: string[] = [];
       const mgr = new RefcountLeaseManager<string>({
