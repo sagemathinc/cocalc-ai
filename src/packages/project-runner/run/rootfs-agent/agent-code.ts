@@ -208,6 +208,33 @@ async function handle(req) {
   }
 }
 
+// The parent directory of an absolute path, opened one component at a time
+// from "/" with O_DIRECTORY|O_NOFOLLOW, each relative to the previous one's
+// fd (through /proc/self/fd/<fd>/<name>, which resolves from that fd as
+// openat does): a symlink anywhere on the way is refused, and a directory
+// swapped later doesn't move the result.
+const DIR_FLAGS =
+  fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+function at(fd, name) {
+  return "/proc/self/fd/" + fd + "/" + name;
+}
+async function openParent(p) {
+  const parts = p.slice(1).split("/");
+  const name = parts.pop();
+  let dir = await fsp.open("/", DIR_FLAGS);
+  try {
+    for (const part of parts) {
+      const next = await fsp.open(at(dir.fd, part), DIR_FLAGS);
+      await dir.close();
+      dir = next;
+    }
+  } catch (err) {
+    await dir.close().catch(() => {});
+    throw err;
+  }
+  return { dir: dir, name: name };
+}
+
 // A write is registered when its request arrives, before anything async, so
 // its data chunks (sent right behind it) always find it. A write that fails
 // still consumes its declared bytes, then replies with the error.
@@ -217,23 +244,17 @@ function startWrite(req) {
   if (!Number.isSafeInteger(size) || size < 0 || size > MAX_FILE) {
     return reply(id, fail("EFBIG", "bad size"));
   }
-  const w = { left: size, failed: null, fh: null, tmp: null, path: null };
+  const w = { left: size, failed: null, fh: null, tmp: null, dir: null, name: null };
   writes.set(id, w);
   w.chain = (async () => {
     const p = checkPath(req.path);
     if (p === "/") throw fail("EISDIR");
-    const slash = p.lastIndexOf("/");
-    w.path = p;
-    w.tmp =
-      p.slice(0, slash + 1) +
-      ".cocalc-write-" +
-      process.pid +
-      "-" +
-      id +
-      "-" +
-      p.slice(slash + 1).slice(0, 64);
+    const parent = await openParent(p);
+    w.dir = parent.dir;
+    w.name = parent.name;
+    w.tmp = ".cocalc-write-" + process.pid + "-" + id + "-" + w.name.slice(0, 64);
     w.fh = await fsp.open(
-      w.tmp,
+      at(w.dir.fd, w.tmp),
       fs.constants.O_WRONLY |
         fs.constants.O_CREAT |
         fs.constants.O_EXCL |
@@ -252,12 +273,14 @@ async function finishWrite(id, w) {
     if (w.failed) throw w.failed;
     await w.fh.close();
     w.fh = null;
-    await fsp.rename(w.tmp, w.path);
+    // both names under the verified directory's fd: renameat
+    await fsp.rename(at(w.dir.fd, w.tmp), at(w.dir.fd, w.name));
+    w.tmp = null;
     send({ id: id, ok: true, result: null });
   } catch (err) {
-    if (w.fh) await w.fh.close().catch(() => {});
-    if (w.tmp) await fsp.unlink(w.tmp).catch(() => {});
     reply(id, err);
+  } finally {
+    await cleanupWrite(w);
   }
 }
 
@@ -272,12 +295,20 @@ function reply(id, err) {
   });
 }
 
+async function cleanupWrite(w) {
+  if (w.fh) await w.fh.close().catch(() => {});
+  w.fh = null;
+  if (w.dir && w.tmp) await fsp.unlink(at(w.dir.fd, w.tmp)).catch(() => {});
+  w.tmp = null;
+  if (w.dir) await w.dir.close().catch(() => {});
+  w.dir = null;
+}
+
 async function abortWrites() {
   for (const [id, w] of writes) {
     writes.delete(id);
     await w.chain.catch(() => {});
-    if (w.fh) await w.fh.close().catch(() => {});
-    if (w.tmp) await fsp.unlink(w.tmp).catch(() => {});
+    await cleanupWrite(w);
   }
 }
 

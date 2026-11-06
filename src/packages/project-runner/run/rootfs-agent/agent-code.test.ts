@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import {
   lstat,
   mkdir,
+  rename,
   mkdtemp,
   readdir,
   readFile,
@@ -228,6 +229,37 @@ describe("rootfs agent code", () => {
     expect(reply.error.code).toBe("EEXIST");
     expect(await readFile(`${dir}/outside`, "utf8")).toBe("untouched");
     await expect(lstat(`${dir}/f`)).rejects.toThrow();
+  });
+
+  it("refuses to install through a symlinked directory on the way", async () => {
+    await agent.json();
+    await mkdir(`${dir}/outside`);
+    await mkdir(`${dir}/a`);
+    await symlink(`${dir}/outside`, `${dir}/a/link`);
+    const reply = await agent.write(`${dir}/a/link/f`, Buffer.from("data"));
+    expect(reply.ok).toBe(false);
+    expect(["ELOOP", "ENOTDIR"]).toContain(reply.error.code);
+    expect(await readdir(`${dir}/outside`)).toEqual([]);
+  });
+
+  it("installs into the directory it verified, even if the path is swapped for a symlink meanwhile", async () => {
+    await agent.json();
+    await mkdir(`${dir}/outside`);
+    await mkdir(`${dir}/a/b`, { recursive: true });
+    const id = 41;
+    agent.send(
+      encodeJsonFrame({ id, op: "writeFile", path: `${dir}/a/b/f`, size: 6 }),
+    );
+    agent.send(encodeChunkFrame(id, Buffer.from("abc")));
+    // let the agent open the destination, then swap the directory
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await rename(`${dir}/a/b`, `${dir}/a/b-real`);
+    await symlink(`${dir}/outside`, `${dir}/a/b`);
+    agent.send(encodeChunkFrame(id, Buffer.from("def")));
+    const reply = await agent.json();
+    expect(reply).toMatchObject({ id, ok: true });
+    expect(await readdir(`${dir}/outside`)).toEqual([]);
+    expect(await readFile(`${dir}/a/b-real/f`, "utf8")).toBe("abcdef");
   });
 
   it("dies on a protocol error, cleaning up its writes", async () => {
