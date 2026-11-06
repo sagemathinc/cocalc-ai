@@ -54,3 +54,21 @@ export type ComputeAgentGrantCheckResult =
         project_id: string;
       };
     };
+
+/**
+ * The account a managed-compute call acts for: the agent credential's account
+ * for an agent call, else the calling account. A call carries one or the other,
+ * never both (the hub strips agent_auth from every non-agent caller); both
+ * means the identity was assembled wrongly, so it is refused.
+ */
+export function computeCallerAccountId(opts: {
+  account_id?: string;
+  agent_auth?: ComputeAgentAuth;
+}): string | undefined {
+  if (opts.agent_auth != null && opts.account_id != null) {
+    throw Object.assign(new Error("ambiguous managed-compute actor"), {
+      code: 403,
+    });
+  }
+  return opts.agent_auth?.account_id ?? opts.account_id;
+}

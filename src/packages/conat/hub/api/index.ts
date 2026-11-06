@@ -255,6 +255,12 @@ export function transformArgs({
       return Promise.reject(err);
     }
   }
+  // agent_auth is the server's own record of a verified agent credential: only
+  // the agent policy builds it, from the authenticated connection. Never take
+  // one from a caller's arguments, whoever the caller is.
+  for (const arg of args ?? []) {
+    if (arg != null && typeof arg === "object") delete arg.agent_auth;
+  }
   const [group, functionName] = name.split(".");
   return HubApiStructure[group]?.[functionName]({
     args,
