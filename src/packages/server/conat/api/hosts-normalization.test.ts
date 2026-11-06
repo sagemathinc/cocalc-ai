@@ -176,6 +176,20 @@ describe("parseRow host metrics normalization", () => {
       promoted_pending: 24,
       promoted_largest_account_count: 20,
       promoted_dispatched_total: { paying: 31, free: 2 },
+      waiting: {
+        inventory_age_ms: 120_000,
+        paying: {
+          running: { count: 1, oldest_age_ms: 9_000_000 },
+          queued_promoted: { count: 12, oldest_age_ms: 10_860_000 },
+          failure_backoff: {
+            count: 2,
+            oldest_age_ms: 4_000_000,
+            max_failures: 5,
+          },
+          not_dispatched: { count: 0, oldest_age_ms: 0 },
+        },
+        free: {},
+      },
     };
     const parse = (snapshot_lane: unknown) =>
       parseRow({
@@ -192,6 +206,7 @@ describe("parseRow host metrics normalization", () => {
         promoted_pending: _p,
         promoted_largest_account_count: _l,
         promoted_dispatched_total: _d,
+        waiting: _w,
         ...older
       } = lane;
       expect(parse(older)).toEqual(older);
@@ -257,6 +272,123 @@ describe("parseRow host metrics normalization", () => {
         { promoted_dispatched_total: { paying: 1 } },
       ],
       ["promoted dispatches as a number", { promoted_dispatched_total: 3 }],
+      [
+        "an unknown wait cause",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: { stuck: { count: 1, oldest_age_ms: 1 } },
+            free: {},
+          },
+        },
+      ],
+      [
+        "an id-shaped wait cause",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              "00000000-1000-4000-8000-000000000001": {
+                count: 1,
+                oldest_age_ms: 1,
+              },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "a reserved wait cause key",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: JSON.parse(
+              '{"__proto__": {"count": 1, "oldest_age_ms": 1}}',
+            ),
+            free: {},
+          },
+        },
+      ],
+      [
+        "an extra field in a wait count",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              queued: { count: 1, oldest_age_ms: 1, project_id: "x" },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "a negative wait age",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: { queued: { count: 1, oldest_age_ms: -5 } },
+            free: {},
+          },
+        },
+      ],
+      [
+        "a fractional max failures",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              failure_backoff: {
+                count: 1,
+                oldest_age_ms: 1,
+                max_failures: 1.5,
+              },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "max failures on a cause other than failure backoff",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              queued: { count: 1, oldest_age_ms: 1, max_failures: 2 },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "failure backoff without max failures",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: { failure_backoff: { count: 1, oldest_age_ms: 1 } },
+            free: {},
+          },
+        },
+      ],
+      [
+        "a missing wait class",
+        { waiting: { inventory_age_ms: 1, paying: {} } },
+      ],
+      [
+        "an extra wait class",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {},
+            free: {},
+            unclassified: {},
+          },
+        },
+      ],
+      [
+        "a bad inventory age",
+        { waiting: { inventory_age_ms: "old", paying: {}, free: {} } },
+      ],
+      ["waiting as an array", { waiting: [] }],
     ])("drops the whole block for %s", (_label, change) => {
       expect(parse({ ...lane, ...change })).toBeUndefined();
     });

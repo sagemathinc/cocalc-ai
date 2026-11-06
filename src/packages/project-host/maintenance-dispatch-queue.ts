@@ -136,6 +136,17 @@ export class MaintenanceDispatchQueue {
     return undefined;
   }
 
+  /** Whether this project waits in the queue past its promote age. */
+  pendingPromoted(project_id: string): boolean {
+    const work = this.pending.get(project_id);
+    return work != null && this.promoted(work, this.now());
+  }
+
+  /** Whether the lane is parked now. */
+  isParked(): boolean {
+    return this.parked != null;
+  }
+
   status(): MaintenanceDispatchQueueStatus {
     const now = this.now();
     let oldest: number | undefined;

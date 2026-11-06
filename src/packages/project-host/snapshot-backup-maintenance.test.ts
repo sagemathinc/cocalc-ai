@@ -201,6 +201,304 @@ describe("snapshot-backup-maintenance", () => {
     });
   });
 
+  describe("why overdue snapshots wait", () => {
+    const overdue = (project_id: string, extra: object = {}) => ({
+      project_id,
+      storage_service_class: "paying" as const,
+      storage_account_id: `acct-${project_id}`,
+      last_edited: "2026-04-10T22:00:00.000Z",
+      snapshots: { daily: 5 },
+      backups: { disabled: true, weekly: 1 },
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+      ...extra,
+    });
+    const drain = async () => {
+      for (let i = 0; i < 40; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
+    const sweep = async (rows: object[]) => {
+      listProjectMaintenanceSchedulesMock.mockResolvedValue(rows);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      await drain();
+    };
+    const waiting = async (now?: number) => {
+      const { getSnapshotLaneStatus } =
+        await import("./snapshot-backup-maintenance");
+      return getSnapshotLaneStatus(now)?.waiting;
+    };
+    const inAMinute = () => new Date(Date.now() + 60_000).toISOString();
+
+    it("classifies a parked lane's queue and the rows kept out by a retry, by class", async () => {
+      snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
+      const { _test } = await import("./snapshot-backup-maintenance");
+      const notYetDue = overdue("fresh", {
+        last_snapshot: new Date(Date.now() - 60_000).toISOString(),
+        last_edited: new Date().toISOString(),
+      });
+      const due = _test.snapshotDueAt(notYetDue as any, { daily: 5 } as any);
+      expect(due).not.toBeNull();
+      expect(due!).toBeGreaterThan(Date.now());
+      await sweep([
+        overdue("p-1"),
+        overdue("p-2"),
+        overdue("f-1", { storage_service_class: "free" }),
+        overdue("retry", { snapshot_retry_at: inAMinute() }),
+        overdue("backoff", {
+          snapshot_retry_at: inAMinute(),
+          snapshot_failures: 3,
+        }),
+        overdue("off", { snapshots: { disabled: true } }),
+        // changed since a snapshot a minute ago: due, but not yet
+        notYetDue,
+      ]);
+      const result = await waiting();
+      expect(result?.inventory_age_ms).toBeGreaterThanOrEqual(0);
+      expect(result?.paying).toEqual({
+        parked: { count: 2, oldest_age_ms: expect.any(Number) },
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+        failure_backoff: {
+          count: 1,
+          oldest_age_ms: expect.any(Number),
+          max_failures: 3,
+        },
+      });
+      expect(result?.free).toEqual({
+        parked: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      // months overdue
+      expect(result!.paying.parked!.oldest_age_ms).toBeGreaterThan(
+        30 * 24 * 3600_000,
+      );
+    });
+
+    it("tells running, promoted and plain queued snapshots apart", async () => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      runScheduledSnapshotMaintenanceMock.mockImplementation(() => held);
+      await sweep([overdue("p-1"), overdue("p-2")]);
+      expect((await waiting())?.paying).toEqual({
+        running: { count: 1, oldest_age_ms: expect.any(Number) },
+        queued_promoted: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      release();
+      await drain();
+
+      const { _test } = await import("./snapshot-backup-maintenance");
+      _test.resetStarvationQueue();
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_PROMOTION = "off";
+      let releaseAgain!: () => void;
+      const heldAgain = new Promise<void>(
+        (resolve) => (releaseAgain = resolve),
+      );
+      runScheduledSnapshotMaintenanceMock.mockImplementation(() => heldAgain);
+      await sweep([overdue("p-1"), overdue("p-2")]);
+      expect((await waiting())?.paying).toEqual({
+        running: { count: 1, oldest_age_ms: expect.any(Number) },
+        queued: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      releaseAgain();
+      await drain();
+    });
+
+    it("keeps a failed attempt as failure backoff, with its failure count", async () => {
+      runScheduledSnapshotMaintenanceMock.mockRejectedValue(
+        new Error("btrfs exploded"),
+      );
+      await sweep([overdue("p-1"), overdue("p-2", { snapshot_failures: 4 })]);
+      expect((await waiting())?.paying).toEqual({
+        failure_backoff: {
+          count: 2,
+          oldest_age_ms: expect.any(Number),
+          max_failures: 5,
+        },
+      });
+    });
+
+    it("keeps an attempt refused by admission as a deferred retry", async () => {
+      admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
+        admitted: false,
+        would_defer: true,
+        starvation_override: false,
+        reason: "io_pressure_contended",
+        operation_id: operation_kind,
+        release: releaseStorageOperationMock,
+      }));
+      await sweep([overdue("p-1")]);
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect((await waiting())?.paying).toEqual({
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+    });
+
+    it("no longer counts a snapshot once it is made", async () => {
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => ({
+        changed: true,
+        created_snapshot_at: "2026-04-10T22:31:00.000Z",
+        latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+      }));
+      await sweep([
+        overdue("p-1"),
+        overdue("f-1", { storage_service_class: "free" }),
+      ]);
+      expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: "p-1",
+          kind: "snapshot",
+          outcome: "succeeded",
+        }),
+      );
+      const result = await waiting();
+      expect(result?.paying).toEqual({});
+      expect(result?.free).toEqual({});
+    });
+
+    it("maps each attempt outcome to its cause", async () => {
+      const { _test } = await import("./snapshot-backup-maintenance");
+      const wait = _test.snapshotLaneAttemptWait;
+      expect(wait("failed", undefined, 1, 5)).toEqual({
+        cause: "failure_backoff",
+        failures: 1,
+        retryAt: 5,
+      });
+      expect(wait("deferred", "snapshot_prune_deferred", 0, 5)?.cause).toBe(
+        "limit_prune_deferred",
+      );
+      expect(wait("deferred", "change_generation_changed", 0, 5)?.cause).toBe(
+        "generation_moved",
+      );
+      expect(wait("deferred", "io_pressure_contended", 0, 5)?.cause).toBe(
+        "deferred_retry",
+      );
+      expect(wait("deferred", "io_pressure_contended", 2, 5)?.cause).toBe(
+        "failure_backoff",
+      );
+    });
+
+    it("counts a snapshot whose retry passed without it being queued as not dispatched, or held by the memory gate", async () => {
+      const retry = Date.now() + 60_000;
+      await sweep([
+        overdue("p-1", { snapshot_retry_at: new Date(retry).toISOString() }),
+      ]);
+      // within its retry and the dispatch grace: still the retry
+      expect((await waiting(retry + 60_000))?.paying).toEqual({
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      // well past it, and not queued
+      expect((await waiting(retry + 5 * 60_000))?.paying).toEqual({
+        not_dispatched: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      const { setSnapshotBackupMaintenanceGate } =
+        await import("./snapshot-backup-gate");
+      setSnapshotBackupMaintenanceGate({
+        checked_at: new Date().toISOString(),
+        blocked_reason: "memory_pressure",
+      });
+      expect((await waiting(retry + 5 * 60_000))?.paying).toEqual({
+        memory_gate: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      setSnapshotBackupMaintenanceGate({
+        checked_at: new Date().toISOString(),
+      });
+    });
+
+    // p-1 runs (held) while p-2 waits behind it; then a partial sweep for p-2
+    // changes or drops its row; then p-1 finishes (a snapshot is made) and
+    // p-2 is dispatched with what the partial sweep saw.
+    const behindARun = async (p2: object | undefined) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        await held;
+        return {
+          changed: true,
+          created_snapshot_at: "2026-04-10T22:31:00.000Z",
+          latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+        };
+      });
+      await sweep([overdue("p-1"), overdue("p-2")]);
+      expect((await waiting())?.paying).toEqual({
+        running: { count: 1, oldest_age_ms: expect.any(Number) },
+        queued_promoted: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      listProjectMaintenanceSchedulesMock.mockResolvedValue(p2 ? [p2] : []);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        projectIds: ["p-2"],
+        detach: true,
+      });
+      await drain();
+      release();
+      await drain();
+      // p-1 made its snapshot; p-2 was never run
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+    };
+
+    it("drops a snapshot whose fresh row shows it is not due after all", async () => {
+      await behindARun(
+        overdue("p-2", {
+          // changed since a snapshot a minute ago: due, but not yet
+          last_snapshot: new Date(Date.now() - 60_000).toISOString(),
+          last_edited: new Date().toISOString(),
+          // and observed: no reconciliation is owed either
+          last_snapshot_observed_at: new Date().toISOString(),
+        }),
+      );
+      expect((await waiting())?.paying).toEqual({});
+    });
+
+    it("records the retry a fresh row shows, as the wait", async () => {
+      await behindARun(
+        overdue("p-2", {
+          snapshot_retry_at: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      );
+      expect((await waiting())?.paying).toEqual({
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+    });
+
+    it("drops a snapshot whose project left the host", async () => {
+      await behindARun(undefined);
+      expect((await waiting())?.paying).toEqual({});
+    });
+
+    it("a partial sweep never replaces the full inventory", async () => {
+      snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
+      await sweep([overdue("p-1"), overdue("p-2"), overdue("p-3")]);
+      expect((await waiting())?.paying).toEqual({
+        parked: { count: 3, oldest_age_ms: expect.any(Number) },
+      });
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([overdue("p-1")]);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        projectIds: ["p-1"],
+        detach: true,
+      });
+      await drain();
+      expect(listProjectMaintenanceSchedulesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ project_ids: ["p-1"] }),
+      );
+      expect((await waiting())?.paying).toEqual({
+        parked: { count: 3, oldest_age_ms: expect.any(Number) },
+      });
+    });
+
+    it("reports nothing before the first full inventory", async () => {
+      expect(await waiting()).toBeUndefined();
+    });
+  });
+
   it("promotes overdue snapshots in the lane, unless in failure backoff or turned off", async () => {
     // Parked, so the queued snapshot stays pending for the status.
     snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
