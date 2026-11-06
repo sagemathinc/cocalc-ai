@@ -138,6 +138,12 @@ describe("finding the agent's host process (never by its own word)", () => {
     expect(() => pickAgentProcess([renamed], C, argv)).toThrow(
       "found 0 host processes",
     );
+    // an empty command line (a zombie, or cleared argv), or one cut short
+    for (const cmdline of [[], argv.slice(0, 3), argv.slice(0, 4)]) {
+      expect(() => pickAgentProcess([{ ...agent, cmdline }], C, argv)).toThrow(
+        "found 0 host processes",
+      );
+    }
     const extraArg = { ...agent, cmdline: [...argv, "x"] };
     expect(() => pickAgentProcess([extraArg], C, argv)).toThrow(
       "found 0 host processes",

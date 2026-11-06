@@ -97,10 +97,15 @@ export interface ProcRecord {
 /**
  * The agent's host process, found by the host alone (never by the pid the
  * agent reports): the one process in the container's pid namespace whose
- * parent is outside it (only the host's exec runtime starts those; nothing
- * inside the container can make a process with an outside parent) and whose
- * command line is exactly the one this spawn used. None, or more than one,
- * and there is no agent to trust.
+ * parent is outside it and whose command line is exactly the one this spawn
+ * used. A process the project starts the usual way has its parent inside the
+ * container. Processes with an outside parent are the container's init and
+ * whatever `podman exec` started, and one of those could exec into the
+ * agent's exact command line (its token is readable in /proc to the same
+ * uid). The worst that gives is two matches, which refuses the project's own
+ * rootfs operations; and a decoy's facts still have to pass
+ * checkAgentAuthority. None, or more than one, and there is no agent to
+ * trust.
  */
 export function pickAgentProcess(
   procs: ProcRecord[],
