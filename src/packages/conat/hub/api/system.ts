@@ -164,6 +164,8 @@ export const system = {
   getSiteFundedClaudeKeys: authFirstRequireAccount,
   manageSiteFundedClaudeKeys: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
+  getAiSubscriptionStatus: authFirstRequireAccount,
+  getMembershipUsage: authFirstRequireAccount,
   getFrontendSourceFingerprint: authFirstRequireAccount,
   getRootfsCatalog: authFirstRequireAccount,
   getRootfsCatalogPage: authFirstRequireAccount,
@@ -3021,6 +3023,21 @@ export interface System {
     timeout?: number;
     credential_id?: string;
   }) => Promise<CodexUsageStatusInfo>;
+
+  // What is known about the account's Claude and Codex subscriptions: each
+  // one's limits as last reported and Auto's view of the pool. No secrets.
+  getAiSubscriptionStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<
+    import("@cocalc/util/ai/subscription-status").AiSubscriptionStatus
+  >;
+
+  // The account's own membership limits and usage ("Usage and limits"),
+  // curated: see MembershipUsage.
+  getMembershipUsage: (opts?: {
+    account_id?: string;
+    refresh_usage_status?: boolean;
+  }) => Promise<import("./purchases").MembershipUsage>;
 
   getFrontendSourceFingerprint: (opts?: {
     account_id?: string;

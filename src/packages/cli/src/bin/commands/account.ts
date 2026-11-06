@@ -307,6 +307,30 @@ export function registerAccountCommand(
     });
 
   account
+    .command("usage")
+    .description(
+      "show your membership's limits and current usage (what Usage and limits shows); works with a scoped API key that may read usage",
+    )
+    .action(async (command: Command) => {
+      await withContext(command, "account usage", async (ctx) => {
+        return await ctx.hub.system.getMembershipUsage({
+          refresh_usage_status: true,
+        });
+      });
+    });
+
+  account
+    .command("subscriptions")
+    .description(
+      "show what is known about your Claude and Codex subscriptions: each one's limits as last reported, and how long Auto's pool lasts",
+    )
+    .action(async (command: Command) => {
+      await withContext(command, "account subscriptions", async (ctx) => {
+        return await ctx.hub.system.getAiSubscriptionStatus({});
+      });
+    });
+
+  account
     .command("egress [account]")
     .description(
       "show historical managed outbound network usage for an account",

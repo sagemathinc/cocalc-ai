@@ -26,7 +26,12 @@ const source_project_id = "00000000-0000-4000-8000-000000000003";
 
 const scope = {
   version: 1 as const,
-  account: ["project:list" as const, "notifications:manage" as const],
+  account: [
+    "project:list" as const,
+    "notifications:manage" as const,
+    "usage:read" as const,
+    "ai-subscriptions:read" as const,
+  ],
   projects: [],
 };
 

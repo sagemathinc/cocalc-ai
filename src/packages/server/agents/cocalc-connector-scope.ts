@@ -69,7 +69,7 @@ export async function assertSoloProjectCapabilityInContext(principal: {
   if (!state || state.scope_revision !== principal.scope_revision)
     throw Error("API key revoked or scope changed");
   if (state.connector_source_project_id === undefined)
-    throw Error("this API key's notification access could not be confirmed");
+    throw Error("this API key's access could not be confirmed");
   if (
     state.connector_source_project_id != null &&
     !(await isSoloProject(
@@ -79,7 +79,7 @@ export async function assertSoloProjectCapabilityInContext(principal: {
   )
     throw Object.assign(
       Error(
-        "an agent may manage notifications only in a project without other collaborators",
+        "an agent may read notifications and usage only in a project without other collaborators",
       ),
       { code: "api_key_shared_project" },
     );
