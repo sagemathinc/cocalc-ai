@@ -43,11 +43,44 @@ test("Claude access options and security model are public and searchable in both
 test("the page on Claude subscriptions in the project states the code's limits, not more", () => {
   const entry = getDocsEntry("ai/claude-subscription-in-project");
   assert.ok(entry);
-  // the figures the code has: 15 min relay idle, 10 min agent disposal
-  assert.match(entry.body, /15 minutes without a request/);
+  // the figures the code has: the relay's fixed 15 minutes after a turn
+  // (RELAY_IDLE_MS), 10 min agent disposal, the CLI bearer's 600 s signed
+  // lifetime and 30 s clock tolerance
+  assert.match(
+    entry.body,
+    /until 15 minutes after the turn ends, whether or not it\s+is used meanwhile/,
+  );
+  assert.match(entry.body, /Requests still running then are stopped/);
+  assert.doesNotMatch(entry.body, /without a request/);
   assert.match(entry.body, /by default 10 minutes after\s+your last turn/);
+  assert.match(
+    entry.body,
+    /not\s+ended while a command it started in a shell is still running/,
+  );
+  assert.match(entry.body, /jobs\s+it started keep running/);
   assert.match(entry.body, /new relay token/);
+  assert.match(entry.body, /signed for 10 minutes/);
+  assert.match(
+    entry.body,
+    /less than 10 minutes 31 seconds\s+after it was issued/,
+  );
+  // the settings pins cover the settings files, not root or hooks
+  assert.match(
+    entry.body,
+    /can't be used in a project whose image\s+contains Claude Code managed settings/,
+  );
+  assert.match(
+    entry.body,
+    /checked when the agent starts and again at each turn start/,
+  );
+  assert.match(
+    entry.body,
+    /as root in the project can still change system\s+files/,
+  );
+  assert.match(entry.body, /do not stop hooks or MCP servers/);
   // what it must never claim
+  assert.doesNotMatch(entry.body, /\+ ?30 ?s|10 min \+/);
+  assert.doesNotMatch(entry.body, /unreachable|cannot affect where/i);
   assert.doesNotMatch(entry.body, /invalidated/i);
   assert.doesNotMatch(
     entry.body,

@@ -26,8 +26,12 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { execFile, spawn } from "node:child_process";
 import {
+  MANAGED_POLICY_MESSAGE,
+  claudeInProjectBackgroundWorkScript,
   claudeInProjectScript,
   claudeInProjectStopScript,
+  claudeManagedPolicyCheck,
+  superviseInProjectProcess,
   claudeProjectsKey,
   claudeSubscriptionRuntime,
   launchClaudeSubscriptionInProject,
@@ -278,6 +282,116 @@ describe("in-project scripts", () => {
     );
   });
 
+  it("does not pass on settings-location overrides", () => {
+    expect(claudeInProjectScript("/tmp/p")).toContain(
+      "unset CLAUDE_CODE_MANAGED_SETTINGS_PATH CLAUDE_CODE_REMOTE_SETTINGS_PATH CLAUDE_CODE_MOCK_REMOTE_SETTINGS CLAUDE_CODE_MANAGED_CONFIG_PREFETCH",
+    );
+  });
+
+  describe("refuses a Claude Code managed policy before the adapter starts", () => {
+    // the start script up to the adapter, with the policy root in `root`
+    const start = async (policy: string) => {
+      const home = join(root, "home");
+      await mkdir(home, { recursive: true });
+      const pid = join(root, "pid");
+      const script = claudeInProjectScript(pid, policy).replace(
+        /\nexec [^\n]*$/,
+        "\nexit 0",
+      );
+      const code = await run("/bin/sh", ["-c", script], {
+        env: { HOME: home, PATH: process.env.PATH },
+      }).then(
+        () => 0,
+        (error) => error.code,
+      );
+      const started = await lstat(pid).then(
+        () => true,
+        () => false,
+      );
+      return { code, started };
+    };
+    const policy = () => join(root, "etc-claude-code");
+
+    it("starts when there is none", async () => {
+      expect(await start(policy())).toEqual({ code: 0, started: true });
+    });
+
+    it("refuses a policy created after the launch preflight passed", async () => {
+      await run("/bin/sh", ["-c", claudeManagedPolicyCheck(policy())]);
+      await mkdir(policy());
+      expect(await start(policy())).toEqual({ code: 78, started: false });
+    });
+
+    it.each([
+      ["an empty policy directory", async () => {}],
+      [
+        "an unknown file in the policy directory",
+        async (p: string) => writeFile(join(p, "README"), ""),
+      ],
+      [
+        "managed-settings.json",
+        async (p: string) => writeFile(join(p, "managed-settings.json"), "{}"),
+      ],
+      [
+        "an empty managed-settings.d",
+        async (p: string) => mkdir(join(p, "managed-settings.d")),
+      ],
+      [
+        "a managed-settings.d entry",
+        async (p: string) => {
+          await mkdir(join(p, "managed-settings.d"));
+          await writeFile(join(p, "managed-settings.d/10-x.json"), "{}");
+        },
+      ],
+      [
+        "managed-mcp.json",
+        async (p: string) => writeFile(join(p, "managed-mcp.json"), "{}"),
+      ],
+      [
+        "a symlinked managed-settings.json",
+        async (p: string) => {
+          await writeFile(join(root, "elsewhere.json"), "{}");
+          await symlink(
+            join(root, "elsewhere.json"),
+            join(p, "managed-settings.json"),
+          );
+        },
+      ],
+      [
+        "a dangling managed-settings.json symlink",
+        async (p: string) =>
+          symlink(join(root, "missing.json"), join(p, "managed-settings.json")),
+      ],
+      [
+        "a dangling managed-settings.d symlink",
+        async (p: string) =>
+          symlink(join(root, "missing.d"), join(p, "managed-settings.d")),
+      ],
+    ])("%s", async (_name, plant) => {
+      await mkdir(policy());
+      await plant(policy());
+      expect(await start(policy())).toEqual({ code: 78, started: false });
+    });
+
+    it.each([
+      [
+        "a symlinked policy directory",
+        async () => {
+          await mkdir(join(root, "real"));
+          await symlink(join(root, "real"), policy());
+        },
+      ],
+      [
+        "a dangling policy directory symlink",
+        async () => symlink(join(root, "missing"), policy()),
+      ],
+      ["a file at the policy path", async () => writeFile(policy(), "{}")],
+    ])("%s", async (_name, plant) => {
+      await plant();
+      expect(await start(policy())).toEqual({ code: 78, started: false });
+    });
+  });
+
   const startTimeFn = claudeInProjectScript("/tmp/p")
     .split("\n")
     .find((line) => line.startsWith("st() "))!;
@@ -335,6 +449,124 @@ describe("in-project scripts", () => {
       adapter.kill("SIGKILL");
     }
   }, 20_000);
+
+  describe("the agent's jobs", () => {
+    // A stand-in adapter (its command line names claude-agent-acp) in a run
+    // marked like the launcher's: an MCP server of its own (node), a shell
+    // still running a command (as a background Bash call keeps it), and a
+    // job whose shell exited (`cmd &`), reparented away from the adapter.
+    const RUN = "11111111-2222-4333-8444-555555555555";
+    const start = async () => {
+      const pidFile = join(root, "pid");
+      const script = join(root, "adapter.js");
+      await writeFile(
+        script,
+        `const { spawn } = require("child_process");
+const fs = require("fs");
+const dir = ${JSON.stringify(root)};
+spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" })
+  .on("spawn", function () { fs.writeFileSync(dir + "/mcp", String(this.pid)); });
+const shell = spawn("/bin/sh", ["-c", "sleep 60; true"], { stdio: "ignore" });
+fs.writeFileSync(dir + "/shell", String(shell.pid));
+spawn("/bin/sh", ["-c", "sleep 60 & echo $! > " + dir + "/job; exit 0"], { stdio: "ignore" });
+setInterval(() => {}, 1000);
+`,
+      );
+      const fake = jest.requireActual("node:child_process")
+        .spawn as typeof realSpawn;
+      const adapter = fake(
+        "/bin/sh",
+        [
+          "-c",
+          `${startTimeFn}\necho "$$ $(st $$)" > ${pidFile}; exec ${process.execPath} ${script} claude-agent-acp`,
+        ],
+        { stdio: "ignore", env: { ...process.env, COCALC_AGENT_RUN: RUN } },
+      );
+      const pidOf = async (name: string) => {
+        for (let i = 0; i < 100; i++) {
+          const pid = parseInt(
+            await readFile(join(root, name), "utf8").catch(() => ""),
+          );
+          if (pid > 0) return pid;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        throw Error(`no ${name}`);
+      };
+      const pids = {
+        mcp: await pidOf("mcp"),
+        shell: await pidOf("shell"),
+        job: await pidOf("job"),
+      };
+      const adapterPid = parseInt(await readFile(pidFile, "utf8"));
+      const cleanup = () => {
+        for (const pid of [adapterPid, ...Object.values(pids)])
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+      };
+      return { pidFile, adapter, adapterPid, pids, cleanup };
+    };
+    const probe = async (pidFile: string, runId = RUN) =>
+      (
+        await run("/bin/sh", [
+          "-c",
+          claudeInProjectBackgroundWorkScript(pidFile, runId),
+        ])
+      ).stdout.trim();
+
+    it("finds a running job, also once reparented, and none when they end", async () => {
+      const { pidFile, pids, cleanup } = await start();
+      try {
+        expect(await probe(pidFile)).toBe("busy");
+        // another run's marker is not this one's
+        expect(
+          await probe(pidFile, "99999999-2222-4333-8444-555555555555"),
+        ).toBe("idle");
+        // the shell's command, then the shell: both done
+        await run("pkill", ["-KILL", "-P", `${pids.shell}`]).catch(() => {});
+        process.kill(pids.shell, "SIGKILL");
+        await new Promise((r) => setTimeout(r, 100));
+        expect(await probe(pidFile)).toBe("busy"); // the reparented job
+        process.kill(pids.job, "SIGKILL");
+        await new Promise((r) => setTimeout(r, 100));
+        // the agent's own processes (its MCP server) are no job
+        expect(alive(pids.mcp)).toBe(true);
+        expect(await probe(pidFile)).toBe("idle");
+      } finally {
+        cleanup();
+      }
+    }, 20_000);
+
+    it("between turns, stop ends the agent and leaves its jobs running", async () => {
+      const { pidFile, adapterPid, pids, cleanup } = await start();
+      try {
+        await run("/bin/sh", [
+          "-c",
+          claudeInProjectStopScript(pidFile, { jobs: false }),
+        ]);
+        await new Promise((r) => setTimeout(r, 200));
+        expect(alive(adapterPid)).toBe(false);
+        expect(alive(pids.mcp)).toBe(false);
+        expect(alive(pids.shell)).toBe(true);
+        expect(alive(pids.job)).toBe(true);
+      } finally {
+        cleanup();
+      }
+    }, 20_000);
+
+    it("during a turn, stop ends the commands the agent is running too", async () => {
+      const { pidFile, adapterPid, pids, cleanup } = await start();
+      try {
+        await run("/bin/sh", ["-c", claudeInProjectStopScript(pidFile)]);
+        await new Promise((r) => setTimeout(r, 200));
+        expect(alive(adapterPid)).toBe(false);
+        expect(alive(pids.mcp)).toBe(false);
+        expect(alive(pids.shell)).toBe(false);
+      } finally {
+        cleanup();
+      }
+    }, 20_000);
+  });
 
   it("stop never signals a pid whose start time changed (pid reuse)", async () => {
     const fake = jest.requireActual("node:child_process")
@@ -497,6 +729,21 @@ describe("launchClaudeSubscriptionInProject", () => {
     const proc = await launchClaudeSubscriptionInProject(binding, conversation);
     expect(proc.sessionPolicy).toBe("default");
     expect(proc.subscriptionAuth).toBe("oauth-token");
+    // the route pinned at the flag-settings tier; never the token
+    const noProxy = "localhost,127.0.0.1,::1,host.containers.internal";
+    expect(proc.pinnedSettingsEnv).toEqual({
+      ANTHROPIC_BASE_URL: relay.baseUrl,
+      NO_PROXY: noProxy,
+      no_proxy: noProxy,
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+      ALL_PROXY: "",
+      http_proxy: "",
+      https_proxy: "",
+      all_proxy: "",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      CLAUDE_CODE_ENABLE_TELEMETRY: "0",
+    });
     const [command, args, options] = (spawn as unknown as jest.Mock).mock
       .calls[0];
     expect(command).toBe("podman");
@@ -534,12 +781,96 @@ describe("launchClaudeSubscriptionInProject", () => {
     expect(await policy.credentialValue()).toBe(`Bearer ${REAL_TOKEN}`);
 
     await proc.stop();
-    expect(execFile).toHaveBeenCalledTimes(1);
-    expect((execFile as unknown as jest.Mock).mock.calls[0][1]).toContain(
-      `project-${projectId}`,
-    );
+    // the managed-policy check before launch, then the stop script
+    expect(execFile).toHaveBeenCalledTimes(2);
+    const calls = (execFile as unknown as jest.Mock).mock.calls;
+    expect(calls[0][1]).toContain(`project-${projectId}`);
+    expect(calls[0][1].at(-1)).toBe(claudeManagedPolicyCheck());
+    expect(calls[1][1]).toContain(`project-${projectId}`);
     expect(relay.close).toHaveBeenCalled();
     expect(lease.close).toHaveBeenCalled();
+  });
+
+  it("refuses a project with a Claude Code managed policy before any credential exists", async () => {
+    (execFile as unknown as jest.Mock).mockImplementation(
+      (_cmd, _args, _opts, cb) =>
+        cb(Object.assign(Error("exit 78"), { code: 78 }), "", ""),
+    );
+    await expect(
+      launchClaudeSubscriptionInProject(binding, conversation),
+    ).rejects.toThrow(MANAGED_POLICY_MESSAGE);
+    expect(startProviderRelaySession).not.toHaveBeenCalled();
+    expect(createProjectCliTokenLease).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("does not start when the managed-policy check cannot run", async () => {
+    (execFile as unknown as jest.Mock).mockImplementation(
+      (_cmd, _args, _opts, cb) =>
+        cb(Object.assign(Error("no container"), { code: 125 }), "", ""),
+    );
+    await expect(
+      launchClaudeSubscriptionInProject(binding, conversation),
+    ).rejects.toThrow(/managed settings/);
+    expect(startProviderRelaySession).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("checks for a managed policy again at each turn start, failing the turn before the relay accepts it", async () => {
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    const mock = execFile as unknown as jest.Mock;
+    await proc.beginConnectorTurn!({ path: "a.chat" } as any);
+    await proc.endConnectorTurn!();
+    expect(mock.mock.calls.map((c) => c[1].at(-1))).toEqual([
+      claudeManagedPolicyCheck(),
+      claudeManagedPolicyCheck(),
+    ]);
+    // installed mid-session
+    mock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(Object.assign(Error("exit 78"), { code: 78 }), "", ""),
+    );
+    await expect(
+      proc.beginConnectorTurn!({ path: "a.chat" } as any),
+    ).rejects.toThrow(MANAGED_POLICY_MESSAGE);
+    expect(relay.beginTurn).toHaveBeenCalledTimes(1);
+    expect(lease.beginConnectorTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops only the agent between turns, and its running commands too during a turn", async () => {
+    const mock = execFile as unknown as jest.Mock;
+    const stopScript = () => mock.mock.calls.at(-1)[1].at(-1) as string;
+    const idle = await launchClaudeSubscriptionInProject(binding, conversation);
+    await idle.beginConnectorTurn!({ path: "a.chat" } as any);
+    await idle.endConnectorTurn!();
+    await idle.stop();
+    expect(stopScript()).toContain("agent() {");
+    expect(stopScript()).not.toContain("tree() {");
+
+    const busy = await launchClaudeSubscriptionInProject(binding, conversation);
+    await busy.beginConnectorTurn!({ path: "a.chat" } as any);
+    await busy.stop();
+    expect(stopScript()).toContain("tree() {");
+  }, 15_000);
+
+  it("asks the container for background work with the run's marker", async () => {
+    const mock = execFile as unknown as jest.Mock;
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    const args = (spawn as unknown as jest.Mock).mock.calls[0][1] as string[];
+    const run = args
+      .find((a) => a.startsWith("COCALC_AGENT_RUN="))!
+      .slice("COCALC_AGENT_RUN=".length);
+    expect(run).toMatch(/^[0-9a-f-]{36}$/);
+    mock.mockImplementation((_cmd, _args, _opts, cb) => cb(null, "busy\n", ""));
+    expect(await proc.hasBackgroundWork!()).toBe(true);
+    expect(mock.mock.calls.at(-1)[1].at(-1)).toContain(
+      `COCALC_AGENT_RUN=${run}`,
+    );
+    mock.mockImplementation((_cmd, _args, _opts, cb) => cb(null, "idle\n", ""));
+    expect(await proc.hasBackgroundWork!()).toBe(false);
+    mock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(Object.assign(Error("gone"), { code: 125 }), "", ""),
+    );
+    await expect(proc.hasBackgroundWork!()).rejects.toThrow();
   });
 
   it("revalidates the subscription token at most every minute", async () => {
@@ -638,5 +969,211 @@ describe("launchClaudeSubscriptionInProject", () => {
         conversation,
       ),
     ).rejects.toThrow(/Unsupported/);
+  });
+});
+
+describe("superviseInProjectProcess", () => {
+  const GRACE = 50;
+  const fakeProc = () => {
+    const proc: any = new EventEmitter();
+    proc.stdin = { end: jest.fn() };
+    // by default the client's stdio never closes
+    proc.kill = jest.fn();
+    return proc;
+  };
+  const credentials = () => {
+    const closes = { relay: 0, lease: 0 };
+    const release = jest.fn(async () => {
+      closes.relay++;
+      await new Promise((r) => setTimeout(r, 5));
+      closes.lease++;
+    });
+    return { closes, release };
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 10));
+
+  it("releases at exit without waiting for close, and closes after a grace", async () => {
+    const proc = fakeProc();
+    const { closes, release } = credentials();
+    const { closed } = superviseInProjectProcess({
+      proc,
+      release,
+      stopInContainer: async () => {},
+      graceMs: GRACE,
+    });
+    let done = false;
+    void closed.then(() => (done = true));
+    proc.emit("exit", 0, null);
+    await tick();
+    expect(closes).toEqual({ relay: 1, lease: 1 });
+    expect(done).toBe(false);
+    await new Promise((r) => setTimeout(r, GRACE + 10));
+    expect(done).toBe(true);
+  });
+
+  it("releases on a spawn error with neither exit nor close", async () => {
+    const proc = fakeProc();
+    const { closes, release } = credentials();
+    const { closed } = superviseInProjectProcess({
+      proc,
+      release,
+      stopInContainer: async () => {},
+      graceMs: GRACE,
+    });
+    proc.emit("error", Error("spawn podman ENOENT"));
+    await closed;
+    await tick();
+    expect(closes).toEqual({ relay: 1, lease: 1 });
+  });
+
+  it("stop returns within its bound when close never fires, credentials released", async () => {
+    const proc = fakeProc();
+    const { closes, release } = credentials();
+    const { stop } = superviseInProjectProcess({
+      proc,
+      release,
+      stopInContainer: async () => {},
+      graceMs: GRACE,
+    });
+    const started = Date.now();
+    await stop();
+    expect(Date.now() - started).toBeLessThan(5 * GRACE);
+    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(closes).toEqual({ relay: 1, lease: 1 });
+  });
+
+  it("releases each credential exactly once under concurrent exit, stop and close", async () => {
+    const proc = fakeProc();
+    const { closes, release } = credentials();
+    const { stop } = superviseInProjectProcess({
+      proc,
+      release,
+      stopInContainer: async () => {},
+      graceMs: GRACE,
+    });
+    proc.emit("exit", 0, null);
+    const stopping = [stop(), stop()];
+    proc.emit("close", 0, null);
+    await Promise.all(stopping);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(closes).toEqual({ relay: 1, lease: 1 });
+  });
+
+  it("releases when the kill throws and when stopping in the container fails", async () => {
+    const proc = fakeProc();
+    proc.kill = jest.fn(() => {
+      throw Error("ESRCH");
+    });
+    const { closes, release } = credentials();
+    const { stop } = superviseInProjectProcess({
+      proc,
+      release,
+      stopInContainer: async () => {
+        throw Error("podman exec failed");
+      },
+      graceMs: GRACE,
+    });
+    await stop();
+    expect(closes).toEqual({ relay: 1, lease: 1 });
+  });
+
+  it("stop releases before the in-container stop finishes", async () => {
+    const proc = fakeProc();
+    const { closes, release } = credentials();
+    let finish!: () => void;
+    const { stop } = superviseInProjectProcess({
+      proc,
+      release,
+      stopInContainer: () => new Promise<void>((r) => (finish = r)),
+      graceMs: GRACE,
+    });
+    const stopping = stop();
+    await tick();
+    expect(closes).toEqual({ relay: 1, lease: 1 });
+    finish();
+    await stopping;
+  });
+
+  describe("with a real relay and a job holding the client's stdout", () => {
+    const realProxy = jest.requireActual("../codex/site-funded-proxy");
+    let upstream: import("node:http").Server;
+    beforeAll(async () => {
+      realProxy.setSiteFundedCodexProxyPortsForTests([0]);
+      const { createServer } = await import("node:http");
+      upstream = createServer((req, res) => {
+        req.resume();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("{}");
+      });
+      await new Promise<void>((r) =>
+        upstream.listen(0, "127.0.0.1", () => r()),
+      );
+    });
+    afterAll(async () => {
+      await realProxy.shutdownSiteFundedCodexProxyForTests();
+      upstream.close();
+    });
+    const post = async (baseUrl: string, token: string) => {
+      const res = await fetch(
+        `${baseUrl.replace("host.containers.internal", "127.0.0.1")}/v1/messages`,
+        {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+          body: "{}",
+        },
+      );
+      await res.text();
+      return res.status;
+    };
+
+    it("refuses the relay token once the client exits, though its stdout stays open", async () => {
+      const port = (upstream.address() as import("node:net").AddressInfo).port;
+      const relay = await realProxy.startProviderRelaySession({
+        upstream: `http://127.0.0.1:${port}`,
+        allowedPathPrefix: "/v1/",
+        allowedPaths: ["/v1/messages"],
+        allowedMethods: ["POST"],
+        credentialHeader: "authorization",
+        credentialValue: () => "Bearer fake-upstream",
+        tokenPrefix: "sk-ant-oat01-cocalc-",
+        allowHttpForTests: true,
+      });
+      relay.beginTurn?.();
+      expect(await post(relay.baseUrl, relay.token)).toBe(200);
+      const leaseFile = join(root, "token");
+      await writeFile(leaseFile, "fake\n");
+      // the client exits; a job it started keeps its stdout and stderr open
+      const child = (
+        jest.requireActual("node:child_process").spawn as typeof realSpawn
+      )("/bin/sh", ["-c", "sleep 30 & echo $!; exit 0"], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      // supervised from the spawn on, as the launcher does
+      const { closed } = superviseInProjectProcess({
+        proc: child,
+        release: async () => {
+          relay.close();
+          await rm(leaseFile, { force: true });
+        },
+        stopInContainer: async () => {},
+        graceMs: GRACE,
+      });
+      let jobPid = 0;
+      child.stdout!.once("data", (d) => (jobPid = parseInt(`${d}`)));
+      let closedAt = 0;
+      child.once("close", () => (closedAt = Date.now()));
+      try {
+        await closed;
+        expect(closedAt).toBe(0); // stdio still held by the job
+        expect(jobPid).toBeGreaterThan(0);
+        expect(await post(relay.baseUrl, relay.token)).toBe(401);
+        await expect(lstat(leaseFile)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        if (jobPid) process.kill(jobPid, "SIGKILL");
+        relay.close();
+      }
+    });
   });
 });

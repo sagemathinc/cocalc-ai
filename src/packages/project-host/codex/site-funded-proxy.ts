@@ -435,7 +435,10 @@ export type ProviderRelaySession = {
    * usable again, and is never idle while the turn runs, however long.
    */
   beginTurn(): void;
-  /** The turn ended: from now on an idle session is suspended. */
+  /**
+   * The turn ended: the session is suspended RELAY_IDLE_MS later, whatever
+   * it is used for meanwhile.
+   */
   endTurn(): void;
   close(): void;
 };
@@ -445,10 +448,12 @@ A relay token is a bearer: anyone who obtains it can use the session, from
 any project on this host (the proxy listens on host loopback, and pasta or
 slirp4netns open each project connection anew from there, so the socket does
 not say which project sent it; unmeasured, from reading the network setup).
-So between turns a session is suspended after RELAY_IDLE_MS without a
-request (none in flight), and then refuses every request until the next turn
-begins. A turn itself has no time limit (a tool may run for long without a
-model request, and turns can be long).
+So between turns a session is suspended RELAY_IDLE_MS after the turn ended:
+a hard deadline that requests do not move, so a process the agent left running
+cannot keep the session alive. Requests still in flight then are stopped, and
+the session refuses every request until the next turn begins. A turn itself
+has no time limit (a tool may run for long without a model request, and turns
+can be long).
 */
 export const RELAY_IDLE_MS = 15 * 60_000;
 
@@ -457,15 +462,31 @@ type RelaySession = {
   requests: Set<ClientRequest>;
   closed: boolean;
   suspended: boolean;
-  /** Between beginTurn and endTurn: never idle. */
+  /** Between beginTurn and endTurn: never suspended. */
   inTurn: boolean;
   idleMs: number;
-  lastUsed: number;
+  /** Between turns: when the session is suspended. */
+  deadline: number;
+  timer?: ReturnType<typeof setTimeout>;
+  /** Bumped by every turn start and end, so a stale timer does nothing. */
+  generation: number;
 };
 
 function suspendRelaySession(session: RelaySession): void {
   session.suspended = true;
   for (const request of session.requests) request.destroy();
+}
+
+// Between turns: suspend the session idleMs from now, requests or not.
+function armRelayDeadline(session: RelaySession): void {
+  if (session.timer) clearTimeout(session.timer);
+  const generation = ++session.generation;
+  session.deadline = Date.now() + session.idleMs;
+  session.timer = setTimeout(() => {
+    if (session.generation === generation && !session.inTurn)
+      suspendRelaySession(session);
+  }, session.idleMs);
+  session.timer.unref?.();
 }
 
 class SiteFundedCodexProxy {
@@ -680,24 +701,31 @@ class SiteFundedCodexProxy {
       suspended: false,
       inTurn: false,
       idleMs,
-      lastUsed: Date.now(),
+      deadline: 0,
+      generation: 0,
     };
+    // until the first turn, as after every turn
+    armRelayDeadline(session);
     this.relaySessions.set(token, session);
     return {
       baseUrl: `http://host.containers.internal:${port}`,
       token,
       beginTurn: () => {
         if (session.closed) return;
+        if (session.timer) clearTimeout(session.timer);
+        session.generation++;
         session.suspended = false;
         session.inTurn = true;
-        session.lastUsed = Date.now();
       },
       endTurn: () => {
+        // only a turn's end starts the deadline: never a later call again
+        if (session.closed || !session.inTurn) return;
         session.inTurn = false;
-        session.lastUsed = Date.now();
+        armRelayDeadline(session);
       },
       close: () => {
         session.closed = true;
+        if (session.timer) clearTimeout(session.timer);
         this.relaySessions.delete(token);
         suspendRelaySession(session);
       },
@@ -708,6 +736,7 @@ class SiteFundedCodexProxy {
     this.sessions.clear();
     for (const session of this.relaySessions.values()) {
       session.closed = true;
+      if (session.timer) clearTimeout(session.timer);
       suspendRelaySession(session);
     }
     this.relaySessions.clear();
@@ -730,16 +759,10 @@ class SiteFundedCodexProxy {
     );
     const session = match ? this.relaySessions.get(match[1]) : undefined;
     if (!session || session.closed) return undefined;
-    if (
-      !session.suspended &&
-      !session.inTurn &&
-      session.requests.size === 0 &&
-      Date.now() - session.lastUsed > session.idleMs
-    ) {
+    // the deadline holds even if its timer has not run yet
+    if (!session.suspended && !session.inTurn && Date.now() >= session.deadline)
       suspendRelaySession(session);
-    }
     if (session.suspended) return "suspended";
-    session.lastUsed = Date.now();
     return session;
   }
 
@@ -839,11 +862,7 @@ class SiteFundedCodexProxy {
       return;
     }
     if (relay) {
-      // the idle time counts from a request's end (its response to the
-      // project closing), not only its start
-      response.once("close", () => {
-        relay.lastUsed = Date.now();
-      });
+      // no request moves the between-turn deadline (armRelayDeadline)
       try {
         await forwardProviderRequest({
           request,

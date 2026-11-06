@@ -323,6 +323,11 @@ describe("provider relay sessions on the project-reachable proxy", () => {
           "/v1/./messages",
           "/v1/x/../messages",
           "/v1/messages/batches",
+          // Claude Code's server-managed settings and policy endpoints:
+          // with the relay as its base URL, they could never load from here
+          "/api/claude_code/settings",
+          "/api/claude_code/policy_limits",
+          "/api/oauth/profile",
         ]) {
           expect([
             target,
@@ -396,24 +401,29 @@ describe("provider relay sessions on the project-reachable proxy", () => {
     );
   });
 
-  it("between turns, suspends a session idle too long, until the next turn (B2)", async () => {
-    await withRelay({ idleMs: 100 }, async ({ session, seen }) => {
+  it("between turns, refuses the token a fixed time after the turn ended, however it is used meanwhile (B2)", async () => {
+    await withRelay({ idleMs: 150 }, async ({ session, seen }) => {
       const auth = { Authorization: `Bearer ${session.token}` };
-      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
-      await new Promise((r) => setTimeout(r, 60));
-      // used within the idle time: still open, and the idle clock restarts
-      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
-      await new Promise((r) => setTimeout(r, 160));
+      session.beginTurn();
+      session.endTurn();
+      const ended = Date.now();
+      // requests between turns never move the deadline
+      while (Date.now() - ended < 110) {
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await new Promise((r) => setTimeout(r, 150 - (Date.now() - ended) + 20));
       expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
-      expect(seen).toHaveLength(2);
+      const used = seen.length;
+      expect(used).toBeGreaterThan(2);
       // the next turn makes it usable again
       session.beginTurn();
       expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
-      expect(seen).toHaveLength(3);
+      expect(seen).toHaveLength(used + 1);
     });
   });
 
-  it("is never idle during a turn, and idle again once it ends (B2)", async () => {
+  it("is never suspended during a turn, and is again once it ends (B2)", async () => {
     await withRelay({ idleMs: 100 }, async ({ session }) => {
       const auth = { Authorization: `Bearer ${session.token}` };
       session.beginTurn();
@@ -423,33 +433,83 @@ describe("provider relay sessions on the project-reachable proxy", () => {
       session.endTurn();
       await new Promise((r) => setTimeout(r, 160));
       expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
-      // a turn after the idle window works: the turn renews the session
+      // a turn after the deadline works: the turn renews the session
       session.beginTurn();
       expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
     });
   });
 
-  it("counts the idle time from a request's end, not only its start (B2)", async () => {
+  it("stops a slow request still running at the deadline (B2)", async () => {
     await withRelay({ idleMs: 150 }, async ({ session }) => {
       const auth = { Authorization: `Bearer ${session.token}` };
-      // answered after 250 ms, longer than the idle time
-      expect(await sendRaw(session.baseUrl, "/v1/messages/delay", auth)).toBe(
-        200,
-      );
-      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      session.beginTurn();
+      session.endTurn();
+      // answered after 250 ms, past the deadline
+      expect(
+        await sendRaw(session.baseUrl, "/v1/messages/delay", auth),
+      ).not.toBe(200);
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
     });
   });
 
-  it("is not idle while a request is in flight (B2)", async () => {
+  it("stops a request that never ends at the deadline, and it does not keep the session (B2)", async () => {
     await withRelay({ idleMs: 100 }, async ({ session, seen }) => {
       const auth = { Authorization: `Bearer ${session.token}` };
-      // the provider never answers this one, so it stays in flight
+      session.beginTurn();
+      session.endTurn();
+      const ended = Date.now();
+      // the provider never answers this one
       const inFlight = sendRaw(session.baseUrl, "/v1/messages/slow", auth);
       while (seen.length < 1) await new Promise((r) => setTimeout(r, 10));
-      await new Promise((r) => setTimeout(r, 160));
-      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
-      session.close();
       expect(await inFlight).not.toBe(200);
+      expect(Date.now() - ended).toBeLessThan(1000);
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+    });
+  });
+
+  it("refuses from exactly the deadline, by the clock even before its timer runs (B2)", async () => {
+    await withRelay({ idleMs: 60_000 }, async ({ session }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      const now = Date.now();
+      const clock = jest.spyOn(Date, "now");
+      try {
+        clock.mockReturnValue(now);
+        session.beginTurn();
+        session.endTurn();
+        clock.mockReturnValue(now + 60_000 - 1);
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+        clock.mockReturnValue(now + 60_000);
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+  });
+
+  it("a later turn end does not move the deadline, and a stale timer does nothing (B2)", async () => {
+    await withRelay({ idleMs: 100 }, async ({ session }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      session.beginTurn();
+      session.endTurn();
+      await new Promise((r) => setTimeout(r, 60));
+      // a repeated end is no new turn
+      session.endTurn();
+      await new Promise((r) => setTimeout(r, 60));
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+
+      // a turn that starts before the deadline: the old timer must not
+      // suspend it, and the new end starts a new deadline
+      session.beginTurn();
+      session.endTurn();
+      await new Promise((r) => setTimeout(r, 60));
+      session.beginTurn();
+      await new Promise((r) => setTimeout(r, 80)); // past the old deadline
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      session.endTurn();
+      await new Promise((r) => setTimeout(r, 60));
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      await new Promise((r) => setTimeout(r, 60));
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
     });
   });
 

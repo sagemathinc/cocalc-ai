@@ -36,6 +36,23 @@ Before starting Claude Code, CoCalc also clears the ANTHROPIC_API_KEY and
 ANTHROPIC_AUTH_TOKEN variables from its environment, and turns off Claude
 Code's non-essential network traffic.
 
+## Claude Code settings in the project
+
+CoCalc fixes, for each session, the Claude Code settings that decide where
+requests go and with which credential: the relay's address, the proxy
+settings, the API key helper, telemetry and non-essential traffic. These take
+precedence over the Claude Code settings files in your home directory and in
+the project (settings.json and settings.local.json), so those files cannot
+send requests elsewhere. They do not stop hooks or MCP servers that someone
+adds to those files: see the section on collaborators below.
+
+Claude Code's managed settings, in /etc/claude-code, take precedence over
+CoCalc's. So a Claude subscription can't be used in a project whose image
+contains Claude Code managed settings: the agent refuses to start, and says
+why. This is checked when the agent starts and again at each turn start.
+Anyone who can run commands as root in the project can still change system
+files at any time, including these settings and the system libraries.
+
 ## What the relay accepts
 
 The relay passes on only what Claude Code needs to run models:
@@ -55,18 +72,34 @@ request fails visibly rather than going through.
 
 - **During a turn** (from the moment your turn starts until it ends), however
   long the turn takes.
-- **Between turns**, until the token has gone 15 minutes without a request
-  (with no request still running). After that it is refused until your next
-  turn starts.
+- **Between turns**, until 15 minutes after the turn ends, whether or not it
+  is used meanwhile. Requests still running then are stopped. After that it is
+  refused until your next turn starts.
 - **Never after the agent ends.** When the agent process ends, its relay
   token is deleted. A process that still has a copy gets nothing with it.
 
 The agent itself is ended after it has been idle, by default 10 minutes after
-your last turn (a site can change this; it can also turn it off). Your next
-turn starts a new agent with a **new relay token**, and Claude Code continues
-the same conversation. The token is also deleted if the agent process crashes,
-and if the project's host is restarted. Within one running agent, all turns
-use the same relay token.
+your last turn (a site can change this; it can also turn it off). It is not
+ended while a command it started in a shell is still running, such as a job
+in the background; that is checked again every minute. Your next turn starts
+a new agent with a **new relay token**, and Claude Code continues the same
+conversation. The token is also deleted if the agent process crashes, and if
+the project's host is restarted. Within one running agent, all turns use the
+same relay token.
+
+When an agent is ended between turns, only the agent itself is stopped: jobs
+it started keep running, but its relay token no longer works for them. If it
+is ended during a turn, the commands it is running for that turn are stopped
+too.
+
+## The CoCalc command-line credential
+
+The agent also gets a credential for the CoCalc command-line tool, in a file
+in the project. It is separate from the relay token. CoCalc renews it while
+the agent runs, and deletes the file when the agent ends. Each copy of it is
+signed for 10 minutes: a copy taken from the file keeps working until then,
+and is accepted, for clock differences, until less than 10 minutes 31 seconds
+after it was issued.
 
 ## Sharing a project with collaborators
 

@@ -11,6 +11,7 @@ const { pathToFileURL } = require("node:url");
 const {
   AcpHarnessClient,
   isClaudeSubscriptionStatus,
+  claudeAccountApiKeySessionMeta,
 } = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
@@ -643,6 +644,127 @@ test("subscription policy exposes only mediated project tools and refuses unknow
   }
 });
 
+const PINNED_RELAY = "http://host.containers.internal:9301";
+const pinnedRelayEnv = {
+  ANTHROPIC_BASE_URL: PINNED_RELAY,
+  NO_PROXY: "localhost,127.0.0.1,::1,host.containers.internal",
+  no_proxy: "localhost,127.0.0.1,::1,host.containers.internal",
+  HTTP_PROXY: "",
+  HTTPS_PROXY: "",
+  ALL_PROXY: "",
+  http_proxy: "",
+  https_proxy: "",
+  all_proxy: "",
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  CLAUDE_CODE_ENABLE_TELEMETRY: "0",
+};
+
+async function inProjectClient(t, { flags = [], pinned } = {}) {
+  const child = spawn(
+    process.execPath,
+    [...profile.args, "--claude-adapter", "--in-project", ...flags],
+    { env: {}, stdio: "pipe" },
+  );
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  const client = await AcpHarnessClient.start(
+    {
+      projectId: "project-a",
+      accountId: "account-a",
+      profile: {
+        version: 2,
+        kind: "acp",
+        id: "claude-code",
+        revision: "0.93.0",
+        cwd: "/home/user/work",
+        credentialMode: "project-managed",
+        executionPolicy: "full-access",
+      },
+      credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "11111111-1111-4111-8111-111111111111",
+      },
+    },
+    async () => ({
+      sessionPolicy: "default",
+      subscriptionAuth: "oauth-token",
+      ...(pinned ? { pinnedSettingsEnv: pinned } : {}),
+      stdin: child.stdin,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      closed,
+      stop: async () => {
+        child.kill("SIGKILL");
+        await closed;
+      },
+    }),
+    30_000,
+    undefined,
+    "claude-subscription-controller",
+  );
+  t.after(() => client.dispose());
+  return client;
+}
+
+test("a Claude subscription in the project pins its relay route on new and resumed sessions", async (t) => {
+  for (const resume of [undefined, "fixture-session"]) {
+    const client = await inProjectClient(t, {
+      flags: ["--subscription-status", `--expect-pin=${PINNED_RELAY}`],
+      pinned: pinnedRelayEnv,
+    });
+    await client.open(resume);
+    const events = [];
+    await client.prompt("hello", async (event) => events.push(event));
+    assert.ok(events.some((event) => event.type === "message"));
+    await client.dispose();
+  }
+  // the fixture refuses a session with any one pin missing or weakened
+  for (const weakened of [
+    { ANTHROPIC_BASE_URL: "http://elsewhere.example" },
+    { NO_PROXY: "" },
+    { no_proxy: "" },
+    { HTTP_PROXY: "http://proxy.example" },
+    { HTTPS_PROXY: "http://proxy.example" },
+    { ALL_PROXY: "http://proxy.example" },
+    { http_proxy: "http://proxy.example" },
+    { https_proxy: "http://proxy.example" },
+    { all_proxy: "http://proxy.example" },
+    { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "0" },
+    { CLAUDE_CODE_ENABLE_TELEMETRY: "1" },
+    { CLAUDE_CODE_OAUTH_TOKEN: "fake-relay-token" },
+  ]) {
+    const unpinned = await inProjectClient(t, {
+      flags: ["--subscription-status", `--expect-pin=${PINNED_RELAY}`],
+      pinned: { ...pinnedRelayEnv, ...weakened },
+    });
+    // the fixture's refusal (-32602), surfaced by the harness's own message;
+    // the only difference from the accepted session is the weakened pin
+    await assert.rejects(() => unpinned.open(), /code -32602/);
+    await unpinned.dispose();
+  }
+});
+
+test("a Claude subscription in the project without a pinned relay route refuses to start", async (t) => {
+  const client = await inProjectClient(t, { flags: ["--subscription-status"] });
+  await assert.rejects(() => client.open(), /no pinned relay route/);
+  await client.dispose();
+});
+
+test("an account API-key session is unchanged: no pinned route, no apiKeyHelper override", () => {
+  const meta = claudeAccountApiKeySessionMeta("guidance");
+  assert.deepEqual(meta.claudeCode.options.settings, {
+    env: { CLAUDE_CODE_USE_FOUNDRY: "0" },
+  });
+  // the merged flag settings: apiKeyHelper is a top-level setting, the
+  // pins sit beside CLAUDE_CODE_USE_FOUNDRY, and no token is among them
+  const pinned = claudeAccountApiKeySessionMeta("guidance", pinnedRelayEnv);
+  assert.deepEqual(pinned.claudeCode.options.settings, {
+    env: { CLAUDE_CODE_USE_FOUNDRY: "0", ...pinnedRelayEnv },
+    apiKeyHelper: "",
+  });
+});
+
 test("a Claude subscription run in the project is a normal session whose billing is still verified", async (t) => {
   for (const [flag, permitted] of [
     ["--subscription-status", true],
@@ -679,6 +801,7 @@ test("a Claude subscription run in the project is a normal session whose billing
       async () => ({
         sessionPolicy: "default",
         subscriptionAuth: "oauth-token",
+        pinnedSettingsEnv: pinnedRelayEnv,
         stdin: child.stdin,
         stdout: child.stdout,
         stderr: child.stderr,

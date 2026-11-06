@@ -409,7 +409,8 @@ export class HarnessAgent implements AcpAgent {
             });
             const subagent =
               event.type === "update" ? subagents.observe(data) : undefined;
-            if (subagent) await request.stream({ type: "event", event: subagent });
+            if (subagent)
+              await request.stream({ type: "event", event: subagent });
           }
         },
         request.image_attachments ?? [],
@@ -547,6 +548,11 @@ export class HarnessAgent implements AcpAgent {
     this.interrupted = true;
     await this.client!.cancel();
     return true;
+  }
+
+  async hasBackgroundWork(): Promise<boolean> {
+    if (this.closed || !this.client) return false;
+    return await this.client.hasBackgroundWork();
   }
 
   async dispose(): Promise<void> {

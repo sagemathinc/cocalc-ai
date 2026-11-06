@@ -6,7 +6,9 @@
 // A retained harness agent (a Claude controller, for example) keeps its
 // process, and on a project host a transcript staging slot, until it is
 // disposed. Dispose one that has been idle this long; the conversation's next
-// turn starts a fresh harness, which resumes the same session.
+// turn starts a fresh harness, which resumes the same session. An agent whose
+// shell work is still running (a background job) is not idle: it is checked
+// again later, as Codex runtimes with background terminals are.
 
 export interface HarnessIdleDisposerOptions<T> {
   /** Idle time before disposal; 0 or less disables it. */
@@ -17,6 +19,11 @@ export interface HarnessIdleDisposerOptions<T> {
   /** Then stop it. A failure is retried (the harness's cleanup may succeed
    * later), so the process and its staging slot are not leaked. */
   dispose: (agent: T) => Promise<void>;
+  /** Whether work the agent started is still running, which defers its
+   * disposal; a failure to tell counts as none. */
+  busy?: (agent: T) => Promise<boolean>;
+  /** How often a deferred agent is checked again. */
+  busyPollMs?: number;
   onError?: (key: string, err: unknown, attempt: number) => void;
   /** First retry delay, doubled for each later one. */
   retryMs?: number;
@@ -26,6 +33,7 @@ export interface HarnessIdleDisposerOptions<T> {
 
 const DEFAULT_RETRY_MS = 60_000;
 const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_BUSY_POLL_MS = 60_000;
 
 export class HarnessIdleDisposer<T> {
   private readonly timers = new Map<
@@ -59,16 +67,44 @@ export class HarnessIdleDisposer<T> {
     if (agent !== undefined) this.schedule(key, agent);
   }
 
-  private schedule(key: string, agent: T): void {
+  private schedule(
+    key: string,
+    agent: T,
+    delay: number = this.options.idleMs,
+  ): void {
     this.cancel(key);
     if (!(this.options.idleMs > 0)) return;
-    const timer = setTimeout(() => {
-      if (this.timers.get(key)?.timer !== timer) return;
-      this.timers.delete(key);
-      if (this.options.retire(key, agent)) this.dispose(key, agent, 1);
-    }, this.options.idleMs);
+    const timer = setTimeout(() => void this.expire(key, agent, timer), delay);
     timer.unref?.();
     this.timers.set(key, { agent, timer });
+  }
+
+  private async expire(
+    key: string,
+    agent: T,
+    timer: ReturnType<typeof setTimeout>,
+  ): Promise<void> {
+    if (this.timers.get(key)?.timer !== timer) return;
+    if (this.options.busy) {
+      let busy = false;
+      try {
+        busy = await this.options.busy(agent);
+      } catch (err) {
+        this.options.onError?.(key, err, 0);
+      }
+      // a turn took the agent meanwhile
+      if (this.timers.get(key)?.timer !== timer) return;
+      if (busy) {
+        this.schedule(
+          key,
+          agent,
+          this.options.busyPollMs ?? DEFAULT_BUSY_POLL_MS,
+        );
+        return;
+      }
+    }
+    this.timers.delete(key);
+    if (this.options.retire(key, agent)) this.dispose(key, agent, 1);
   }
 
   private dispose(key: string, agent: T, attempt: number): void {
