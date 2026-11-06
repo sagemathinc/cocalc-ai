@@ -529,6 +529,9 @@ export async function unmountAll(
     await release({ immediate });
   }
   if (immediate) {
+    // The releases above only queue their disposal (see the lease manager's
+    // disposer); this waits behind them under the same lock, and resolves
+    // only once the rootfs is detached, or rejects.
     await withRootfsLock(project_id, async () => {
       await detachBothWays(project_id);
     });
@@ -586,6 +589,19 @@ async function detachBothWays(project_id: string): Promise<void> {
   if (await isMounted({ project_id, mountpoint: getMergedPath(project_id) })) {
     idmapUids.delete(project_id);
     await disposeMount(project_id);
+  }
+  // Callers go on to what lies beneath (the views, the sources): they may
+  // only if nothing of the rootfs is mounted any more. disposeMount logs its
+  // failures; this makes them the caller's.
+  for (const mountpoint of [
+    getMergedPath(project_id, -1),
+    getMergedPath(project_id),
+  ]) {
+    if (await isMounted({ project_id, mountpoint })) {
+      throw new Error(
+        `could not unmount this project's RootFS at ${mountpoint}`,
+      );
+    }
   }
 }
 

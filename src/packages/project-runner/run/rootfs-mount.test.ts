@@ -244,6 +244,45 @@ describe("mount() with a rootfs that is already mounted", () => {
     await settles(Promise.all([stop, again]));
   });
 
+  it("resolves an immediate unmountAll only once the rootfs is detached, and rejects if it isn't", async () => {
+    const { mount, unmountAll } = await import("./rootfs");
+    const plainPath = join(dir, "roots", PROJECT);
+    const mounted = trackMounts();
+    const tracked = mockExecuteCode.getMockImplementation()!;
+    await mount({ project_id: PROJECT, home });
+
+    // the helper's unmount is held
+    let unmounted!: () => void;
+    mockExecuteCode.mockImplementation(async (opts: any) => {
+      if (opts.args?.includes("umount-overlay-project")) {
+        await new Promise<void>((resolve) => (unmounted = resolve));
+      }
+      return await tracked(opts);
+    });
+    let settled = false;
+    const stop = unmountAll(PROJECT, { immediate: true }).finally(
+      () => (settled = true),
+    );
+    await sleep(3 * DELAY_MS);
+    expect(settled).toBe(false);
+    expect([...mounted]).toEqual([plainPath]);
+    unmounted();
+    await settles(stop);
+    expect([...mounted]).toEqual([]);
+
+    // an unmount that fails leaves it mounted: the caller hears of it
+    mockExecuteCode.mockImplementation(async (opts: any) =>
+      opts.args?.includes("umount-overlay-project")
+        ? Promise.reject(new Error("target is busy"))
+        : await tracked(opts),
+    );
+    await mount({ project_id: PROJECT, home });
+    await expect(unmountAll(PROJECT, { immediate: true })).rejects.toThrow(
+      "could not unmount this project's RootFS",
+    );
+    expect([...mounted]).toEqual([plainPath]);
+  });
+
   it("takes leftovers down only with nothing holding them and a proof, all under the lock", async () => {
     const { mount, detachLeftovers } = await import("./rootfs");
     const plainPath = join(dir, "roots", PROJECT);

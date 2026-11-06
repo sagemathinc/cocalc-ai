@@ -1496,15 +1496,37 @@ describe("project-runner podman orphan fallback", () => {
       expect(await opts.proveUnused()).toBe(true);
     });
 
-    it("takes the views and the idmapped rootfs down at stop", async () => {
+    it("takes the views down at stop only after the idmapped rootfs is detached", async () => {
       noBrowserContainers();
       mockProjectHasViews.mockResolvedValue(true);
+      let detached = false;
+      let detachedFirst: boolean | undefined;
+      mockUnmountAll.mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        detached = true;
+      });
+      mockUmountProjectViews.mockImplementationOnce(async () => {
+        detachedFirst = detached;
+      });
       await stop({ project_id: project1 });
 
       expect(mockUnmountAll).toHaveBeenCalledWith(project1, {
         immediate: true,
       });
       expect(mockUmountProjectViews).toHaveBeenCalledWith(project1);
+      expect(detachedFirst).toBe(true);
+    });
+
+    it("leaves the views mounted when the rootfs couldn't be detached at stop", async () => {
+      noBrowserContainers();
+      mockProjectHasViews.mockResolvedValue(true);
+      mockUnmountAll.mockRejectedValueOnce(
+        new Error("could not unmount this project's RootFS"),
+      );
+      await expect(stop({ project_id: project1 })).rejects.toThrow(
+        "could not unmount",
+      );
+      expect(mockUmountProjectViews).not.toHaveBeenCalled();
     });
   });
 
