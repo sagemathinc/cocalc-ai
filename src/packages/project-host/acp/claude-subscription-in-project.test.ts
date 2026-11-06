@@ -4,6 +4,7 @@
  */
 
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import { PassThrough } from "node:stream";
 import {
   execFile as realExecFile,
@@ -455,8 +456,9 @@ describe("in-project scripts", () => {
     // marked like the launcher's: an MCP server of its own (node), a shell
     // still running a command (as a background Bash call keeps it), and a
     // job whose shell exited (`cmd &`), reparented away from the adapter.
-    const RUN = "11111111-2222-4333-8444-555555555555";
+    // each start its own run, so an earlier test's leftovers never count
     const start = async () => {
+      const RUN = randomUUID();
       const pidFile = join(root, "pid");
       const script = join(root, "adapter.js");
       await writeFile(
@@ -499,14 +501,20 @@ setInterval(() => {}, 1000);
       };
       const adapterPid = parseInt(await readFile(pidFile, "utf8"));
       const cleanup = () => {
+        // the shell's own command too, which killing the shell would orphan
+        try {
+          jest
+            .requireActual("node:child_process")
+            .execFileSync("pkill", ["-KILL", "-P", `${pids.shell}`]);
+        } catch {}
         for (const pid of [adapterPid, ...Object.values(pids)])
           try {
             process.kill(pid, "SIGKILL");
           } catch {}
       };
-      return { pidFile, adapter, adapterPid, pids, cleanup };
+      return { pidFile, adapter, adapterPid, pids, cleanup, run: RUN };
     };
-    const probe = async (pidFile: string, runId = RUN) =>
+    const probe = async (pidFile: string, runId: string) =>
       (
         await run("/bin/sh", [
           "-c",
@@ -515,23 +523,36 @@ setInterval(() => {}, 1000);
       ).stdout.trim();
 
     it("finds a running job, also once reparented, and none when they end", async () => {
-      const { pidFile, pids, cleanup } = await start();
+      const { pidFile, pids, cleanup, run: runId } = await start();
       try {
-        expect(await probe(pidFile)).toBe("busy");
+        expect(await probe(pidFile, runId)).toBe("busy");
         // another run's marker is not this one's
         expect(
           await probe(pidFile, "99999999-2222-4333-8444-555555555555"),
         ).toBe("idle");
         // the shell's command, then the shell: both done
         await run("pkill", ["-KILL", "-P", `${pids.shell}`]).catch(() => {});
-        process.kill(pids.shell, "SIGKILL");
-        await new Promise((r) => setTimeout(r, 100));
-        expect(await probe(pidFile)).toBe("busy"); // the reparented job
+        try {
+          // the shell may already have exited once its command was killed
+          process.kill(pids.shell, "SIGKILL");
+        } catch (err: any) {
+          if (err?.code !== "ESRCH") throw err;
+        }
+        for (let i = 0; i < 50 && alive(pids.shell); i++)
+          await new Promise((r) => setTimeout(r, 20));
+        expect(alive(pids.shell)).toBe(false);
+        expect(alive(pids.job)).toBe(true);
+        expect(await probe(pidFile, runId)).toBe("busy"); // the reparented job
         process.kill(pids.job, "SIGKILL");
-        await new Promise((r) => setTimeout(r, 100));
+        // killed processes leave the process table asynchronously
+        let state = "busy";
+        for (let i = 0; i < 100 && state !== "idle"; i++) {
+          await new Promise((r) => setTimeout(r, 50));
+          state = await probe(pidFile, runId);
+        }
         // the agent's own processes (its MCP server) are no job
         expect(alive(pids.mcp)).toBe(true);
-        expect(await probe(pidFile)).toBe("idle");
+        expect(state).toBe("idle");
       } finally {
         cleanup();
       }
@@ -1040,6 +1061,29 @@ describe("superviseInProjectProcess", () => {
     expect(Date.now() - started).toBeLessThan(5 * GRACE);
     expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
     expect(closes).toEqual({ relay: 1, lease: 1 });
+  });
+
+  it("stop returns within its bound even if the release never settles", async () => {
+    const proc = fakeProc();
+    let closedFirst = false;
+    // the security-relevant steps run before the release's first wait, as
+    // the launcher's do (the relay closed, the bearer file removed)
+    const release = jest.fn(() => {
+      closedFirst = true;
+      return new Promise<void>(() => {});
+    });
+    const { stop } = superviseInProjectProcess({
+      proc,
+      release,
+      stopInContainer: async () => {},
+      graceMs: GRACE,
+    });
+    const started = Date.now();
+    await stop();
+    expect(Date.now() - started).toBeLessThan(5 * GRACE);
+    expect(closedFirst).toBe(true);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
   });
 
   it("releases each credential exactly once under concurrent exit, stop and close", async () => {

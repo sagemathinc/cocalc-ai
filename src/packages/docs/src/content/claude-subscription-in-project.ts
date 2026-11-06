@@ -43,8 +43,9 @@ requests go and with which credential: the relay's address, the proxy
 settings, the API key helper, telemetry and non-essential traffic. These take
 precedence over the Claude Code settings files in your home directory and in
 the project (settings.json and settings.local.json), so those files cannot
-send requests elsewhere. They do not stop hooks or MCP servers that someone
-adds to those files: see the section on collaborators below.
+redirect Claude Code's model requests elsewhere. They do not stop hooks or MCP
+servers that someone adds to those files: see the section on collaborators
+below.
 
 Claude Code's managed settings, in /etc/claude-code, take precedence over
 CoCalc's. So a Claude subscription can't be used in a project whose image
@@ -108,8 +109,18 @@ after it was issued.
 Everyone who can run code in a project can see what runs in it as the project
 user. So while your agent is working, and for a short time afterwards, another
 process in the project could deliberately obtain the relay token from your
-agent's environment or memory, and use it to send requests billed to your
+agent's environment or memory, or by adding hooks or MCP servers to Claude
+Code's settings in the project, and use it to send requests billed to your
 subscription, until the token stops working as described above.
+
+The same holds for the CoCalc command-line credential described above, which
+acts as you in this project. While the agent runs, every process in the
+project can read its file, and CoCalc keeps renewing it. The agent is not
+ended while a process carrying its run marker is running, and other
+processes in the project can read that marker and start such a process. So a
+collaborator can keep the agent running, and its command-line credential
+renewed, indefinitely. The relay token still stops working 15 minutes after
+each turn.
 
 This doesn't happen by accident: it takes intentional circumvention, which
 violates Anthropic's terms of service. CoCalc cannot protect you from a

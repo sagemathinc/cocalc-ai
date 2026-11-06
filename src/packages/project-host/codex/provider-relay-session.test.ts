@@ -513,6 +513,40 @@ describe("provider relay sessions on the project-reachable proxy", () => {
     });
   });
 
+  it("an earlier deadline's callback, run after a later turn ended, does not suspend early (B2)", async () => {
+    // a callback already queued when beginTurn clears its timer can still
+    // run: capture it and run it at the worst moment, after a later turn
+    // ended and armed a new deadline
+    const idleMs = 61_234;
+    const realSetTimeout = global.setTimeout;
+    const deadlines: Array<() => void> = [];
+    const spy = jest.spyOn(global, "setTimeout").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+      ...rest: any[]
+    ) => {
+      if (ms === idleMs) deadlines.push(fn);
+      return realSetTimeout(fn, ms, ...rest);
+    }) as any);
+    try {
+      await withRelay({ idleMs }, async ({ session }) => {
+        const auth = { Authorization: `Bearer ${session.token}` };
+        session.beginTurn();
+        session.endTurn();
+        const stale = deadlines.at(-1)!;
+        session.beginTurn();
+        session.endTurn();
+        stale();
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+        // the current deadline's own callback does suspend it
+        deadlines.at(-1)!();
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("never limits a running turn, however long, and is usable right after it (B2)", async () => {
     await withRelay({ idleMs: 100 }, async ({ session, seen }) => {
       const auth = { Authorization: `Bearer ${session.token}` };

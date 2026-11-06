@@ -374,7 +374,8 @@ async function checkNoManagedPolicy(
  * a job the agent started can keep the client's stdout and stderr open long
  * after the agent itself is gone, and its credentials must not outlive the
  * agent. `closed` resolves at close or error, or a grace period after exit
- * when the stdio stays open; stop() returns within a bounded time.
+ * when the stdio stays open; stop() returns within a bounded time, even if
+ * the release's later steps (which wait on the hub) do not.
  */
 export function superviseInProjectProcess({
   proc,
@@ -433,7 +434,10 @@ export function superviseInProjectProcess({
         try {
           proc.kill("SIGKILL");
         } catch {}
-        await releasing;
+        // The relay is closed and the bearer file removed before release's
+        // first wait; what follows (the hub revoking the CLI session) goes on
+        // in the background rather than holding stop beyond its bound.
+        await Promise.race([releasing, delay()]);
         await Promise.race([closed, delay()]);
       }
     })());

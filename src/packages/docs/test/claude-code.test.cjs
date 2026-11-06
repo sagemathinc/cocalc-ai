@@ -79,7 +79,23 @@ test("the page on Claude subscriptions in the project states the code's limits, 
     entry.body,
     /as root in the project can still change system\s+files/,
   );
-  assert.match(entry.body, /do not stop hooks or MCP servers/);
+  assert.match(entry.body, /do not stop hooks or MCP\s+servers/);
+  assert.match(
+    entry.body,
+    /cannot\s+redirect Claude Code's model requests elsewhere/,
+  );
+  assert.doesNotMatch(entry.body, /cannot\s+send requests elsewhere/);
+  // the command-line credential: readable, renewed, and kept going by any
+  // process carrying the run marker
+  assert.match(entry.body, /every process in the\s+project can read its file/);
+  assert.match(
+    entry.body,
+    /a\s+collaborator can keep the agent running, and its command-line credential\s+renewed, indefinitely/,
+  );
+  assert.match(
+    entry.body,
+    /or by adding hooks or MCP servers to Claude\s+Code's settings in the project/,
+  );
   // what it must never claim
   assert.doesNotMatch(entry.body, /\+ ?30 ?s|10 min \+/);
   assert.doesNotMatch(entry.body, /unreachable|cannot affect where/i);
