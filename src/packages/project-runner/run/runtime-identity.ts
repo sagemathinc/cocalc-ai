@@ -67,6 +67,10 @@ export type RuntimeIdentity =
       // the host uid/gid the project user runs as
       uid: number;
       gid: number;
+      // the same, inside the runtime user's own user namespace (what
+      // `podman unshare chown` takes to give a host dir to the project user)
+      innerUid: number;
+      innerGid: number;
       usernsArgs: string[];
       status: RuntimeUidModeStatus;
     };
@@ -260,6 +264,8 @@ export async function resolveRuntimeIdentity({
   return {
     mode: "separate",
     uid: PROJECT_RUNTIME_SEPARATE_UID,
+    innerUid: uid.inner!,
+    innerGid: gid.inner!,
     gid: PROJECT_RUNTIME_SEPARATE_UID,
     usernsArgs: separateUsernsArgs(uid.inner!, gid.inner!),
     status: { configured, effective: "separate" },

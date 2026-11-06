@@ -14,10 +14,19 @@ import { podmanEnv } from "@cocalc/backend/podman/env";
 import { mountArg } from "@cocalc/backend/podman";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import {
+  acquireSeparateRuntime,
   getImageNamePath,
   mount,
   unmount,
+  type SeparateRuntimeHandle,
 } from "@cocalc/project-runner/run/rootfs";
+import {
+  cleanupHandoff,
+  createHandoffDir,
+  handoffParent,
+  handOver,
+  type Handoff,
+} from "@cocalc/project-runner/run/sidecar-handoff";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import {
@@ -25,6 +34,7 @@ import {
   projectPoolPodmanLauncher,
   projectSecretsHostPath,
   forceKillContainerProcesses,
+  sidecarRuntimeFor,
 } from "@cocalc/project-runner/run/podman";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -179,11 +189,52 @@ export async function launchHarnessInProject(
     HOME: DEFAULT_PROJECT_RUNTIME_HOME,
     image,
   });
-  const rootfs = await mount({
+  // The project's runtime uid (R1 PR3a): the sidecar shares the project's
+  // network, so the project runs; as its own identity, views and rootfs.
+  const runtime = await sidecarRuntimeFor({
     project_id: projectId,
     home,
-    config: { image },
+    scratch,
   });
+  let separateHandle: SeparateRuntimeHandle | undefined;
+  if (runtime.mode === "separate") {
+    separateHandle = await acquireSeparateRuntime({
+      project_id: projectId,
+      home,
+      config: { image },
+      idmapUid: runtime.uid,
+      kinds: scratch ? ["home", "scratch", "secrets"] : ["home", "secrets"],
+      holder: "acp",
+    });
+  }
+  const rootfs =
+    separateHandle?.rootfs ??
+    (await mount({
+      project_id: projectId,
+      home,
+      config: { image },
+    }));
+  // The credential relay's directory: host-private. For a separate-uid
+  // project it is handed to the project user (see sidecar-handoff.ts).
+  let relayHandoff: Handoff | undefined;
+  const newRelayDirectory = async (): Promise<string> => {
+    if (runtime.mode !== "separate") {
+      return await mkdtemp(join(tmpdir(), "cocalc-acp-credential-"));
+    }
+    relayHandoff = await createHandoffDir(
+      await handoffParent(join(tmpdir(), "cocalc-sidecar-handoff")),
+      "acp-relay",
+    );
+    return relayHandoff.dir;
+  };
+  const handRelayOver = async (): Promise<void> => {
+    if (relayHandoff == null || runtime.mode !== "separate") return;
+    relayHandoff.entries.push(
+      join(relayHandoff.dir, "relay.sock"),
+      join(relayHandoff.dir, "token"),
+    );
+    await handOver(relayHandoff, runtime.innerUid);
+  };
   const name = `acp-${projectId}-${randomUUID()}`;
   let created = false;
   let stopped: Promise<void> | undefined;
@@ -227,10 +278,12 @@ export async function launchHarnessInProject(
           }),
         );
         await fundedRelay?.close();
-        if (credentialRelayDirectory)
+        if (relayHandoff != null) await cleanupHandoff(relayHandoff);
+        else if (credentialRelayDirectory)
           await rm(credentialRelayDirectory, { recursive: true, force: true });
       }
-      await unmount(projectId);
+      if (separateHandle != null) await separateHandle.release();
+      else await unmount(projectId);
     })().catch((error) => {
       stopped = undefined;
       throw error;
@@ -290,9 +343,7 @@ export async function launchHarnessInProject(
       ) {
         throw Error("Unsupported account credential binding");
       }
-      credentialRelayDirectory = await mkdtemp(
-        join(tmpdir(), "cocalc-acp-credential-"),
-      );
+      credentialRelayDirectory = await newRelayDirectory();
       credentialRelay = await createAnthropicAccountCredentialRelay({
         projectId,
         accountId,
@@ -304,6 +355,7 @@ export async function launchHarnessInProject(
         credentialRelay.token,
         { encoding: "utf8", mode: 0o600 },
       );
+      await handRelayOver();
     }
     if (credential.mode === "site-funded") {
       if (
@@ -313,9 +365,7 @@ export async function launchHarnessInProject(
       ) {
         throw Error("Unsupported site-funded credential binding");
       }
-      credentialRelayDirectory = await mkdtemp(
-        join(tmpdir(), "cocalc-acp-credential-"),
-      );
+      credentialRelayDirectory = await newRelayDirectory();
       fundedRelay = await createSiteFundedClaudeRelay({
         socketPath: join(credentialRelayDirectory, "relay.sock"),
       });
@@ -329,6 +379,7 @@ export async function launchHarnessInProject(
         fundedRelay.token,
         { encoding: "utf8", mode: 0o600 },
       );
+      await handRelayOver();
     }
     if (profile.version === 2 && profile.id === "claude-code") {
       // The sidecar shares the project's network namespace, so a project
@@ -349,21 +400,31 @@ export async function launchHarnessInProject(
       `${HARNESS_OWNER_LABEL}=${owner}`,
       "--label",
       `cocalc.project=${projectId}`,
-      `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
+      ...runtime.usernsArgs,
       "--user",
       `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
       // Preserve the project's existing network policy, not a new unrestricted network.
       `--network=container:project-${projectId}`,
       "--workdir",
       profile.cwd,
-      mountArg({ source: home, target: DEFAULT_PROJECT_RUNTIME_HOME }),
       mountArg({
-        source: projectSecretsHostPath(projectId),
+        source: separateHandle?.views.home ?? home,
+        target: DEFAULT_PROJECT_RUNTIME_HOME,
+      }),
+      mountArg({
+        source:
+          separateHandle?.views.secrets ?? projectSecretsHostPath(projectId),
         target: PROJECT_SECRETS_MOUNT_PATH,
         readOnly: true,
       }),
     ];
-    if (scratch) args.push(mountArg({ source: scratch, target: "/tmp" }));
+    if (scratch)
+      args.push(
+        mountArg({
+          source: separateHandle?.views.scratch ?? scratch,
+          target: "/tmp",
+        }),
+      );
     if (credentialRelayDirectory) {
       args.push(
         mountArg({
