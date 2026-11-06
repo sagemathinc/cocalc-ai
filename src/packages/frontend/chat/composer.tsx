@@ -44,6 +44,8 @@ import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import {
   hasUnboundAgentName,
   bindAgentName,
+  bindUnambiguousAgentNames,
+  isAmbiguousAgentName,
 } from "@cocalc/frontend/agents/unbound-mentions";
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { AgentFileAttachment } from "./agent-file-attachment";
@@ -472,7 +474,13 @@ export function ChatRoomComposer({
     }),
   });
   const pendingPreparation = useRef<
-    | { reference?: AgentMentionReference; value?: string; immediate?: boolean }
+    | {
+        reference?: AgentMentionReference;
+        value?: string;
+        // What was typed, before its names were bound (resolveTypedNames).
+        typed?: string;
+        immediate?: boolean;
+      }
     | undefined
   >(undefined);
   const [nameAfterPreparation, setNameAfterPreparation] = useState(false);
@@ -502,14 +510,19 @@ export function ChatRoomComposer({
    * Every send goes through the same checks: mentioned computers, then
    * mentioned agents, then that the draft is still the one approved.
    */
-  function sendChecked(effective: string, immediate: boolean) {
+  function sendChecked(
+    effective: string,
+    immediate: boolean,
+    typed: string = effective,
+  ) {
     return computerCheck.preflight(effective, () =>
       agentMentions.preflight(`${effective}\n${acpPrompt}`, () => {
+        // The editor shows what was typed, or the same draft with its
+        // names bound (resolveTypedNames), whichever it has rendered.
+        const editorDraft = chatInputControlRef.current?.getValue?.();
         if (
-          !approvedDraftIsCurrent({
-            approvedDraft: effective,
-            editorDraft: chatInputControlRef.current?.getValue?.(),
-          })
+          !approvedDraftIsCurrent({ approvedDraft: effective, editorDraft }) &&
+          !approvedDraftIsCurrent({ approvedDraft: typed, editorDraft })
         )
           throw new Error(
             "The draft changed during approval. Review it and press Send again.",
@@ -519,6 +532,19 @@ export function ChatRoomComposer({
         );
       }),
     );
+  }
+  /**
+   * A typed or pasted @name that only one agent has is bound on send: a
+   * reference is identity only, so there is nothing to choose. Names several
+   * agents share stay unbound, and sending asks for a pick.
+   */
+  function resolveTypedNames(typed: string): string {
+    const { value } = bindUnambiguousAgentNames(
+      typed,
+      agentMentions.agents.map(namedAgentReference),
+    );
+    if (value !== typed) setInput(value, composerSession);
+    return value;
   }
   /** A first message naming agents or computers needs its agent first. */
   function needsAgentThread(effective: string) {
@@ -536,7 +562,11 @@ export function ChatRoomComposer({
     setNameAfterPreparation(false);
     if (pending.reference) agentMentions.context.onSelect(pending.reference);
     else if (pending.value)
-      void sendChecked(pending.value, pending.immediate === true);
+      void sendChecked(
+        pending.value,
+        pending.immediate === true,
+        pending.typed ?? pending.value,
+      );
   }, [
     selectedThread?.key,
     agentMentions.context.onSelect,
@@ -558,15 +588,16 @@ export function ChatRoomComposer({
     (value?: string | { preventDefault?: () => void }) => {
       // Snapshot the same editor representation that the approval guard reads.
       // Debounced input and keyboard callbacks can differ in trailing newlines.
-      const effective =
+      const typed =
         chatInputControlRef.current?.getValue?.() ??
         (typeof value === "string" ? value : input);
-      if (!effective || !effective.trim()) return;
+      if (!typed || !typed.trim()) return;
+      const effective = resolveTypedNames(typed);
       if (needsAgentThread(effective)) {
-        void prepareAgentThread({ value: effective });
+        void prepareAgentThread({ value: effective, typed });
         return;
       }
-      void sendChecked(effective, false);
+      void sendChecked(effective, false, typed);
       setIsInputFocused(true);
       refocusComposerInput();
       if (isZenMode) {
@@ -584,21 +615,25 @@ export function ChatRoomComposer({
       selectedThread,
       isNewThreadCodex,
       acpPrompt,
+      agentMentions.agents,
+      setInput,
+      composerSession,
     ],
   );
 
   const handleSendImmediately = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
       if (!supportsLiveGuidance) return handleSend(value);
-      const effective =
+      const typed =
         chatInputControlRef.current?.getValue?.() ??
         (typeof value === "string" ? value : input);
-      if (!effective || !effective.trim()) return;
+      if (!typed || !typed.trim()) return;
+      const effective = resolveTypedNames(typed);
       if (needsAgentThread(effective)) {
-        void prepareAgentThread({ value: effective, immediate: true });
+        void prepareAgentThread({ value: effective, typed, immediate: true });
         return;
       }
-      void sendChecked(effective, true);
+      void sendChecked(effective, true, typed);
       setIsInputFocused(true);
       refocusComposerInput();
       if (isZenMode) {
@@ -619,6 +654,9 @@ export function ChatRoomComposer({
       selectedThread,
       isNewThreadCodex,
       acpPrompt,
+      agentMentions.agents,
+      setInput,
+      composerSession,
     ],
   );
   const handleFontSizeChange = useMemo(() => {
@@ -823,7 +861,13 @@ export function ChatRoomComposer({
             {computerCheck.ui}
             {(hasAgentControls || isNewThreadCodex) &&
               agentMentions.agents
-                .filter((agent) => hasUnboundAgentName(input, agent.name))
+                // Only a name several agents share needs a pick; one that
+                // a single agent has is bound on send.
+                .filter(
+                  (agent) =>
+                    hasUnboundAgentName(input, agent.name) &&
+                    isAmbiguousAgentName(agent.name, agentMentions.agents),
+                )
                 .map((agent) => (
                   <Button
                     key={agent.endpoint.agent_id}
