@@ -144,6 +144,7 @@ async function disposeMount(project_id: string): Promise<void> {
   } catch (err) {
     const e = `${err}`;
     if (e.includes("not mounted") || e.includes("no mount point")) {
+      idmapUids.delete(project_id);
       return;
     }
     logger.warn("unmount failed", { project_id, error: e });

@@ -105,12 +105,15 @@ import {
   gcProjectViews,
   hardenProjectDataRoot,
   mountProjectView,
+  noteRuntimeUidModeStatus,
   projectHasViews,
   projectViewPath,
   projectViewSource,
   PROJECT_VIEW_ROOT,
+  readMountinfo,
   runtimeIdentityForStart,
   umountProjectViews,
+  viewSourceMountFailures,
   type ProjectViewKind,
 } from "./runtime-host";
 import { keepIdUsernsArgs, type RuntimeIdentity } from "./runtime-identity";
@@ -2097,7 +2100,9 @@ async function separateIdentityForStart({
   const identity = await runtimeIdentityForStart({ sharedScratch });
   if (identity.mode !== "separate") return identity;
   const wrong: string[] = [];
+  const sources: string[] = [];
   const check = (kind: ProjectViewKind, path: string) => {
+    sources.push(path);
     if (path !== projectViewSource(project_id, kind)) {
       wrong.push(
         `${kind} ${path} is not ${projectViewSource(project_id, kind)}`,
@@ -2108,17 +2113,25 @@ async function separateIdentityForStart({
   if (scratch) check("scratch", scratch);
   check("secrets", projectSecretsHostPath(project_id));
   check("browser-run", projectBrowserRunHostPath(project_id));
+  // the views keep their sources' mount flags: no setuid files, no devices
+  try {
+    wrong.push(...viewSourceMountFailures(await readMountinfo(), sources));
+  } catch (err) {
+    wrong.push(`cannot read mountinfo: ${err}`.slice(0, 200));
+  }
   if (wrong.length === 0) return identity;
   const status = {
     configured: identity.status.configured,
     effective: "keep-id" as const,
     reason: "host-unsafe" as const,
-    detail: wrong.join("; "),
+    detail: wrong.join("; ").slice(0, 500),
   };
   logger.warn("separate runtime uid not used for this start", {
     project_id,
     ...status,
   });
+  // health shows what this start did, not the host-wide decision
+  noteRuntimeUidModeStatus(status);
   return {
     mode: "keep-id",
     usernsArgs: keepIdUsernsArgs(),

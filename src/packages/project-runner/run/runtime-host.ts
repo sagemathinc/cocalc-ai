@@ -15,8 +15,9 @@ for it.
 - hostPreconditions() reads the host's state (stat and mountinfo only) and
   lists what isn't safe; any failure keeps the start on keep-id.
 
-Both are cached briefly: they change only when the host's helpers or rootless
-namespace change, and a start must not pay for them every time.
+The helper's capabilities and the live map are cached briefly: they change
+only when the host's helpers or rootless namespace change, and a start must
+not pay for them every time. The preconditions are checked on every start.
 */
 
 import { lstat, readFile } from "node:fs/promises";
@@ -133,6 +134,8 @@ export function parseMountinfo(text: string): MountEntry[] {
 }
 
 // The mount that contains path: the longest mountpoint that is a prefix.
+// Of mounts stacked on one mountpoint, mountinfo lists the hidden ones first,
+// so the last one wins: it is the one in effect.
 export function mountFor(
   mounts: MountEntry[],
   path: string,
@@ -142,7 +145,7 @@ export function mountFor(
     const prefix = m.mountpoint === "/" ? "/" : `${m.mountpoint}/`;
     if (
       (path === m.mountpoint || path.startsWith(prefix)) &&
-      (best == null || m.mountpoint.length > best.mountpoint.length)
+      (best == null || m.mountpoint.length >= best.mountpoint.length)
     ) {
       best = m;
     }
@@ -158,8 +161,48 @@ export interface HostState {
   >;
   mountinfo: () => Promise<string>;
   runtimeGid: number;
-  // where the shared scratch dir of this host is, if it has one
+  // where the shared scratch dir of this host is, if projects mount it
   sharedScratch?: string;
+  // where a shared scratch dir may be (the default and the configured path),
+  // whether or not projects mount it: it lies outside the hardened data root
+  sharedScratchPaths?: string[];
+}
+
+// Where shared scratch is or may be on this host, enabled or not.
+export function sharedScratchPaths(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const paths = new Set(["/mnt/cocalc-scratch"]);
+  const configured = `${env.COCALC_SHARED_SCRATCH_HOST_MOUNT ?? ""}`.trim();
+  if (configured.startsWith("/")) paths.add(configured);
+  return [...paths];
+}
+
+/**
+ * Mounts of a project's view sources that would let setuid files or device
+ * nodes through: each must be on a nosuid,nodev mount.
+ */
+export function viewSourceMountFailures(
+  mountinfo: string,
+  sources: string[],
+): string[] {
+  const mounts = parseMountinfo(mountinfo);
+  const failures: string[] = [];
+  for (const source of sources) {
+    const mount = mountFor(mounts, source);
+    for (const option of ["nosuid", "nodev"]) {
+      if (!mount?.options.includes(option)) {
+        failures.push(
+          `${source} is on ${mount?.mountpoint ?? "no mount"}, not mounted ${option}`,
+        );
+      }
+    }
+  }
+  return failures;
+}
+
+export async function readMountinfo(): Promise<string> {
+  return await readFile("/proc/self/mountinfo", "utf8");
 }
 
 /**
@@ -179,8 +222,13 @@ export async function checkHostPreconditions(
       // the helper creates it, with these ids and mode, at the first mount
       return;
     }
-    if (info == null || !info.isDirectory) {
+    if (info == null) {
       failures.push(`${path} is missing`);
+      return;
+    }
+    // stat is lstat: a symlink is not a directory either
+    if (!info.isDirectory) {
+      failures.push(`${path} is not a directory`);
       return;
     }
     const mode = info.mode & 0o7777;
@@ -223,9 +271,20 @@ export async function checkHostPreconditions(
       failures.push(`${PROJECT_DATA_ROOT} is not mounted ${option}`);
     }
   }
-  // Shared scratch has no safe view yet: separate mode needs it absent.
+  // Shared scratch has no safe view yet: separate mode needs it absent, on
+  // the host and not only in the projects' configuration.
   if (host.sharedScratch) {
     failures.push(`shared scratch ${host.sharedScratch} has no project view`);
+  }
+  for (const path of host.sharedScratchPaths ?? []) {
+    const mounted = mounts.some(
+      (m) => m.mountpoint === path || m.mountpoint.startsWith(`${path}/`),
+    );
+    if (mounted || (await host.stat(path)) != null) {
+      failures.push(
+        `shared scratch ${path} ${mounted ? "is mounted" : "exists"} outside ${PROJECT_DATA_ROOT}`,
+      );
+    }
   }
   return failures;
 }
@@ -244,14 +303,42 @@ async function statHost(path: string) {
   }
 }
 
-let cached:
-  | { at: number; key: string; identity: Promise<RuntimeIdentity> }
-  | undefined;
+// The helper's capabilities and the live rootless map change only when the
+// host's helpers or its rootless namespace do, so each is cached for CACHE_MS
+// (5 minutes): a helper upgrade or a new map can take that long to be seen.
+// A failed read isn't kept. The host's safety preconditions are cheap and
+// are checked on every start, never cached.
+class Cached<T> {
+  private entry?: { at: number; value: Promise<T> };
+
+  get(load: () => Promise<T>): Promise<T> {
+    if (this.entry == null || Date.now() - this.entry.at > CACHE_MS) {
+      const entry = { at: Date.now(), value: load() };
+      this.entry = entry;
+      entry.value.catch(() => {
+        if (this.entry === entry) this.entry = undefined;
+      });
+    }
+    return this.entry.value;
+  }
+
+  clear(): void {
+    this.entry = undefined;
+  }
+}
+
+const cachedProbe = new Cached<string | undefined>();
+const cachedMaps = new Cached<{ uidMap: string; gidMap: string }>();
 let lastStatus: RuntimeUidModeStatus | undefined;
 
 /** The last decision, for health and the heartbeat. */
 export function runtimeUidModeStatus(): RuntimeUidModeStatus | undefined {
   return lastStatus;
+}
+
+/** A start that overrode the host's decision (see podman.ts) says so here. */
+export function noteRuntimeUidModeStatus(status: RuntimeUidModeStatus): void {
+  lastStatus = status;
 }
 
 // Sidecar launch paths (sandbox exec, browsers, ...) still run as keep-id
@@ -262,19 +349,25 @@ export interface RuntimeUidModeReport extends RuntimeUidModeStatus {
   label: string;
 }
 
+/** How health shows a decision: never plain "separate" while partial. */
+export function runtimeUidModeLabel(
+  status: RuntimeUidModeStatus,
+  sidecarsSeparate = SIDECARS_SEPARATE,
+): string {
+  if (status.effective === "separate") {
+    return sidecarsSeparate ? "separate" : "separate (partial)";
+  }
+  if (status.configured !== "keep-id") {
+    return `keep-id (fallback: ${status.reason ?? "unknown"})`;
+  }
+  return "keep-id";
+}
+
 /** For the heartbeat: null until the first project start decides. */
 export function runtimeUidModeReport(): RuntimeUidModeReport | null {
   const status = lastStatus;
   if (status == null) return null;
-  let label: string;
-  if (status.effective === "separate") {
-    label = SIDECARS_SEPARATE ? "separate" : "separate (partial)";
-  } else if (status.configured !== "keep-id") {
-    label = `keep-id (fallback: ${status.reason ?? "unknown"})`;
-  } else {
-    label = "keep-id";
-  }
-  return { ...status, label };
+  return { ...status, label: runtimeUidModeLabel(status) };
 }
 
 /**
@@ -289,8 +382,30 @@ export async function gcProjectViews(keep: string[]): Promise<void> {
 }
 
 export function clearRuntimeIdentityCache(): void {
-  cached = undefined;
+  cachedProbe.clear();
+  cachedMaps.clear();
 }
+
+// What a decision reads from the host (replaced in tests).
+export interface RuntimeHostInputs {
+  helperProbe: () => Promise<string | undefined>;
+  liveMaps: () => Promise<{ uidMap: string; gidMap: string }>;
+  harden: () => Promise<void>;
+  host: (sharedScratch?: string) => HostState;
+}
+
+const HOST_INPUTS: RuntimeHostInputs = {
+  helperProbe,
+  liveMaps,
+  harden: async () => await hardenProjectDataRoot(),
+  host: (sharedScratch) => ({
+    stat: statHost,
+    mountinfo: readMountinfo,
+    runtimeGid: process.getgid?.() ?? -1,
+    sharedScratch,
+    sharedScratchPaths: sharedScratchPaths(),
+  }),
+};
 
 /**
  * Keep-id or separate for the next start. Fallbacks are warned on every start
@@ -298,41 +413,25 @@ export function clearRuntimeIdentityCache(): void {
  */
 export async function runtimeIdentityForStart({
   sharedScratch,
+  inputs = HOST_INPUTS,
 }: {
   sharedScratch?: string;
+  inputs?: RuntimeHostInputs;
 } = {}): Promise<RuntimeIdentity> {
-  const key = `${process.env.COCALC_PROJECT_RUNTIME_UID_MODE ?? ""}|${sharedScratch ?? ""}`;
-  if (
-    cached == null ||
-    cached.key !== key ||
-    Date.now() - cached.at > CACHE_MS
-  ) {
-    const identity = resolveRuntimeIdentity({
-      helperProbe,
-      liveMaps,
-      hostPreconditions: async () => {
-        // The data root's hardening comes first (idempotent, and harmless
-        // for keep-id starts), so a host can get to separate at all.
-        try {
-          await hardenProjectDataRoot();
-        } catch (err) {
-          return [`project-view harden failed: ${`${err}`.slice(0, 200)}`];
-        }
-        return await checkHostPreconditions({
-          stat: statHost,
-          mountinfo: async () => await readFile("/proc/self/mountinfo", "utf8"),
-          runtimeGid: process.getgid?.() ?? -1,
-          sharedScratch,
-        });
-      },
-    });
-    cached = { at: Date.now(), key, identity };
-    // a failed resolution must not stick
-    identity.catch(() => {
-      if (cached?.identity === identity) cached = undefined;
-    });
-  }
-  const identity = await cached.identity;
+  const identity = await resolveRuntimeIdentity({
+    helperProbe: () => cachedProbe.get(inputs.helperProbe),
+    liveMaps: () => cachedMaps.get(inputs.liveMaps),
+    hostPreconditions: async () => {
+      // The data root's hardening comes first (idempotent, and harmless
+      // for keep-id starts), so a host can get to separate at all.
+      try {
+        await inputs.harden();
+      } catch (err) {
+        return [`project-view harden failed: ${`${err}`.slice(0, 200)}`];
+      }
+      return await checkHostPreconditions(inputs.host(sharedScratch));
+    },
+  });
   lastStatus = identity.status;
   if (identity.status.configured !== "keep-id" && identity.mode === "keep-id") {
     logger.warn(

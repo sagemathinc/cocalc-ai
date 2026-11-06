@@ -99,6 +99,33 @@ jest.mock("./rootfs", () => ({
   unmountAll: (...args: any[]) => mockUnmountAll(...args),
 }));
 
+// Separate-runtime-uid starts: the host's decision, the helper's views and
+// the view sources are replaced here; everything else is the real module.
+let mockRuntimeIdentity: any;
+let mockViewSources: Record<string, string> | undefined;
+let mockMountinfo: string | undefined;
+const mockMountProjectView = jest.fn();
+const mockHardenProjectDataRoot = jest.fn(async () => {});
+const mockProjectHasViews = jest.fn(async () => false);
+const mockUmountProjectViews = jest.fn(async () => {});
+
+jest.mock("./runtime-host", () => {
+  const actual = jest.requireActual("./runtime-host");
+  return {
+    ...actual,
+    projectViewSource: (project_id: string, kind: string) =>
+      mockViewSources?.[kind] ?? actual.projectViewSource(project_id, kind),
+    readMountinfo: async () => mockMountinfo ?? (await actual.readMountinfo()),
+    runtimeIdentityForStart: async (...args: any[]) =>
+      mockRuntimeIdentity ?? (await actual.runtimeIdentityForStart(...args)),
+    mountProjectView: (...args: any[]) => mockMountProjectView(...args),
+    hardenProjectDataRoot: (...args: any[]) =>
+      mockHardenProjectDataRoot(...args),
+    projectHasViews: (...args: any[]) => mockProjectHasViews(...args),
+    umountProjectViews: (...args: any[]) => mockUmountProjectViews(...args),
+  };
+});
+
 jest.mock("./limits", () => ({
   podmanLimits: (...args: any[]) => mockPodmanLimits(...args),
   projectCgroupLimitsFromPodmanArgs: (...args: any[]) =>
@@ -116,6 +143,8 @@ jest.mock("./conat-client", () => ({
 
 import getPort from "@cocalc/backend/get-port";
 import { mountArg } from "@cocalc/backend/podman";
+import { mount as mountRootFs } from "./rootfs";
+import { projectViewPath, runtimeUidModeReport } from "./runtime-host";
 import {
   mkdir,
   mkdtemp,
@@ -138,6 +167,7 @@ import {
   refreshProjectSecretsHostPath,
   resolveHostContainersInternalAddress,
   podmanRuntimeArgs,
+  projectBrowserRunHostPath,
   redactConfigurationForLog,
   start,
   state,
@@ -1233,6 +1263,140 @@ describe("project-runner podman orphan fallback", () => {
     ).rejects.toThrow(
       "shared scratch is enabled but host mount /tmp/missing-scratch-11111111-1111-4111-8111-111111111111 does not exist",
     );
+  });
+
+  describe("with a separate runtime uid", () => {
+    const P = 1073741824;
+    const SEPARATE_ARGS = ["--uidmap=0:1:2001", "--uidmap=2001:4194305:1"];
+    const separate = {
+      mode: "separate",
+      uid: P,
+      gid: P,
+      usernsArgs: SEPARATE_ARGS,
+      status: { configured: "separate", effective: "separate" },
+    };
+    const home = `/tmp/project-${project1}`;
+    const SAFE =
+      "22 1 8:1 / / rw,nosuid,nodev,relatime shared:1 - ext4 /dev/sda1 rw";
+    const raw = () => [
+      home,
+      projectSecretsHostPath(project1),
+      projectBrowserRunHostPath(project1),
+    ];
+
+    beforeEach(() => {
+      mockRuntimeIdentity = separate;
+      mockViewSources = {
+        home,
+        secrets: projectSecretsHostPath(project1),
+        "browser-run": projectBrowserRunHostPath(project1),
+      };
+      mockMountinfo = SAFE;
+      mockMountProjectView.mockImplementation(async ({ project_id, kind }) =>
+        projectViewPath(project_id, kind),
+      );
+      mockProjectHasViews.mockResolvedValue(false);
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+    });
+
+    afterEach(() => {
+      mockRuntimeIdentity = undefined;
+      mockViewSources = undefined;
+      mockMountinfo = undefined;
+    });
+
+    const startProject = async () => {
+      mockProjectStartPodman(project1);
+      await start({
+        project_id: project1,
+        localPath: async () => ({ home }),
+        config: { image: "docker.io/library/ubuntu:latest" },
+      });
+    };
+    const sources = () =>
+      (mountArg as jest.Mock).mock.calls.map(([arg]) => arg.source);
+    const createArgs = (): string[] =>
+      mockPodman.mock.calls
+        .map(([args]) => args as string[])
+        .find((args) => args.includes("--name"))!;
+
+    it("hands Podman only the views, the idmapped rootfs and the separate map", async () => {
+      process.env.COCALC_SHARED_SCRATCH_ENABLED = "1";
+      process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT = "/";
+      await startProject();
+
+      expect(mockHardenProjectDataRoot).toHaveBeenCalled();
+      for (const kind of ["home", "secrets", "browser-run"]) {
+        expect(mockMountProjectView).toHaveBeenCalledWith({
+          project_id: project1,
+          kind,
+          uid: P,
+        });
+        expect(sources()).toContain(projectViewPath(project1, kind));
+      }
+      expect(mountArg).toHaveBeenCalledWith({
+        source: projectViewPath(project1, "secrets"),
+        target: expect.any(String),
+        readOnly: true,
+      });
+      // no raw project dir and no shared scratch reaches the container
+      for (const path of raw()) expect(sources()).not.toContain(path);
+      expect(mountArg).not.toHaveBeenCalledWith(
+        expect.objectContaining({ target: "/scratch" }),
+      );
+      expect(mountRootFs).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: project1, idmapUid: P }),
+      );
+      const args = createArgs();
+      expect(args).toEqual(expect.arrayContaining(SEPARATE_ARGS));
+      expect(args.some((a) => `${a}`.startsWith("--userns=keep-id"))).toBe(
+        false,
+      );
+    });
+
+    it("falls back to keep-id, visibly, when a source is not where the helper takes it", async () => {
+      mockViewSources!.home = "/mnt/cocalc/elsewhere";
+      await startProject();
+
+      expect(mockMountProjectView).not.toHaveBeenCalled();
+      expect(sources()).toContain(home);
+      expect(mountRootFs).toHaveBeenCalledWith(
+        expect.objectContaining({ idmapUid: undefined }),
+      );
+      const args = createArgs();
+      expect(args.some((a) => `${a}`.startsWith("--userns=keep-id"))).toBe(
+        true,
+      );
+      expect(args).not.toEqual(expect.arrayContaining(SEPARATE_ARGS));
+      expect(runtimeUidModeReport()?.label).toBe(
+        "keep-id (fallback: host-unsafe)",
+      );
+    });
+
+    it("falls back to keep-id when a view source's mount allows setuid", async () => {
+      mockMountinfo = SAFE.replace("rw,nosuid,nodev,relatime", "rw,relatime");
+      await startProject();
+
+      expect(mockMountProjectView).not.toHaveBeenCalled();
+      expect(
+        createArgs().some((a) => `${a}`.startsWith("--userns=keep-id")),
+      ).toBe(true);
+      expect(runtimeUidModeReport()).toMatchObject({
+        reason: "host-unsafe",
+        detail: expect.stringContaining("not mounted nosuid"),
+      });
+    });
+
+    it("takes the views and the idmapped rootfs down at stop", async () => {
+      noBrowserContainers();
+      mockProjectHasViews.mockResolvedValue(true);
+      await stop({ project_id: project1 });
+
+      expect(mockUnmountAll).toHaveBeenCalledWith(project1, {
+        immediate: true,
+      });
+      expect(mockUmountProjectViews).toHaveBeenCalledWith(project1);
+    });
   });
 
   it("materializes project secrets as private runtime files", async () => {
