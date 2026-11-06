@@ -48,9 +48,12 @@ export function initDatabase(options: DatabaseOptions = {}): SqliteDatabase {
     ensureDirectory(filename);
   }
   db = new DatabaseSync(filename) as unknown as SqliteDatabase;
+  // First, so every statement below (switching to WAL takes a lock) waits for
+  // another connection's lock instead of failing at once with "database is
+  // locked".
+  db.exec("PRAGMA busy_timeout=5000");
   db.exec("PRAGMA journal_mode=WAL");
   db.exec("PRAGMA synchronous=NORMAL");
-  db.exec("PRAGMA busy_timeout=5000");
   // Checkpoints fsync; keep them off the event loop.
   if (deferWalCheckpoints(db, filename, { label: "lite-hub" })) {
     dbFilename = filename;
