@@ -387,16 +387,18 @@ describe("a patch whose parent is not in the stream", () => {
       const { project_id, path } = await setup(lostParent);
       setSnapshotsBlockedLimits({ boundMs: 0 });
       const s3 = await open(project_id, path);
+      const snapshots = () =>
+        ((s3 as any).dstream().getAll() ?? []).filter((m) => m?.is_snapshot)
+          .length;
+      // (counted before the edits: each commit already runs the check, so the
+      // snapshot can be made by one of them)
+      const before = snapshots();
       await s3.set_snapshot_interval(1);
       for (let i = 0; i < 4; i++) {
         s3.from_str(`${s3.to_str()}x${i}\n`);
         s3.commit();
         await s3.save();
       }
-      const snapshots = () =>
-        ((s3 as any).dstream().getAll() ?? []).filter((m) => m?.is_snapshot)
-          .length;
-      const before = snapshots();
       // (throttled: the commits above already called it)
       (s3 as any).snapshotIfNecessary();
       await (s3 as any).snapshotIfNecessary.flush();

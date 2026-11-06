@@ -631,6 +631,13 @@ export function historyGap(
   };
 }
 
+// Why a snapshot without the waiting patches was held back (see
+// snapshotTimeCoveringValueHeads).
+export type SnapshotHeldBackReason =
+  | "no dominating head"
+  | "head value differs from its hash"
+  | "head not stored yet";
+
 export interface LoadedStartSnapshot {
   // patch times proven to be ancestors of the loaded snapshot's patch;
   // undefined for a snapshot written before snapshot_ancestors
@@ -2751,6 +2758,10 @@ export class SyncDoc extends EventEmitter {
 
     this.emit("close");
 
+    if (this.recheckSnapshotTimer != null) {
+      clearTimeout(this.recheckSnapshotTimer);
+      this.recheckSnapshotTimer = undefined;
+    }
     this.stopBackendFsWatch();
     this.client.removeListener("closed", this.close);
     if (this.useConat && this.patches_table != null) {
@@ -3895,6 +3906,189 @@ export class SyncDoc extends EventEmitter {
   private wholeHistoryLoadAttempted = false;
   private wholeHistoryLoadedWithinLimits = false;
 
+  // A snapshot made without the patches that wait on missing history (see
+  // snapshotDespiteMissingHistory) must be of a patch that has every value
+  // head as an ancestor: the single value head, once the heads have been
+  // merged. Value heads are what every client commits on (the waiting patches
+  // are left out of them, and of every value), so later patches build only on
+  // the snapshot's patch or its descendants. A snapshot of any other patch
+  // (e.g. the interval candidate) leaves a concurrent head outside what it
+  // covers; the next patch that merges that head then has a parent a client
+  // opening the document from the snapshot does not have, so it loads older
+  // history, reaches the patch that is not in the stream, and loads the whole
+  // history on every open. The whole history is loaded here, so these are
+  // the value heads of the whole stream.
+  private snapshotTimeCoveringValueHeads = ():
+    | { time: PatchId; reason?: undefined }
+    | { time?: undefined; reason: SnapshotHeldBackReason } => {
+    const session = this.patchflowSession as any;
+    if (session == null) return { reason: "no dominating head" };
+    // Value heads only: raw heads include the waiting patches, which nobody
+    // commits on, so they would never converge.
+    let heads: PatchId[];
+    try {
+      if (typeof session.graph?.getValueHeads !== "function") {
+        return { reason: "no dominating head" };
+      }
+      heads = session.graph.getValueHeads();
+    } catch {
+      return { reason: "no dominating head" };
+    }
+    if (!Array.isArray(heads) || heads.length !== 1) {
+      return { reason: "no dominating head" };
+    }
+    const head = heads[0];
+    // the head's value must be its author's (otherwise wait for a later one)
+    if (snapshotTimeAvoidingMismatch(session, head) !== head) {
+      return { reason: "head value differs from its hash" };
+    }
+    // a patch just committed here may not be in the stream yet: a snapshot
+    // must name a stored patch (the next check finds it stored)
+    if (!this.isStoredPatch(head)) return { reason: "head not stored yet" };
+    return { time: head };
+  };
+
+  // Whether the patch is in the stream with its sequence number (as
+  // conatSnapshotSeqInfo needs), not only listed locally while being saved.
+  private isStoredPatch = (time: PatchId): boolean => {
+    const dstream = this.dstream() as any;
+    const all = dstream?.getAll?.() ?? [];
+    for (let i = 0; i < all.length; i++) {
+      const mesg = all[i];
+      if (mesg?.is_snapshot || `${mesg?.time}` !== `${time}`) continue;
+      return typeof dstream.seq?.(i) === "number";
+    }
+    return false;
+  };
+
+  // Whether the newest snapshot leaves out a patch that a client opening the
+  // document from it needs: a patch stored after the snapshot's patch has a
+  // parent that is stored before it and is not its ancestor, so that client
+  // loads older history for it (and, past a parent that is not in the stream,
+  // the whole history). A parent that is not in the stream at all doesn't
+  // count: no snapshot can supply it. Needs the whole history loaded (the
+  // gated path only). The ancestors are computed once per newest snapshot.
+  private uncoveredCheck?: { time: string; ancestors: Set<string> };
+  private newestSnapshotUncovered = (): boolean => {
+    const graph = (this.patchflowSession as any)?.graph;
+    const dstream = this.dstream() as any;
+    if (graph?.ancestry == null || dstream?.getAll == null) return false;
+    const all: any[] = dstream.getAll() ?? [];
+    let newest: any;
+    for (const mesg of all) {
+      if (mesg?.is_snapshot && typeof mesg?.seq_info?.seq === "number") {
+        if (newest == null || mesg.seq_info.seq > newest.seq_info.seq) {
+          newest = mesg;
+        }
+      }
+    }
+    if (newest == null) return false;
+    const time = `${newest.time}`;
+    const start = newest.seq_info.seq;
+    if (this.uncoveredCheck?.time !== time) {
+      let ancestors: Set<string>;
+      try {
+        ancestors = graph.ancestry([time])?.times ?? new Set<string>();
+      } catch {
+        return false;
+      }
+      this.uncoveredCheck = { time, ancestors };
+    }
+    const { ancestors } = this.uncoveredCheck;
+    // stored patches by position; the parents of those after the snapshot's
+    // patch, and of local ones not stored yet (they will be after it too)
+    const seqOf = new globalThis.Map<string, number>();
+    const after: unknown[][] = [];
+    for (let i = 0; i < all.length; i++) {
+      const mesg = all[i];
+      if (mesg?.is_snapshot) continue;
+      const seq = dstream.seq?.(i);
+      const parents = Array.isArray(mesg?.parents) ? mesg.parents : [];
+      if (typeof seq === "number") {
+        seqOf.set(`${mesg.time}`, seq);
+        if (seq >= start) after.push(parents);
+      } else {
+        after.push(parents);
+      }
+    }
+    for (const parents of after) {
+      for (const parent of parents) {
+        const id = `${parent}`;
+        const parentSeq = seqOf.get(id);
+        if (parentSeq != null && parentSeq < start && !ancestors.has(id)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // A head just committed here is stored a moment later, and the check runs
+  // only on commits and remote patches: look again once it should be stored.
+  private recheckSnapshotTimer?: ReturnType<typeof setTimeout>;
+  private recheckSnapshotSoon = (): void => {
+    if (this.recheckSnapshotTimer != null || this.isClosed()) return;
+    this.recheckSnapshotTimer = setTimeout(() => {
+      this.recheckSnapshotTimer = undefined;
+      if (this.isClosed()) return;
+      // now, not at the end of the throttle's window
+      this.snapshotIfNecessary();
+      void this.snapshotIfNecessary.flush();
+    }, 1_000);
+    (this.recheckSnapshotTimer as any).unref?.();
+  };
+
+  // Remote patches can be the merge that lets a held-back snapshot be made
+  // (another client's edit; this one may never edit, e.g. a host process
+  // after a restart that loaded the whole history while opening): check then
+  // too, but only while more history is needed (the throttled check is
+  // otherwise left to local commits, as before).
+  private snapshotAfterRemotePatches = (): void => {
+    if (
+      this.isClosed() ||
+      this.patchflowSession == null ||
+      this.get_state() !== "ready" ||
+      !(this.patchflowSession as any).needsMoreHistory?.()
+    ) {
+      return;
+    }
+    this.snapshotIfNecessary();
+  };
+
+  // Holding back for want of a single head must not go unnoticed (a document
+  // whose heads never converge would otherwise stop getting snapshots
+  // silently): emitted each time as "snapshot-held-back", and logged at most
+  // once per snapshotsBlockedBoundMs, with the number of value heads and about
+  // how many loaded patches come after the last loaded snapshot.
+  private lastSnapshotHeldBackLog = 0;
+  private reportSnapshotHeldBack = (reason: SnapshotHeldBackReason): void => {
+    let heads = 0;
+    let sinceSnapshot = 0;
+    try {
+      const session = this.patchflowSession as any;
+      heads = (session?.graph?.getValueHeads?.() ?? session?.getHeads?.() ?? [])
+        .length;
+      const patches = this.get_patches();
+      for (let i = patches.length - 1; i >= 0; i--) {
+        if (patches[i].is_snapshot) break;
+        sinceSnapshot += 1;
+      }
+    } catch {}
+    const info = {
+      project_id: this.project_id,
+      path: this.path,
+      reason,
+      heads,
+      patchesSinceSnapshot: sinceSnapshot,
+    };
+    this.emit("snapshot-held-back", info);
+    const now = Date.now();
+    if (now - this.lastSnapshotHeldBackLog >= snapshotsBlockedBoundMs) {
+      this.lastSnapshotHeldBackLog = now;
+      logger.warn("holding back a snapshot without the waiting patches", info);
+    }
+  };
+
   // Logs what a snapshot that was made while more history was still needed
   // leaves out (the durable record of it), and emits it as "history-gap".
   private reportHistoryGap = (time: PatchId): void => {
@@ -3952,7 +4146,7 @@ export class SyncDoc extends EventEmitter {
       this.snapshotsBlockedSince = undefined;
     }
     const candidate = this.patchflowSnapshotCandidate(interval, max_size);
-    const time =
+    let time =
       candidate == null
         ? undefined
         : snapshotTimeAvoidingMismatch(this.patchflowSession, candidate);
@@ -3961,6 +4155,26 @@ export class SyncDoc extends EventEmitter {
         candidate,
         time,
       });
+    }
+    if (withoutMissingHistory) {
+      // Due by the interval, or (whatever the interval) because the newest
+      // snapshot doesn't cover what is stored after it, so every client that
+      // opens the document from it loads the whole history.
+      if (time != null || this.newestSnapshotUncovered()) {
+        const covering = this.snapshotTimeCoveringValueHeads();
+        if (covering.time == null) {
+          dbg(
+            "not making a snapshot without the waiting patches",
+            covering.reason,
+          );
+          this.reportSnapshotHeldBack(covering.reason);
+          if (covering.reason === "head not stored yet") {
+            this.recheckSnapshotSoon();
+          }
+          return;
+        }
+        time = covering.time;
+      }
     }
     if (time != null) {
       dbg("yes, try to make a snapshot at time", time);
@@ -4470,12 +4684,14 @@ export class SyncDoc extends EventEmitter {
     }
     if (envs.length > 1 && this.applyPatchflowRemoteBatch(envs)) {
       this.loadHistoryIfNeeded();
+      this.snapshotAfterRemotePatches();
       return;
     }
     for (const env of envs) {
       onEnvelope(env);
     }
     this.loadHistoryIfNeeded();
+    this.snapshotAfterRemotePatches();
   };
 
   // A document is loaded from its latest snapshot and the patches after the
