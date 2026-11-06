@@ -26,11 +26,15 @@ async function upstreamServer(seen: Seen[]) {
     });
     request.resume();
     if (request.url?.startsWith("/v1/messages/slow")) return; // never answers
-    response.writeHead(200, {
-      "content-type": "application/json",
-      "anthropic-ratelimit-unified-5h-utilization": "0.1",
-    });
-    response.end(JSON.stringify({ ok: true }));
+    // this one answers after a while
+    const delay = request.url?.startsWith("/v1/messages/delay") ? 250 : 0;
+    setTimeout(() => {
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "anthropic-ratelimit-unified-5h-utilization": "0.1",
+      });
+      response.end(JSON.stringify({ ok: true }));
+    }, delay);
   });
   await new Promise<void>((resolve) =>
     server.listen(0, "127.0.0.1", () => resolve()),
@@ -392,7 +396,7 @@ describe("provider relay sessions on the project-reachable proxy", () => {
     );
   });
 
-  it("suspends a session idle too long, until the host renews it (B2)", async () => {
+  it("between turns, suspends a session idle too long, until the next turn (B2)", async () => {
     await withRelay({ idleMs: 100 }, async ({ session, seen }) => {
       const auth = { Authorization: `Bearer ${session.token}` };
       expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
@@ -402,9 +406,37 @@ describe("provider relay sessions on the project-reachable proxy", () => {
       await new Promise((r) => setTimeout(r, 160));
       expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
       expect(seen).toHaveLength(2);
-      session.renew();
+      // the next turn makes it usable again
+      session.beginTurn();
       expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
       expect(seen).toHaveLength(3);
+    });
+  });
+
+  it("is never idle during a turn, and idle again once it ends (B2)", async () => {
+    await withRelay({ idleMs: 100 }, async ({ session }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      session.beginTurn();
+      // a long tool run without a model request
+      await new Promise((r) => setTimeout(r, 160));
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      session.endTurn();
+      await new Promise((r) => setTimeout(r, 160));
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+      // a turn after the idle window works: the turn renews the session
+      session.beginTurn();
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+    });
+  });
+
+  it("counts the idle time from a request's end, not only its start (B2)", async () => {
+    await withRelay({ idleMs: 150 }, async ({ session }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      // answered after 250 ms, longer than the idle time
+      expect(await sendRaw(session.baseUrl, "/v1/messages/delay", auth)).toBe(
+        200,
+      );
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
     });
   });
 
@@ -421,11 +453,12 @@ describe("provider relay sessions on the project-reachable proxy", () => {
     });
   });
 
-  it("suspends a session at the end of its lifetime, ending what is in flight (B2)", async () => {
+  it("suspends a session at the end of its lifetime, even during a turn, ending what is in flight (B2)", async () => {
     await withRelay(
       { maxLifetimeMs: 300, idleMs: 60_000 },
       async ({ session, seen }) => {
         const auth = { Authorization: `Bearer ${session.token}` };
+        session.beginTurn();
         // the provider never answers this one: it is ended at the lifetime
         const started = Date.now();
         const inFlight = sendRaw(session.baseUrl, "/v1/messages/slow", auth);
@@ -434,13 +467,40 @@ describe("provider relay sessions on the project-reachable proxy", () => {
         expect(seen).toHaveLength(1);
         expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
         expect(seen).toHaveLength(1);
-        // a renewal starts a new lifetime
-        session.renew();
+        // the next turn starts a new lifetime
+        session.beginTurn();
         expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
-        // and a closed session can't be renewed
+        // and a closed session never comes back
         session.close();
-        session.renew();
+        session.beginTurn();
         expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+      },
+    );
+  });
+
+  it("sends nothing when the session is suspended while the credential is looked up (B2)", async () => {
+    let release!: (value: string) => void;
+    let asked!: () => void;
+    const lookingUp = new Promise<void>((resolve) => (asked = resolve));
+    await withRelay(
+      {
+        maxLifetimeMs: 100,
+        credentialValue: () =>
+          new Promise<string>((resolve) => {
+            release = resolve;
+            asked();
+          }),
+      },
+      async ({ session, seen }) => {
+        const status = sendRaw(session.baseUrl, "/v1/messages", {
+          Authorization: `Bearer ${session.token}`,
+        });
+        await lookingUp;
+        // the lifetime ends while the credential is looked up
+        await new Promise((r) => setTimeout(r, 150));
+        release("Bearer real-subscription-token");
+        expect(await status).not.toBe(200);
+        expect(seen).toHaveLength(0);
       },
     );
   });

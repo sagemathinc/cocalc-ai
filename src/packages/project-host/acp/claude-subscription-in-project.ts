@@ -14,10 +14,13 @@ CLAUDE_CODE_OAUTH_TOKEN set to a per-session relay token and
 ANTHROPIC_BASE_URL set to the host's project-reachable provider proxy
 (site-funded-proxy.ts), which swaps in the real token on each model request.
 With non-essential traffic off, model requests are all Claude Code sends
-(design: src/.agents/claude-subscription-in-project-2026-11-06.md).
+(design: "Running in the project" in
+src/.agents/claude-subscription-support-plan-2026-09-23.md).
 
 What project code can do while a session is open is use that session, as
-with the account API-key relay; never obtain the token.
+with the account API-key relay; never obtain the token. That includes the
+project's other collaborators: the user is to be warned before any turn in a
+project with other collaborators.
 */
 
 import { spawn, execFile } from "node:child_process";
@@ -410,12 +413,27 @@ export async function launchClaudeSubscriptionInProject(
       // Not the controller: a normal session in the project's cwd.
       sessionPolicy: "default",
       subscriptionAuth: "oauth-token",
-      beginConnectorTurn: (chat) => {
-        // each turn renews the relay session's bounded lifetime (B2)
-        relay.renew();
-        return lease.beginConnectorTurn(chat);
+      // The harness calls these around every turn of the qualified Claude
+      // Code harness (endConnectorTurn in its finally): each turn starts a
+      // new bounded lifetime for the relay session, and between turns an
+      // idle session is suspended (B2).
+      beginConnectorTurn: async (chat) => {
+        relay.beginTurn();
+        try {
+          return await lease.beginConnectorTurn(chat);
+        } catch (error) {
+          // the harness ends only turns that began
+          relay.endTurn();
+          throw error;
+        }
       },
-      endConnectorTurn: () => lease.endConnectorTurn(),
+      endConnectorTurn: async () => {
+        try {
+          await lease.endConnectorTurn();
+        } finally {
+          relay.endTurn();
+        }
+      },
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,

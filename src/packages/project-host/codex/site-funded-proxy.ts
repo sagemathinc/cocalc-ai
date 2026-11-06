@@ -431,10 +431,12 @@ export type ProviderRelaySession = {
   /** What the process sends as `Authorization: Bearer <token>`. */
   token: string;
   /**
-   * Makes a suspended session usable again, for another lifetime: the host
-   * calls it at the start of each turn (never the project).
+   * A turn starts (the host calls it, never the project): the session is
+   * usable again, for a new lifetime, and is not idle while the turn runs.
    */
-  renew(): void;
+  beginTurn(): void;
+  /** The turn ended: from now on an idle session is suspended. */
+  endTurn(): void;
   close(): void;
 };
 
@@ -443,10 +445,12 @@ A relay token is a bearer: anyone who obtains it can use the session, from
 any project on this host (the proxy listens on host loopback, and pasta or
 slirp4netns open each project connection anew from there, so the socket does
 not say which project sent it; unmeasured, from reading the network setup).
-So a session is usable only for a bounded time: it is suspended after
-RELAY_IDLE_MS without a request (none in flight), and RELAY_MAX_LIFETIME_MS
-after its last renewal, when its in-flight requests are ended too. A
-suspended session refuses every request until the host renews it.
+So a session is usable only for a bounded time: between turns it is
+suspended after RELAY_IDLE_MS without a request (none in flight), and in any
+case RELAY_MAX_LIFETIME_MS after the start of its latest turn, when its
+in-flight requests are ended too. During a turn only the lifetime applies (a
+tool may run for long without a model request). A suspended session refuses
+every request until the next turn begins.
 */
 export const RELAY_IDLE_MS = 15 * 60_000;
 export const RELAY_MAX_LIFETIME_MS = 6 * 60 * 60_000;
@@ -456,6 +460,8 @@ type RelaySession = {
   requests: Set<ClientRequest>;
   closed: boolean;
   suspended: boolean;
+  /** Between beginTurn and endTurn: never idle. */
+  inTurn: boolean;
   idleMs: number;
   maxLifetimeMs: number;
   lastUsed: number;
@@ -693,6 +699,7 @@ class SiteFundedCodexProxy {
       requests: new Set(),
       closed: false,
       suspended: false,
+      inTurn: false,
       idleMs,
       maxLifetimeMs,
       lastUsed: Date.now(),
@@ -702,8 +709,14 @@ class SiteFundedCodexProxy {
     return {
       baseUrl: `http://host.containers.internal:${port}`,
       token,
-      renew: () => {
-        if (!session.closed) startRelayLifetime(session);
+      beginTurn: () => {
+        if (session.closed) return;
+        startRelayLifetime(session);
+        session.inTurn = true;
+      },
+      endTurn: () => {
+        session.inTurn = false;
+        session.lastUsed = Date.now();
       },
       close: () => {
         session.closed = true;
@@ -741,6 +754,7 @@ class SiteFundedCodexProxy {
     if (!session || session.closed) return undefined;
     if (
       !session.suspended &&
+      !session.inTurn &&
       session.requests.size === 0 &&
       Date.now() - session.lastUsed > session.idleMs
     ) {
@@ -847,13 +861,19 @@ class SiteFundedCodexProxy {
       return;
     }
     if (relay) {
+      // the idle time counts from a request's end (its response to the
+      // project closing), not only its start
+      response.once("close", () => {
+        relay.lastUsed = Date.now();
+      });
       try {
         await forwardProviderRequest({
           request,
           response,
           policy: relay.policy,
           requests: relay.requests,
-          isClosed: () => relay.closed,
+          // suspended while the credential was looked up counts as closed
+          isClosed: () => relay.closed || relay.suspended,
         });
       } catch {
         request.resume();

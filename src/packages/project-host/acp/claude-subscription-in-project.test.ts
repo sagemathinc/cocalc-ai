@@ -449,7 +449,8 @@ describe("launchClaudeSubscriptionInProject", () => {
   let relay: {
     baseUrl: string;
     token: string;
-    renew: jest.Mock;
+    beginTurn: jest.Mock;
+    endTurn: jest.Mock;
     close: jest.Mock;
   };
   let lease: any;
@@ -466,7 +467,8 @@ describe("launchClaudeSubscriptionInProject", () => {
     relay = {
       baseUrl: "http://host.containers.internal:9301",
       token: "sk-ant-oat01-cocalc-RELAY",
-      renew: jest.fn(),
+      beginTurn: jest.fn(),
+      endTurn: jest.fn(),
       close: jest.fn(),
     };
     (startProviderRelaySession as jest.Mock).mockResolvedValue(relay);
@@ -558,15 +560,44 @@ describe("launchClaudeSubscriptionInProject", () => {
     }
   });
 
-  it("renews the relay session at each turn, before the turn's connector (B2)", async () => {
+  it("starts a relay turn with each turn, and ends it even when the connector's end fails (B2)", async () => {
     const proc = await launchClaudeSubscriptionInProject(binding, conversation);
-    expect(relay.renew).not.toHaveBeenCalled();
+    expect(relay.beginTurn).not.toHaveBeenCalled();
     const order: string[] = [];
-    relay.renew.mockImplementation(() => order.push("renew"));
+    relay.beginTurn.mockImplementation(() => order.push("relay begin"));
+    relay.endTurn.mockImplementation(() => order.push("relay end"));
     lease.beginConnectorTurn.mockImplementation(() => order.push("connector"));
+    lease.endConnectorTurn.mockImplementation(async () => {
+      order.push("connector end");
+    });
     await proc.beginConnectorTurn!({ path: "a.chat" } as any);
+    await proc.endConnectorTurn!();
+    lease.endConnectorTurn.mockImplementation(async () => {
+      order.push("connector end failed");
+      throw Error("revocation unconfirmed");
+    });
     await proc.beginConnectorTurn!({ path: "a.chat" } as any);
-    expect(order).toEqual(["renew", "connector", "renew", "connector"]);
+    await expect(proc.endConnectorTurn!()).rejects.toThrow("unconfirmed");
+    expect(order).toEqual([
+      "relay begin",
+      "connector",
+      "connector end",
+      "relay end",
+      "relay begin",
+      "connector",
+      "connector end failed",
+      "relay end",
+    ]);
+  });
+
+  it("ends the relay turn when the connector cannot begin (B2)", async () => {
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    lease.beginConnectorTurn.mockRejectedValue(Error("connector unavailable"));
+    await expect(
+      proc.beginConnectorTurn!({ path: "a.chat" } as any),
+    ).rejects.toThrow("connector unavailable");
+    expect(relay.beginTurn).toHaveBeenCalledTimes(1);
+    expect(relay.endTurn).toHaveBeenCalledTimes(1);
   });
 
   it("closes the relay when the adapter exits", async () => {
