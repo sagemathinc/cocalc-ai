@@ -190,8 +190,11 @@ export function claudeInProjectScript(pidFile: string): string {
  * Ends the adapter and everything it started (Claude Code, its shells and
  * MCP servers): TERM to the whole tree, then KILL. The tree comes from
  * /proc, which every project image has, and only if the recorded pid is
- * still the adapter. Everything runs as the project user, so the worst a
- * project can do by editing the pid file is stop its own processes.
+ * still the adapter. Each process is recorded with its start time (field 22
+ * of /proc/<pid>/stat) and signaled only while that still matches, so a pid
+ * reused by another process after an exit is never signaled. Everything runs
+ * as the project user, so the worst a project can do by editing the pid file
+ * is stop its own processes.
  */
 export function claudeInProjectStopScript(pidFile: string): string {
   return [
@@ -199,12 +202,15 @@ export function claudeInProjectStopScript(pidFile: string): string {
     `rm -f ${pidFile}`,
     'case "$p" in ""|*[!0-9]*) exit 0;; esac',
     `tr '\\000' ' ' < /proc/$p/cmdline 2>/dev/null | grep -q claude-agent-acp || exit 0`,
+    // The comm field may hold spaces and parentheses: count from the last ")".
+    'st() { s=$(cat /proc/$1/stat 2>/dev/null) || return 1; set -- ${s##*) }; echo "${20}"; }',
     'ppids=$(for d in /proc/[0-9]*; do while IFS=": \t" read -r k v; do if [ "$k" = PPid ]; then echo "${d#/proc/} $v"; break; fi; done 2>/dev/null < "$d/status"; done)',
     'tree() { echo "$1"; for c in $(echo "$ppids" | while read -r a b; do [ "$b" = "$1" ] && echo "$a"; done); do tree "$c"; done; }',
-    'pids=$(tree "$p")',
-    "kill -TERM $pids 2>/dev/null",
+    'procs=$(for q in $(tree "$p"); do t=$(st "$q") && echo "$q:$t"; done)',
+    'signal() { for e in $procs; do [ "$(st "${e%%:*}")" = "${e#*:}" ] && kill -"$1" "${e%%:*}" 2>/dev/null; done; true; }',
+    "signal TERM",
     "sleep 2",
-    "kill -KILL $pids 2>/dev/null",
+    "signal KILL",
     "exit 0",
   ].join("\n");
 }

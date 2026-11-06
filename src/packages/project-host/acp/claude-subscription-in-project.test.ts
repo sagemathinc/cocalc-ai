@@ -10,6 +10,8 @@ import {
   spawn as realSpawn,
 } from "node:child_process";
 import {
+  chmod,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -321,6 +323,49 @@ describe("in-project scripts", () => {
       adapter.kill("SIGKILL");
     }
   }, 20_000);
+
+  it("stop never signals a pid whose start time changed (pid reuse)", async () => {
+    const fake = jest.requireActual("node:child_process")
+      .spawn as typeof realSpawn;
+    // A comm with spaces and parentheses, to exercise the stat parsing.
+    const odd = join(root, "x) (y z");
+    await copyFile("/bin/sh", odd);
+    await chmod(odd, 0o755);
+    const other = fake(odd, ["-c", "while :; do sleep 1; done"], {
+      stdio: "ignore",
+    });
+    try {
+      await new Promise((r) => setTimeout(r, 100));
+      const helpers = claudeInProjectStopScript("/nonexistent")
+        .split("\n")
+        .filter((line) => /^(st|signal)\(\) /.test(line))
+        .join("\n");
+      expect(helpers.split("\n")).toHaveLength(2);
+      const stat = await readFile(`/proc/${other.pid}/stat`, "utf8");
+      const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+      const { stdout } = await run("/bin/sh", [
+        "-c",
+        `${helpers}\nst ${other.pid}`,
+      ]);
+      expect(stdout.trim()).toBe(start);
+      // Recorded with another start time: that pid is now someone else.
+      await run("/bin/sh", [
+        "-c",
+        `${helpers}\nprocs="${other.pid}:${Number(start) + 1}"\nsignal KILL`,
+      ]);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(alive(other.pid!)).toBe(true);
+      // The same process: signaled.
+      await run("/bin/sh", [
+        "-c",
+        `${helpers}\nprocs="${other.pid}:${start}"\nsignal KILL`,
+      ]);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(other.exitCode !== null || other.signalCode !== null).toBe(true);
+    } finally {
+      other.kill("SIGKILL");
+    }
+  });
 
   it("stop leaves a process that is not the adapter alone", async () => {
     const fake = jest.requireActual("node:child_process")
