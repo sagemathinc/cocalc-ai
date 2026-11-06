@@ -22,12 +22,12 @@ import {
 } from "./claude-pool";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { ClaudeUsageLimitWarning } from "./claude-credential-list";
+import { ClaudeSubscriptionSharingBanner } from "./claude-subscription-sharing";
 
 const CLAUDE_CREDENTIALS_EVENT = "cocalc:claude-credentials";
 const CLAUDE_CREDENTIALS_MAX_AGE_MS = 60_000;
 let claudeCredentials:
-  | { at: number; promise: Promise<ExternalCredentialInfo[]> }
-  | undefined;
+  { at: number; promise: Promise<ExternalCredentialInfo[]> } | undefined;
 
 /**
  * The account's Claude credentials (one list call, shared by every footer),
@@ -194,12 +194,20 @@ export function ClaudePaymentStatus({
       : undefined;
   const pool = !!readClaudePoolSelection({ accountId, projectId, threadKey });
   return (
-    <PaymentStatus
-      key={JSON.stringify([accountId, projectId, credential, pool])}
-      credentialId={credentialId}
-      mode={pool ? CLAUDE_POOL_VALUE : (credential?.mode ?? "project-secret")}
-      onConfigure={onConfigure}
-    />
+    <>
+      {(pool || credential?.mode === "account-subscription") && (
+        <ClaudeSubscriptionSharingBanner
+          accountId={accountId}
+          projectId={projectId}
+        />
+      )}
+      <PaymentStatus
+        key={JSON.stringify([accountId, projectId, credential, pool])}
+        credentialId={credentialId}
+        mode={pool ? CLAUDE_POOL_VALUE : (credential?.mode ?? "project-secret")}
+        onConfigure={onConfigure}
+      />
+    </>
   );
 }
 
