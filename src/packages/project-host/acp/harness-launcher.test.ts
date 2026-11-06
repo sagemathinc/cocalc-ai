@@ -540,7 +540,8 @@ describe("for a project with a separate runtime uid", () => {
     usernsArgs: ["--uidmap=0:1:2001", "--uidmap=2001:4194305:1"],
     status: { configured: "separate", effective: "separate" },
   };
-  const mockAttach = jest.fn(async (_name: string) => {});
+  const mockReserve = jest.fn(async (_name: string) => {});
+  const mockMarkLaunched = jest.fn(async () => {});
   const VIEWS = {
     home: "/run/cocalc/project-views/p/home",
     scratch: "/run/cocalc/project-views/p/scratch",
@@ -551,14 +552,17 @@ describe("for a project with a separate runtime uid", () => {
     mockSidecarRuntime.mockResolvedValue(SEPARATE);
     mockHandleRelease.mockReset();
     mockHandleRelease.mockResolvedValue(undefined);
-    mockAttach.mockReset();
-    mockAttach.mockResolvedValue(undefined);
+    mockReserve.mockReset();
+    mockReserve.mockResolvedValue(undefined);
+    mockMarkLaunched.mockReset();
+    mockMarkLaunched.mockResolvedValue(undefined);
     mockAcquire.mockReset();
     mockAcquire.mockResolvedValue({
       rootfs: "/run/cocalc/project-rootfs/p/root",
       views: VIEWS,
       mountViews: async () => {},
-      attach: mockAttach,
+      reserve: mockReserve,
+      markLaunched: mockMarkLaunched,
       release: mockHandleRelease,
     });
     mockHandOver.mockReset();
@@ -629,9 +633,17 @@ describe("for a project with a separate runtime uid", () => {
     expect(joined).not.toContain("mount:/scratch:");
     expect(args).toContain("/run/cocalc/project-rootfs/p/root");
     // its container is recorded with its holder before it is created (C1)
-    expect(mockAttach).toHaveBeenCalledTimes(1);
-    expect(mockAttach.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mockReserve).toHaveBeenCalledTimes(1);
+    expect(mockReserve.mock.calls[0][0]).toMatch(/^acp-/);
+    // reserved, created, marked launched, then started
+    expect(mockReserve.mock.invocationCallOrder[0]).toBeLessThan(
       mockExec.mock.invocationCallOrder[0],
+    );
+    expect(mockExec.mock.invocationCallOrder[0]).toBeLessThan(
+      mockMarkLaunched.mock.invocationCallOrder[0],
+    );
+    expect(mockMarkLaunched.mock.invocationCallOrder[0]).toBeLessThan(
+      mockSpawn.mock.invocationCallOrder.at(-1)!,
     );
     await handle.stop();
     expect(mockCleanupHandoff).toHaveBeenCalledTimes(1);
@@ -649,7 +661,8 @@ describe("for a project with a separate runtime uid", () => {
       rootfs: "/run/cocalc/project-rootfs/p/root",
       views: { home: VIEWS.home, scratch: VIEWS.scratch },
       mountViews: async () => {},
-      attach: mockAttach,
+      reserve: mockReserve,
+      markLaunched: mockMarkLaunched,
       release: mockHandleRelease,
     });
     await expect(launchHarnessInProject(binding)).rejects.toThrow(
@@ -659,17 +672,39 @@ describe("for a project with a separate runtime uid", () => {
     expect(mockHandleRelease).toHaveBeenCalledTimes(1);
   });
 
-  test("launches nothing when its holder was dropped before it attached (C1)", async () => {
+  test("launches nothing when its holder was dropped before it reserved (C1)", async () => {
     mockExec.mockClear();
-    mockAttach.mockRejectedValueOnce(
+    mockSpawn.mockClear();
+    mockReserve.mockRejectedValueOnce(
       new Error("this holder of the project's runtime was released"),
     );
     await expect(launchHarnessInProject(binding)).rejects.toThrow(
       "was released",
     );
     expect(mockExec).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
     // its (already dropped) holder is released, a no-op
     expect(mockHandleRelease).toHaveBeenCalledTimes(1);
+  });
+
+  test("starts nothing, and removes what it created, when marking it launched is refused (C1)", async () => {
+    mockExec.mockClear();
+    mockSpawn.mockClear();
+    mockMarkLaunched.mockRejectedValueOnce(
+      new Error("the project is being stopped; not launching"),
+    );
+    await expect(launchHarnessInProject(binding)).rejects.toThrow(
+      "being stopped",
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+    const calls = mockExec.mock.calls.map(([, args]) => args as string[]);
+    expect(calls[0]).toContain("create");
+    expect(calls.at(-1)).toEqual(expect.arrayContaining(["rm", "--force"]));
+    // released only after the removal
+    expect(mockHandleRelease).toHaveBeenCalledTimes(1);
+    expect(mockExec.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      mockHandleRelease.mock.invocationCallOrder[0],
+    );
   });
 
   test("stays on keep-id while the project runs keep-id", async () => {

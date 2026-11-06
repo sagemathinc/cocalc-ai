@@ -602,10 +602,14 @@ export interface SeparateRuntimeHandle {
   views: Partial<Record<ProjectViewKind, string>>;
   // more views for this holder (the start mounts its rootfs first)
   mountViews(kinds: ProjectViewKind[]): Promise<void>;
-  // The container this holder is about to launch, recorded before the
-  // launch: only a holder with one, proven gone, may be dropped by a stop.
-  // Refused once the holder was released or dropped: then don't launch.
-  attach(containerName: string): Promise<void>;
+  // C1, two steps. reserve: the name of the container this holder is about
+  // to create (one of this project's); a reserved holder is never dropped.
+  // markLaunched: once that container has been created, before it starts;
+  // only then may a stop drop the holder, and only by a proof begun after
+  // this. Both refuse once the holder was released or dropped: then don't
+  // create or start anything.
+  reserve(containerName: string): Promise<void>;
+  markLaunched(): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -619,9 +623,12 @@ const liveHandles = new Map<
       holder: SeparateHolderKind;
       release: () => Promise<void>;
       container?: string;
+      launchedAt?: number;
     }
   >
 >();
+// orders markLaunched against the start of a stop's proof
+let launchSeq = 0;
 
 // Projects being stopped: no new holder until the stop ends (R-d).
 const stoppingSeparate = new Set<string>();
@@ -635,18 +642,33 @@ export function reopenSeparateRuntime(project_id: string): void {
 }
 
 /**
- * Releases the holders of the given kinds that have launched a container,
- * for a stop that has proven all of the project's containers gone (so those
- * holders' sidecars are dead). A holder with no container yet is about to
- * launch one: it is never dropped.
+ * For a stop: proves all of the project's containers gone (proveGone; an
+ * error is no proof), then releases the holders of the given kinds whose
+ * container was created before the proof began, so their sidecars are dead
+ * and can't start. A holder only reserved (about to create its container),
+ * or marked launched after the proof began, is never dropped: the proof
+ * doesn't cover its container.
  */
 export async function dropHoldersProvenGone(
   project_id: string,
   kinds: SeparateHolderKind[],
+  proveGone: () => Promise<boolean>,
 ): Promise<number> {
+  const proofFrom = launchSeq;
+  let gone = false;
+  try {
+    gone = await proveGone();
+  } catch {
+    gone = false;
+  }
+  if (!gone) return 0;
   let dropped = 0;
   for (const entry of [...(liveHandles.get(project_id)?.values() ?? [])]) {
-    if (kinds.includes(entry.holder) && entry.container != null) {
+    if (
+      kinds.includes(entry.holder) &&
+      entry.launchedAt != null &&
+      entry.launchedAt <= proofFrom
+    ) {
       await entry.release();
       dropped += 1;
     }
@@ -785,22 +807,45 @@ export async function acquireSeparateRuntime({
       holder: SeparateHolderKind;
       release: () => Promise<void>;
       container?: string;
+      launchedAt?: number;
     } = { holder, release };
+    // under the rootfs lock: no launch step for a released holder, nor
+    // while the project's runtime is being stopped (R-d)
+    const mayLaunch = () => {
+      if (released) {
+        throw new Error(
+          "this holder of the project's runtime was released; not launching",
+        );
+      }
+      if (stoppingSeparate.has(project_id)) {
+        throw new Error(
+          "the project is being stopped; not launching (try again when it has)",
+        );
+      }
+    };
     live.set(id, entry);
     return {
       rootfs: merged,
       views,
-      attach: async (containerName) => {
+      reserve: async (containerName) => {
         if (!containerName.includes(project_id)) {
           throw new Error("a holder's container must be the project's");
         }
         await withRootfsLock(project_id, async () => {
-          if (released) {
-            throw new Error(
-              "this holder of the project's runtime was released; not launching",
-            );
+          mayLaunch();
+          if (entry.container != null) {
+            throw new Error("this holder already has a container");
           }
           entry.container = containerName;
+        });
+      },
+      markLaunched: async () => {
+        await withRootfsLock(project_id, async () => {
+          mayLaunch();
+          if (entry.container == null) {
+            throw new Error("this holder reserved no container");
+          }
+          entry.launchedAt = ++launchSeq;
         });
       },
       mountViews: async (more) => {

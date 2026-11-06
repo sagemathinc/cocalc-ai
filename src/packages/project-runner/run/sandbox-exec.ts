@@ -285,9 +285,10 @@ export async function sandboxExec({
         });
       }
 
-      // Build a one-off container run.
+      // Build a one-off container run. A separate project's is created,
+      // marked launched on its holder, then started (C1).
       args.push(
-        "run",
+        separateHandle != null ? "create" : "run",
         ...(await podmanRuntimeArgs()),
         "--cgroups=disabled",
         "--rm",
@@ -415,15 +416,31 @@ export async function sandboxExec({
       );
     }
 
-    // the holder records its container before the launch (and refuses if it
-    // was dropped meanwhile)
-    if (separateHandle != null && containerName != null) {
-      await separateHandle.attach(containerName);
-    }
     logger.debug("podman", argsJoin(args));
     // With Podman cgroups disabled, exec processes inherit the caller's
     // cgroup. Admit both run and exec launchers so no project command escapes.
-    const result = await runPodman(args, projectPoolPodmanLauncher(project_id));
+    const launcher = projectPoolPodmanLauncher(project_id);
+    let result: Awaited<ReturnType<typeof runPodman>>;
+    if (separateHandle != null && containerName != null) {
+      // C1: reserved (never droppable), created, marked launched (droppable
+      // only by a stop's proof begun after this), then started. A step
+      // refused (the holder dropped, or the project stopping) starts
+      // nothing, and what was created is removed before the release below.
+      await separateHandle.reserve(containerName);
+      try {
+        await createContainer(args, launcher);
+        await separateHandle.markLaunched();
+      } catch (err) {
+        await removeContainer(containerName);
+        throw err;
+      }
+      result = await runPodman(
+        ["start", "--attach", "--interactive", containerName],
+        launcher,
+      );
+    } else {
+      result = await runPodman(args, launcher);
+    }
     if (containerName && clientKilled) await removeContainer(containerName);
     return result;
   } finally {
@@ -436,6 +453,28 @@ export async function sandboxExec({
       await unmount(project_id);
     }
   }
+}
+
+/** Creates a separate project's one-off container (`podman create ...`). */
+async function createContainer(
+  args: string[],
+  launcher: ReturnType<typeof projectPoolPodmanLauncher>,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) =>
+    execFile(
+      launcher?.command ?? "podman",
+      launcher ? [...launcher.argsPrefix, ...args] : args,
+      { cwd: "/", timeout: 120_000, env: podmanEnv() },
+      (error, _stdout, stderr) =>
+        error
+          ? reject(
+              new Error(
+                `could not create the sandbox container: ${stderr || error.message}`,
+              ),
+            )
+          : resolve(),
+    ),
+  );
 }
 
 /** Best effort: a killed run's container is removed, never left behind. */

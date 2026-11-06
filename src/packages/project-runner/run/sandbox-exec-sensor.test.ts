@@ -242,7 +242,8 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     scratch: `/run/cocalc/project-views/${PROJECT}/scratch`,
   };
   const ROOTFS = `/run/cocalc/project-rootfs/${PROJECT}/root`;
-  const attachMock = jest.fn(async (_name: string) => {});
+  const reserveMock = jest.fn(async (_name: string) => {});
+  const markLaunchedMock = jest.fn(async () => {});
 
   beforeEach(() => {
     execFileMock
@@ -255,14 +256,17 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     releaseMock.mockResolvedValue(undefined);
     sidecarRuntimeMock.mockReset();
     sidecarRuntimeMock.mockResolvedValue(SEPARATE);
-    attachMock.mockReset();
-    attachMock.mockResolvedValue(undefined);
+    reserveMock.mockReset();
+    reserveMock.mockResolvedValue(undefined);
+    markLaunchedMock.mockReset();
+    markLaunchedMock.mockResolvedValue(undefined);
     acquireSeparateMock.mockReset();
     acquireSeparateMock.mockResolvedValue({
       rootfs: ROOTFS,
       views: VIEWS,
       mountViews: async () => {},
-      attach: attachMock,
+      reserve: reserveMock,
+      markLaunched: markLaunchedMock,
       release: releaseMock,
     });
   });
@@ -304,20 +308,53 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 
-  it("records its container with its holder before launching it (C1)", async () => {
+  it("reserves, creates, marks launched, then starts its container (C1)", async () => {
     await run();
-    expect(attachMock).toHaveBeenCalledTimes(1);
-    expect(attachMock.mock.calls[0][0]).toContain(PROJECT);
-    expect(attachMock.mock.invocationCallOrder[0]).toBeLessThan(
+    const calls = execFileMock.mock.calls.map(([, args]) => args as string[]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain("create");
+    expect(calls[0]).not.toContain("run");
+    const name = calls[0][calls[0].indexOf("--name") + 1];
+    expect(name).toContain(PROJECT);
+    expect(calls[1].slice(-4)).toEqual([
+      "start",
+      "--attach",
+      "--interactive",
+      name,
+    ]);
+    expect(reserveMock).toHaveBeenCalledWith(name);
+    const order = [
+      reserveMock.mock.invocationCallOrder[0],
       execFileMock.mock.invocationCallOrder[0],
+      markLaunchedMock.mock.invocationCallOrder[0],
+      execFileMock.mock.invocationCallOrder[1],
+    ];
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("creates nothing when reserving is refused (C1)", async () => {
+    reserveMock.mockRejectedValueOnce(
+      new Error("the project is being stopped; not launching"),
     );
-    // a holder dropped by a stop meanwhile: nothing is launched
-    execFileMock.mockClear();
-    attachMock.mockRejectedValueOnce(
+    await expect(run()).rejects.toThrow("being stopped");
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts nothing, and removes what it created, when marking it launched is refused (C1)", async () => {
+    markLaunchedMock.mockRejectedValueOnce(
       new Error("this holder of the project's runtime was released"),
     );
     await expect(run()).rejects.toThrow("was released");
-    expect(execFileMock).not.toHaveBeenCalled();
+    const calls = execFileMock.mock.calls.map(([, args]) => args as string[]);
+    expect(
+      calls.map((args) =>
+        args.find((a) => a === "create" || a === "start" || a === "rm"),
+      ),
+    ).toEqual(["create", "rm"]);
+    expect(execFileMock.mock.invocationCallOrder[1]).toBeLessThan(
+      releaseMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("refuses, never the raw dir, when its handle lacks a view", async () => {
@@ -325,7 +362,8 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
       rootfs: ROOTFS,
       views: { scratch: VIEWS.scratch },
       mountViews: async () => {},
-      attach: attachMock,
+      reserve: reserveMock,
+      markLaunched: markLaunchedMock,
       release: releaseMock,
     });
     await expect(run()).rejects.toThrow("no home view for this run");

@@ -312,42 +312,125 @@ describe("separate runtime holders", () => {
     );
   });
 
-  it("a stop drops only holders that launched a container, never one about to (C1)", async () => {
+  const proven = async () => true;
+
+  it("drops a holder whose created container a stop proved gone, and only that (C1)", async () => {
     const rootfs = await import("./rootfs");
     const launched = await acquire("sandbox", ["home"]);
-    await launched.attach(`sandbox-${PROJECT}-1`);
-    // acquired, but not yet attached: it is about to launch
-    const launching = await acquire("sandbox", ["home"]);
+    await launched.reserve(`sandbox-${PROJECT}-1`);
+    // (its container created)
+    await launched.markLaunched();
+    // reserved only: about to create its container
+    const reserved = await acquire("sandbox", ["home"]);
+    await reserved.reserve(`sandbox-${PROJECT}-2`);
+    // not even reserved
+    const fresh = await acquire("sandbox", ["home"]);
     expect(
-      await rootfs.dropHoldersProvenGone(PROJECT, ["sandbox", "codex"]),
+      await rootfs.dropHoldersProvenGone(PROJECT, ["sandbox", "codex"], proven),
     ).toBe(1);
-    expect(rootfs.separateRuntimeHolders(PROJECT)).toEqual({ sandbox: 1 });
+    expect(rootfs.separateRuntimeHolders(PROJECT)).toEqual({ sandbox: 2 });
     expect(events).not.toContain("umount-rootfs");
-    // the dropped holder may not launch afterwards
-    await expect(launched.attach(`sandbox-${PROJECT}-2`)).rejects.toThrow(
+    // the dropped holder can take neither step afterwards
+    await expect(launched.markLaunched()).rejects.toThrow(
       "was released; not launching",
     );
-    // the other one still can, and is then dropped by the next stop
-    await launching.attach(`sandbox-${PROJECT}-3`);
-    expect(await rootfs.dropHoldersProvenGone(PROJECT, ["sandbox"])).toBe(1);
+    const late = await acquire("sandbox", ["home"]);
+    await late.release();
+    await expect(late.reserve(`sandbox-${PROJECT}-3`)).rejects.toThrow(
+      "was released; not launching",
+    );
+    // no proof, no drop (also when proving throws)
+    await reserved.markLaunched();
+    expect(
+      await rootfs.dropHoldersProvenGone(
+        PROJECT,
+        ["sandbox"],
+        async () => false,
+      ),
+    ).toBe(0);
+    expect(
+      await rootfs.dropHoldersProvenGone(PROJECT, ["sandbox"], async () => {
+        throw new Error("ps failed");
+      }),
+    ).toBe(0);
+    // only the kinds named
+    expect(await rootfs.dropHoldersProvenGone(PROJECT, ["codex"], proven)).toBe(
+      0,
+    );
+    expect(
+      await rootfs.dropHoldersProvenGone(PROJECT, ["sandbox"], proven),
+    ).toBe(1);
+    await fresh.release();
     expect(rootfs.separateRuntimeHolders(PROJECT)).toEqual({});
     expect(events.slice(-3)).toEqual([
       "umount-attempt",
       "umount-rootfs",
       "umount-views",
     ]);
-    // only kinds named are dropped
-    const project = await acquire("project", ["home"]);
-    await project.attach(`project-${PROJECT}`);
-    expect(await rootfs.dropHoldersProvenGone(PROJECT, ["sandbox"])).toBe(0);
-    await project.release();
   });
 
-  it("attaches only a container of this project (C1)", async () => {
+  it("never drops a holder whose container is created while the stop's proof runs (C1 race)", async () => {
+    const rootfs = await import("./rootfs");
+    // reserved before the stop; its create is paused
     const holder = await acquire("sandbox", ["home"]);
+    await holder.reserve(`sandbox-${PROJECT}-1`);
+    let proofStarted!: () => void;
+    const started = new Promise<void>((r) => (proofStarted = r));
+    let finishProof!: (gone: boolean) => void;
+    const proof = new Promise<boolean>((r) => (finishProof = r));
+    const drop = rootfs.dropHoldersProvenGone(PROJECT, ["sandbox"], () => {
+      proofStarted();
+      return proof;
+    });
+    await started;
+    // while the proof runs, the container is created and marked launched
+    await holder.markLaunched();
+    // the proof found nothing: it ran before that container existed
+    finishProof(true);
+    expect(await drop).toBe(0);
+    expect(rootfs.separateRuntimeHolders(PROJECT)).toEqual({ sandbox: 1 });
+    expect([...mounted]).toEqual([IDMAPPED]);
+    expect(views.has("home")).toBe(true);
+    // a reserved holder is kept by a proof as well
+    const other = await acquire("sandbox", ["home"]);
+    await other.reserve(`sandbox-${PROJECT}-2`);
+    expect(
+      await rootfs.dropHoldersProvenGone(PROJECT, ["sandbox"], proven),
+    ).toBe(1);
+    expect(rootfs.separateRuntimeHolders(PROJECT)).toEqual({ sandbox: 1 });
+    expect(views.has("home")).toBe(true);
+    await other.release();
+  });
+
+  it("starts no launch step while the project's runtime is being stopped (C1, R-d)", async () => {
+    const rootfs = await import("./rootfs");
+    const holder = await acquire("sandbox", ["home"]);
+    const reserved = await acquire("sandbox", ["home"]);
+    await reserved.reserve(`sandbox-${PROJECT}-2`);
+    rootfs.closeSeparateRuntime(PROJECT);
+    await expect(holder.reserve(`sandbox-${PROJECT}-1`)).rejects.toThrow(
+      "being stopped",
+    );
+    await expect(reserved.markLaunched()).rejects.toThrow("being stopped");
+    rootfs.reopenSeparateRuntime(PROJECT);
+    await holder.reserve(`sandbox-${PROJECT}-1`);
+    await holder.markLaunched();
+    await holder.release();
+    await reserved.release();
+  });
+
+  it("reserves only a container of this project, once, and marks only a reserved one (C1)", async () => {
+    const holder = await acquire("sandbox", ["home"]);
+    await expect(holder.markLaunched()).rejects.toThrow(
+      "reserved no container",
+    );
     await expect(
-      holder.attach("sandbox-99999999-2222-4333-8444-555555555555"),
+      holder.reserve("sandbox-99999999-2222-4333-8444-555555555555"),
     ).rejects.toThrow("must be the project's");
+    await holder.reserve(`sandbox-${PROJECT}-1`);
+    await expect(holder.reserve(`sandbox-${PROJECT}-2`)).rejects.toThrow(
+      "already has a container",
+    );
     await holder.release();
   });
 

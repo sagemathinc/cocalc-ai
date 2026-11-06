@@ -185,6 +185,7 @@ import {
   redactConfigurationForLog,
   sidecarRuntimeFor,
   stopSeparateRuntime,
+  projectSidecarsAbsent,
   start,
   state,
   stop,
@@ -1795,7 +1796,9 @@ describe("project-runner podman orphan fallback", () => {
         await expect(
           stopSeparateRuntime(project1, { waitMs: 50 }),
         ).rejects.toThrow("still in use by: codex ×1");
-        expect(mockDropHolders).not.toHaveBeenCalled();
+        // the drop got a proof that fails: a sidecar is alive
+        const prove = mockDropHolders.mock.calls[0][2];
+        expect(await prove()).toBe(false);
         expect(mockRelease).not.toHaveBeenCalled();
         expect(mockReopenSeparate).toHaveBeenCalledWith(project1);
       });
@@ -1815,9 +1818,37 @@ describe("project-runner podman orphan fallback", () => {
         expect(mockDropHolders).toHaveBeenCalledWith(
           project1,
           expect.arrayContaining(["codex", "sandbox"]),
+          expect.any(Function),
         );
         expect(mockDropHolders.mock.calls[0][1]).not.toContain("project");
+        // nothing of the project's left: the proof holds
+        expect(await mockDropHolders.mock.calls[0][2]()).toBe(true);
         expect(mockRelease).toHaveBeenCalledTimes(1);
+      });
+
+      it("never counts a created, not yet started sidecar container as gone (C1)", async () => {
+        await startProject();
+        mockHolders.mockImplementation(() => ({ project: 1, sandbox: 1 }));
+        // created after the stop's removal sweep: at rest, but it can start
+        mockPodman.mockImplementation(async (args: string[]) => {
+          if (args[0] === "ps" && args.includes("{{.Names}}")) {
+            return {
+              stdout: `project-${project1}\nsandbox-${project1}-1-ab\n`,
+            };
+          }
+          if (args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")) {
+            return {
+              stdout: `project-${project1}|exited\nsandbox-${project1}-1-ab|created\n`,
+            };
+          }
+          return { stdout: "" };
+        });
+        await expect(
+          stopSeparateRuntime(project1, { waitMs: 50 }),
+        ).rejects.toThrow("still in use by: sandbox ×1");
+        expect(await mockDropHolders.mock.calls[0][2]()).toBe(false);
+        expect(await projectSidecarsAbsent(project1)).toBe(false);
+        expect(mockRelease).not.toHaveBeenCalled();
       });
 
       it("refuses when the containers' absence can't be proven, dropping nothing (T1)", async () => {
@@ -1832,7 +1863,10 @@ describe("project-runner podman orphan fallback", () => {
         await expect(
           stopSeparateRuntime(project1, { waitMs: 50 }),
         ).rejects.toThrow("still in use by: codex ×1");
-        expect(mockDropHolders).not.toHaveBeenCalled();
+        // its proof fails (the drop treats an error as no proof)
+        await expect(mockDropHolders.mock.calls[0][2]()).rejects.toThrow(
+          "podman failed",
+        );
         expect(mockRelease).not.toHaveBeenCalled();
       });
 

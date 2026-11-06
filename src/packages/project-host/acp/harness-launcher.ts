@@ -478,12 +478,15 @@ export async function launchHarnessInProject(
       harnessCommand.executable,
       ...harnessCommand.args,
     );
-    // the holder records its container before it exists (and refuses if it
-    // was dropped meanwhile)
-    if (separateHandle != null) await separateHandle.attach(name);
+    // C1: the holder reserves the name before the container exists (never
+    // droppable), and is marked launched only once it was created, before
+    // it starts; a refused step (dropped, or the project stopping) starts
+    // nothing, and the cleanup removes what was created
+    if (separateHandle != null) await separateHandle.reserve(name);
     // Mark before awaiting: timeout/disconnect can leave a successfully created container.
     created = true;
     await command(args);
+    if (separateHandle != null) await separateHandle.markLaunched();
     const proc = spawn(
       launcher.command,
       [...launcher.argsPrefix, "start", "--attach", "--interactive", name],

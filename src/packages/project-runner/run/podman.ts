@@ -2361,6 +2361,26 @@ async function removeProjectSidecarContainers(
 }
 
 /**
+ * The proof for dropping a sidecar's holder (C1): no container of the
+ * project's but its own exists at all (a created, not yet started one is
+ * not "gone": it could still start), and none is alive.
+ */
+export async function projectSidecarsAbsent(
+  project_id: string,
+): Promise<boolean> {
+  if (!isValidUUID(project_id)) return false;
+  const { stdout } = await podman(["ps", "-a", "--format", "{{.Names}}"], {
+    timeout: 30,
+  });
+  for (const name of `${stdout ?? ""}`.split("\n").map((n) => n.trim())) {
+    if (!name || !name.includes(project_id)) continue;
+    if (name === projectContainerName(project_id)) continue;
+    return false;
+  }
+  return await projectContainersGone(project_id);
+}
+
+/**
  * The stop of a separate-uid project's runtime (§1a): no new holder while
  * it runs (R-d); the project's own sidecars stopped first; a bounded wait,
  * outside the rootfs lock, for their holders to let go (R-c); a holder that
@@ -2388,11 +2408,11 @@ export async function stopSeparateRuntime(
     ) {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    if (
-      Object.keys(otherHolders(project_id)).length > 0 &&
-      (await projectContainersGone(project_id).catch(() => false))
-    ) {
-      await dropHoldersProvenGone(project_id, SIDECAR_HOLDERS);
+    if (Object.keys(otherHolders(project_id)).length > 0) {
+      // only holders whose containers this proof covers
+      await dropHoldersProvenGone(project_id, SIDECAR_HOLDERS, () =>
+        projectSidecarsAbsent(project_id),
+      );
     }
     const left = otherHolders(project_id);
     if (Object.keys(left).length > 0) {
