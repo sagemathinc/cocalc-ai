@@ -189,7 +189,7 @@ export function ClaudeSubscriptionSharingBanner({
       type="warning"
       showIcon
       banner
-      message={SHARING_TITLE}
+      title={SHARING_TITLE}
       description={SHARING_SHORT_TEXT}
     />
   );
