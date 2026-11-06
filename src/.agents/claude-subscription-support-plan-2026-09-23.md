@@ -272,12 +272,13 @@ proxy swaps in the real token for each model request. The relay:
   checked exactly on the request-target as sent (origin-form only; no encoded
   or backslash separators or dots), and never forwards the caller's own
   credentials;
-- is usable only for a bounded time: between turns it is suspended after a
-  period without requests, and in any case a fixed lifetime after each turn
-  starts; the host renews it at each turn's start;
+- has no time limit during a turn (turns can be long); between turns it is
+  suspended after a period without requests, until the next turn starts. A
+  new agent process, after each idle disposal or restart, gets a new token;
 - cannot tell which project a connection comes from (projects reach it through
   the host's loopback), so a leaked relay token is usable from any project on
-  the host until that time limit. This is the residual risk.
+  the host while a turn runs, or until the idle limit after it. This is the
+  residual risk.
 
 Before any turn in a project with other collaborators (checked at every turn
 start, and whenever the collaborators change), the user sees the collaborator

@@ -432,7 +432,7 @@ export type ProviderRelaySession = {
   token: string;
   /**
    * A turn starts (the host calls it, never the project): the session is
-   * usable again, for a new lifetime, and is not idle while the turn runs.
+   * usable again, and is never idle while the turn runs, however long.
    */
   beginTurn(): void;
   /** The turn ended: from now on an idle session is suspended. */
@@ -445,15 +445,12 @@ A relay token is a bearer: anyone who obtains it can use the session, from
 any project on this host (the proxy listens on host loopback, and pasta or
 slirp4netns open each project connection anew from there, so the socket does
 not say which project sent it; unmeasured, from reading the network setup).
-So a session is usable only for a bounded time: between turns it is
-suspended after RELAY_IDLE_MS without a request (none in flight), and in any
-case RELAY_MAX_LIFETIME_MS after the start of its latest turn, when its
-in-flight requests are ended too. During a turn only the lifetime applies (a
-tool may run for long without a model request). A suspended session refuses
-every request until the next turn begins.
+So between turns a session is suspended after RELAY_IDLE_MS without a
+request (none in flight), and then refuses every request until the next turn
+begins. A turn itself has no time limit (a tool may run for long without a
+model request, and turns can be long).
 */
 export const RELAY_IDLE_MS = 15 * 60_000;
-export const RELAY_MAX_LIFETIME_MS = 6 * 60 * 60_000;
 
 type RelaySession = {
   policy: ProviderRelayPolicy;
@@ -463,27 +460,12 @@ type RelaySession = {
   /** Between beginTurn and endTurn: never idle. */
   inTurn: boolean;
   idleMs: number;
-  maxLifetimeMs: number;
   lastUsed: number;
-  lifetime?: ReturnType<typeof setTimeout>;
 };
 
 function suspendRelaySession(session: RelaySession): void {
   session.suspended = true;
-  if (session.lifetime) clearTimeout(session.lifetime);
-  session.lifetime = undefined;
   for (const request of session.requests) request.destroy();
-}
-
-function startRelayLifetime(session: RelaySession): void {
-  if (session.lifetime) clearTimeout(session.lifetime);
-  session.suspended = false;
-  session.lastUsed = Date.now();
-  session.lifetime = setTimeout(
-    () => suspendRelaySession(session),
-    session.maxLifetimeMs,
-  );
-  session.lifetime.unref?.();
 }
 
 class SiteFundedCodexProxy {
@@ -651,7 +633,6 @@ class SiteFundedCodexProxy {
     tokenPrefix = "",
     allowHttpForTests,
     idleMs = RELAY_IDLE_MS,
-    maxLifetimeMs = RELAY_MAX_LIFETIME_MS,
   }: {
     upstream: string;
     allowedPathPrefix: string;
@@ -664,10 +645,8 @@ class SiteFundedCodexProxy {
     tokenPrefix?: string;
     allowHttpForTests?: boolean;
     idleMs?: number;
-    maxLifetimeMs?: number;
   }): Promise<ProviderRelaySession> {
-    if (!(idleMs > 0) || !(maxLifetimeMs > 0))
-      throw Error("Invalid relay session lifetime");
+    if (!(idleMs > 0)) throw Error("Invalid relay session idle time");
     const checked = validateProviderRelayPolicy({
       upstream,
       allowedPathPrefix,
@@ -701,18 +680,17 @@ class SiteFundedCodexProxy {
       suspended: false,
       inTurn: false,
       idleMs,
-      maxLifetimeMs,
       lastUsed: Date.now(),
     };
-    startRelayLifetime(session);
     this.relaySessions.set(token, session);
     return {
       baseUrl: `http://host.containers.internal:${port}`,
       token,
       beginTurn: () => {
         if (session.closed) return;
-        startRelayLifetime(session);
+        session.suspended = false;
         session.inTurn = true;
+        session.lastUsed = Date.now();
       },
       endTurn: () => {
         session.inTurn = false;

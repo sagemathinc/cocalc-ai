@@ -453,51 +453,58 @@ describe("provider relay sessions on the project-reachable proxy", () => {
     });
   });
 
-  it("suspends a session at the end of its lifetime, even during a turn, ending what is in flight (B2)", async () => {
-    await withRelay(
-      { maxLifetimeMs: 300, idleMs: 60_000 },
-      async ({ session, seen }) => {
-        const auth = { Authorization: `Bearer ${session.token}` };
+  it("never limits a running turn, however long, and is usable right after it (B2)", async () => {
+    await withRelay({ idleMs: 100 }, async ({ session, seen }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      const now = Date.now();
+      const clock = jest.spyOn(Date, "now");
+      try {
+        clock.mockReturnValue(now);
         session.beginTurn();
-        // the provider never answers this one: it is ended at the lifetime
-        const started = Date.now();
-        const inFlight = sendRaw(session.baseUrl, "/v1/messages/slow", auth);
-        expect(await inFlight).not.toBe(200);
-        expect(Date.now() - started).toBeLessThan(5_000);
-        expect(seen).toHaveLength(1);
-        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
-        expect(seen).toHaveLength(1);
-        // the next turn starts a new lifetime
-        session.beginTurn();
+        // seven hours into the turn
+        clock.mockReturnValue(now + 7 * 60 * 60_000);
         expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
-        // and a closed session never comes back
-        session.close();
-        session.beginTurn();
+        clock.mockReturnValue(now + 9 * 60 * 60_000);
+        session.endTurn();
+        // right after the long turn ended: not idle yet
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+        clock.mockReturnValue(now + 9 * 60 * 60_000 + 200);
         expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
-      },
-    );
+      } finally {
+        clock.mockRestore();
+      }
+      expect(seen).toHaveLength(2);
+      // and close ends it for good
+      session.close();
+      session.beginTurn();
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+    });
   });
 
   it("sends nothing when the session is suspended while the credential is looked up (B2)", async () => {
     let release!: (value: string) => void;
     let asked!: () => void;
     const lookingUp = new Promise<void>((resolve) => (asked = resolve));
+    let first = true;
     await withRelay(
       {
-        maxLifetimeMs: 100,
+        idleMs: 100,
         credentialValue: () =>
-          new Promise<string>((resolve) => {
-            release = resolve;
-            asked();
-          }),
+          first
+            ? new Promise<string>((resolve) => {
+                first = false;
+                release = resolve;
+                asked();
+              })
+            : "Bearer real-subscription-token",
       },
       async ({ session, seen }) => {
-        const status = sendRaw(session.baseUrl, "/v1/messages", {
-          Authorization: `Bearer ${session.token}`,
-        });
+        const auth = { Authorization: `Bearer ${session.token}` };
+        const status = sendRaw(session.baseUrl, "/v1/messages", auth);
         await lookingUp;
-        // the lifetime ends while the credential is looked up
-        await new Promise((r) => setTimeout(r, 150));
+        // between turns, idle past the limit: the next request suspends it
+        await new Promise((r) => setTimeout(r, 160));
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
         release("Bearer real-subscription-token");
         expect(await status).not.toBe(200);
         expect(seen).toHaveLength(0);
