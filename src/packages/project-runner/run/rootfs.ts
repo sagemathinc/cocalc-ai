@@ -600,7 +600,45 @@ export const HELPER_VIEW_OPS: ViewOps = {
 export interface SeparateRuntimeHandle {
   rootfs: string;
   views: Partial<Record<ProjectViewKind, string>>;
+  // more views for this holder (the start mounts its rootfs first)
+  mountViews(kinds: ProjectViewKind[]): Promise<void>;
   release(): Promise<void>;
+}
+
+// Live handles, to drop a holder whose sidecar died without releasing
+// (only after its containers are proven gone, R-b).
+const liveHandles = new Map<
+  string,
+  Map<number, { holder: SeparateHolderKind; release: () => Promise<void> }>
+>();
+
+// Projects being stopped: no new holder until the stop ends (R-d).
+const stoppingSeparate = new Set<string>();
+
+export function closeSeparateRuntime(project_id: string): void {
+  stoppingSeparate.add(project_id);
+}
+
+export function reopenSeparateRuntime(project_id: string): void {
+  stoppingSeparate.delete(project_id);
+}
+
+/**
+ * Releases the holders of the given kinds, for a stop that has proven all
+ * of the project's containers gone (so those holders' sidecars are dead).
+ */
+export async function dropHoldersProvenGone(
+  project_id: string,
+  kinds: SeparateHolderKind[],
+): Promise<number> {
+  let dropped = 0;
+  for (const entry of [...(liveHandles.get(project_id)?.values() ?? [])]) {
+    if (kinds.includes(entry.holder)) {
+      await entry.release();
+      dropped += 1;
+    }
+  }
+  return dropped;
 }
 
 /** Which kinds of holder (and how many) a project's separate runtime has. */
@@ -635,6 +673,9 @@ export async function acquireSeparateRuntime({
   views?: ViewOps;
 }): Promise<SeparateRuntimeHandle> {
   return await withRootfsLock(project_id, async () => {
+    if (stoppingSeparate.has(project_id)) {
+      throw new Error("the project is being stopped; try again when it has");
+    }
     const { merged, release: releaseLease } = await mountHeld({
       project_id,
       home,
@@ -644,9 +685,10 @@ export async function acquireSeparateRuntime({
       pooled: false,
     });
     const views: Partial<Record<ProjectViewKind, string>> = {};
-    try {
+    // under the rootfs lock
+    const mountKinds = async (wanted: ProjectViewKind[]) => {
       let mine = ourViews.get(project_id);
-      for (const kind of kinds) {
+      for (const kind of wanted) {
         const isMounted = await viewOps.mounted(project_id, kind);
         if (isMounted && mine?.has(kind)) {
           views[kind] = projectViewPath(project_id, kind);
@@ -664,6 +706,9 @@ export async function acquireSeparateRuntime({
         }
         mine.add(kind);
       }
+    };
+    try {
+      await mountKinds(kinds);
     } catch (err) {
       // nothing else counted yet: give the lease back (its delayed
       // disposal runs under this lock and rechecks)
@@ -678,31 +723,47 @@ export async function acquireSeparateRuntime({
     }
     holders.set(id, holder);
     let released = false;
+    const release = async () => {
+      if (released) return;
+      released = true;
+      await withRootfsLock(project_id, async () => {
+        const mine = separateHolders.get(project_id);
+        mine?.delete(id);
+        if (mine?.size === 0) separateHolders.delete(project_id);
+        const live = liveHandles.get(project_id);
+        live?.delete(id);
+        if (live?.size === 0) liveHandles.delete(project_id);
+        // not immediate: no disposal runs from this; the last holder
+        // detaches below, awaited
+        await releaseLease();
+        if ((separateHolders.get(project_id)?.size ?? 0) > 0) return;
+        if (leases.getCount(project_id) > 0) return;
+        await detachBothWays(project_id);
+        await viewOps.umountAll(project_id);
+        ourViews.delete(project_id);
+        if (await viewOps.anyMounted(project_id)) {
+          throw new Error(
+            "could not unmount this project's views after its last user",
+          );
+        }
+      });
+    };
+    let live = liveHandles.get(project_id);
+    if (live == null) {
+      live = new Map();
+      liveHandles.set(project_id, live);
+    }
+    live.set(id, { holder, release });
     return {
       rootfs: merged,
       views,
-      release: async () => {
-        if (released) return;
-        released = true;
+      mountViews: async (more) => {
         await withRootfsLock(project_id, async () => {
-          const mine = separateHolders.get(project_id);
-          mine?.delete(id);
-          if (mine?.size === 0) separateHolders.delete(project_id);
-          // not immediate: no disposal runs from this; the last holder
-          // detaches below, awaited
-          await releaseLease();
-          if ((separateHolders.get(project_id)?.size ?? 0) > 0) return;
-          if (leases.getCount(project_id) > 0) return;
-          await detachBothWays(project_id);
-          await viewOps.umountAll(project_id);
-          ourViews.delete(project_id);
-          if (await viewOps.anyMounted(project_id)) {
-            throw new Error(
-              "could not unmount this project's views after its last user",
-            );
-          }
+          if (released) throw new Error("this holder was released");
+          await mountKinds(more);
         });
       },
+      release,
     };
   });
 }

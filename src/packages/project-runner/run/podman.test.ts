@@ -95,9 +95,19 @@ jest.mock("./filesystem", () => ({
 }));
 
 const mockDetachLeftovers = jest.fn(async () => {});
+const mockAcquireSeparate = jest.fn();
+const mockHolders = jest.fn((_id: string): Record<string, number> => ({}));
+const mockDropHolders = jest.fn(async (..._args: any[]) => 0);
+const mockCloseSeparate = jest.fn();
+const mockReopenSeparate = jest.fn();
 jest.mock("./rootfs", () => ({
+  acquireSeparateRuntime: (...args: any[]) => mockAcquireSeparate(...args),
+  closeSeparateRuntime: (...args: any[]) => mockCloseSeparate(...args),
   detachLeftovers: (...args: any[]) => mockDetachLeftovers(...args),
+  dropHoldersProvenGone: (...args: any[]) => mockDropHolders(...args),
   mount: jest.fn(),
+  reopenSeparateRuntime: (...args: any[]) => mockReopenSeparate(...args),
+  separateRuntimeHolders: (id: string) => mockHolders(id),
   unmountAll: (...args: any[]) => mockUnmountAll(...args),
 }));
 
@@ -172,6 +182,7 @@ import {
   projectBrowserRunHostPath,
   projectContainersGone,
   redactConfigurationForLog,
+  stopSeparateRuntime,
   start,
   state,
   stop,
@@ -1289,7 +1300,32 @@ describe("project-runner podman orphan fallback", () => {
       projectBrowserRunHostPath(project1),
     ];
 
+    let mountedKinds: string[];
+    let mockRelease: jest.Mock;
     beforeEach(() => {
+      mountedKinds = [];
+      mockRelease = jest.fn(async () => {});
+      mockHolders.mockReset();
+      mockHolders.mockImplementation(() => ({}));
+      mockDropHolders.mockReset();
+      mockDropHolders.mockResolvedValue(0);
+      mockAcquireSeparate.mockReset();
+      mockAcquireSeparate.mockImplementation(
+        async ({ project_id }: { project_id: string }) => {
+          const views: Record<string, string> = {};
+          return {
+            rootfs: `/run/cocalc/project-rootfs/${project_id}/root`,
+            views,
+            mountViews: async (kinds: string[]) => {
+              for (const kind of kinds) {
+                views[kind] = projectViewPath(project_id, kind as any);
+                mountedKinds.push(kind);
+              }
+            },
+            release: mockRelease,
+          };
+        },
+      );
       mockRuntimeIdentity = separate;
       mockViewSources = {
         home,
@@ -1304,7 +1340,12 @@ describe("project-runner podman orphan fallback", () => {
       mockGetConmonContainerProcesses.mockResolvedValue(new Map());
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+      // no project handle may outlive its test
+      mockHolders.mockImplementation(() => ({}));
+      mockRelease?.mockImplementation(async () => {});
+      mockPodman.mockImplementation(async () => ({ stdout: "" }));
+      await stopSeparateRuntime(project1, { waitMs: 0 }).catch(() => {});
       mockRuntimeIdentity = undefined;
       mockViewSources = undefined;
       mockMountinfo = undefined;
@@ -1336,12 +1377,17 @@ describe("project-runner podman orphan fallback", () => {
       await startProject();
 
       expect(mockHardenProjectDataRoot).toHaveBeenCalled();
-      for (const kind of ["home", "secrets", "browser-run"]) {
-        expect(mockMountProjectView).toHaveBeenCalledWith({
+      // the project's own holder of its separate runtime
+      expect(mockAcquireSeparate).toHaveBeenCalledWith(
+        expect.objectContaining({
           project_id: project1,
-          kind,
-          uid: P,
-        });
+          idmapUid: P,
+          holder: "project",
+          kinds: [],
+        }),
+      );
+      for (const kind of ["home", "secrets", "browser-run"]) {
+        expect(mountedKinds).toContain(kind);
         expect(sources()).toContain(projectViewPath(project1, kind));
       }
       expect(mountArg).toHaveBeenCalledWith({
@@ -1354,9 +1400,8 @@ describe("project-runner podman orphan fallback", () => {
       expect(mountArg).not.toHaveBeenCalledWith(
         expect.objectContaining({ target: "/scratch" }),
       );
-      expect(mountRootFs).toHaveBeenCalledWith(
-        expect.objectContaining({ project_id: project1, idmapUid: P }),
-      );
+      // not through the project's pooled leases
+      expect(mountRootFs).not.toHaveBeenCalled();
       const args = createArgs();
       expect(args).toEqual(expect.arrayContaining(SEPARATE_ARGS));
       expect(args.some((a) => `${a}`.startsWith("--userns=keep-id"))).toBe(
@@ -1368,11 +1413,11 @@ describe("project-runner podman orphan fallback", () => {
       mockViewSources!.home = "/mnt/cocalc/elsewhere";
       await startProject();
 
-      expect(mockMountProjectView).not.toHaveBeenCalled();
+      expect(mockAcquireSeparate).not.toHaveBeenCalled();
       expect(sources()).toContain(home);
-      expect(mountRootFs).toHaveBeenCalledWith(
-        expect.objectContaining({ idmapUid: undefined }),
-      );
+      const [rootfsOpts] = (mountRootFs as jest.Mock).mock.calls.at(-1)!;
+      expect(rootfsOpts.project_id).toBe(project1);
+      expect(rootfsOpts.idmapUid).toBeUndefined();
       const args = createArgs();
       expect(args.some((a) => `${a}`.startsWith("--userns=keep-id"))).toBe(
         true,
@@ -1387,7 +1432,7 @@ describe("project-runner podman orphan fallback", () => {
       mockMountinfo = SAFE.replace("rw,nosuid,nodev,relatime", "rw,relatime");
       await startProject();
 
-      expect(mockMountProjectView).not.toHaveBeenCalled();
+      expect(mockAcquireSeparate).not.toHaveBeenCalled();
       expect(
         createArgs().some((a) => `${a}`.startsWith("--userns=keep-id")),
       ).toBe(true);
@@ -1484,7 +1529,7 @@ describe("project-runner podman orphan fallback", () => {
 
     it("lets only the start prove the rootfs unused, by its containers", async () => {
       await startProject();
-      const [opts] = (mountRootFs as jest.Mock).mock.calls.at(-1)!;
+      const [opts] = mockAcquireSeparate.mock.calls.at(-1)!;
       mockGetConmonContainerProcesses.mockResolvedValue(new Map());
       mockPodman.mockImplementation(async (args: string[]) =>
         args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
@@ -1515,6 +1560,120 @@ describe("project-runner podman orphan fallback", () => {
       });
       expect(mockUmountProjectViews).toHaveBeenCalledWith(project1);
       expect(detachedFirst).toBe(true);
+    });
+
+    it("reuses views a live sidecar holds, instead of treating them as leftovers", async () => {
+      mockProjectHasViews.mockResolvedValue(true);
+      mockHolders.mockImplementation(() => ({ sandbox: 1 }));
+      await startProject();
+      expect(mockDetachLeftovers).not.toHaveBeenCalled();
+      expect(mockAcquireSeparate).toHaveBeenCalled();
+    });
+
+    describe("stopping the separate runtime", () => {
+      const ps = (names: string[]) =>
+        mockPodman.mockImplementation(async (args: string[]) =>
+          args[0] === "ps" && args.includes("{{.Names}}")
+            ? { stdout: names.join("\n") }
+            : { stdout: "" },
+        );
+
+      it("refuses new holders while it stops, then releases only its own (R-d, L1)", async () => {
+        await startProject();
+        ps([]);
+        await stopSeparateRuntime(project1, { waitMs: 50 });
+        expect(mockCloseSeparate).toHaveBeenCalledWith(project1);
+        expect(mockRelease).toHaveBeenCalledTimes(1);
+        expect(mockReopenSeparate).toHaveBeenCalledWith(project1);
+        expect(mockCloseSeparate.mock.invocationCallOrder[0]).toBeLessThan(
+          mockRelease.mock.invocationCallOrder[0],
+        );
+        expect(mockUnmountAll).not.toHaveBeenCalledWith(project1, {
+          immediate: true,
+        });
+      });
+
+      it("stops the project's own sidecars first, and only those", async () => {
+        await startProject();
+        const other = "22222222-2222-4222-8222-222222222222";
+        ps([
+          `codex-${project1}-0123456789ab`,
+          `project-${project1}`,
+          `codex-${other}-0123456789ab`,
+        ]);
+        await stopSeparateRuntime(project1, { waitMs: 50 });
+        const removed = mockPodman.mock.calls
+          .map(([args]) => args as string[])
+          .filter((args) => args[0] === "rm")
+          .map((args) => args.at(-1));
+        expect(removed).toEqual([`codex-${project1}-0123456789ab`]);
+      });
+
+      it("refuses, naming what still holds, when a live sidecar won't let go (L2)", async () => {
+        await startProject();
+        mockHolders.mockImplementation(() => ({ project: 1, codex: 1 }));
+        // its container is still alive
+        mockPodman.mockImplementation(async (args: string[]) =>
+          args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
+            ? { stdout: `codex-${project1}-0123456789ab|running\n` }
+            : { stdout: "" },
+        );
+        await expect(
+          stopSeparateRuntime(project1, { waitMs: 50 }),
+        ).rejects.toThrow("still in use by: codex ×1");
+        expect(mockDropHolders).not.toHaveBeenCalled();
+        expect(mockRelease).not.toHaveBeenCalled();
+        expect(mockReopenSeparate).toHaveBeenCalledWith(project1);
+      });
+
+      it("drops a holder whose sidecar died only once its containers are proven gone (R-b)", async () => {
+        await startProject();
+        let alive = true;
+        mockHolders.mockImplementation(() =>
+          alive ? { project: 1, codex: 1 } : { project: 1 },
+        );
+        mockDropHolders.mockImplementation(async () => {
+          alive = false;
+          return 1;
+        });
+        ps([]);
+        await stopSeparateRuntime(project1, { waitMs: 50 });
+        expect(mockDropHolders).toHaveBeenCalledWith(
+          project1,
+          expect.arrayContaining(["codex", "sandbox"]),
+        );
+        expect(mockDropHolders.mock.calls[0][1]).not.toContain("project");
+        expect(mockRelease).toHaveBeenCalledTimes(1);
+      });
+
+      it("waits for a sidecar that lets go within the bound (R-c)", async () => {
+        await startProject();
+        let holding = true;
+        mockHolders.mockImplementation(() =>
+          holding ? { project: 1, sandbox: 1 } : { project: 1 },
+        );
+        ps([]);
+        setTimeout(() => (holding = false), 30);
+        await stopSeparateRuntime(project1, { waitMs: 2000 });
+        expect(mockDropHolders).not.toHaveBeenCalled();
+        expect(mockRelease).toHaveBeenCalledTimes(1);
+      });
+
+      it("propagates a failed last release, and a later stop takes the verified path (L1)", async () => {
+        await startProject();
+        ps([]);
+        mockRelease.mockRejectedValueOnce(
+          new Error("could not unmount this project's RootFS"),
+        );
+        await expect(
+          stopSeparateRuntime(project1, { waitMs: 50 }),
+        ).rejects.toThrow("could not unmount");
+        await stopSeparateRuntime(project1, { waitMs: 50 });
+        expect(mockUnmountAll).toHaveBeenCalledWith(project1, {
+          immediate: true,
+        });
+        expect(mockUmountProjectViews).toHaveBeenCalledWith(project1);
+      });
     });
 
     it("leaves the views mounted when the rootfs couldn't be detached at stop", async () => {
