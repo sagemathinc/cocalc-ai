@@ -106,4 +106,95 @@ describe("RefcountLeaseManager", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(mgr.getCount("slow")).toBe(0);
   });
+
+  describe("maxIdle", () => {
+    test("disposes the longest idle resource right away beyond the cap", async () => {
+      const disposed: string[] = [];
+      const mgr = new RefcountLeaseManager<string>({
+        delayMs: 60_000,
+        maxIdle: 2,
+        disposer: async (key) => {
+          disposed.push(key);
+        },
+      });
+      for (const key of ["a", "b", "c", "d"]) {
+        const release = await mgr.acquire(key);
+        await release();
+      }
+      await new Promise((r) => setTimeout(r, 10));
+      // a and b went idle first
+      expect(disposed).toEqual(["a", "b"]);
+      await mgr.close();
+    });
+
+    test("an acquire moves a resource out of the idle order", async () => {
+      const disposed: string[] = [];
+      const mgr = new RefcountLeaseManager<string>({
+        delayMs: 60_000,
+        maxIdle: 2,
+        disposer: async (key) => {
+          disposed.push(key);
+        },
+      });
+      for (const key of ["a", "b"]) {
+        await (
+          await mgr.acquire(key)
+        )();
+      }
+      // a is used again: now b is the longest idle
+      await (
+        await mgr.acquire("a")
+      )();
+      await (
+        await mgr.acquire("c")
+      )();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(disposed).toEqual(["b"]);
+      await mgr.close();
+    });
+
+    test("never disposes a resource in use, and in-use ones do not count", async () => {
+      const disposed: string[] = [];
+      const mgr = new RefcountLeaseManager<string>({
+        delayMs: 60_000,
+        maxIdle: 1,
+        disposer: async (key) => {
+          disposed.push(key);
+        },
+      });
+      const holdA = await mgr.acquire("a");
+      const holdB = await mgr.acquire("b");
+      await (
+        await mgr.acquire("c")
+      )();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(disposed).toEqual([]);
+      expect(mgr.getCount("a")).toBe(1);
+      expect(mgr.getCount("b")).toBe(1);
+      await holdA();
+      await new Promise((r) => setTimeout(r, 10));
+      // c (idle longest) goes; a stays as the one allowed idle resource
+      expect(disposed).toEqual(["c"]);
+      await holdB();
+      await mgr.close();
+    });
+
+    test("without maxIdle nothing is disposed before the delay", async () => {
+      const disposed: string[] = [];
+      const mgr = new RefcountLeaseManager<string>({
+        delayMs: 60_000,
+        disposer: async (key) => {
+          disposed.push(key);
+        },
+      });
+      for (const key of ["a", "b", "c"]) {
+        await (
+          await mgr.acquire(key)
+        )();
+      }
+      await new Promise((r) => setTimeout(r, 10));
+      expect(disposed).toEqual([]);
+      await mgr.close();
+    });
+  });
 });

@@ -12,18 +12,26 @@
  * - release({ immediate: true }) disposes immediately when the refcount hits
  *   zero instead of scheduling delayed cleanup.
  * - All operations are serialized per key to avoid races.
+ * - maxIdle (optional) bounds how many resources wait for their delayed
+ *   disposal at once: beyond it the longest idle one is disposed right away.
  */
 export class RefcountLeaseManager<K> {
   private readonly delayMs: number;
   private readonly disposer: (key: K) => Promise<void>;
+  private readonly maxIdle?: number;
   private closed = false;
   private counts = new Map<K, number>();
   private timers = new Map<K, NodeJS.Timeout>();
   private locks = new Map<K, Promise<void>>();
 
-  constructor(opts: { delayMs?: number; disposer: (key: K) => Promise<void> }) {
+  constructor(opts: {
+    delayMs?: number;
+    disposer: (key: K) => Promise<void>;
+    maxIdle?: number;
+  }) {
     this.delayMs = opts.delayMs ?? 30_000;
     this.disposer = opts.disposer;
+    this.maxIdle = opts.maxIdle;
   }
 
   /**
@@ -87,8 +95,33 @@ export class RefcountLeaseManager<K> {
         }, this.delayMs);
         timer.unref?.();
         this.timers.set(key, timer);
+        this.disposeExcessIdle(key);
       });
     };
+  }
+
+  // Pending disposals are in this.timers in the order they became idle (an
+  // acquire removes a key, a release adds it back at the end), so the first
+  // is the longest idle.
+  private disposeExcessIdle(newest: K): void {
+    if (this.maxIdle == null) return;
+    while (this.timers.size > Math.max(0, this.maxIdle)) {
+      const oldest = this.timers.keys().next().value as K;
+      if (oldest === newest) return;
+      clearTimeout(this.timers.get(oldest));
+      this.timers.delete(oldest);
+      void this.withLock(oldest, async () => {
+        // reacquired meanwhile
+        if ((this.counts.get(oldest) ?? 0) > 0) return;
+        try {
+          await this.disposer(oldest);
+        } finally {
+          if ((this.counts.get(oldest) ?? 0) === 0) {
+            this.counts.delete(oldest);
+          }
+        }
+      });
+    }
   }
 
   getCount(key: K): number {
