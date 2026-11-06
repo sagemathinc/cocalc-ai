@@ -57,6 +57,28 @@ Claude Code is started **the way Codex's app-server is**: `podman exec` into the
 9. **Visibility (`top`):** comes from (1). Exec'd into the project container, Claude Code and its tool processes are ordinary project processes, as Codex's are. Stopping a harness kills its process group in the container: reuse the Codex app-server's stop and cleanup code, not the sidecar's "container removal kills everything".
 10. **Remaining exposure, stated plainly.** While a turn runs, project code can call the loopback bridge, and with it the relay token mounted in the sidecar. It could make Anthropic requests on the subscription for the turn's duration. It cannot obtain the token. That is the same exposure API-key Claude has today, and less than Codex (whose refresh-capable `auth.json` is in the project).
 
+## Removing every agent sidecar (William, Nov 5: "I'm now interested in removing all sidecars if we can.")
+
+Agent processes today run in three kinds of separate containers:
+1. **The Claude subscription controller** (`claude-subscription-controller.ts`). Removed by this design.
+2. **The `acp-<project>-<uuid>` sidecar** (`harness-launcher.ts`). It runs every project ACP harness:
+   - qualified Claude Code in modes `project-secret` (`ANTHROPIC_API_KEY` from the project's secrets), `account-api-key` (an Anthropic API key saved in the person's CoCalc account and relayed by the host) and `site-funded`;
+   - plus any project-configured ACP executable (profile v1).
+   Everything it mounts the project container already has, or can get:
+   - project secrets: `/run/secrets/cocalc` is already mounted in the project container;
+   - `/opt/cocalc/bin`, `/opt/cocalc/bin2`: already mounted;
+   - the harness entry `qualified-harness-entry.js`: ship it in a mount the project container already has (e.g. beside the project bundle);
+   - the built-in skills: copy them into `~/.claude/skills`, as Codex copies into `~/.codex/skills` (`codex-project.ts`);
+   - the relay socket: replaced by the TCP relay URL (design item 2);
+   - the restricted-egress environment: passed with `podman exec -e`, as for Codex;
+   - `/tmp` scratch: the project's own.
+   So `launchHarnessInProject` becomes `podman exec` into `project-<id>` for every mode, with Codex's process-group stop and cleanup.
+3. **The `codex-<project>-<context>` container** (`spawnCodexInProjectContainer`). The app-server no longer uses it: it execs into the project container (`spawnCodexAppServerInProjectRuntime`).
+   - Its remaining callers are `spawnCodexExec`, which is never called (dead code, delete it), and `codex login --device-auth` (`codex-device-auth.ts`). Device login writes the subscription's new `auth.json` to a host-protected `CODEX_HOME`, not project storage, which is why it uses a separate container.
+   - **Open:** run device login as a host process (no project container needed, since it only talks to OpenAI), or exec in the project with a staging `CODEX_HOME` in the turn's scratch that the host reads back and deletes. A short-lived login is a smaller concern than turns; it can be the last step.
+
+(Shared-browser containers are a separate product feature, not agents, and are out of scope.)
+
 ## What gets deleted (after rollout)
 
 - `claude-subscription-controller.ts`, `claude-project-tool-bridge.ts` and the bridge scripts (`claude-project-mcp.cjs`).
