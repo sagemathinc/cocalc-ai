@@ -542,6 +542,7 @@ describe("for a project with a separate runtime uid", () => {
   };
   const mockReserve = jest.fn(async (_name: string) => {});
   const mockMarkLaunched = jest.fn(async () => {});
+  const mockOrphan = jest.fn(async () => {});
   const VIEWS = {
     home: "/run/cocalc/project-views/p/home",
     scratch: "/run/cocalc/project-views/p/scratch",
@@ -556,6 +557,8 @@ describe("for a project with a separate runtime uid", () => {
     mockReserve.mockResolvedValue(undefined);
     mockMarkLaunched.mockReset();
     mockMarkLaunched.mockResolvedValue(undefined);
+    mockOrphan.mockReset();
+    mockOrphan.mockResolvedValue(undefined);
     mockAcquire.mockReset();
     mockAcquire.mockResolvedValue({
       rootfs: "/run/cocalc/project-rootfs/p/root",
@@ -563,6 +566,7 @@ describe("for a project with a separate runtime uid", () => {
       mountViews: async () => {},
       reserve: mockReserve,
       markLaunched: mockMarkLaunched,
+      orphan: mockOrphan,
       release: mockHandleRelease,
     });
     mockHandOver.mockReset();
@@ -663,6 +667,7 @@ describe("for a project with a separate runtime uid", () => {
       mountViews: async () => {},
       reserve: mockReserve,
       markLaunched: mockMarkLaunched,
+      orphan: mockOrphan,
       release: mockHandleRelease,
     });
     await expect(launchHarnessInProject(binding)).rejects.toThrow(
@@ -707,6 +712,32 @@ describe("for a project with a separate runtime uid", () => {
     );
   });
 
+  test("orphans the kept holder when a refused mark's container can't be removed (K1)", async () => {
+    mockSpawn.mockClear();
+    mockMarkLaunched.mockRejectedValueOnce(
+      new Error("the project is being stopped; not launching"),
+    );
+    mockExec.mockImplementation((_cmd, args: string[], _opts, cb) =>
+      args.includes("rm") ? cb(new Error("podman rm failed")) : cb(null),
+    );
+    await expect(launchHarnessInProject(binding)).rejects.toThrow();
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockOrphan).toHaveBeenCalledTimes(1);
+    expect(mockHandleRelease).not.toHaveBeenCalled();
+    mockExec.mockImplementation((_cmd, _args, _opts, cb) => cb(null));
+  });
+
+  test("orphans the kept holder when a failed create's container can't be removed (K1)", async () => {
+    mockExec.mockImplementation((_cmd, args: string[], _opts, cb) =>
+      cb(new Error(args.includes("rm") ? "podman rm failed" : "create failed")),
+    );
+    await expect(launchHarnessInProject(binding)).rejects.toThrow();
+    expect(mockMarkLaunched).not.toHaveBeenCalled();
+    expect(mockOrphan).toHaveBeenCalledTimes(1);
+    expect(mockHandleRelease).not.toHaveBeenCalled();
+    mockExec.mockImplementation((_cmd, _args, _opts, cb) => cb(null));
+  });
+
   test("keeps the holder when its container can't be removed (C1)", async () => {
     const handle = await launchHarnessInProject(binding);
     mockExec.mockImplementation((_cmd, args: string[], _opts, cb) =>
@@ -716,6 +747,8 @@ describe("for a project with a separate runtime uid", () => {
       "ACP container operation failed",
     );
     expect(mockHandleRelease).not.toHaveBeenCalled();
+    // kept, but droppable by a later stop's proof (K1)
+    expect(mockOrphan).toHaveBeenCalledTimes(1);
     mockExec.mockImplementation((_cmd, _args, _opts, cb) => cb(null));
   });
 

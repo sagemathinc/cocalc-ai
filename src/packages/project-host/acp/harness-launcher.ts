@@ -281,6 +281,22 @@ export async function launchHarnessInProject(
             await remove();
           }
         }
+      } catch (error) {
+        // K1: the holder stays (never released beneath a container that may
+        // still start), but a later stop may drop it once it has removed
+        // the container and proven it gone, launched or not.
+        if (separateHandle != null) {
+          await separateHandle.orphan().catch((err) =>
+            logger.warn(
+              "could not keep the ACP harness's holder for the stop",
+              {
+                projectId,
+                err: `${err}`,
+              },
+            ),
+          );
+        }
+        throw error;
       } finally {
         // Revoke scoped authority even if a failed runtime removal needs repair.
         restrictedEgress?.close();
