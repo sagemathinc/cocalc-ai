@@ -62,7 +62,9 @@ exec "$real" "$@"
 
 const GIT_CREDENTIAL_HELPER = `#!/bin/sh
 # CoCalc GitHub connector: git credentials for https://github.com only.
-[ "$1" = get ] || exit 0
+# Other actions (store, erase) get the credential on stdin too: read it all
+# before exiting, so the writer never meets a closed pipe.
+[ "$1" = get ] || { cat >/dev/null; exit 0; }
 token_file="$(cd "$(dirname "$0")" && pwd)/../${tokenFile("github")}"
 protocol=""
 host=""
