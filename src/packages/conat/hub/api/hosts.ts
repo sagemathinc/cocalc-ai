@@ -2053,6 +2053,7 @@ export const hosts = {
   getAgentMemoryContext: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
   recordClaudeSubscriptionUsage: authFirstRequireHost,
+  recordCodexSubscriptionUsage: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
   releaseCodexDeviceAuthLease: authFirstRequireHost,
   refreshCodexSubscriptionAuth: authFirstRequireHost,
@@ -2537,6 +2538,14 @@ export interface Hosts {
   // Claude subscription limits reported during a turn, saved on the
   // credential. The owner is owner_account_id: host auth strips account_id.
   recordClaudeSubscriptionUsage: (opts: {
+    host_id?: string;
+    project_id: string;
+    owner_account_id: string;
+    credential_id: string;
+    usage: unknown;
+  }) => Promise<boolean>;
+  // The same for ChatGPT Codex plan limits (util/ai/codex-usage.ts).
+  recordCodexSubscriptionUsage: (opts: {
     host_id?: string;
     project_id: string;
     owner_account_id: string;

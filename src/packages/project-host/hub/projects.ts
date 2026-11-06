@@ -1,4 +1,5 @@
 import { hubApi } from "@cocalc/lite/hub/api";
+import { recordCodexRateLimits } from "../acp/claude-subscription-usage";
 import TTL from "@isaacs/ttlcache";
 import { account_id } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
@@ -3433,6 +3434,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
               timeoutMs,
               credentialId: authRuntime.credentialId,
             });
+      // Save what Codex reported, so agents and other pages see it later.
+      if (status.rateLimits)
+        recordCodexRateLimits({
+          projectId: project_id,
+          accountId,
+          credentialId: authRuntime.credentialId,
+          rateLimits: status.rateLimits,
+        });
       const liveModels = status.models?.length ? status.models : undefined;
       if (
         cacheKey &&

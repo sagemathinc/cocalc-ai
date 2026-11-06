@@ -25,8 +25,10 @@ export {
   CodexAppServerAgent,
   forkCodexAppServerSession,
   getCodexAppServerAccountStatus,
+  setCodexRateLimitRecorder,
   type CodexAcpRecoveryErrorCode,
   type CodexAppServerAccountStatus,
+  type CodexRateLimitReport,
 } from "./codex-app-server";
 export {
   findSessionFile,
