@@ -120,6 +120,7 @@ import {
   viewSourceMountFailures,
   type ProjectViewKind,
 } from "./runtime-host";
+import { checkDaemonStateAfterSeparateStart } from "./runtime-hardening";
 import { keepIdUsernsArgs, type RuntimeIdentity } from "./runtime-identity";
 import { projectPoolCgroupPath } from "./project-pool-cgroup";
 
@@ -2825,6 +2826,11 @@ async function startUnlocked({
       progress: 85,
       desc: "launched project container",
     });
+    if (separate != null) {
+      // Podman relaxes the parents of the paths it's given; the daemon's own
+      // state must stay private after a separate start (reported, restored).
+      await checkDaemonStateAfterSeparateStart();
+    }
 
     report({
       type: "start-project",

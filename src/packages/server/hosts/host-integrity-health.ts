@@ -40,12 +40,20 @@ export type HostIntegrityRow = {
   id: string;
   name: string | null;
   integrity: HostIntegrityStatus | null;
+  // the project runtime uid mode report from the heartbeat; untrusted
+  runtime_uid_mode?: unknown;
 };
 
 export type HostIntegrityCondition = {
   host_id: string;
   host_name: string | null;
-  kind: "processes" | "config" | "watcher" | "reboot";
+  kind:
+    | "processes"
+    | "config"
+    | "watcher"
+    | "reboot"
+    | "runtime-uid-fallback"
+    | "daemon-state";
   level: "critical" | "warning";
   subject: string;
   // stable facts only (the alert dedupe compares bodies)
@@ -61,6 +69,9 @@ export interface HostIntegritySummary {
   conditions: HostIntegrityCondition[];
   // every alert subject of the hosts that report (whether raised or not)
   reporting_subjects: string[];
+  // hosts per runtime uid mode label ("keep-id", "separate (partial)",
+  // "keep-id (fallback: ...)", "undecided", "unreported")
+  runtime_uid_modes: Record<string, number>;
 }
 
 const SUBJECTS: Record<HostIntegrityCondition["kind"], string> = {
@@ -68,7 +79,134 @@ const SUBJECTS: Record<HostIntegrityCondition["kind"], string> = {
   processes: "unexpected process placement",
   config: "host configuration changed",
   reboot: "reboot pending for updates",
+  "runtime-uid-fallback": "separate runtime uid not in effect",
+  "daemon-state": "daemon state not private",
 };
+// reported by the integrity watcher (the rest come from project-host)
+const WATCHER_KINDS: HostIntegrityCondition["kind"][] = [
+  "watcher",
+  "processes",
+  "config",
+  "reboot",
+];
+const RUNTIME_UID_KINDS: HostIntegrityCondition["kind"][] = [
+  "runtime-uid-fallback",
+  "daemon-state",
+];
+const MAX_REPORT_TEXT = 200;
+
+export interface RuntimeUidModeView {
+  configured: string;
+  effective: "keep-id" | "separate" | "undecided";
+  reason?: string;
+  detail?: string;
+  label: string;
+  reported_at: string;
+  daemon_state?: { ok: boolean; problem?: string; restored?: boolean };
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, MAX_REPORT_TEXT)
+    : undefined;
+}
+
+/** The heartbeat's runtime uid mode report, if well-formed. */
+export function normalizeRuntimeUidMode(
+  raw: unknown,
+): RuntimeUidModeView | undefined {
+  if (raw == null || typeof raw !== "object") return undefined;
+  const value = raw as Record<string, unknown>;
+  const effective = value.effective;
+  if (
+    effective !== "keep-id" &&
+    effective !== "separate" &&
+    effective !== "undecided"
+  ) {
+    return undefined;
+  }
+  const configured = text(value.configured);
+  const label = text(value.label);
+  const reported_at = text(value.reported_at);
+  if (!configured || !label || !reported_at) return undefined;
+  const state = value.daemon_state as Record<string, unknown> | undefined;
+  return {
+    configured,
+    effective,
+    ...(text(value.reason) ? { reason: text(value.reason) } : {}),
+    ...(text(value.detail) ? { detail: text(value.detail) } : {}),
+    label,
+    reported_at,
+    ...(state != null &&
+    typeof state === "object" &&
+    typeof state.ok === "boolean"
+      ? {
+          daemon_state: {
+            ok: state.ok,
+            ...(text(state.problem) ? { problem: text(state.problem) } : {}),
+            ...(typeof state.restored === "boolean"
+              ? { restored: state.restored }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+/** The label shown for a host: partial is never shown as separate, and an
+ * undecided host never as either mode. */
+function runtimeUidLabel(mode: RuntimeUidModeView): string {
+  if (mode.effective === "undecided") {
+    return mode.configured === "keep-id"
+      ? "undecided"
+      : `undecided (configured ${mode.configured})`;
+  }
+  if (mode.effective === "keep-id" && mode.configured !== "keep-id") {
+    return `keep-id (fallback: ${mode.reason ?? "unknown"})`;
+  }
+  return mode.label;
+}
+
+function runtimeUidConditions(
+  row: HostIntegrityRow,
+  mode: RuntimeUidModeView,
+): HostIntegrityCondition[] {
+  const label = hostLabel(row);
+  const base = { host_id: row.id, host_name: row.name };
+  const conditions: HostIntegrityCondition[] = [];
+  // Configured separate but projects start as keep-id: never only a label.
+  if (mode.configured !== "keep-id" && mode.effective === "keep-id") {
+    const reason = mode.reason ?? "unknown";
+    conditions.push({
+      ...base,
+      kind: "runtime-uid-fallback",
+      level: "warning",
+      subject: subject(row, "runtime-uid-fallback"),
+      facts: [
+        `${label}: runtime uid mode ${mode.configured} is configured, but projects start as keep-id (reason: ${reason})`,
+      ],
+      details: [
+        `${label}: runtime uid mode ${mode.configured} configured, keep-id in effect (reason: ${reason}${mode.detail ? `; ${mode.detail}` : ""})`,
+      ],
+    });
+  }
+  if (mode.daemon_state && !mode.daemon_state.ok) {
+    const what = mode.daemon_state.problem ?? "unknown";
+    conditions.push({
+      ...base,
+      kind: "daemon-state",
+      level: "warning",
+      subject: subject(row, "daemon-state"),
+      facts: [
+        `${label}: the daemon state directory was not private after a separate start (${what})${mode.daemon_state.restored ? "; its mode was restored" : ""}`,
+      ],
+      details: [
+        `${label}: daemon state directory after a separate start: ${what}${mode.daemon_state.restored ? " (mode restored to 0700)" : ""}`,
+      ],
+    });
+  }
+  return conditions;
+}
 
 // Keyed on the host id, which never changes (a name can be renamed or
 // shared): alerts dedupe and clear by subject. The name is in the facts.
@@ -99,8 +237,25 @@ export function summarizeHostIntegrity(
 ): HostIntegritySummary {
   const conditions: HostIntegrityCondition[] = [];
   const reporting_subjects: string[] = [];
+  const runtime_uid_modes: Record<string, number> = {};
   let unreported = 0;
   for (const row of byHostId(rows)) {
+    // The runtime uid report comes from project-host itself, independent of
+    // the watcher's; only a fresh one counts (merged heartbeat metadata).
+    const mode = normalizeRuntimeUidMode(row.runtime_uid_mode);
+    if (
+      mode != null &&
+      seenWithin(mode.reported_at, HOST_ONLINE_WINDOW_MS, now)
+    ) {
+      const modeLabel = runtimeUidLabel(mode);
+      runtime_uid_modes[modeLabel] = (runtime_uid_modes[modeLabel] ?? 0) + 1;
+      for (const kind of RUNTIME_UID_KINDS) {
+        reporting_subjects.push(subject(row, kind));
+      }
+      conditions.push(...runtimeUidConditions(row, mode));
+    } else {
+      runtime_uid_modes.unreported = (runtime_uid_modes.unreported ?? 0) + 1;
+    }
     const integrity = row.integrity;
     // Heartbeat metadata is merged, so a host that went back to a build
     // without this report keeps the last one: only a fresh report counts.
@@ -114,8 +269,8 @@ export function summarizeHostIntegrity(
     }
     const label = hostLabel(row);
     const base = { host_id: row.id, host_name: row.name };
-    for (const kind of Object.keys(SUBJECTS)) {
-      reporting_subjects.push(subject(row, kind as keyof typeof SUBJECTS));
+    for (const kind of WATCHER_KINDS) {
+      reporting_subjects.push(subject(row, kind));
     }
     if (integrity.watcher !== "running") {
       conditions.push({
@@ -211,13 +366,15 @@ export function summarizeHostIntegrity(
     unreported_hosts: unreported,
     conditions,
     reporting_subjects,
+    runtime_uid_modes,
   };
 }
 
 export async function getHostIntegritySummary(): Promise<HostIntegritySummary> {
   const bayId = getConfiguredBayId();
   const { rows } = await getPool().query<HostIntegrityRow>(
-    `SELECT id, name, metadata->'host_integrity' AS integrity
+    `SELECT id, name, metadata->'host_integrity' AS integrity,
+            metadata->'runtime_uid_mode' AS runtime_uid_mode
      FROM project_hosts
      WHERE deleted IS NULL
        AND status = 'running'
@@ -239,7 +396,8 @@ export function hostIntegrityHealth(
       details: [`${result.reason}`],
     };
   }
-  const { active_hosts, unreported_hosts, conditions } = result.value;
+  const { active_hosts, unreported_hosts, conditions, runtime_uid_modes } =
+    result.value;
   const reporting = active_hosts - unreported_hosts;
   const unreported = unreported_hosts
     ? ` ${unreported_hosts} host${unreported_hosts === 1 ? " does" : "s do"} not report it yet.`
@@ -258,8 +416,28 @@ export function hostIntegrityHealth(
       conditions.length > 0
         ? `${hosts}/${reporting} reporting hosts have integrity conditions (${alertMode() === "alert" ? "alerting" : "report-only"}).${unreported}`
         : `${reporting}/${active_hosts} active hosts report no integrity conditions.${unreported}`,
-    details: conditions.flatMap((c) => c.details),
+    details: [
+      ...conditions.flatMap((c) => c.details),
+      ...runtimeUidModeLine(runtime_uid_modes),
+    ],
   };
+}
+
+function runtimeUidModeLine(
+  modes: Record<string, number> | undefined,
+): string[] {
+  const entries = Object.entries(modes ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  if (entries.length === 0) return [];
+  return [
+    `Runtime uid mode: ${entries.map(([label, n]) => `${n} ${label}`).join(", ")}`,
+    ...(entries.some(([label]) => label.startsWith("separate (partial)"))
+      ? [
+          "separate (partial): sidecar processes still run as the shared runtime uid, so the project user is not yet fully separated",
+        ]
+      : []),
+  ];
 }
 
 export function alertMode(): "alert" | "report" {

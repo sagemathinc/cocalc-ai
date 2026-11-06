@@ -276,3 +276,200 @@ describe("host integrity alert pass", () => {
     ]);
   });
 });
+
+describe("project runtime uid mode health", () => {
+  const withMode = (id: string, mode: any): HostIntegrityRow => ({
+    ...host(id, {}),
+    runtime_uid_mode: mode,
+  });
+  const report = (extra: any = {}) => ({
+    configured: "keep-id",
+    effective: "keep-id",
+    label: "keep-id",
+    reported_at: ago(0),
+    ...extra,
+  });
+  const kinds = (rows: HostIntegrityRow[]) =>
+    summarizeHostIntegrity(rows, NOW).conditions.map((c) => c.kind);
+
+  it("alerts when separate is configured but projects start as keep-id, for every reason", () => {
+    for (const reason of [
+      "helper-old",
+      "map-missing-block",
+      "map-unparsable",
+      "map-collision",
+      "host-unsafe",
+      "mode-invalid",
+    ]) {
+      const summary = summarizeHostIntegrity(
+        [
+          withMode(
+            "a",
+            report({
+              configured: "separate",
+              reason,
+              label: `keep-id (fallback: ${reason})`,
+            }),
+          ),
+        ],
+        NOW,
+      );
+      const fallback = summary.conditions.filter(
+        (c) => c.kind === "runtime-uid-fallback",
+      );
+      expect(fallback).toHaveLength(1);
+      expect(fallback[0].level).toBe("warning");
+      // alerted (current facts), with the reason
+      expect(fallback[0].facts.join("\n")).toContain(`reason: ${reason}`);
+      expect(summary.runtime_uid_modes).toEqual({
+        [`keep-id (fallback: ${reason})`]: 1,
+      });
+    }
+  });
+
+  it("(control) no alert for keep-id as configured, or separate in effect", () => {
+    expect(kinds([withMode("a", report())])).toEqual([]);
+    expect(
+      kinds([
+        withMode(
+          "b",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+          }),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("shows partial as partial (never plain separate), and undecided as undecided", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+          }),
+        ),
+        withMode(
+          "b",
+          report({
+            configured: "separate",
+            effective: "undecided",
+            label: "undecided",
+          }),
+        ),
+        withMode("c", report({ effective: "undecided", label: "undecided" })),
+      ],
+      NOW,
+    );
+    expect(summary.runtime_uid_modes).toEqual({
+      "separate (partial)": 1,
+      "undecided (configured separate)": 1,
+      undecided: 1,
+    });
+    // undecided is never an alert, and never counted as a mode
+    expect(summary.conditions).toEqual([]);
+    const health = hostIntegrityHealth({ status: "fulfilled", value: summary });
+    expect(health.details.join("\n")).toContain(
+      "Runtime uid mode: 1 separate (partial), 1 undecided, 1 undecided (configured separate)",
+    );
+    expect(health.details.join("\n")).toContain(
+      "the project user is not yet fully separated",
+    );
+  });
+
+  it("a fallback label from the host can't hide the fallback", () => {
+    // the comparison is configured vs effective, not the host's label
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            label: "keep-id",
+            reason: "host-unsafe",
+          }),
+        ),
+      ],
+      NOW,
+    );
+    expect(summary.conditions.map((c) => c.kind)).toEqual([
+      "runtime-uid-fallback",
+    ]);
+    expect(summary.runtime_uid_modes).toEqual({
+      "keep-id (fallback: host-unsafe)": 1,
+    });
+  });
+
+  it("reports the daemon state directory not being private after a separate start", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+            daemon_state: { ok: false, problem: "mode 0711", restored: true },
+          }),
+        ),
+        withMode(
+          "b",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+            daemon_state: { ok: true },
+          }),
+        ),
+      ],
+      NOW,
+    );
+    const state = summary.conditions.filter((c) => c.kind === "daemon-state");
+    expect(state).toHaveLength(1);
+    expect(state[0].host_id).toBe("a");
+    expect(state[0].facts[0]).toContain("mode 0711");
+    expect(state[0].facts[0]).toContain("restored");
+  });
+
+  it("ignores stale and malformed reports (merged heartbeat metadata)", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({ configured: "separate", reported_at: ago(60 * 60_000) }),
+        ),
+        withMode("b", { configured: "separate", effective: "nonsense" }),
+        withMode("c", "separate"),
+        host("d", {}),
+      ],
+      NOW,
+    );
+    expect(summary.conditions).toEqual([]);
+    expect(summary.runtime_uid_modes).toEqual({ unreported: 4 });
+  });
+
+  it("clears a fallback alert once the host reports separate in effect", async () => {
+    // reporting_subjects lets the alert pass clear it
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+          }),
+        ),
+      ],
+      NOW,
+    );
+    expect(summary.reporting_subjects).toContain(
+      "Host integrity: a: separate runtime uid not in effect",
+    );
+  });
+});
