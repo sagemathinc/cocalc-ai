@@ -468,6 +468,10 @@ const fs = require("fs");
 const dir = ${JSON.stringify(root)};
 spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" })
   .on("spawn", function () { fs.writeFileSync(dir + "/mcp", String(this.pid)); });
+// an own process whose environ the probe can read (node's is not: it has
+// file capabilities, so it is not dumpable)
+spawn("sleep", ["60"], { stdio: "ignore" })
+  .on("spawn", function () { fs.writeFileSync(dir + "/ownsleep", String(this.pid)); });
 const shell = spawn("/bin/sh", ["-c", "sleep 60; true"], { stdio: "ignore" });
 fs.writeFileSync(dir + "/shell", String(shell.pid));
 spawn("/bin/sh", ["-c", "sleep 60 & echo $! > " + dir + "/job; exit 0"], { stdio: "ignore" });
@@ -496,6 +500,7 @@ setInterval(() => {}, 1000);
       };
       const pids = {
         mcp: await pidOf("mcp"),
+        ownSleep: await pidOf("ownsleep"),
         shell: await pidOf("shell"),
         job: await pidOf("job"),
       };
@@ -550,8 +555,10 @@ setInterval(() => {}, 1000);
           await new Promise((r) => setTimeout(r, 50));
           state = await probe(pidFile, runId);
         }
-        // the agent's own processes (its MCP server) are no job
+        // the agent's own processes (its MCP servers, one of them with a
+        // readable environ carrying the marker) are no job
         expect(alive(pids.mcp)).toBe(true);
+        expect(alive(pids.ownSleep)).toBe(true);
         expect(state).toBe("idle");
       } finally {
         cleanup();
@@ -568,6 +575,7 @@ setInterval(() => {}, 1000);
         await new Promise((r) => setTimeout(r, 200));
         expect(alive(adapterPid)).toBe(false);
         expect(alive(pids.mcp)).toBe(false);
+        expect(alive(pids.ownSleep)).toBe(false);
         expect(alive(pids.shell)).toBe(true);
         expect(alive(pids.job)).toBe(true);
       } finally {

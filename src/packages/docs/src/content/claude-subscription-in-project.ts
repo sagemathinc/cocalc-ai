@@ -113,20 +113,22 @@ agent's environment or memory, or by adding hooks or MCP servers to Claude
 Code's settings in the project, and use it to send requests billed to your
 subscription, until the token stops working as described above.
 
-The same holds for the CoCalc command-line credential described above, which
-acts as you in this project: among other things, it can create, start, resize
-and delete virtual machines and volumes for the project, paid by you. While
-the agent runs, every process in the project can read its file, and CoCalc
-keeps renewing it. The agent is not ended while a process carrying its run
-marker is running, and other processes in the project can read that marker
-and start such a process. So a collaborator can keep the agent running, and
-its command-line credential renewed, indefinitely. The relay token still stops working 15 minutes after
-each turn.
+Obtaining the relay token this way doesn't happen by accident: it takes
+intentional circumvention, which violates Anthropic's terms of service.
 
-This doesn't happen by accident: it takes intentional circumvention, which
-violates Anthropic's terms of service. CoCalc cannot protect you from a
-collaborator who sets out to do this. Use your subscription only in projects
-where you trust every collaborator.
+The CoCalc command-line credential described above is exposed the same way.
+It acts as you in this project: among other things, it can create, start,
+resize and delete virtual machines and volumes for the project, paid by you.
+While the agent runs, every process in the project can read its file, and
+CoCalc keeps renewing it. The agent is not ended while a process carrying its
+run marker is running, and other processes in the project can read that
+marker and start such a process. So a collaborator can keep the agent
+running, and its command-line credential renewed, indefinitely. The relay
+token still stops working 15 minutes after each turn.
+
+CoCalc cannot protect you from a collaborator who sets out to do either of
+these. Use your subscription only in projects where you trust every
+collaborator.
 
 Before any turn paid by your own subscription in a project that has other
 collaborators, CoCalc shows this warning and sends nothing until you accept

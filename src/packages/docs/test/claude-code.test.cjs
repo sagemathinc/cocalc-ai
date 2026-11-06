@@ -90,11 +90,22 @@ test("the page on Claude subscriptions in the project states the code's limits, 
   assert.match(entry.body, /every process in the\s+project can read its file/);
   assert.match(
     entry.body,
-    /acts as you in this project: among other things, it can create, start, resize\s+and delete virtual machines and volumes for the project, paid by you/,
+    /It acts as you in this project: among other things, it can create, start,\s+resize and delete virtual machines and volumes for the project, paid by you/,
   );
+  // "not by accident" and Anthropic's terms are about the relay token only,
+  // stated before the command-line credential's paragraph
   assert.match(
     entry.body,
-    /a\s+collaborator can keep the agent running, and\s+its command-line credential renewed,\s+indefinitely/,
+    /Obtaining the relay token this way doesn't happen by accident/,
+  );
+  assert.ok(
+    entry.body.indexOf("doesn't happen by accident") <
+      entry.body.indexOf("The CoCalc command-line credential described above"),
+  );
+  assert.doesNotMatch(entry.body, /^This doesn't happen by accident/m);
+  assert.match(
+    entry.body,
+    /a\s+collaborator can keep the agent\s+running, and its command-line credential renewed,\s+indefinitely/,
   );
   assert.match(
     entry.body,
