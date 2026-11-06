@@ -90,7 +90,11 @@ test("the page on Claude subscriptions in the project states the code's limits, 
   assert.match(entry.body, /every process in the\s+project can read its file/);
   assert.match(
     entry.body,
-    /a\s+collaborator can keep the agent running, and its command-line credential\s+renewed, indefinitely/,
+    /acts as you in this project: among other things, it can create, start, resize\s+and delete virtual machines and volumes for the project, paid by you/,
+  );
+  assert.match(
+    entry.body,
+    /a\s+collaborator can keep the agent running, and\s+its command-line credential renewed,\s+indefinitely/,
   );
   assert.match(
     entry.body,
