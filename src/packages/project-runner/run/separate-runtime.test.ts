@@ -181,6 +181,22 @@ describe("separate runtime holders", () => {
     await next.release();
   });
 
+  it("reuses only views this daemon mounted, never a leftover found mounted (R-a)", async () => {
+    // a previous daemon's view, still mounted: no record of it here
+    views.add("home");
+    await expect(acquire("sandbox", ["home"])).rejects.toThrow(
+      "left over from an earlier run",
+    );
+    expect(events).not.toContain("mount-view home");
+    // control: one this daemon mounted is reused, not mounted twice
+    views.clear();
+    const a = await acquire("project", ["home"]);
+    const b = await acquire("sandbox", ["home"]);
+    expect(events.filter((e) => e === "mount-view home")).toHaveLength(1);
+    await b.release();
+    await a.release();
+  });
+
   it("gives the lease back when a view can't be mounted, counting nothing", async () => {
     const rootfs = await import("./rootfs");
     const { acquireSeparateRuntime } = rootfs;

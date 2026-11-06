@@ -569,6 +569,10 @@ export type SeparateHolderKind =
   | "controller";
 
 const separateHolders = new Map<string, Map<number, SeparateHolderKind>>();
+// The views this daemon mounted (R-a): only those are ever reused. A view
+// found mounted without this record is a leftover of an earlier run, and
+// only the project's start may take it down (detachLeftovers, proven).
+const ourViews = new Map<string, Set<ProjectViewKind>>();
 let nextHolderId = 1;
 
 export interface ViewOps {
@@ -641,10 +645,24 @@ export async function acquireSeparateRuntime({
     });
     const views: Partial<Record<ProjectViewKind, string>> = {};
     try {
+      let mine = ourViews.get(project_id);
       for (const kind of kinds) {
-        views[kind] = (await viewOps.mounted(project_id, kind))
-          ? projectViewPath(project_id, kind)
-          : await viewOps.mount({ project_id, kind, uid: idmapUid });
+        const isMounted = await viewOps.mounted(project_id, kind);
+        if (isMounted && mine?.has(kind)) {
+          views[kind] = projectViewPath(project_id, kind);
+          continue;
+        }
+        if (isMounted) {
+          throw new Error(
+            `this project's ${kind} view is left over from an earlier run; the project's next start removes it`,
+          );
+        }
+        views[kind] = await viewOps.mount({ project_id, kind, uid: idmapUid });
+        if (mine == null) {
+          mine = new Set();
+          ourViews.set(project_id, mine);
+        }
+        mine.add(kind);
       }
     } catch (err) {
       // nothing else counted yet: give the lease back (its delayed
@@ -677,6 +695,7 @@ export async function acquireSeparateRuntime({
           if (leases.getCount(project_id) > 0) return;
           await detachBothWays(project_id);
           await viewOps.umountAll(project_id);
+          ourViews.delete(project_id);
           if (await viewOps.anyMounted(project_id)) {
             throw new Error(
               "could not unmount this project's views after its last user",
