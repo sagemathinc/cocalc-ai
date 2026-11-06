@@ -82,7 +82,10 @@ export function createChatSyncDB(opts: CreateChatSyncDBOptions): ImmerDB {
 }
 
 // Ref-counted pool using RefcountLeaseManager so a given project/path syncdb is opened once.
-const CLOSE_DELAY_MS = 30_000;
+// An idle syncdb stays open this long: agent chats are touched every few
+// minutes, and each reopen loads the chat's history since its last snapshot
+// again.
+const CLOSE_DELAY_MS = 10 * 60_000;
 const openSyncdbs = new Map<string, ImmerDB>();
 const leases = new RefcountLeaseManager<string>({
   delayMs: CLOSE_DELAY_MS,

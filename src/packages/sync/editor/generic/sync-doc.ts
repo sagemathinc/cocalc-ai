@@ -466,6 +466,93 @@ export function patchClientId(time: string): string | undefined {
   }
 }
 
+// A parent that no loaded patch can supply and that is not in the stream at
+// all (see SyncDoc.waitsOnPatchMissingFromStream).
+export interface PatchMissingFromStream {
+  // the missing parent
+  missing: string;
+  // the oldest loaded patch that builds on it
+  child: string;
+  // its author's newest loaded patch before it (the patch it can only have
+  // been made on), and that patch's user_id
+  before: string;
+  beforeUserId?: number;
+}
+
+// The parents of loaded patches that are provably not in the stream: a
+// client appends its own patches in order, so a parent whose author has an
+// older patch in the loaded history would be in the loaded history if it
+// were in the stream.
+export function patchesMissingFromStream(
+  patches: {
+    time: unknown;
+    parents?: unknown[];
+    is_snapshot?: boolean;
+    patch?: unknown;
+    user_id?: number;
+  }[],
+): PatchMissingFromStream[] {
+  const loaded = new Set<string>();
+  // the loaded patches of each client, with their user ids
+  const byClient = new globalThis.Map<
+    string,
+    { time: string; user_id?: number }[]
+  >();
+  for (const p of patches) {
+    const time = `${p.time}`;
+    loaded.add(time);
+    if (p.is_snapshot && p.patch == null) continue;
+    const client = patchClientId(time);
+    if (client == null) continue;
+    let v = byClient.get(client);
+    if (v == null) {
+      v = [];
+      byClient.set(client, v);
+    }
+    v.push({ time, user_id: p.user_id });
+  }
+  const found = new globalThis.Map<string, PatchMissingFromStream>();
+  for (const p of patches) {
+    const child = `${p.time}`;
+    for (const parent of p.parents ?? []) {
+      const id = `${parent}`;
+      if (loaded.has(id)) continue;
+      const client = patchClientId(id);
+      if (client == null) continue;
+      let before: { time: string; user_id?: number } | undefined;
+      for (const q of byClient.get(client) ?? []) {
+        if (
+          comparePatchId(q.time, id) < 0 &&
+          (before == null || comparePatchId(q.time, before.time) > 0)
+        ) {
+          before = q;
+        }
+      }
+      if (before == null) continue;
+      const prev = found.get(id);
+      if (prev == null || comparePatchId(child, prev.child) < 0) {
+        found.set(id, {
+          missing: id,
+          child,
+          before: before.time,
+          beforeUserId: before.user_id,
+        });
+      }
+    }
+  }
+  return [...found.values()];
+}
+
+// How old the patch that builds on a missing parent must be before a client
+// repairs the parent (see SyncDoc.repairPatchesMissingFromStream): a patch on
+// its way to the stream arrives within seconds.
+let missingParentRepairAgeMs = 10 * 60_000;
+
+// for tests
+export function setMissingParentRepairAgeMs(ms: number): void {
+  missingParentRepairAgeMs = ms;
+}
+
 export interface LoadedStartSnapshot {
   // patch times proven to be ancestors of the loaded snapshot's patch;
   // undefined for a snapshot written before snapshot_ancestors
@@ -937,6 +1024,7 @@ export class SyncDoc extends EventEmitter {
     if (this.patchesReplaced()) {
       this.patchesInstanceReset();
     }
+    void this.repairPatchesMissingFromStream();
 
     // Success -- everything initialized with no issues.
     if (this.opts.ignoreInitialChanges) {
@@ -3657,6 +3745,8 @@ export class SyncDoc extends EventEmitter {
       // loadHistoryIfNeeded), and a snapshot would pass an approximation on to
       // every client that opens the document later.
       dbg("not making a snapshot: more history is needed for exact values");
+      // which may never come (a parent that is not in the stream)
+      void this.repairPatchesMissingFromStream();
       return;
     }
     const candidate = this.patchflowSnapshotCandidate(interval, max_size);
@@ -4237,39 +4327,82 @@ export class SyncDoc extends EventEmitter {
   // the stream. Loading everything would only add the cost of the whole
   // history (minutes for a long-lived document) to every cold open.
   private waitsOnPatchMissingFromStream = (): boolean => {
-    let patches: Patch[];
     try {
-      patches = this.get_patches();
+      return patchesMissingFromStream(this.get_patches()).length > 0;
     } catch {
       return false;
     }
-    const loaded = new Set<string>();
-    // oldest loaded patch of each client
-    const oldest = new globalThis.Map<string, string>();
-    for (const p of patches) {
-      const time = `${p.time}`;
-      loaded.add(time);
-      if (p.is_snapshot && p.patch == null) continue;
-      const client = patchClientId(time);
-      if (client == null) continue;
-      const prev = oldest.get(client);
-      if (prev == null || comparePatchId(time, prev) < 0) {
-        oldest.set(client, time);
+  };
+
+  // Missing parents this client already wrote a repair for.
+  private repairedMissingParents = new Set<string>();
+
+  // Snapshots wait while patchflow needs more history (snapshotIfNecessary),
+  // and a parent that is not in the stream never arrives: without a repair
+  // the document never gets another snapshot, and every open loads all the
+  // patches since the last one, which grows without bound.
+  // The repair: an empty patch with the missing id, on its author's patch
+  // before it (the one it can only have been made on), once the patch that
+  // builds on it is old enough that the parent is not merely on its way.
+  // Every client then computes the same, exact value: the one each client
+  // that opened the document after the loss already showed. If the real patch
+  // reaches the stream after all, it takes the same table key and replaces
+  // the repair.
+  private repairPatchesMissingFromStream = reuseInFlight(
+    async (): Promise<void> => {
+      if (
+        this.isClosed() ||
+        this.get_state() !== "ready" ||
+        this.patches_table == null ||
+        !(this.patchflowSession as any)?.needsMoreHistory?.()
+      ) {
+        return;
       }
-    }
-    for (const p of patches) {
-      for (const parent of p.parents ?? []) {
-        const id = `${parent}`;
-        if (loaded.has(id)) continue;
-        const client = patchClientId(id);
-        const first = client == null ? undefined : oldest.get(client);
-        if (first != null && comparePatchId(first, id) < 0) {
-          return true;
+      const dbg = this.dbg("repairPatchesMissingFromStream");
+      let missing: PatchMissingFromStream[];
+      try {
+        missing = patchesMissingFromStream(this.get_patches());
+      } catch {
+        return;
+      }
+      const now = Date.now();
+      let wrote = false;
+      for (const m of missing) {
+        if (this.repairedMissingParents.has(m.missing)) continue;
+        let childMs: number;
+        try {
+          childMs = decodePatchId(m.child).timeMs;
+        } catch {
+          continue;
+        }
+        if (now - childMs < missingParentRepairAgeMs) continue;
+        this.repairedMissingParents.add(m.missing);
+        dbg("repairing a parent that is not in the stream", {
+          missing: m.missing,
+          child: m.child,
+          before: m.before,
+        });
+        this.patches_table.set({
+          string_id: this.string_id,
+          time: m.missing,
+          wall: decodePatchId(m.missing).timeMs,
+          user_id: m.beforeUserId ?? this.my_user_id ?? 1,
+          is_snapshot: false,
+          parents: [m.before],
+          version: (this.patchflowSession?.versions().length ?? 0) + 1,
+          patch: "[]",
+        });
+        wrote = true;
+      }
+      if (wrote) {
+        try {
+          await this.patches_table.save();
+        } catch (err) {
+          dbg(`failed to save the repair: ${err}`);
         }
       }
-    }
-    return false;
-  };
+    },
+  );
 
   private applyPatchflowRemoteBatch = (envs: PatchEnvelope[]): boolean => {
     if (this.patchflowSession == null) {

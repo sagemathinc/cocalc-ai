@@ -22,6 +22,7 @@ import {
   waitUntilSynced,
 } from "./setup";
 import { decodePatchId, encodePatchId } from "patchflow";
+import { setMissingParentRepairAgeMs } from "@cocalc/sync/editor/generic/sync-doc";
 
 beforeAll(before);
 afterAll(after);
@@ -98,8 +99,8 @@ describe("a patch whose parent is not in the stream", () => {
   };
 
   it("does not load the whole history when the missing parent's author has an older patch loaded", async () => {
-    const { project_id, path, s1, last, missing } = await setup((s1) =>
-      decodePatchId(s1.versions().at(-1)).clientId,
+    const { project_id, path, s1, last, missing } = await setup(
+      (s1) => decodePatchId(s1.versions().at(-1)).clientId,
     );
     const s3 = await open(project_id, path);
     const session = (s3 as any).patchflowSession;
@@ -137,4 +138,59 @@ describe("a patch whose parent is not in the stream", () => {
     // it may be below the loaded history, so the whole history is loaded
     expect(s3.hasFullHistory()).toBe(true);
   }, 60_000);
+
+  // Snapshots wait while patchflow needs more history, so without a repair a
+  // document with such a parent never gets another snapshot, and every open
+  // loads all the patches since the last one.
+  describe("the automatic repair", () => {
+    afterEach(() => setMissingParentRepairAgeMs(10 * 60_000));
+
+    it("is not written while the patch that builds on the parent is recent (it may be on its way)", async () => {
+      const { project_id, path, s1, missing } = await setup(
+        (s1) => decodePatchId(s1.versions().at(-1)).clientId,
+      );
+      const s3 = await open(project_id, path);
+      await new Promise((r) => setTimeout(r, 500));
+      const session = (s3 as any).patchflowSession;
+      expect(() => session.getPatch(missing)).toThrow("unknown time");
+      expect(session.needsMoreHistory()).toBe(true);
+      expect(s3.to_str()).toBe(s1.to_str());
+    }, 60_000);
+
+    it("is written by a client that opens the document once that patch is old enough; then no client waits and snapshots resume", async () => {
+      const { project_id, path, s1, last, missing } = await setup(
+        (s1) => decodePatchId(s1.versions().at(-1)).clientId,
+      );
+      const value = s1.to_str();
+      setMissingParentRepairAgeMs(0);
+      const s3 = await open(project_id, path);
+      const session = (s3 as any).patchflowSession;
+      await wait({ until: () => session.getPatch(missing) != null });
+      // an empty patch on the author's patch before it
+      const repair = session.getPatch(missing);
+      expect(repair.parents).toEqual([last]);
+      expect(session.needsMoreHistory()).toBe(false);
+      await wait({
+        until: () => (s1 as any).patchflowSession.getPatch(missing) != null,
+      });
+      expect((s1 as any).patchflowSession.needsMoreHistory()).toBe(false);
+      // the value did not change
+      expect(s3.to_str()).toBe(value);
+      expect(s1.to_str()).toBe(value);
+      // a client that opens now neither waits nor loads the whole history
+      const s4 = await open(project_id, path);
+      expect((s4 as any).patchflowSession.needsMoreHistory()).toBe(false);
+      expect(s4.hasFullHistory()).toBe(false);
+      expect(s4.to_str()).toBe(value);
+      // and a snapshot can be made again
+      s4.from_str(`${value}after the repair\n`);
+      s4.commit();
+      await s4.save();
+      await (s4 as any).snapshot(s4.versions().at(-1));
+      await waitUntilSynced([s1, s4]);
+      const s5 = await open(project_id, path);
+      expect(s5.to_str()).toBe(`${value}after the repair\n`);
+      expect((s5 as any).patchflowSession.needsMoreHistory()).toBe(false);
+    }, 60_000);
+  });
 });
