@@ -144,6 +144,15 @@ describe("git credential helper", () => {
     ).toBe("");
   });
 
+  it("reads all of its input before exiting, for store and erase too", async () => {
+    // more than a pipe buffer: a helper that exits without reading it makes
+    // the writer fail with EPIPE every time, not only under load
+    const big = `protocol=https\nhost=github.com\npassword=${"x".repeat(300_000)}\n\n`;
+    for (const action of ["store", "erase", "get"]) {
+      expect(run(helper(), [action], big)).toBe("");
+    }
+  });
+
   it("is used by git itself, only during a turn", async () => {
     const fill = () =>
       run("git", ["credential", "fill"], "protocol=https\nhost=github.com\n\n");
