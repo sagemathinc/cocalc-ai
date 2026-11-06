@@ -408,6 +408,92 @@ describe("snapshot-backup-maintenance", () => {
       });
     });
 
+    // p-1 runs (held) while p-2 waits behind it; then a partial sweep for p-2
+    // changes or drops its row; then p-1 finishes (a snapshot is made) and
+    // p-2 is dispatched with what the partial sweep saw.
+    const behindARun = async (p2: object | undefined) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        await held;
+        return {
+          changed: true,
+          created_snapshot_at: "2026-04-10T22:31:00.000Z",
+          latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+        };
+      });
+      await sweep([overdue("p-1"), overdue("p-2")]);
+      expect((await waiting())?.paying).toEqual({
+        running: { count: 1, oldest_age_ms: expect.any(Number) },
+        queued_promoted: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      listProjectMaintenanceSchedulesMock.mockResolvedValue(p2 ? [p2] : []);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        projectIds: ["p-2"],
+        detach: true,
+      });
+      await drain();
+      release();
+      await drain();
+      // p-1 made its snapshot; p-2 was never run
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+    };
+
+    it("drops a snapshot whose fresh row shows it is not due after all", async () => {
+      await behindARun(
+        overdue("p-2", {
+          // changed since a snapshot a minute ago: due, but not yet
+          last_snapshot: new Date(Date.now() - 60_000).toISOString(),
+          last_edited: new Date().toISOString(),
+          // and observed: no reconciliation is owed either
+          last_snapshot_observed_at: new Date().toISOString(),
+        }),
+      );
+      expect((await waiting())?.paying).toEqual({});
+    });
+
+    it("records the retry a fresh row shows, as the wait", async () => {
+      await behindARun(
+        overdue("p-2", {
+          snapshot_retry_at: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      );
+      expect((await waiting())?.paying).toEqual({
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+    });
+
+    it("drops a snapshot whose project left the host", async () => {
+      await behindARun(undefined);
+      expect((await waiting())?.paying).toEqual({});
+    });
+
+    it("a partial sweep never replaces the full inventory", async () => {
+      snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
+      await sweep([overdue("p-1"), overdue("p-2"), overdue("p-3")]);
+      expect((await waiting())?.paying).toEqual({
+        parked: { count: 3, oldest_age_ms: expect.any(Number) },
+      });
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([overdue("p-1")]);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        projectIds: ["p-1"],
+        detach: true,
+      });
+      await drain();
+      expect(listProjectMaintenanceSchedulesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ project_ids: ["p-1"] }),
+      );
+      expect((await waiting())?.paying).toEqual({
+        parked: { count: 3, oldest_age_ms: expect.any(Number) },
+      });
+    });
+
     it("reports nothing before the first full inventory", async () => {
       expect(await waiting()).toBeUndefined();
     });
