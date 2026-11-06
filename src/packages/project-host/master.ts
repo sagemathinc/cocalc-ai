@@ -62,6 +62,7 @@ import { imageCachePath } from "@cocalc/project-runner/run/rootfs-base";
 import {
   getRootfsMountpoint,
   isMounted as isRootfsMounted,
+  rootfsIdmapUid,
 } from "@cocalc/project-runner/run/rootfs";
 import {
   deleteProjectLocal,
@@ -1994,7 +1995,12 @@ export async function startMasterRegistration({
       await awaitReadyForControl("scanProjectRootfs", waitUntilReady);
       const rootfsPath = getRootfsMountpoint(opts.project_id);
       try {
-        await fsPromises.access(rootfsPath);
+        // An idmapped rootfs (a separate runtime uid) isn't reachable from
+        // this daemon; the scanner's rootless podman binds it read-only,
+        // and the mountinfo check below is what tells it's there.
+        if (rootfsIdmapUid(opts.project_id) == null) {
+          await fsPromises.access(rootfsPath);
+        }
       } catch {
         throw new Error(
           `project '${opts.project_id}' RootFS mount path is not available on this host`,

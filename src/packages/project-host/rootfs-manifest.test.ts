@@ -10,6 +10,7 @@ jest.mock("@cocalc/project-runner/run/rootfs-base", () => ({
 jest.mock("@cocalc/project-runner/run/rootfs", () => ({
   getRootfsMountpoint: jest.fn(),
   isMounted: jest.fn(),
+  rootfsIdmapUid: jest.fn(),
 }));
 
 describe("rootfs manifest", () => {
@@ -65,6 +66,24 @@ describe("rootfs manifest", () => {
     expect(hardlinked.hardlink_sha256).not.toBe(brokenCopy.hardlink_sha256);
     expect(brokenCopy.hardlink_group_count).toBe(0);
     expect(brokenCopy.hardlink_member_count).toBe(0);
+  });
+
+  it("never builds a local manifest of a separate runtime uid's rootfs", async () => {
+    await fs.writeFile(path.join(tmpdir, "visible.txt"), "x");
+    rootfs.rootfsIdmapUid.mockReturnValue(1073741824);
+    // a path this daemon can't even stat is still taken as mounted
+    rootfs.getRootfsMountpoint.mockReturnValue(
+      path.join(tmpdir, "unreachable"),
+    );
+    const { buildProjectRootfsManifest } = await import("./rootfs-manifest");
+    await expect(buildProjectRootfsManifest("p1")).rejects.toThrow(
+      "needs the root helper",
+    );
+    // control: not mounted is still reported as such
+    rootfs.isMounted.mockResolvedValue(false);
+    await expect(buildProjectRootfsManifest("p1")).rejects.toThrow(
+      "RootFS mount is not available",
+    );
   });
 
   it("ignores root mountpoint mode differences", async () => {

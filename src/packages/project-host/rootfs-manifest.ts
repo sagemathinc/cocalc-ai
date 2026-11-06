@@ -20,6 +20,7 @@ import {
 import {
   getRootfsMountpoint,
   isMounted,
+  rootfsIdmapUid,
 } from "@cocalc/project-runner/run/rootfs";
 
 const logger = getLogger("project-host:rootfs-manifest");
@@ -54,6 +55,9 @@ type BuildManifestOptions = {
   image?: string;
   inspect_path?: string;
   project_id?: string;
+  // a separate runtime uid's rootfs: this daemon can't walk it, so only the
+  // root helper may build the manifest (never a partial local one)
+  privilegedOnly?: boolean;
 };
 
 function detectType(info: any): FileType {
@@ -194,6 +198,7 @@ async function buildManifest({
   image,
   inspect_path,
   project_id,
+  privilegedOnly,
 }: BuildManifestOptions): Promise<HostRootfsManifest> {
   const baseFields = {
     format: "rootfs-manifest-v1" as const,
@@ -227,12 +232,22 @@ async function buildManifest({
         total_regular_bytes: manifest.total_regular_bytes,
       };
     } catch (err) {
+      if (privilegedOnly) {
+        throw new Error(
+          `the rootfs manifest of project '${project_id}' needs the root helper, which failed`,
+        );
+      }
       logger.warn("privileged rootfs manifest failed; falling back locally", {
         root_path,
         source_kind,
         err: `${err}`,
       });
     }
+  }
+  if (privilegedOnly) {
+    throw new Error(
+      `the rootfs manifest of project '${project_id}' needs the root helper`,
+    );
   }
   const records: ManifestRecord[] = [];
   const hardlink_paths = new Map<string, string[]>();
@@ -324,7 +339,13 @@ export async function buildProjectRootfsManifest(
   project_id: string,
 ): Promise<HostRootfsManifest> {
   const root_path = getRootfsMountpoint(project_id);
-  if (!(await exists(root_path)) || !(await isMounted({ project_id }))) {
+  // An idmapped rootfs (a separate runtime uid) isn't reachable from this
+  // daemon at all: only mountinfo can tell it's there.
+  const separate = rootfsIdmapUid(project_id) != null;
+  if (
+    !(separate || (await exists(root_path))) ||
+    !(await isMounted({ project_id }))
+  ) {
     throw new Error(
       `project '${project_id}' RootFS mount is not available on this host`,
     );
@@ -333,5 +354,6 @@ export async function buildProjectRootfsManifest(
     source_kind: "project-rootfs",
     project_id,
     root_path,
+    privilegedOnly: separate,
   });
 }
