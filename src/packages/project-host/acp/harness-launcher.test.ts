@@ -23,6 +23,25 @@ const mockRelayClose = jest.fn();
 const mockCreateRelay = jest.fn();
 const mockWriteFile = jest.fn();
 const mockRm = jest.fn();
+const KEEP_ID = {
+  mode: "keep-id",
+  usernsArgs: ["--userns=keep-id:uid=2001,gid=2001"],
+  status: { configured: "keep-id", effective: "keep-id" },
+};
+const mockSidecarRuntime = jest.fn(
+  async (..._args: any[]): Promise<any> => KEEP_ID,
+);
+const mockAcquire = jest.fn();
+const mockHandleRelease = jest.fn();
+const mockHandOver = jest.fn();
+const mockCleanupHandoff = jest.fn();
+jest.mock("@cocalc/project-runner/run/sidecar-handoff", () => ({
+  handoffParent: async (root: string) => root,
+  defaultHandoffRoot: () => "/daemon-state/sidecar-handoff",
+  createHandoffDir: async () => ({ dir: "/handoff/acp-relay-x", entries: [] }),
+  handOver: (...args) => mockHandOver(...args),
+  cleanupHandoff: (...args) => mockCleanupHandoff(...args),
+}));
 jest.mock("node:child_process", () => ({
   execFile: (...args) => mockExec(...args),
   spawn: (...args) => mockSpawn(...args),
@@ -64,6 +83,7 @@ jest.mock("@cocalc/project-runner/run/filesystem", () => ({
   localPath: async () => ({ home: "/project-home", scratch: "/scratch" }),
 }));
 jest.mock("@cocalc/project-runner/run/rootfs", () => ({
+  acquireSeparateRuntime: (...args) => mockAcquire(...args),
   getImageNamePath: () => "image",
   mount: async () => "/rootfs",
   unmount: (...args) => mockUnmount(...args),
@@ -84,6 +104,7 @@ jest.mock("@cocalc/project-runner/run/podman", () => ({
   podmanRuntimeArgs: async () => [],
   projectSecretsHostPath: () => "/project-secrets",
   forceKillContainerProcesses: (...args) => mockForceKill(...args),
+  sidecarRuntimeFor: (...args) => mockSidecarRuntime(...args),
   projectPoolPodmanLauncher: () => ({
     command: "pool-launcher",
     argsPrefix: ["project-pool", "podman"],
@@ -506,4 +527,239 @@ test("an unregistered Claude sidecar gets no connector key file", async () => {
   const args = mockExec.mock.calls[0][1];
   expect(args.join(" ")).not.toContain("COCALC_CONNECTOR_API_KEY_FILE");
   await handle.stop();
+});
+
+describe("for a project with a separate runtime uid", () => {
+  const P = 1073741824;
+  const SEPARATE = {
+    mode: "separate",
+    uid: P,
+    gid: P,
+    innerUid: 4194305,
+    innerGid: 4194399,
+    usernsArgs: ["--uidmap=0:1:2001", "--uidmap=2001:4194305:1"],
+    status: { configured: "separate", effective: "separate" },
+  };
+  const mockReserve = jest.fn(async (_name: string) => {});
+  const mockMarkLaunched = jest.fn(async () => {});
+  const mockOrphan = jest.fn(async () => {});
+  const VIEWS = {
+    home: "/run/cocalc/project-views/p/home",
+    scratch: "/run/cocalc/project-views/p/scratch",
+    secrets: "/run/cocalc/project-views/p/secrets",
+  };
+  beforeEach(() => {
+    mockSidecarRuntime.mockReset();
+    mockSidecarRuntime.mockResolvedValue(SEPARATE);
+    mockHandleRelease.mockReset();
+    mockHandleRelease.mockResolvedValue(undefined);
+    mockReserve.mockReset();
+    mockReserve.mockResolvedValue(undefined);
+    mockMarkLaunched.mockReset();
+    mockMarkLaunched.mockResolvedValue(undefined);
+    mockOrphan.mockReset();
+    mockOrphan.mockResolvedValue(undefined);
+    mockAcquire.mockReset();
+    mockAcquire.mockResolvedValue({
+      rootfs: "/run/cocalc/project-rootfs/p/root",
+      views: VIEWS,
+      mountViews: async () => {},
+      reserve: mockReserve,
+      markLaunched: mockMarkLaunched,
+      orphan: mockOrphan,
+      release: mockHandleRelease,
+    });
+    mockHandOver.mockReset();
+    mockHandOver.mockResolvedValue(undefined);
+    mockCleanupHandoff.mockReset();
+    mockCleanupHandoff.mockResolvedValue(undefined);
+  });
+  afterAll(() => {
+    mockSidecarRuntime.mockReset();
+    mockSidecarRuntime.mockResolvedValue(KEEP_ID);
+  });
+
+  test("runs as the project's separate uid on its views, with the relay handed to the project user", async () => {
+    const handle = await launchHarnessInProject({
+      ...binding,
+      profile: {
+        version: 2,
+        kind: "acp",
+        id: "claude-code",
+        revision: "0.93.0",
+        cwd: "/home/user",
+        credentialMode: "project-managed",
+        executionPolicy: "full-access",
+      },
+      credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-api-key",
+        credentialId: "13ba1a66-881b-4fe1-b732-15088f82434f",
+      },
+    });
+    expect(mockAcquire).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: binding.projectId,
+        idmapUid: P,
+        holder: "acp",
+        kinds: ["home", "scratch", "secrets"],
+      }),
+    );
+    // the relay lives in a handed-over dir: exactly its socket and token
+    expect(mockCreateRelay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        socketPath: "/handoff/acp-relay-x/relay.sock",
+      }),
+    );
+    expect(mockHandOver).toHaveBeenCalledWith(
+      {
+        dir: "/handoff/acp-relay-x",
+        entries: [
+          "/handoff/acp-relay-x/relay.sock",
+          "/handoff/acp-relay-x/token",
+        ],
+      },
+      { uid: 4194305, gid: 4194399 },
+    );
+    const args: string[] = mockExec.mock.calls[0][1];
+    const joined = args.join(" ");
+    expect(args).toEqual(expect.arrayContaining(SEPARATE.usernsArgs));
+    expect(joined).not.toContain("--userns=keep-id");
+    expect(args).toContain(`mount:${VIEWS.home}:/home/user:undefined`);
+    expect(args).toContainEqual(
+      expect.stringMatching(new RegExp(`^mount:${VIEWS.secrets}:.*:true$`)),
+    );
+    expect(args).toContain(`mount:${VIEWS.scratch}:/tmp:undefined`);
+    // never the raw project dirs
+    expect(joined).not.toContain("/project-home");
+    expect(joined).not.toContain("/project-secrets");
+    expect(joined).not.toContain("mount:/scratch:");
+    expect(args).toContain("/run/cocalc/project-rootfs/p/root");
+    // its container is recorded with its holder before it is created (C1)
+    expect(mockReserve).toHaveBeenCalledTimes(1);
+    expect(mockReserve.mock.calls[0][0]).toMatch(/^acp-/);
+    // reserved, created, marked launched, then started
+    expect(mockReserve.mock.invocationCallOrder[0]).toBeLessThan(
+      mockExec.mock.invocationCallOrder[0],
+    );
+    expect(mockExec.mock.invocationCallOrder[0]).toBeLessThan(
+      mockMarkLaunched.mock.invocationCallOrder[0],
+    );
+    expect(mockMarkLaunched.mock.invocationCallOrder[0]).toBeLessThan(
+      mockSpawn.mock.invocationCallOrder.at(-1)!,
+    );
+    await handle.stop();
+    expect(mockCleanupHandoff).toHaveBeenCalledTimes(1);
+    expect(mockRm).not.toHaveBeenCalledWith(
+      "/handoff/acp-relay-x",
+      expect.anything(),
+    );
+    expect(mockHandleRelease).toHaveBeenCalledTimes(1);
+    expect(mockUnmount).not.toHaveBeenCalled();
+  });
+
+  test("refuses, never the raw dir, when its handle lacks a view", async () => {
+    mockExec.mockClear();
+    mockAcquire.mockResolvedValue({
+      rootfs: "/run/cocalc/project-rootfs/p/root",
+      views: { home: VIEWS.home, scratch: VIEWS.scratch },
+      mountViews: async () => {},
+      reserve: mockReserve,
+      markLaunched: mockMarkLaunched,
+      orphan: mockOrphan,
+      release: mockHandleRelease,
+    });
+    await expect(launchHarnessInProject(binding)).rejects.toThrow(
+      "no secrets view for this harness",
+    );
+    expect(mockExec).not.toHaveBeenCalled();
+    expect(mockHandleRelease).toHaveBeenCalledTimes(1);
+  });
+
+  test("launches nothing when its holder was dropped before it reserved (C1)", async () => {
+    mockExec.mockClear();
+    mockSpawn.mockClear();
+    mockReserve.mockRejectedValueOnce(
+      new Error("this holder of the project's runtime was released"),
+    );
+    await expect(launchHarnessInProject(binding)).rejects.toThrow(
+      "was released",
+    );
+    expect(mockExec).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+    // its (already dropped) holder is released, a no-op
+    expect(mockHandleRelease).toHaveBeenCalledTimes(1);
+  });
+
+  test("starts nothing, and removes what it created, when marking it launched is refused (C1)", async () => {
+    mockExec.mockClear();
+    mockSpawn.mockClear();
+    mockMarkLaunched.mockRejectedValueOnce(
+      new Error("the project is being stopped; not launching"),
+    );
+    await expect(launchHarnessInProject(binding)).rejects.toThrow(
+      "being stopped",
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+    const calls = mockExec.mock.calls.map(([, args]) => args as string[]);
+    expect(calls[0]).toContain("create");
+    expect(calls.at(-1)).toEqual(expect.arrayContaining(["rm", "--force"]));
+    // released only after the removal
+    expect(mockHandleRelease).toHaveBeenCalledTimes(1);
+    expect(mockExec.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      mockHandleRelease.mock.invocationCallOrder[0],
+    );
+  });
+
+  test("orphans the kept holder when a refused mark's container can't be removed (K1)", async () => {
+    mockSpawn.mockClear();
+    mockMarkLaunched.mockRejectedValueOnce(
+      new Error("the project is being stopped; not launching"),
+    );
+    mockExec.mockImplementation((_cmd, args: string[], _opts, cb) =>
+      args.includes("rm") ? cb(new Error("podman rm failed")) : cb(null),
+    );
+    await expect(launchHarnessInProject(binding)).rejects.toThrow();
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockOrphan).toHaveBeenCalledTimes(1);
+    expect(mockHandleRelease).not.toHaveBeenCalled();
+    mockExec.mockImplementation((_cmd, _args, _opts, cb) => cb(null));
+  });
+
+  test("orphans the kept holder when a failed create's container can't be removed (K1)", async () => {
+    mockExec.mockImplementation((_cmd, args: string[], _opts, cb) =>
+      cb(new Error(args.includes("rm") ? "podman rm failed" : "create failed")),
+    );
+    await expect(launchHarnessInProject(binding)).rejects.toThrow();
+    expect(mockMarkLaunched).not.toHaveBeenCalled();
+    expect(mockOrphan).toHaveBeenCalledTimes(1);
+    expect(mockHandleRelease).not.toHaveBeenCalled();
+    mockExec.mockImplementation((_cmd, _args, _opts, cb) => cb(null));
+  });
+
+  test("keeps the holder when its container can't be removed (C1)", async () => {
+    const handle = await launchHarnessInProject(binding);
+    mockExec.mockImplementation((_cmd, args: string[], _opts, cb) =>
+      args.includes("rm") ? cb(new Error("podman rm failed")) : cb(null),
+    );
+    await expect(handle.stop()).rejects.toThrow(
+      "ACP container operation failed",
+    );
+    expect(mockHandleRelease).not.toHaveBeenCalled();
+    // kept, but droppable by a later stop's proof (K1)
+    expect(mockOrphan).toHaveBeenCalledTimes(1);
+    mockExec.mockImplementation((_cmd, _args, _opts, cb) => cb(null));
+  });
+
+  test("stays on keep-id while the project runs keep-id", async () => {
+    mockSidecarRuntime.mockResolvedValue(KEEP_ID);
+    const handle = await launchHarnessInProject(binding);
+    expect(mockAcquire).not.toHaveBeenCalled();
+    expect(mockExec.mock.calls[0][1]).toContain(
+      "--userns=keep-id:uid=2001,gid=2001",
+    );
+    await handle.stop();
+    expect(mockUnmount).toHaveBeenCalled();
+  });
 });

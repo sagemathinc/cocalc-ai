@@ -3,7 +3,13 @@ import { randomBytes } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
 import { localPath } from "./filesystem";
-import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
+import {
+  acquireSeparateRuntime,
+  getImageNamePath,
+  mount as mountRootFs,
+  unmount,
+  type SeparateRuntimeHandle,
+} from "./rootfs";
 import { readFile } from "fs/promises";
 import {
   containerConatHostArgs,
@@ -11,6 +17,7 @@ import {
   networkArgument,
   podmanRuntimeArgs,
   projectPoolPodmanLauncher,
+  sidecarRuntimeFor,
 } from "./podman";
 import { mountArg } from "@cocalc/backend/podman";
 import { podmanEnv } from "@cocalc/backend/podman/env";
@@ -243,8 +250,13 @@ export async function sandboxExec({
   };
 
   let rootfs: string | undefined;
+  // a separate-uid project: this run's own holder of the project's runtime
+  let separateHandle: SeparateRuntimeHandle | undefined;
   // The one-off container's name, to remove it if its run is killed.
   let containerName: string | undefined;
+  // A separate run's container from its create on, until proven removed:
+  // its holder is released only then (C1).
+  let createdSeparate: string | undefined;
   try {
     if (useEphemeral) {
       const { home, scratch } = await localPath({
@@ -261,10 +273,25 @@ export async function sandboxExec({
         HOME,
         image,
       });
+      // The project's runtime uid: its own while it runs, the host's now
+      // while it doesn't (R1 PR3a).
+      const runtime = await sidecarRuntimeFor({ project_id, home, scratch });
+      const useScratch = !!scratch && !tmpfs?.includes("/tmp");
+      if (runtime.mode === "separate") {
+        separateHandle = await acquireSeparateRuntime({
+          project_id,
+          home,
+          config: { image },
+          idmapUid: runtime.uid,
+          kinds: useScratch ? ["home", "scratch"] : ["home"],
+          holder: "sandbox",
+        });
+      }
 
-      // Build a one-off container run.
+      // Build a one-off container run. A separate project's is created,
+      // marked launched on its holder, then started (C1).
       args.push(
-        "run",
+        separateHandle != null ? "create" : "run",
         ...(await podmanRuntimeArgs()),
         "--cgroups=disabled",
         "--rm",
@@ -272,9 +299,7 @@ export async function sandboxExec({
       );
       // Match the main project runtime so sudo and setuid helpers behave the
       // same way in ephemeral sidecars.
-      args.push(
-        `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
-      );
+      args.push(...runtime.usernsArgs);
       args.push(
         "--user",
         `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
@@ -300,9 +325,18 @@ export async function sandboxExec({
         args.push("-e", `${key}=${value}`);
       }
 
-      args.push(mountArg({ source: home, target: HOME }));
-      if (scratch && !tmpfs?.includes("/tmp")) {
-        args.push(mountArg({ source: scratch, target: "/tmp" }));
+      // a separate project's views, never its raw dirs
+      const source = (kind: "home" | "scratch", raw: string): string => {
+        if (separateHandle == null) return raw;
+        const view = separateHandle.views[kind];
+        if (view == null) throw new Error(`no ${kind} view for this run`);
+        return view;
+      };
+      args.push(mountArg({ source: source("home", home), target: HOME }));
+      if (useScratch) {
+        args.push(
+          mountArg({ source: source("scratch", scratch!), target: "/tmp" }),
+        );
       }
       for (const path of tmpfs ?? []) {
         if (!path.startsWith("/") || /[,:\s]/.test(path))
@@ -332,7 +366,9 @@ export async function sandboxExec({
       containerName = `sandbox-${project_id}-${Date.now()}-${randomBytes(4).toString("hex")}`;
       args.push("--name", containerName);
 
-      rootfs = await mountRootFs({ project_id, home, config: { image } });
+      rootfs =
+        separateHandle?.rootfs ??
+        (await mountRootFs({ project_id, home, config: { image } }));
       args.push("--rootfs", rootfs);
       args.push(
         ...(argv
@@ -386,16 +422,113 @@ export async function sandboxExec({
     logger.debug("podman", argsJoin(args));
     // With Podman cgroups disabled, exec processes inherit the caller's
     // cgroup. Admit both run and exec launchers so no project command escapes.
-    const result = await runPodman(args, projectPoolPodmanLauncher(project_id));
+    const launcher = projectPoolPodmanLauncher(project_id);
+    let result: Awaited<ReturnType<typeof runPodman>>;
+    if (separateHandle != null && containerName != null) {
+      // C1: reserved (never droppable), created, marked launched (droppable
+      // only by a stop's proof begun after this), then started. Whatever
+      // happens from the create on (a refused step, a start that fails or
+      // never runs), the container is removed, and proven gone, before the
+      // holder's release below.
+      await separateHandle.reserve(containerName);
+      // a create that fails may still have created it
+      createdSeparate = containerName;
+      await createContainer(args, launcher);
+      await separateHandle.markLaunched();
+      result = await runPodman(
+        ["start", "--attach", "--interactive", containerName],
+        launcher,
+      );
+    } else {
+      result = await runPodman(args, launcher);
+    }
     if (containerName && clientKilled) await removeContainer(containerName);
     return result;
   } finally {
-    if (rootfs) {
+    if (separateHandle != null) {
+      if (
+        createdSeparate != null &&
+        !(await removeConfirmed(createdSeparate))
+      ) {
+        // Never release beneath a container that may still start: the
+        // holder stays, and the project's stop removes the container,
+        // proves it gone and drops the holder (orphaned: droppable by that
+        // proof even if it was never marked launched).
+        await separateHandle.orphan().catch((err) =>
+          logger.warn("could not keep a sandbox's holder for the stop", {
+            project_id,
+            err: `${err}`,
+          }),
+        );
+        logger.warn("could not remove a separate sandbox container", {
+          project_id,
+          name: createdSeparate,
+        });
+        // eslint-disable-next-line no-unsafe-finally
+        throw new Error(
+          "could not remove this run's container; the project's files stay held until the project is stopped",
+        );
+      }
+      // only this run's holder; the last holder detaches, awaited
+      await separateHandle.release();
+    } else if (rootfs) {
       // Decrement overlay mount refcount; actual unmount happens only when
       // no other users (e.g., the main project container) are using it.
       await unmount(project_id);
     }
   }
+}
+
+/** Creates a separate project's one-off container (`podman create ...`). */
+async function createContainer(
+  args: string[],
+  launcher: ReturnType<typeof projectPoolPodmanLauncher>,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) =>
+    execFile(
+      launcher?.command ?? "podman",
+      launcher ? [...launcher.argsPrefix, ...args] : args,
+      { cwd: "/", timeout: 120_000, env: podmanEnv() },
+      (error, _stdout, stderr) =>
+        error
+          ? reject(
+              new Error(
+                `could not create the sandbox container: ${stderr || error.message}`,
+              ),
+            )
+          : resolve(),
+    ),
+  );
+}
+
+/**
+ * Removes a container and proves it gone: true only if `podman rm` succeeded
+ * (an absent one is fine) and `podman container exists` then answers "no"
+ * (exit 1). Any doubt answers false.
+ */
+async function removeConfirmed(name: string): Promise<boolean> {
+  const podmanCode = (args: string[]) =>
+    new Promise<number | null>((resolve) =>
+      execFile(
+        "podman",
+        args,
+        { cwd: "/", timeout: 30_000, env: podmanEnv() },
+        (error) =>
+          resolve(
+            error == null
+              ? 0
+              : typeof (error as { code?: unknown }).code === "number"
+                ? (error as { code: number }).code
+                : null,
+          ),
+      ),
+    );
+  if (
+    (await podmanCode(["rm", "--force", "--ignore", "--time", "0", name])) !== 0
+  ) {
+    return false;
+  }
+  return (await podmanCode(["container", "exists", name])) === 1;
 }
 
 /** Best effort: a killed run's container is removed, never left behind. */

@@ -59,9 +59,16 @@ import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
 import { basename, join, relative, isAbsolute } from "node:path";
 import {
+  acquireSeparateRuntime,
+  closeSeparateRuntime,
   detachLeftovers as detachRootfsLeftovers,
+  dropHoldersProvenGone,
   mount as mountRootFs,
+  reopenSeparateRuntime,
+  separateRuntimeHolders,
   unmountAll as unmountAllRootFs,
+  type SeparateHolderKind,
+  type SeparateRuntimeHandle,
 } from "./rootfs";
 import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
@@ -96,7 +103,10 @@ import getLogger from "@cocalc/backend/logger";
 import { writeStartupScripts } from "./startup-scripts";
 import { podman } from "@cocalc/backend/podman";
 import getPort from "@cocalc/backend/get-port";
-import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_UID,
+} from "@cocalc/util/project-runtime";
 import { PROJECT_STARTUP_SCRIPT_PATH } from "@cocalc/util/project-startup-script";
 import { getConatClient } from "./conat-client";
 import {
@@ -108,7 +118,6 @@ import { resolveSharedScratchMount } from "./shared-scratch";
 import {
   gcProjectViews,
   hardenProjectDataRoot,
-  mountProjectView,
   noteRuntimeUidModeStatus,
   projectHasViews,
   projectViewPath,
@@ -2116,12 +2125,6 @@ export async function projectContainersGone(
   return true;
 }
 
-async function umountViewsIfAny(project_id: string): Promise<void> {
-  if (await projectHasViews(project_id)) {
-    await umountProjectViews(project_id);
-  }
-}
-
 /**
  * The start's runtime identity. Separate only if, beyond the host-wide gates
  * (runtime-host.ts), this project's dirs are where the root helper accepts
@@ -2180,26 +2183,263 @@ async function separateIdentityForStart({
   };
 }
 
-async function projectMountSources({
+// A separate-uid project's own holder of its runtime (R1 PR3a §1a): taken
+// by its start, released by its stop.
+const projectSeparateHandles = new Map<string, SeparateRuntimeHandle>();
+// and the identity its start used, which its sidecars use too
+const projectSeparateIdentities = new Map<
+  string,
+  Extract<RuntimeIdentity, { mode: "separate" }>
+>();
+
+// "{[0:1:2001 2001:4194305:1 ...] [0:1:2001 2001:4194305:1 ...]}", from
+// `podman inspect --format '{{.HostConfig.IDMappings}}'`: the uid and gid
+// extents, as container:intermediate:length.
+export function parseInspectIdMappings(
+  text: string,
+): { uid: string[]; gid: string[] } | undefined {
+  const m = /^\{\[([0-9: ]*)\] \[([0-9: ]*)\]\}$/.exec(text.trim());
+  if (!m) return undefined;
+  const extents = (list: string) =>
+    list.trim() === "" ? [] : list.trim().split(/\s+/);
+  return { uid: extents(m[1]), gid: extents(m[2]) };
+}
+
+/**
+ * The identity a running project's container actually has, from its own
+ * config: its id maps and the source of its HOME. With no record of its
+ * start in this daemon (it restarted), this is the only basis a sidecar's
+ * identity may rest on; anything that doesn't match keep-id or the host's
+ * separate identity exactly is refused.
+ */
+export async function liveProjectIdentity({
   project_id,
-  separate,
-  sources,
+  home,
 }: {
   project_id: string;
-  separate?: { uid: number };
-  sources: Partial<Record<ProjectViewKind, string>>;
-}): Promise<Partial<Record<ProjectViewKind, string>>> {
-  if (separate == null) return sources;
-  const views: Partial<Record<ProjectViewKind, string>> = {};
-  for (const kind of Object.keys(sources) as ProjectViewKind[]) {
-    if (sources[kind] == null) continue;
-    views[kind] = await mountProjectView({
-      project_id,
-      kind,
-      uid: separate.uid,
-    });
+  home: string;
+}): Promise<RuntimeIdentity> {
+  const refuse = (why: string): never => {
+    throw new Error(
+      `the running project's runtime uid could not be established (${why}); restart the project`,
+    );
+  };
+  let stdout = "";
+  try {
+    ({ stdout } = await podman(
+      [
+        "inspect",
+        "--format",
+        "{{.HostConfig.IDMappings}}|{{range .Mounts}}{{.Source}}>{{.Destination}};{{end}}",
+        projectContainerName(project_id),
+      ],
+      { timeout: 30 },
+    ));
+  } catch {
+    refuse("inspect failed");
   }
-  return views;
+  const [mapsText, mountsText = ""] = `${stdout ?? ""}`.trim().split("|");
+  const maps = parseInspectIdMappings(mapsText);
+  if (maps == null) refuse("unreadable id maps");
+  const homeSources = mountsText
+    .split(";")
+    .filter(Boolean)
+    .map((entry) => entry.split(">"))
+    .filter(([, destination]) => destination === DEFAULT_PROJECT_RUNTIME_HOME)
+    .map(([source]) => source);
+  if (homeSources.length !== 1) refuse("no single HOME mount");
+  const homeSource = homeSources[0];
+  const user = `${DEFAULT_PROJECT_RUNTIME_UID}`;
+  const uidOf = (list: string[]) =>
+    list.filter((e) => e.startsWith(`${user}:`));
+  const uidExt = uidOf(maps!.uid);
+  const gidExt = uidOf(maps!.gid);
+  if (uidExt.length !== 1 || gidExt.length !== 1)
+    refuse("no single user extent");
+  // keep-id: the user is the runtime user (intermediate 0), on the raw home
+  if (uidExt[0] === `${user}:0:1` && gidExt[0] === `${user}:0:1`) {
+    if (homeSource !== home) refuse("keep-id map without the raw home");
+    return {
+      mode: "keep-id",
+      usernsArgs: keepIdUsernsArgs(),
+      status: { configured: "keep-id", effective: "keep-id" },
+    };
+  }
+  // separate: exactly the host's separate identity, on the home view
+  const host = await runtimeIdentityForStart();
+  if (host.mode !== "separate") refuse("separate map, but not a separate host");
+  const sep = host as Extract<RuntimeIdentity, { mode: "separate" }>;
+  if (
+    uidExt[0] !== `${user}:${sep.innerUid}:1` ||
+    gidExt[0] !== `${user}:${sep.innerGid}:1`
+  ) {
+    refuse("a map that is neither keep-id nor this host's separate one");
+  }
+  if (homeSource !== projectViewPath(project_id, "home")) {
+    refuse("a separate map without the home view");
+  }
+  return sep;
+}
+
+/**
+ * The runtime identity a sidecar of the project uses (R1 PR3a §1): the
+ * project's own while it runs separate; keep-id while it runs keep-id (both
+ * read from the running container when this daemon has no record of its
+ * start); the host's decision now, with this project's checks, while it's
+ * stopped.
+ */
+export async function sidecarRuntimeFor({
+  project_id,
+  home,
+  scratch,
+}: {
+  project_id: string;
+  home: string;
+  scratch?: string;
+}): Promise<RuntimeIdentity> {
+  // never while it's starting or stopping, even with a record of it
+  if (starting.has(project_id) || stopping.has(project_id)) {
+    throw new Error(
+      `the project is ${starting.has(project_id) ? "starting" : "stopping"}; try again`,
+    );
+  }
+  const recorded = projectSeparateIdentities.get(project_id);
+  if (recorded != null && projectSeparateHandles.has(project_id)) {
+    return recorded;
+  }
+  const current = await state(project_id);
+  if (current === "starting" || current === "stopping") {
+    throw new Error(`the project is ${current}; try again`);
+  }
+  if (current === "running") {
+    // no record of its start here (e.g. this daemon restarted): the
+    // container's own config, verified, or a refusal
+    return await liveProjectIdentity({ project_id, home });
+  }
+  const sharedScratchMount = await resolveSharedScratchMount();
+  return await separateIdentityForStart({
+    project_id,
+    home,
+    scratch,
+    sharedScratch: sharedScratchMount?.source,
+  });
+}
+const SIDECAR_RELEASE_WAIT_MS = 10_000;
+const SIDECAR_HOLDERS: SeparateHolderKind[] = [
+  "sandbox",
+  "codex",
+  "acp",
+  "browser",
+  "controller",
+];
+
+function otherHolders(project_id: string) {
+  const holders = separateRuntimeHolders(project_id);
+  delete holders.project;
+  return holders;
+}
+
+/** Every container of the project but its own (separate projects only). */
+async function removeProjectSidecarContainers(
+  project_id: string,
+): Promise<void> {
+  if (!isValidUUID(project_id)) return;
+  const { stdout } = await podman(["ps", "-a", "--format", "{{.Names}}"], {
+    timeout: 30,
+  });
+  for (const name of `${stdout ?? ""}`.split("\n").map((n) => n.trim())) {
+    if (!name || !name.includes(project_id)) continue;
+    if (name === projectContainerName(project_id)) continue;
+    await podman(["rm", "-f", "-t", "0", name], { timeout: 30 }).catch((err) =>
+      logger.warn("stop: could not remove a sidecar container", {
+        project_id,
+        name,
+        err: `${err}`,
+      }),
+    );
+  }
+}
+
+/**
+ * The proof for dropping a sidecar's holder (C1): no container of the
+ * project's but its own exists at all (a created, not yet started one is
+ * not "gone": it could still start), and none is alive.
+ */
+export async function projectSidecarsAbsent(
+  project_id: string,
+): Promise<boolean> {
+  if (!isValidUUID(project_id)) return false;
+  const { stdout } = await podman(["ps", "-a", "--format", "{{.Names}}"], {
+    timeout: 30,
+  });
+  for (const name of `${stdout ?? ""}`.split("\n").map((n) => n.trim())) {
+    if (!name || !name.includes(project_id)) continue;
+    if (name === projectContainerName(project_id)) continue;
+    return false;
+  }
+  return await projectContainersGone(project_id);
+}
+
+/**
+ * The stop of a separate-uid project's runtime (§1a): no new holder while
+ * it runs (R-d); the project's own sidecars stopped first; a bounded wait,
+ * outside the rootfs lock, for their holders to let go (R-c); a holder that
+ * never let go is dropped only once all of the project's containers are
+ * proven gone (R-b); otherwise the stop refuses, naming what still holds
+ * (L2), and detaches nothing. Then the project's own holder is released:
+ * the last one detaches the rootfs and the views, awaited (L1).
+ */
+export async function stopSeparateRuntime(
+  project_id: string,
+  { waitMs = SIDECAR_RELEASE_WAIT_MS }: { waitMs?: number } = {},
+): Promise<void> {
+  closeSeparateRuntime(project_id);
+  try {
+    await removeProjectSidecarContainers(project_id).catch((err) =>
+      logger.warn("stop: could not list sidecar containers", {
+        project_id,
+        err: `${err}`,
+      }),
+    );
+    const deadline = Date.now() + waitMs;
+    while (
+      Object.keys(otherHolders(project_id)).length > 0 &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (Object.keys(otherHolders(project_id)).length > 0) {
+      // only holders whose containers this proof covers
+      await dropHoldersProvenGone(project_id, SIDECAR_HOLDERS, () =>
+        projectSidecarsAbsent(project_id),
+      );
+    }
+    const left = otherHolders(project_id);
+    if (Object.keys(left).length > 0) {
+      throw new Error(
+        `this project's files are still in use by: ${Object.entries(left)
+          .map(([kind, n]) => `${kind} ×${n}`)
+          .join(", ")}; its runtime was not stopped`,
+      );
+    }
+    const own = projectSeparateHandles.get(project_id);
+    if (own != null) {
+      try {
+        await own.release();
+      } finally {
+        // a failed release leaves the mounts; the next stop or start takes
+        // the verified path for what it finds
+        projectSeparateHandles.delete(project_id);
+        projectSeparateIdentities.delete(project_id);
+      }
+    } else {
+      // no holder in this daemon (it restarted): the verified detach
+      await unmountAllRootFs(project_id, { immediate: true });
+      await umountProjectViews(project_id);
+    }
+  } finally {
+    reopenSeparateRuntime(project_id);
+  }
 }
 
 async function startUnlocked({
@@ -2223,7 +2463,8 @@ async function startUnlocked({
     reportProgress({ project_id, op_id: lro_op_id, event });
   const timings = createPhaseTimingRecorder();
   const totalStarted = Date.now();
-  const mountedHere = { rootfs: false, views: false };
+  const mountedHere = { rootfs: false };
+  let separateHandle: SeparateRuntimeHandle | undefined;
   try {
     starting.add(project_id);
     report({ type: "start-project", progress: 0 });
@@ -2337,7 +2578,9 @@ async function startUnlocked({
         // takes down views a crashed earlier start may have left behind
         // (with the rootfs, whose idmapped upper is one of them).
         await hardenProjectDataRoot();
-        if (await projectHasViews(project_id)) {
+        // views a live sidecar holds are reused below, not leftovers
+        const held = Object.keys(separateRuntimeHolders(project_id)).length > 0;
+        if (!held && (await projectHasViews(project_id))) {
           // proof and detach in one step under the rootfs lock
           await detachRootfsLeftovers(project_id, {
             proveUnused: async () => await projectContainersGone(project_id),
@@ -2352,19 +2595,30 @@ async function startUnlocked({
       desc: "mounting rootfs...",
     });
 
-    const rootfs = await timings.measure(
-      "mount_rootfs",
-      async () =>
-        await mountRootFs({
+    const rootfs = await timings.measure("mount_rootfs", async () => {
+      // only the start may replace a mount that differs from this one
+      const proveUnused = async () => await projectContainersGone(project_id);
+      if (separate != null) {
+        separateHandle = await acquireSeparateRuntime({
           project_id,
           home,
           config,
-          idmapUid: separate?.uid,
-          // only the start may replace a mount that differs from this one
-          proveUnused: async () => await projectContainersGone(project_id),
-        }),
-    );
-    mountedHere.rootfs = true;
+          idmapUid: separate.uid,
+          kinds: [],
+          holder: "project",
+          proveUnused,
+        });
+        return separateHandle.rootfs;
+      }
+      const merged = await mountRootFs({
+        project_id,
+        home,
+        config,
+        proveUnused,
+      });
+      mountedHere.rootfs = true;
+      return merged;
+    });
     report({
       type: "start-project",
       progress: 40,
@@ -2527,21 +2781,21 @@ async function startUnlocked({
     // The container's view of each dir: the dir itself (keep-id), or its
     // idmapped view (separate), so files on disk keep the runtime user as
     // owner while the project user is a different host uid.
-    mountedHere.views = separate != null;
-    const views = await timings.measure(
-      "mount_project_views",
-      async () =>
-        await projectMountSources({
-          project_id,
-          separate,
-          sources: {
-            home,
-            scratch: scratch || undefined,
-            secrets: projectSecretsPath,
-            "browser-run": browserRunPath,
-          },
-        }),
-    );
+    const views = await timings.measure("mount_project_views", async () => {
+      const sources: Partial<Record<ProjectViewKind, string>> = {
+        home,
+        scratch: scratch || undefined,
+        secrets: projectSecretsPath,
+        "browser-run": browserRunPath,
+      };
+      if (separateHandle == null) return sources;
+      await separateHandle.mountViews(
+        (Object.keys(sources) as ProjectViewKind[]).filter(
+          (kind) => sources[kind] != null,
+        ),
+      );
+      return separateHandle.views;
+    });
     const configuredSshPort =
       Number.isInteger(config?.ssh_port) && (config?.ssh_port ?? 0) > 0
         ? Number(config?.ssh_port)
@@ -2840,6 +3094,10 @@ async function startUnlocked({
           .reduce((sum, [_phase, duration]) => sum + duration, 0),
     );
 
+    if (separateHandle != null) {
+      projectSeparateHandles.set(project_id, separateHandle);
+      projectSeparateIdentities.set(project_id, separate!);
+    }
     return {
       state: "running",
       ssh_port,
@@ -2860,10 +3118,11 @@ async function startUnlocked({
         });
       });
     }
-    if (mountedHere.views) {
-      await umountViewsIfAny(project_id).catch((unmountErr) => {
+    if (separateHandle != null) {
+      // only this start's own holder; a sidecar's hold stays
+      await separateHandle.release().catch((unmountErr) => {
         logger.warn(
-          "start: failed to unmount project views after startup error",
+          "start: failed to release the separate runtime after startup error",
           {
             project_id,
             err: `${unmountErr}`,
@@ -2980,12 +3239,14 @@ async function stopUnlocked({ project_id }: { project_id: string }) {
       // unmount while holding the project lifecycle lock. A quick restart can
       // cancel the delayed disposal and reuse the image-validated mount;
       // otherwise the lease manager detaches it after its grace period.
-      if (await projectHasViews(project_id)) {
-        // Separate runtime uid: the rootfs's idmapped upper is one of the
-        // project's views, so the rootfs goes now (no quick-restart reuse),
-        // then the views, before their sources are removed below.
-        await unmountAllRootFs(project_id, { immediate: true });
-        await umountProjectViews(project_id);
+      if (
+        projectSeparateHandles.has(project_id) ||
+        (await projectHasViews(project_id))
+      ) {
+        // Separate runtime uid: its holders, sidecars first (see
+        // stopSeparateRuntime); the rootfs goes before the views, and both
+        // before their sources are removed below.
+        await stopSeparateRuntime(project_id);
       } else {
         await unmountAllRootFs(project_id, { immediate: false });
       }

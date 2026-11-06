@@ -14,10 +14,20 @@ import { podmanEnv } from "@cocalc/backend/podman/env";
 import { mountArg } from "@cocalc/backend/podman";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import {
+  acquireSeparateRuntime,
   getImageNamePath,
   mount,
   unmount,
+  type SeparateRuntimeHandle,
 } from "@cocalc/project-runner/run/rootfs";
+import {
+  cleanupHandoff,
+  createHandoffDir,
+  defaultHandoffRoot,
+  handoffParent,
+  handOver,
+  type Handoff,
+} from "@cocalc/project-runner/run/sidecar-handoff";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import {
@@ -25,6 +35,7 @@ import {
   projectPoolPodmanLauncher,
   projectSecretsHostPath,
   forceKillContainerProcesses,
+  sidecarRuntimeFor,
 } from "@cocalc/project-runner/run/podman";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -179,11 +190,65 @@ export async function launchHarnessInProject(
     HOME: DEFAULT_PROJECT_RUNTIME_HOME,
     image,
   });
-  const rootfs = await mount({
+  // The project's runtime uid (R1 PR3a): the sidecar shares the project's
+  // network, so the project runs; as its own identity, views and rootfs.
+  const runtime = await sidecarRuntimeFor({
     project_id: projectId,
     home,
-    config: { image },
+    scratch,
   });
+  let separateHandle: SeparateRuntimeHandle | undefined;
+  if (runtime.mode === "separate") {
+    separateHandle = await acquireSeparateRuntime({
+      project_id: projectId,
+      home,
+      config: { image },
+      idmapUid: runtime.uid,
+      kinds: scratch ? ["home", "scratch", "secrets"] : ["home", "secrets"],
+      holder: "acp",
+    });
+  }
+  const rootfs =
+    separateHandle?.rootfs ??
+    (await mount({
+      project_id: projectId,
+      home,
+      config: { image },
+    }));
+  // The credential relay's directory: host-private. For a separate-uid
+  // project it is handed to the project user (see sidecar-handoff.ts).
+  let relayHandoff: Handoff | undefined;
+  const newRelayDirectory = async (): Promise<string> => {
+    if (runtime.mode !== "separate") {
+      return await mkdtemp(join(tmpdir(), "cocalc-acp-credential-"));
+    }
+    relayHandoff = await createHandoffDir(
+      await handoffParent(defaultHandoffRoot()),
+      "acp-relay",
+    );
+    return relayHandoff.dir;
+  };
+  const handRelayOver = async (): Promise<void> => {
+    if (relayHandoff == null || runtime.mode !== "separate") return;
+    relayHandoff.entries.push(
+      join(relayHandoff.dir, "relay.sock"),
+      join(relayHandoff.dir, "token"),
+    );
+    await handOver(relayHandoff, {
+      uid: runtime.innerUid,
+      gid: runtime.innerGid,
+    });
+  };
+  // a separate project's views, never its raw dirs
+  const viewOrRaw = (
+    kind: "home" | "scratch" | "secrets",
+    raw: string,
+  ): string => {
+    if (separateHandle == null) return raw;
+    const view = separateHandle.views[kind];
+    if (view == null) throw new Error(`no ${kind} view for this harness`);
+    return view;
+  };
   const name = `acp-${projectId}-${randomUUID()}`;
   let created = false;
   let stopped: Promise<void> | undefined;
@@ -194,6 +259,7 @@ export async function launchHarnessInProject(
   let fundedRelay: SiteFundedClaudeRelay | undefined;
   let fundedTurns: SiteFundedClaudeTurns | undefined;
   let restrictedEgress: ClaudeRestrictedEgress | undefined;
+  let relayCleanupError: unknown;
   const cleanup = () =>
     (stopped ??= (async () => {
       // Keep the rootfs lease if removal fails; never unmount beneath a live child.
@@ -215,6 +281,22 @@ export async function launchHarnessInProject(
             await remove();
           }
         }
+      } catch (error) {
+        // K1: the holder stays (never released beneath a container that may
+        // still start), but a later stop may drop it once it has removed
+        // the container and proven it gone, launched or not.
+        if (separateHandle != null) {
+          await separateHandle.orphan().catch((err) =>
+            logger.warn(
+              "could not keep the ACP harness's holder for the stop",
+              {
+                projectId,
+                err: `${err}`,
+              },
+            ),
+          );
+        }
+        throw error;
       } finally {
         // Revoke scoped authority even if a failed runtime removal needs repair.
         restrictedEgress?.close();
@@ -227,10 +309,22 @@ export async function launchHarnessInProject(
           }),
         );
         await fundedRelay?.close();
-        if (credentialRelayDirectory)
-          await rm(credentialRelayDirectory, { recursive: true, force: true });
+        try {
+          if (relayHandoff != null) await cleanupHandoff(relayHandoff);
+          else if (credentialRelayDirectory)
+            await rm(credentialRelayDirectory, {
+              recursive: true,
+              force: true,
+            });
+        } catch (error) {
+          // the holder still goes below (once the container is gone)
+          relayCleanupError = error;
+        }
       }
-      await unmount(projectId);
+      // Only once the container is gone: never beneath a live child.
+      if (separateHandle != null) await separateHandle.release();
+      else await unmount(projectId);
+      if (relayCleanupError != null) throw relayCleanupError;
     })().catch((error) => {
       stopped = undefined;
       throw error;
@@ -290,9 +384,7 @@ export async function launchHarnessInProject(
       ) {
         throw Error("Unsupported account credential binding");
       }
-      credentialRelayDirectory = await mkdtemp(
-        join(tmpdir(), "cocalc-acp-credential-"),
-      );
+      credentialRelayDirectory = await newRelayDirectory();
       credentialRelay = await createAnthropicAccountCredentialRelay({
         projectId,
         accountId,
@@ -304,6 +396,7 @@ export async function launchHarnessInProject(
         credentialRelay.token,
         { encoding: "utf8", mode: 0o600 },
       );
+      await handRelayOver();
     }
     if (credential.mode === "site-funded") {
       if (
@@ -313,9 +406,7 @@ export async function launchHarnessInProject(
       ) {
         throw Error("Unsupported site-funded credential binding");
       }
-      credentialRelayDirectory = await mkdtemp(
-        join(tmpdir(), "cocalc-acp-credential-"),
-      );
+      credentialRelayDirectory = await newRelayDirectory();
       fundedRelay = await createSiteFundedClaudeRelay({
         socketPath: join(credentialRelayDirectory, "relay.sock"),
       });
@@ -329,6 +420,7 @@ export async function launchHarnessInProject(
         fundedRelay.token,
         { encoding: "utf8", mode: 0o600 },
       );
+      await handRelayOver();
     }
     if (profile.version === 2 && profile.id === "claude-code") {
       // The sidecar shares the project's network namespace, so a project
@@ -349,21 +441,27 @@ export async function launchHarnessInProject(
       `${HARNESS_OWNER_LABEL}=${owner}`,
       "--label",
       `cocalc.project=${projectId}`,
-      `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
+      ...runtime.usernsArgs,
       "--user",
       `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
       // Preserve the project's existing network policy, not a new unrestricted network.
       `--network=container:project-${projectId}`,
       "--workdir",
       profile.cwd,
-      mountArg({ source: home, target: DEFAULT_PROJECT_RUNTIME_HOME }),
       mountArg({
-        source: projectSecretsHostPath(projectId),
+        source: viewOrRaw("home", home),
+        target: DEFAULT_PROJECT_RUNTIME_HOME,
+      }),
+      mountArg({
+        source: viewOrRaw("secrets", projectSecretsHostPath(projectId)),
         target: PROJECT_SECRETS_MOUNT_PATH,
         readOnly: true,
       }),
     ];
-    if (scratch) args.push(mountArg({ source: scratch, target: "/tmp" }));
+    if (scratch)
+      args.push(
+        mountArg({ source: viewOrRaw("scratch", scratch), target: "/tmp" }),
+      );
     if (credentialRelayDirectory) {
       args.push(
         mountArg({
@@ -396,9 +494,15 @@ export async function launchHarnessInProject(
       harnessCommand.executable,
       ...harnessCommand.args,
     );
+    // C1: the holder reserves the name before the container exists (never
+    // droppable), and is marked launched only once it was created, before
+    // it starts; a refused step (dropped, or the project stopping) starts
+    // nothing, and the cleanup removes what was created
+    if (separateHandle != null) await separateHandle.reserve(name);
     // Mark before awaiting: timeout/disconnect can leave a successfully created container.
     created = true;
     await command(args);
+    if (separateHandle != null) await separateHandle.markLaunched();
     const proc = spawn(
       launcher.command,
       [...launcher.argsPrefix, "start", "--attach", "--interactive", name],

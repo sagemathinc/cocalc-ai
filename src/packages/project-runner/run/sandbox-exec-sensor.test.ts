@@ -12,6 +12,16 @@ import { sandboxExec } from "./sandbox-exec";
 const execFileMock = jest.fn();
 const mountRootFsMock = jest.fn(async () => "/roots/project");
 const readImageMock = jest.fn(async () => "image-file-in-home:latest");
+const KEEP_ID = {
+  mode: "keep-id",
+  usernsArgs: ["--userns=keep-id:uid=2001,gid=2001"],
+  status: { configured: "keep-id", effective: "keep-id" },
+};
+const sidecarRuntimeMock = jest.fn(
+  async (..._args: any[]): Promise<any> => KEEP_ID,
+);
+const acquireSeparateMock = jest.fn();
+const releaseMock = jest.fn(async () => {});
 
 jest.mock("node:child_process", () => ({
   ...jest.requireActual("node:child_process"),
@@ -33,6 +43,7 @@ jest.mock("./env", () => ({
 }));
 jest.mock("./mounts", () => ({ getCoCalcMounts: () => ({}) }));
 jest.mock("./rootfs", () => ({
+  acquireSeparateRuntime: (...args: any[]) => acquireSeparateMock(...args),
   getImageNamePath: () => "/projects/p/home/current-image.txt",
   mount: (...args: any[]) => (mountRootFsMock as any)(...args),
   unmount: async () => {},
@@ -46,6 +57,7 @@ jest.mock("./podman", () => ({
   },
   podmanRuntimeArgs: async () => [],
   projectPoolPodmanLauncher: () => undefined,
+  sidecarRuntimeFor: (...args: any[]) => sidecarRuntimeMock(...args),
 }));
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
@@ -213,5 +225,292 @@ describe("sandboxExec for sensors", () => {
       argv: ["/bin/true"],
     });
     expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sandboxExec for a project with a separate runtime uid", () => {
+  const P = 1073741824;
+  const SEPARATE = {
+    mode: "separate",
+    uid: P,
+    gid: P,
+    usernsArgs: ["--uidmap=0:1:2001", "--uidmap=2001:4194305:1"],
+    status: { configured: "separate", effective: "separate" },
+  };
+  const VIEWS = {
+    home: `/run/cocalc/project-views/${PROJECT}/home`,
+    scratch: `/run/cocalc/project-views/${PROJECT}/scratch`,
+  };
+  const ROOTFS = `/run/cocalc/project-rootfs/${PROJECT}/root`;
+  const reserveMock = jest.fn(async (_name: string) => {});
+  const markLaunchedMock = jest.fn(async () => {});
+  const orphanMock = jest.fn(async () => {});
+
+  // podman as the separate path sees it: `container exists` answers exit 1
+  // (absent) once the container was removed
+  const fakePodman = ({
+    startFails = false,
+    rmFails = false,
+    stillThere = false,
+    onCreate,
+  }: {
+    startFails?: boolean;
+    rmFails?: boolean;
+    stillThere?: boolean;
+    onCreate?: () => void;
+  } = {}) =>
+    execFileMock.mockImplementation((_c, args: string[], _o, callback) => {
+      const fail = (code: number) =>
+        callback(Object.assign(new Error(`exit ${code}`), { code }), "", "");
+      if (args.includes("create")) onCreate?.();
+      if (args.includes("start") && startFails) return fail(125);
+      if (args.includes("rm") && rmFails) return fail(125);
+      if (args.includes("exists"))
+        return stillThere ? callback(undefined, "", "") : fail(1);
+      return callback(undefined, "ok\n", "");
+    });
+  const verbs = () =>
+    execFileMock.mock.calls.map(([, args]) =>
+      (args as string[]).find((a) =>
+        ["create", "start", "rm", "exists", "run"].includes(a),
+      ),
+    );
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    fakePodman();
+    mountRootFsMock.mockClear();
+    releaseMock.mockReset();
+    releaseMock.mockResolvedValue(undefined);
+    sidecarRuntimeMock.mockReset();
+    sidecarRuntimeMock.mockResolvedValue(SEPARATE);
+    reserveMock.mockReset();
+    reserveMock.mockResolvedValue(undefined);
+    markLaunchedMock.mockReset();
+    markLaunchedMock.mockResolvedValue(undefined);
+    orphanMock.mockReset();
+    orphanMock.mockResolvedValue(undefined);
+    acquireSeparateMock.mockReset();
+    acquireSeparateMock.mockResolvedValue({
+      rootfs: ROOTFS,
+      views: VIEWS,
+      mountViews: async () => {},
+      reserve: reserveMock,
+      markLaunched: markLaunchedMock,
+      orphan: orphanMock,
+      release: releaseMock,
+    });
+  });
+
+  afterAll(() => {
+    sidecarRuntimeMock.mockReset();
+    sidecarRuntimeMock.mockResolvedValue(KEEP_ID);
+  });
+
+  const run = async () =>
+    await sandboxExec({
+      project_id: PROJECT,
+      script: "",
+      useEphemeral: true,
+      argv: ["/bin/bash", "-lc", "true"],
+    });
+
+  it("runs as the project user's separate uid, on its views and idmapped rootfs, as its own holder", async () => {
+    await run();
+    expect(acquireSeparateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT,
+        idmapUid: P,
+        kinds: ["home", "scratch"],
+        holder: "sandbox",
+      }),
+    );
+    expect(mountRootFsMock).not.toHaveBeenCalled();
+    const args: string[] = execFileMock.mock.calls[0][1];
+    const joined = args.join(" ");
+    expect(args).toEqual(expect.arrayContaining(SEPARATE.usernsArgs));
+    expect(joined).not.toContain("--userns=keep-id");
+    expect(joined).toContain(VIEWS.home);
+    expect(joined).toContain(VIEWS.scratch);
+    // no raw project dir reaches the container
+    expect(joined).not.toContain("/projects/p/home");
+    expect(joined).not.toContain("/scratch/p");
+    expect(args[args.indexOf("--rootfs") + 1]).toBe(ROOTFS);
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reserves, creates, marks launched, then starts its container (C1)", async () => {
+    await run();
+    const calls = execFileMock.mock.calls.map(([, args]) => args as string[]);
+    // then removed and proven gone, before the release
+    expect(verbs()).toEqual(["create", "start", "rm", "exists"]);
+    expect(execFileMock.mock.invocationCallOrder[3]).toBeLessThan(
+      releaseMock.mock.invocationCallOrder[0],
+    );
+    expect(calls[0]).toContain("create");
+    expect(calls[0]).not.toContain("run");
+    const name = calls[0][calls[0].indexOf("--name") + 1];
+    expect(name).toContain(PROJECT);
+    expect(calls[1].slice(-4)).toEqual([
+      "start",
+      "--attach",
+      "--interactive",
+      name,
+    ]);
+    expect(reserveMock).toHaveBeenCalledWith(name);
+    const order = [
+      reserveMock.mock.invocationCallOrder[0],
+      execFileMock.mock.invocationCallOrder[0],
+      markLaunchedMock.mock.invocationCallOrder[0],
+      execFileMock.mock.invocationCallOrder[1],
+    ];
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("never runs a streaming command ephemerally: no holder, nothing created", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      sandboxExec({
+        project_id: PROJECT,
+        script: "true",
+        useEphemeral: true,
+        signal: abort.signal,
+        onOutput: () => {},
+      } as any),
+    ).rejects.toThrow(
+      "Managed commands require the existing project container",
+    );
+    expect(acquireSeparateMock).not.toHaveBeenCalled();
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("creates nothing when reserving is refused (C1)", async () => {
+    reserveMock.mockRejectedValueOnce(
+      new Error("the project is being stopped; not launching"),
+    );
+    await expect(run()).rejects.toThrow("being stopped");
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts nothing, and removes what it created, when marking it launched is refused (C1)", async () => {
+    markLaunchedMock.mockRejectedValueOnce(
+      new Error("this holder of the project's runtime was released"),
+    );
+    await expect(run()).rejects.toThrow("was released");
+    expect(verbs()).toEqual(["create", "rm", "exists"]);
+    expect(execFileMock.mock.invocationCallOrder[2]).toBeLessThan(
+      releaseMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("removes its container before the release when the start fails (C1)", async () => {
+    fakePodman({ startFails: true });
+    await run();
+    expect(verbs()).toEqual(["create", "start", "rm", "exists"]);
+    expect(execFileMock.mock.invocationCallOrder[3]).toBeLessThan(
+      releaseMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("removes its container before the release when aborted between create and start (C1)", async () => {
+    const abort = new AbortController();
+    fakePodman({ onCreate: () => abort.abort() });
+    await sandboxExec({
+      project_id: PROJECT,
+      script: "true",
+      useEphemeral: true,
+      signal: abort.signal,
+    }).catch(() => {});
+    expect(verbs()).toEqual(["create", "start", "rm", "exists"]);
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+    expect(execFileMock.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      releaseMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("orphans the kept holder when a refused mark's container can't be removed (K1)", async () => {
+    markLaunchedMock.mockRejectedValueOnce(
+      new Error("the project is being stopped; not launching"),
+    );
+    fakePodman({ rmFails: true });
+    await expect(run()).rejects.toThrow(
+      "could not remove this run's container",
+    );
+    expect(orphanMock).toHaveBeenCalledTimes(1);
+    expect(releaseMock).not.toHaveBeenCalled();
+  });
+
+  it("removes what a failed create may have left before the release (C1)", async () => {
+    execFileMock.mockImplementation((_c, args: string[], _o, callback) =>
+      args.includes("create")
+        ? callback(Object.assign(new Error("exit 125"), { code: 125 }), "", "")
+        : args.includes("exists")
+          ? callback(Object.assign(new Error("exit 1"), { code: 1 }), "", "")
+          : callback(undefined, "", ""),
+    );
+    await expect(run()).rejects.toThrow("could not create");
+    expect(verbs()).toEqual(["create", "rm", "exists"]);
+    expect(markLaunchedMock).not.toHaveBeenCalled();
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["its removal fails", { rmFails: true }],
+    ["it is still there after removal", { stillThere: true }],
+  ])(
+    "keeps the holder (no release, no detach) when %s (C1)",
+    async (_why, opts) => {
+      fakePodman(opts);
+      await expect(run()).rejects.toThrow(
+        "could not remove this run's container",
+      );
+      expect(releaseMock).not.toHaveBeenCalled();
+      // kept, but droppable by a later stop's proof (K1)
+      expect(orphanMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("refuses, never the raw dir, when its handle lacks a view", async () => {
+    acquireSeparateMock.mockResolvedValue({
+      rootfs: ROOTFS,
+      views: { scratch: VIEWS.scratch },
+      mountViews: async () => {},
+      reserve: reserveMock,
+      markLaunched: markLaunchedMock,
+      orphan: orphanMock,
+      release: releaseMock,
+    });
+    await expect(run()).rejects.toThrow("no home view for this run");
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases its holder after a failed run too", async () => {
+    // the command exits 1; its container is removed
+    execFileMock.mockImplementation((_c, args: string[], _o, callback) =>
+      args.includes("start") || args.includes("exists")
+        ? callback(Object.assign(new Error("exit 1"), { code: 1 }), "", "boom")
+        : callback(undefined, "", ""),
+    );
+    await run().catch(() => {});
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a failed release reach the caller (L1)", async () => {
+    releaseMock.mockRejectedValueOnce(
+      new Error("could not unmount this project's RootFS"),
+    );
+    await expect(run()).rejects.toThrow("could not unmount");
+  });
+
+  it("stays on keep-id while the project runs keep-id", async () => {
+    sidecarRuntimeMock.mockResolvedValue(KEEP_ID);
+    await run();
+    expect(acquireSeparateMock).not.toHaveBeenCalled();
+    expect(mountRootFsMock).toHaveBeenCalled();
+    const joined = execFileMock.mock.calls[0][1].join(" ");
+    expect(joined).toContain("--userns=keep-id");
   });
 });
