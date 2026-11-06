@@ -1,5 +1,5 @@
 import { createServer, request as httpRequest } from "node:http";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 import {
   setSiteFundedCodexProxyPortsForTests,
   shutdownSiteFundedCodexProxyForTests,
@@ -9,7 +9,12 @@ import {
 beforeAll(() => setSiteFundedCodexProxyPortsForTests([0]));
 afterAll(shutdownSiteFundedCodexProxyForTests);
 
-type Seen = { method?: string; url?: string; authorization?: string };
+type Seen = {
+  method?: string;
+  url?: string;
+  authorization?: string;
+  headers?: Record<string, any>;
+};
 
 async function upstreamServer(seen: Seen[]) {
   const server = createServer((request, response) => {
@@ -17,8 +22,10 @@ async function upstreamServer(seen: Seen[]) {
       method: request.method,
       url: request.url,
       authorization: request.headers.authorization,
+      headers: { ...request.headers },
     });
     request.resume();
+    if (request.url?.startsWith("/v1/messages/slow")) return; // never answers
     response.writeHead(200, {
       "content-type": "application/json",
       "anthropic-ratelimit-unified-5h-utilization": "0.1",
@@ -103,7 +110,7 @@ describe("provider relay sessions on the project-reachable proxy", () => {
       expect(ok.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe(
         "0.1",
       );
-      expect(seen).toEqual([
+      expect(seen.map(({ headers: _headers, ...rest }) => rest)).toEqual([
         {
           method: "POST",
           url: "/v1/messages?beta=true",
@@ -192,5 +199,249 @@ describe("provider relay sessions on the project-reachable proxy", () => {
         tokenPrefix: "bad prefix",
       }),
     ).rejects.toThrow("Invalid relay token prefix");
+  });
+  // One request with this exact request-target, sent as is (no client-side
+  // URL handling), and its status (0 when the connection was reset).
+  function sendRaw(
+    baseUrl: string,
+    target: string,
+    headers: Record<string, string>,
+    method = "POST",
+  ): Promise<number> {
+    const port = Number(new URL(baseUrl).port);
+    const body = method === "POST" ? '{"model":"x"}' : "";
+    return new Promise((resolve) => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("data", (chunk) => (data += chunk));
+      socket.on("error", () => resolve(0));
+      socket.on("close", () =>
+        resolve(Number(/^HTTP\/1\.1 (\d+)/.exec(data)?.[1] ?? 0)),
+      );
+      socket.write(
+        [
+          `${method} ${target} HTTP/1.1`,
+          "Host: host.containers.internal",
+          ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
+          `Content-Length: ${body.length}`,
+          "Connection: close",
+          "",
+          body,
+        ].join("\r\n"),
+      );
+    });
+  }
+
+  async function withRelay(
+    opts: Partial<Parameters<typeof startProviderRelaySession>[0]>,
+    fn: (ctx: {
+      session: Awaited<ReturnType<typeof startProviderRelaySession>>;
+      seen: Seen[];
+      port: number;
+    }) => Promise<void>,
+  ) {
+    const seen: Seen[] = [];
+    const upstream = await upstreamServer(seen);
+    const port = (upstream.address() as AddressInfo).port;
+    const session = await startProviderRelaySession({
+      upstream: `http://127.0.0.1:${port}`,
+      allowedPathPrefix: "/v1/",
+      allowedMethods: ["POST"],
+      credentialHeader: "authorization",
+      credentialValue: () => "Bearer real-subscription-token",
+      allowHttpForTests: true,
+      ...opts,
+    });
+    try {
+      await fn({ session, seen, port });
+    } finally {
+      session.close();
+      upstream.closeAllConnections?.();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  }
+
+  it("never sends a request naming another host (B3)", async () => {
+    // a second fake upstream stands for the attacker's host
+    const evilSeen: Seen[] = [];
+    const evil = await upstreamServer(evilSeen);
+    const evilPort = (evil.address() as AddressInfo).port;
+    try {
+      await withRelay({}, async ({ session, seen }) => {
+        const auth = { Authorization: `Bearer ${session.token}` };
+        for (const target of [
+          `http://127.0.0.1:${evilPort}/v1/messages`,
+          `//127.0.0.1:${evilPort}/v1/messages`,
+        ]) {
+          expect(await sendRaw(session.baseUrl, target, auth)).toBe(403);
+        }
+        expect(evilSeen).toHaveLength(0);
+        expect(seen).toHaveLength(0);
+      });
+    } finally {
+      await new Promise<void>((resolve) => evil.close(() => resolve()));
+    }
+  });
+
+  it("refuses encoded or backslash separators and dots, as sent (S1)", async () => {
+    // a prefix-only policy: these must not reach the provider either
+    await withRelay({}, async ({ session, seen }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      for (const target of [
+        "/v1/..%2Fapi%2Foauth%2Fprofile",
+        "/v1/..%2fapi",
+        "/v1/..%5capi",
+        "/v1/%2e%2e/api",
+        "/v1/%2E%2E/api",
+        "/v1\\api",
+        "/v1/messages?x=%2f",
+      ]) {
+        expect([target, await sendRaw(session.baseUrl, target, auth)]).toEqual([
+          target,
+          403,
+        ]);
+      }
+      expect(seen).toHaveLength(0);
+      // the control: a plain path in the prefix passes
+      expect(await sendRaw(session.baseUrl, "/v1/other", auth)).toBe(200);
+      expect(seen).toHaveLength(1);
+    });
+  });
+
+  it("allows only the exact endpoints listed, matched as sent (S1)", async () => {
+    await withRelay(
+      { allowedPaths: ["/v1/messages", "/v1/messages/count_tokens"] },
+      async ({ session, seen }) => {
+        const auth = { Authorization: `Bearer ${session.token}` };
+        for (const target of [
+          "/v1/models",
+          "/v1/messages/",
+          "/v1/./messages",
+          "/v1/x/../messages",
+          "/v1/messages/batches",
+        ]) {
+          expect([
+            target,
+            await sendRaw(session.baseUrl, target, auth),
+          ]).toEqual([target, 403]);
+        }
+        expect(seen).toHaveLength(0);
+        expect(
+          await sendRaw(session.baseUrl, "/v1/messages?beta=true", auth),
+        ).toBe(200);
+        expect(
+          await sendRaw(session.baseUrl, "/v1/messages/count_tokens", auth),
+        ).toBe(200);
+        expect(seen.map((r) => r.url)).toEqual([
+          "/v1/messages?beta=true",
+          "/v1/messages/count_tokens",
+        ]);
+      },
+    );
+    await expect(
+      startProviderRelaySession({
+        upstream: "https://api.anthropic.com",
+        allowedPathPrefix: "/v1/",
+        allowedPaths: ["/v1/%2e%2e/x"],
+        credentialHeader: "authorization",
+        credentialValue: () => "Bearer x",
+      }),
+    ).rejects.toThrow("Invalid relay paths");
+  });
+
+  it("passes on only the relay's credential, whatever the caller sends (P3)", async () => {
+    await withRelay({}, async ({ session, seen }) => {
+      expect(
+        await sendRaw(session.baseUrl, "/v1/messages", {
+          Authorization: `Bearer ${session.token}`,
+          "X-Api-Key": "k",
+          "Proxy-Authorization": "Basic eA==",
+        }),
+      ).toBe(200);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].headers!.authorization).toBe(
+        "Bearer real-subscription-token",
+      );
+      expect(seen[0].headers).not.toHaveProperty("x-api-key");
+      expect(seen[0].headers).not.toHaveProperty("proxy-authorization");
+    });
+  });
+
+  it("sends nothing when the session closes while the credential is looked up (P5)", async () => {
+    let release!: (value: string) => void;
+    let asked!: () => void;
+    const lookingUp = new Promise<void>((resolve) => (asked = resolve));
+    await withRelay(
+      {
+        credentialValue: () =>
+          new Promise<string>((resolve) => {
+            release = resolve;
+            asked();
+          }),
+      },
+      async ({ session, seen }) => {
+        const status = sendRaw(session.baseUrl, "/v1/messages", {
+          Authorization: `Bearer ${session.token}`,
+        });
+        await lookingUp;
+        session.close();
+        release("Bearer real-subscription-token");
+        expect(await status).not.toBe(200);
+        expect(seen).toHaveLength(0);
+      },
+    );
+  });
+
+  it("suspends a session idle too long, until the host renews it (B2)", async () => {
+    await withRelay({ idleMs: 100 }, async ({ session, seen }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      await new Promise((r) => setTimeout(r, 60));
+      // used within the idle time: still open, and the idle clock restarts
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      await new Promise((r) => setTimeout(r, 160));
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+      expect(seen).toHaveLength(2);
+      session.renew();
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      expect(seen).toHaveLength(3);
+    });
+  });
+
+  it("is not idle while a request is in flight (B2)", async () => {
+    await withRelay({ idleMs: 100 }, async ({ session, seen }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      // the provider never answers this one, so it stays in flight
+      const inFlight = sendRaw(session.baseUrl, "/v1/messages/slow", auth);
+      while (seen.length < 1) await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 160));
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      session.close();
+      expect(await inFlight).not.toBe(200);
+    });
+  });
+
+  it("suspends a session at the end of its lifetime, ending what is in flight (B2)", async () => {
+    await withRelay(
+      { maxLifetimeMs: 300, idleMs: 60_000 },
+      async ({ session, seen }) => {
+        const auth = { Authorization: `Bearer ${session.token}` };
+        // the provider never answers this one: it is ended at the lifetime
+        const started = Date.now();
+        const inFlight = sendRaw(session.baseUrl, "/v1/messages/slow", auth);
+        expect(await inFlight).not.toBe(200);
+        expect(Date.now() - started).toBeLessThan(5_000);
+        expect(seen).toHaveLength(1);
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+        expect(seen).toHaveLength(1);
+        // a renewal starts a new lifetime
+        session.renew();
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+        // and a closed session can't be renewed
+        session.close();
+        session.renew();
+        expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+      },
+    );
   });
 });

@@ -446,7 +446,12 @@ describe("launchClaudeSubscriptionInProject", () => {
   } as any;
   const conversation = { path: "a.chat", threadId: "thread-1" };
 
-  let relay: { baseUrl: string; token: string; close: jest.Mock };
+  let relay: {
+    baseUrl: string;
+    token: string;
+    renew: jest.Mock;
+    close: jest.Mock;
+  };
   let lease: any;
   let child: any;
 
@@ -461,6 +466,7 @@ describe("launchClaudeSubscriptionInProject", () => {
     relay = {
       baseUrl: "http://host.containers.internal:9301",
       token: "sk-ant-oat01-cocalc-RELAY",
+      renew: jest.fn(),
       close: jest.fn(),
     };
     (startProviderRelaySession as jest.Mock).mockResolvedValue(relay);
@@ -517,6 +523,9 @@ describe("launchClaudeSubscriptionInProject", () => {
     expect(policy).toMatchObject({
       upstream: "https://api.anthropic.com",
       allowedPathPrefix: "/v1/",
+      // only Claude Code's model endpoints, POST only (S1)
+      allowedPaths: ["/v1/messages", "/v1/messages/count_tokens"],
+      allowedMethods: ["POST"],
       credentialHeader: "authorization",
       tokenPrefix: "sk-ant-oat01-cocalc-",
     });
@@ -547,6 +556,17 @@ describe("launchClaudeSubscriptionInProject", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("renews the relay session at each turn, before the turn's connector (B2)", async () => {
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    expect(relay.renew).not.toHaveBeenCalled();
+    const order: string[] = [];
+    relay.renew.mockImplementation(() => order.push("renew"));
+    lease.beginConnectorTurn.mockImplementation(() => order.push("connector"));
+    await proc.beginConnectorTurn!({ path: "a.chat" } as any);
+    await proc.beginConnectorTurn!({ path: "a.chat" } as any);
+    expect(order).toEqual(["renew", "connector", "renew", "connector"]);
   });
 
   it("closes the relay when the adapter exits", async () => {

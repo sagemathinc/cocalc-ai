@@ -430,14 +430,55 @@ export type ProviderRelaySession = {
   baseUrl: string;
   /** What the process sends as `Authorization: Bearer <token>`. */
   token: string;
+  /**
+   * Makes a suspended session usable again, for another lifetime: the host
+   * calls it at the start of each turn (never the project).
+   */
+  renew(): void;
   close(): void;
 };
+
+/*
+A relay token is a bearer: anyone who obtains it can use the session, from
+any project on this host (the proxy listens on host loopback, and pasta or
+slirp4netns open each project connection anew from there, so the socket does
+not say which project sent it; unmeasured, from reading the network setup).
+So a session is usable only for a bounded time: it is suspended after
+RELAY_IDLE_MS without a request (none in flight), and RELAY_MAX_LIFETIME_MS
+after its last renewal, when its in-flight requests are ended too. A
+suspended session refuses every request until the host renews it.
+*/
+export const RELAY_IDLE_MS = 15 * 60_000;
+export const RELAY_MAX_LIFETIME_MS = 6 * 60 * 60_000;
 
 type RelaySession = {
   policy: ProviderRelayPolicy;
   requests: Set<ClientRequest>;
   closed: boolean;
+  suspended: boolean;
+  idleMs: number;
+  maxLifetimeMs: number;
+  lastUsed: number;
+  lifetime?: ReturnType<typeof setTimeout>;
 };
+
+function suspendRelaySession(session: RelaySession): void {
+  session.suspended = true;
+  if (session.lifetime) clearTimeout(session.lifetime);
+  session.lifetime = undefined;
+  for (const request of session.requests) request.destroy();
+}
+
+function startRelayLifetime(session: RelaySession): void {
+  if (session.lifetime) clearTimeout(session.lifetime);
+  session.suspended = false;
+  session.lastUsed = Date.now();
+  session.lifetime = setTimeout(
+    () => suspendRelaySession(session),
+    session.maxLifetimeMs,
+  );
+  session.lifetime.unref?.();
+}
 
 class SiteFundedCodexProxy {
   private readonly sessions = new Map<string, Session>();
@@ -597,21 +638,30 @@ class SiteFundedCodexProxy {
   async startRelaySession({
     upstream,
     allowedPathPrefix,
+    allowedPaths,
     allowedMethods,
     credentialHeader,
     credentialValue,
     tokenPrefix = "",
     allowHttpForTests,
+    idleMs = RELAY_IDLE_MS,
+    maxLifetimeMs = RELAY_MAX_LIFETIME_MS,
   }: {
     upstream: string;
     allowedPathPrefix: string;
+    /** The only paths allowed, exactly, each within allowedPathPrefix. */
+    allowedPaths?: readonly string[];
     allowedMethods?: readonly string[];
     credentialHeader: string;
     credentialValue: () => Promise<string> | string;
     /** Prepended to the random token, e.g. so it looks like the provider's. */
     tokenPrefix?: string;
     allowHttpForTests?: boolean;
+    idleMs?: number;
+    maxLifetimeMs?: number;
   }): Promise<ProviderRelaySession> {
+    if (!(idleMs > 0) || !(maxLifetimeMs > 0))
+      throw Error("Invalid relay session lifetime");
     const checked = validateProviderRelayPolicy({
       upstream,
       allowedPathPrefix,
@@ -621,26 +671,44 @@ class SiteFundedCodexProxy {
     });
     if (!/^[A-Za-z0-9_-]*$/.test(tokenPrefix))
       throw Error("Invalid relay token prefix");
+    if (
+      allowedPaths?.some(
+        (path) =>
+          !/^\/[A-Za-z0-9_/-]+$/.test(path) ||
+          path.includes("//") ||
+          !path.startsWith(allowedPathPrefix),
+      )
+    )
+      throw Error("Invalid relay paths");
     const port = await this.ensureListening();
     const token = `${tokenPrefix}${randomBytes(32).toString("base64url")}`;
     const session: RelaySession = {
       policy: {
         ...checked,
         allowedPathPrefix,
+        allowedPaths: allowedPaths ? new Set(allowedPaths) : undefined,
         credentialHeader,
         credentialValue,
       },
       requests: new Set(),
       closed: false,
+      suspended: false,
+      idleMs,
+      maxLifetimeMs,
+      lastUsed: Date.now(),
     };
+    startRelayLifetime(session);
     this.relaySessions.set(token, session);
     return {
       baseUrl: `http://host.containers.internal:${port}`,
       token,
+      renew: () => {
+        if (!session.closed) startRelayLifetime(session);
+      },
       close: () => {
         session.closed = true;
         this.relaySessions.delete(token);
-        for (const request of session.requests) request.destroy();
+        suspendRelaySession(session);
       },
     };
   }
@@ -649,7 +717,7 @@ class SiteFundedCodexProxy {
     this.sessions.clear();
     for (const session of this.relaySessions.values()) {
       session.closed = true;
-      for (const request of session.requests) request.destroy();
+      suspendRelaySession(session);
     }
     this.relaySessions.clear();
     const server = this.server;
@@ -661,12 +729,26 @@ class SiteFundedCodexProxy {
     });
   }
 
-  private relaySessionFor(request: IncomingMessage): RelaySession | undefined {
+  // A relay session's token: the session, "suspended" while it may not be
+  // used, or undefined when the bearer is no relay token.
+  private relaySessionFor(
+    request: IncomingMessage,
+  ): RelaySession | "suspended" | undefined {
     const match = /^Bearer\s+(.+)$/i.exec(
       `${request.headers.authorization ?? ""}`,
     );
     const session = match ? this.relaySessions.get(match[1]) : undefined;
-    return session && !session.closed ? session : undefined;
+    if (!session || session.closed) return undefined;
+    if (
+      !session.suspended &&
+      session.requests.size === 0 &&
+      Date.now() - session.lastUsed > session.idleMs
+    ) {
+      suspendRelaySession(session);
+    }
+    if (session.suspended) return "suspended";
+    session.lastUsed = Date.now();
+    return session;
   }
 
   private sessionFor(request: IncomingMessage): Session | undefined {
@@ -759,6 +841,11 @@ class SiteFundedCodexProxy {
     response: ServerResponse,
   ): Promise<void> {
     const relay = this.relaySessionFor(request);
+    if (relay === "suspended") {
+      request.resume();
+      jsonResponse(response, 401, "Relay session is suspended");
+      return;
+    }
     if (relay) {
       try {
         await forwardProviderRequest({

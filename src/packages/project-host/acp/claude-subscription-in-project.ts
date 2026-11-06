@@ -287,7 +287,9 @@ export async function launchClaudeSubscriptionInProject(
   const relay = await startProviderRelaySession({
     upstream: ANTHROPIC_API_ORIGIN,
     allowedPathPrefix: "/v1/",
-    allowedMethods: ["GET", "POST"],
+    // Only the model endpoints Claude Code uses, as sent (S1)
+    allowedPaths: ["/v1/messages", "/v1/messages/count_tokens"],
+    allowedMethods: ["POST"],
     credentialHeader: "authorization",
     credentialValue: async () => {
       if (Date.now() - checkedAt > CREDENTIAL_RECHECK_MS) {
@@ -408,7 +410,11 @@ export async function launchClaudeSubscriptionInProject(
       // Not the controller: a normal session in the project's cwd.
       sessionPolicy: "default",
       subscriptionAuth: "oauth-token",
-      beginConnectorTurn: (chat) => lease.beginConnectorTurn(chat),
+      beginConnectorTurn: (chat) => {
+        // each turn renews the relay session's bounded lifetime (B2)
+        relay.renew();
+        return lease.beginConnectorTurn(chat);
+      },
       endConnectorTurn: () => lease.endConnectorTurn(),
       stdin: proc.stdin,
       stdout: proc.stdout,

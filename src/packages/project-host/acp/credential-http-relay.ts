@@ -89,6 +89,11 @@ export interface ProviderRelayPolicy {
   /** A fixed HTTPS origin (see validateProviderRelayPolicy). */
   upstream: URL;
   allowedPathPrefix: string;
+  /**
+   * When set, the only paths allowed, matched exactly on the raw
+   * request-target (a query may follow), not on the parsed URL.
+   */
+  allowedPaths?: ReadonlySet<string>;
   allowedMethods: ReadonlySet<string>;
   credentialHeader: string;
   /** The credential header's value, revalidated for each request. */
@@ -163,9 +168,26 @@ export async function forwardProviderRequest({
     fail(response, 405, "Provider request method is outside relay policy");
     return;
   }
+  // The policy is checked on what the caller sent, before any parsing: only
+  // origin-form ("/path?query"; never "http://host/..." or "//host/...", which
+  // name another host), and no encoded or backslash separators or dots,
+  // which URL parsing folds or leaves for the provider to decode
+  // differently (S1).
+  const raw = request.url ?? "";
+  const rawPath = raw.split("?")[0];
+  if (
+    !raw.startsWith("/") ||
+    raw.startsWith("//") ||
+    /%2f|%5c|%2e|\\/i.test(raw) ||
+    (policy.allowedPaths != null && !policy.allowedPaths.has(rawPath))
+  ) {
+    request.resume();
+    fail(response, 403, "Provider request is outside relay policy");
+    return;
+  }
   let target: URL;
   try {
-    target = new URL(request.url ?? "", policy.upstream);
+    target = new URL(raw, policy.upstream);
   } catch {
     request.resume();
     fail(response, 400, "Invalid provider request");
