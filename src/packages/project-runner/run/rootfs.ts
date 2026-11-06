@@ -177,6 +177,40 @@ export async function isMounted({
   }
 }
 
+/**
+ * What mount() does with a rootfs that may already be mounted, either way:
+ * - reuse: mounted the requested way, against the requested image;
+ * - replace: detach what's there (if anything) and mount afresh;
+ * - refuse: it's mounted the other way (plain vs. idmapped) and others still
+ *   hold it, e.g. a sidecar asking for a plain rootfs while the project runs
+ *   with a separate runtime uid. Detaching it would pull the rootfs out from
+ *   under them; only the project's own start may switch the way, once nothing
+ *   holds it.
+ */
+export function rootfsMountAction({
+  mountedPlain,
+  mountedIdmap,
+  idmapUid,
+  currentIdmapUid,
+  sameImage,
+  holders,
+}: {
+  mountedPlain: boolean;
+  mountedIdmap: boolean;
+  idmapUid?: number;
+  currentIdmapUid?: number;
+  sameImage: boolean;
+  holders: number;
+}): "reuse" | "replace" | "refuse" {
+  if (!mountedPlain && !mountedIdmap) return "replace";
+  const sameWay =
+    idmapUid == null
+      ? mountedPlain && !mountedIdmap
+      : mountedIdmap && !mountedPlain && currentIdmapUid === idmapUid;
+  if (sameWay) return sameImage ? "reuse" : "replace";
+  return holders > 0 ? "refuse" : "replace";
+}
+
 // mount the project -- this is idempotent, so can be called even if already mounted.
 export async function mount({
   project_id,
@@ -296,17 +330,26 @@ export async function mount({
     });
     if (mountedPlain || mountedIdmap) {
       const mountedImage = await readFile(imageName, "utf8").catch(() => "");
-      const sameWay =
-        idmapUid == null
-          ? mountedPlain && !mountedIdmap
-          : mountedIdmap &&
-            !mountedPlain &&
-            idmapUids.get(project_id) === idmapUid;
-      if (mountedImage.trim() === image && sameWay) {
+      const action = rootfsMountAction({
+        mountedPlain,
+        mountedIdmap,
+        idmapUid,
+        currentIdmapUid: idmapUids.get(project_id),
+        sameImage: mountedImage.trim() === image,
+        holders: leaseReleases.get(project_id)?.length ?? 0,
+      });
+      if (action === "reuse") {
         // Already mounted against the requested lowerdir. A quick restart can
         // cancel delayed disposal and safely reuse this mount.
         addRelease(project_id, release);
         return merged;
+      }
+      if (action === "refuse") {
+        throw new Error(
+          idmapUid == null
+            ? "this project's RootFS is in use with a separate runtime uid, which this does not support yet"
+            : "this project's RootFS is still in use without a separate runtime uid; stop what uses it and try again",
+        );
       }
       // Never let the restart grace period mask a RootFS change (or a change
       // of runtime uid). Detach the old mounts before replacing the persisted
