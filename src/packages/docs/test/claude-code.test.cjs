@@ -58,6 +58,8 @@ test("the page on Claude subscriptions in the project states the code's limits, 
     /not\s+ended while a command it started in a shell is still running/,
   );
   assert.match(entry.body, /jobs\s+it started keep running/);
+  assert.match(entry.body, /differs on purpose from Codex/);
+  assert.match(entry.body, /stops renewing it and deletes the\s+file/);
   assert.match(entry.body, /new relay token/);
   assert.match(entry.body, /signed for 10 minutes/);
   assert.match(

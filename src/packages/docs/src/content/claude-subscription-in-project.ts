@@ -90,13 +90,15 @@ same relay token.
 When an agent is ended between turns, only the agent itself is stopped: jobs
 it started keep running, but its relay token no longer works for them. If it
 is ended during a turn, the commands it is running for that turn are stopped
-too.
+too, since that turn can no longer finish. This differs on purpose from Codex
+agents, whose commands CoCalc never stops itself.
 
 ## The CoCalc command-line credential
 
 The agent also gets a credential for the CoCalc command-line tool, in a file
 in the project. It is separate from the relay token. CoCalc renews it while
-the agent runs, and deletes the file when the agent ends. Each copy of it is
+the agent runs; when the agent ends, it stops renewing it and deletes the
+file. Each copy of it is
 signed for 10 minutes: a copy taken from the file keeps working until then,
 and is accepted, for clock differences, until less than 10 minutes 31 seconds
 after it was issued.
