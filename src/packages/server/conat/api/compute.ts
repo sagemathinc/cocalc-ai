@@ -133,6 +133,11 @@ import { assertDedicatedHostAdmissionForAccount } from "@cocalc/server/project-h
 import type { DedicatedHostFundingMode } from "@cocalc/server/project-host/admission";
 import { estimateDedicatedHostRate } from "@cocalc/server/project-host/spend";
 import {
+  assertNebiusSpotFundingAllowed,
+  nebiusSpotRunningRate,
+  type NebiusSpotBilling,
+} from "@cocalc/server/compute/nebius-spot";
+import {
   GCP_WINDOWS_SERVER_LICENSE_USD_PER_VCPU_HOUR,
   getDedicatedHostSurchargeFraction,
   gcpMachineArchitecture,
@@ -1115,12 +1120,30 @@ export async function createVm(
   const authorizedFallbackHours = allowOnDemandFallback ? 24 : 0;
   const id = randomUUID();
   const settings = await getServerSettings();
+  assertNebiusSpotFundingAllowed({
+    provider,
+    pricing_model: pricingModel,
+    course_funded: fundingSource != null,
+  });
+  // Nebius Spot is max-price only (#684): its rate comes from a live quote and
+  // the VM's cap, never the daily catalog's spot price.
+  let nebiusSpot: NebiusSpotBilling | undefined;
+  let customerSpot = customerSpotRate;
+  if (provider === "nebius" && pricingModel === "spot") {
+    const priced = await nebiusSpotRunningRate({
+      rate_input: rateInput,
+      on_demand_rate: customerOnDemandRate,
+      settings,
+    });
+    customerSpot = priced.rate;
+    nebiusSpot = priced.spot;
+  }
   // The database keeps both rates on every VM. For an on-demand-only Nebius
   // shape, use the on-demand rate as the inert Spot placeholder; admission
   // above still rejects selecting Spot for that machine.
   const spotRate = rateWithProviderCost(
     provider,
-    customerSpotRate ?? customerOnDemandRate,
+    customerSpot ?? customerOnDemandRate,
     settings,
   );
   const onDemandRate = rateWithProviderCost(
@@ -1290,6 +1313,7 @@ export async function createVm(
             on_demand: onDemandRate,
           },
           stopped_rate: stoppedRate,
+          ...(nebiusSpot ? { nebius_spot: nebiusSpot } : {}),
         },
       },
     },
@@ -3038,9 +3062,21 @@ async function setVmMachineTypeLocal(opts: {
     );
   }
   const settings = await getServerSettings();
+  // a Nebius Spot VM gets a new cap for its new machine (#684)
+  let nebiusSpot: NebiusSpotBilling | undefined;
+  let customerSpot = customerSpotRate;
+  if (vm.provider === "nebius" && vm.desired_pricing_model === "spot") {
+    const priced = await nebiusSpotRunningRate({
+      rate_input: rateInput,
+      on_demand_rate: customerOnDemandRate,
+      settings,
+    });
+    customerSpot = priced.rate;
+    nebiusSpot = priced.spot;
+  }
   const spotRate = rateWithProviderCost(
     vm.provider,
-    customerSpotRate ?? customerOnDemandRate,
+    customerSpot ?? customerOnDemandRate,
     settings,
   );
   const onDemandRate = rateWithProviderCost(
@@ -3106,6 +3142,8 @@ async function setVmMachineTypeLocal(opts: {
           on_demand: onDemandRate,
         },
         stopped_rate: stoppedRate,
+        // a cap from the previous machine no longer matches the Spot rate
+        nebius_spot: nebiusSpot,
       },
     },
   }))!;
@@ -3165,9 +3203,52 @@ async function setVmPricingModelLocal(opts: {
   ) {
     throw new Error(`machine '${vm.machine_type}' does not support Spot`);
   }
+  // Switching a stopped Nebius VM to Spot sets a new cap and Spot rate from a
+  // live quote (#684); the stored Spot rate may be the daily catalog's.
+  let nebiusSpotUpdate:
+    | { spot_hourly_price: string; metadata: ComputeVmRow["metadata"] }
+    | undefined;
+  if (opts.pricing_model === "spot" && vm.provider === "nebius") {
+    const onDemand = vm.metadata?.billing?.running_rates?.on_demand;
+    if (!onDemand) {
+      throw new Error(`pricing is unavailable for '${vm.machine_type}'`);
+    }
+    const settings = await getServerSettings();
+    const priced = await nebiusSpotRunningRate({
+      rate_input: {
+        provider: "nebius",
+        region: vm.region,
+        zone: vm.zone,
+        machine_type: vm.machine_type,
+        provider_platform: vm.provider_spec?.platform,
+        gpu_type: vm.gpu_type ?? undefined,
+        gpu_count: vm.gpu_count,
+        disk_gb: vm.boot_disk_gb,
+        disk_type: defaultComputeVolumeDiskType("nebius"),
+        operating_system: vm.operating_system,
+      },
+      on_demand_rate: onDemand,
+      settings,
+    });
+    const spotRate = rateWithProviderCost("nebius", priced.rate, settings);
+    nebiusSpotUpdate = {
+      spot_hourly_price: `${spotRate.hourly_cost_usd}`,
+      metadata: {
+        ...vm.metadata,
+        billing: {
+          ...vm.metadata?.billing,
+          running_rates: {
+            ...vm.metadata?.billing?.running_rates,
+            spot: spotRate,
+          },
+          nebius_spot: priced.spot,
+        },
+      },
+    };
+  }
   const hourlyRate = Number(
     opts.pricing_model === "spot"
-      ? vm.spot_hourly_price
+      ? (nebiusSpotUpdate?.spot_hourly_price ?? vm.spot_hourly_price)
       : vm.on_demand_hourly_price,
   );
   if (!Number.isFinite(hourlyRate) || hourlyRate < 0) {
@@ -3190,6 +3271,7 @@ async function setVmPricingModelLocal(opts: {
     require_fresh_auth: true,
   });
   const next = (await updateComputeVm(vm.id, {
+    ...(nebiusSpotUpdate ?? {}),
     desired_pricing_model: opts.pricing_model,
     effective_pricing_model: opts.pricing_model,
     spot_recovery_state: { phase: "idle" },

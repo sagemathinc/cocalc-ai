@@ -185,6 +185,7 @@ export type SiteSettingsKeys =
   | "project_hosts_funding_mode"
   | "project_hosts_gcp_surcharge_percent"
   | "project_hosts_nebius_surcharge_percent"
+  | "nebius_spot_headroom_percent"
   | "cloudflare_mode"
   | "automatic_project_archiving_enabled"
   | "automatic_project_archiving_report_only"
@@ -421,7 +422,9 @@ const PROJECT_HOSTS_FUNDING_MODES = [
   "site-funded",
 ] as const;
 export type ProjectHostsFundingMode =
-  "account-prepaid" | "account-postpaid" | "site-funded";
+  | "account-prepaid"
+  | "account-postpaid"
+  | "site-funded";
 
 const project_hosts_funding_mode_to_val: ToValFunc<ProjectHostsFundingMode> = (
   val?,
@@ -1909,6 +1912,16 @@ export const site_settings_conf: SiteSettings = {
     desc: "Percentage markup applied to Nebius dedicated-host prices shown in the UI and used for dedicated-host billing. Use this to publish customer-facing prices at or above Nebius list pricing.",
     default: "0",
     valid: onlyNonnegFloat,
+    to_val: toFloat,
+    tags: ["Project Hosts", "Cloud", "Nebius", "Commercialization"],
+    group: "Compute / Project Hosts",
+    subgroup: "Billing",
+  },
+  nebius_spot_headroom_percent: {
+    name: "Dedicated VMs: Nebius Spot - Cap Headroom (%)",
+    desc: "A new Nebius Spot VM's price cap is Nebius's live spot price plus this percentage (default 20). The VM is billed at the cap plus the Nebius surcharge, and Nebius stops it if its spot price rises above the cap. More headroom means fewer price stops and a higher price. From 0 to 200.",
+    default: "20",
+    valid: (value) => onlyNonnegFloat(value) && toFloat(value) <= 200,
     to_val: toFloat,
     tags: ["Project Hosts", "Cloud", "Nebius", "Commercialization"],
     group: "Compute / Project Hosts",

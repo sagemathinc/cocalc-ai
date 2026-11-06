@@ -32,6 +32,10 @@ const projectsGetMock = jest.fn();
 const resourceAdviceListMock = jest.fn();
 const clientDisposeMock = jest.fn();
 const instancesStartMock = jest.fn();
+const pricingPoliciesGetMock = jest.fn();
+const pricingPoliciesGetByNameMock = jest.fn();
+const pricingPoliciesCreateMock = jest.fn();
+const spotPricesListMock = jest.fn();
 
 // These tests exercise the provider as it works once Nebius Spot is offered
 // again (#684); the "while Nebius Spot is off" tests below turn it off.
@@ -78,6 +82,12 @@ jest.mock("../nebius/client", () => {
     };
     readonly projects = { get: projectsGetMock };
     readonly resourceAdvice = { list: resourceAdviceListMock };
+    readonly pricingPolicies = {
+      get: pricingPoliciesGetMock,
+      getByName: pricingPoliciesGetByNameMock,
+      create: pricingPoliciesCreateMock,
+    };
+    readonly spotPrices = { list: spotPricesListMock };
 
     constructor(private creds: any) {}
 
@@ -123,6 +133,84 @@ function buildSpec(overrides: Partial<HostSpec> = {}): HostSpec {
     },
     ...overrides,
   };
+}
+
+function spotSpec(overrides: Partial<HostSpec> = {}): HostSpec {
+  const base = buildSpec({
+    pricing_model: "spot",
+    gpu: { type: "h100", count: 1 },
+  });
+  return {
+    ...base,
+    ...overrides,
+    metadata: {
+      ...base.metadata,
+      spot_max_price_per_gpu_hour: "2.400",
+      ...(overrides.metadata ?? {}),
+    },
+  };
+}
+
+function mockSpotPolicy(opts: {
+  scheduling: "allowed" | "blocked";
+  exists?: boolean;
+  platform?: string;
+  maxPrice?: string;
+}) {
+  const { PricingPolicyStatus_SchedulingState, PricingPolicyStatus_State } =
+    jest.requireActual("@nebius/js-sdk/api/nebius/billing/v1/index");
+  const policy = {
+    metadata: { id: "policy-1", name: "cocalc-spot-spot-platform-2-400" },
+    spec: {
+      computeInstanceSpec: {
+        versions: {
+          $case: "v1",
+          v1: { platform: opts.platform ?? "spot-platform" },
+        },
+      },
+      pricing: {
+        versions: {
+          $case: "maxPriceV1",
+          maxPriceV1: { maxPrice: opts.maxPrice ?? "2.400" },
+        },
+      },
+    },
+    status: {
+      state: PricingPolicyStatus_State.STATE_ACTIVE,
+      schedulingState:
+        opts.scheduling === "blocked"
+          ? PricingPolicyStatus_SchedulingState.SCHEDULING_STATE_BLOCKED
+          : PricingPolicyStatus_SchedulingState.SCHEDULING_STATE_ALLOWED,
+    },
+  };
+  pricingPoliciesGetByNameMock.mockReset();
+  pricingPoliciesCreateMock.mockReset();
+  pricingPoliciesGetMock.mockReset();
+  if (opts.exists === false) {
+    pricingPoliciesGetByNameMock.mockRejectedValue(new Error("NOT_FOUND"));
+    pricingPoliciesCreateMock.mockResolvedValue({
+      wait: jest.fn(async () => undefined),
+      resourceId: () => "policy-1",
+    });
+  } else {
+    pricingPoliciesGetByNameMock.mockResolvedValue(policy);
+  }
+  pricingPoliciesGetMock.mockResolvedValue(policy);
+  return policy;
+}
+
+function mockSpotPrice(value: string, region = "eu-north1") {
+  spotPricesListMock.mockReset();
+  spotPricesListMock.mockResolvedValue({
+    items: [
+      {
+        region,
+        computeInstance: { platform: "spot-platform" },
+        price: { value, currency: "USD", unitTitle: "gpu hour" },
+      },
+    ],
+    nextPageToken: "",
+  });
 }
 
 describe("Nebius client lifecycle", () => {
@@ -322,20 +410,16 @@ describe("NebiusProvider", () => {
   });
 
   it("creates preemptible instances for spot hosts", async () => {
+    mockSpotPolicy({ scheduling: "allowed" });
     const provider = new NebiusProvider();
-    await provider.createHost(
-      buildSpec({
-        pricing_model: "spot",
-      }),
-      {
-        parentId: "project-1",
-        serviceAccountId: "svc-1",
-        publicKeyId: "pub-1",
-        privateKeyPem: "key",
-        sshPublicKey: "ssh-ed25519 AAAA",
-        subnetId: "subnet-1",
-      },
-    );
+    const runtime = await provider.createHost(spotSpec(), {
+      parentId: "project-1",
+      serviceAccountId: "svc-1",
+      publicKeyId: "pub-1",
+      privateKeyPem: "key",
+      sshPublicKey: "ssh-ed25519 AAAA",
+      subnetId: "subnet-1",
+    });
 
     const createArgs = instancesCreateMock.mock.calls[0][0];
     expect(createArgs.spec.preemptible).toBeDefined();
@@ -347,6 +431,19 @@ describe("NebiusProvider", () => {
     expect(createArgs.spec.reservationPolicy).toBeUndefined();
     expect(createArgs.spec.networkInterfaces[0].publicIpAddress.static).toBe(
       false,
+    );
+    // max-price mode only: the instance runs under its cap's policy (#684)
+    expect(createArgs.spec.pricingModel).toEqual(
+      expect.objectContaining({
+        $case: "spotPricingPolicy",
+        spotPricingPolicy: expect.objectContaining({ id: "policy-1" }),
+      }),
+    );
+    expect(runtime.metadata).toEqual(
+      expect.objectContaining({
+        spot_pricing_policy_id: "policy-1",
+        spot_max_price_per_gpu_hour: "2.400",
+      }),
     );
   });
 
@@ -472,7 +569,7 @@ describe("NebiusProvider", () => {
     });
 
     await expect(
-      new NebiusProvider().createHost(buildSpec({ pricing_model: "spot" }), {
+      new NebiusProvider().createHost(spotSpec(), {
         parentId: "project-1",
         serviceAccountId: "svc-1",
         publicKeyId: "pub-1",
@@ -1314,5 +1411,307 @@ describe("NebiusProvider while Nebius Spot is off (#684)", () => {
     );
     expect(instancesGetMock).not.toHaveBeenCalled();
     expect(instancesStartMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("NebiusProvider Spot in max-price mode (#684)", () => {
+  const creds = {
+    parentId: "project-1",
+    serviceAccountId: "svc-1",
+    publicKeyId: "pub-1",
+    privateKeyPem: "key",
+    sshPublicKey: "ssh-ed25519 AAAA",
+    subnetId: "subnet-1",
+  };
+  const preemptibleWithPolicy = {
+    spec: {
+      preemptible: {
+        onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+        priority: 0,
+      },
+      pricingModel: {
+        $case: "spotPricingPolicy",
+        spotPricingPolicy: { id: "policy-1" },
+      },
+    },
+  };
+  const runtime = {
+    provider: "nebius" as const,
+    instance_id: "instance-1",
+    zone: "eu-north1",
+  } as any;
+
+  beforeEach(() => {
+    mockNebiusSpotOffered = true;
+    pricingPoliciesGetMock.mockReset();
+    pricingPoliciesGetByNameMock.mockReset();
+    pricingPoliciesCreateMock.mockReset();
+    spotPricesListMock.mockReset();
+    disksCreateMock.mockReset();
+    instancesCreateMock.mockReset();
+    instancesListMock.mockReset();
+    instancesGetMock.mockReset();
+    instancesStartMock.mockReset();
+    instancesStopMock.mockReset();
+    instancesListMock.mockResolvedValue({ items: [], nextPageToken: "" });
+    instancesCreateMock.mockResolvedValue(instanceOp("instance-1"));
+    instancesStartMock.mockResolvedValue(instanceOp("instance-1"));
+    instancesStopMock.mockResolvedValue(instanceOp("instance-1"));
+    disksCreateMock
+      .mockResolvedValueOnce(diskOp("boot-disk"))
+      .mockResolvedValueOnce(diskOp("data-disk"));
+  });
+
+  it("refuses a Spot spec without a cap, or without a GPU, before any Nebius call", async () => {
+    const provider = new NebiusProvider();
+    await expect(
+      provider.createHost(buildSpec({ pricing_model: "spot" }), creds),
+    ).rejects.toThrow(/requires a max price/);
+    await expect(
+      provider.createHost(spotSpec({ gpu: undefined }), creds),
+    ).rejects.toThrow(/GPU machines only/);
+    await expect(
+      provider.createHost(
+        spotSpec({ metadata: { spot_max_price_per_gpu_hour: "2.4" } } as any),
+        creds,
+      ),
+    ).rejects.toThrow(/invalid Nebius Spot max price/);
+    expect(instancesListMock).not.toHaveBeenCalled();
+    expect(pricingPoliciesGetByNameMock).not.toHaveBeenCalled();
+    expect(instancesCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("creates the cap's policy when it is missing", async () => {
+    mockSpotPolicy({ scheduling: "allowed", exists: false });
+    await new NebiusProvider().createHost(spotSpec(), creds);
+    const request = pricingPoliciesCreateMock.mock.calls[0][0];
+    expect(request.metadata.name).toBe("cocalc-spot-spot-platform-2-400");
+    expect(request.metadata.parentId).toBe("project-1");
+    expect(request.spec.computeInstanceSpec.versions.v1.platform).toBe(
+      "spot-platform",
+    );
+    expect(request.spec.pricing.versions.maxPriceV1.maxPrice).toBe("2.400");
+    expect(
+      instancesCreateMock.mock.calls[0][0].spec.pricingModel.spotPricingPolicy
+        .id,
+    ).toBe("policy-1");
+  });
+
+  it("refuses an existing policy name with a different cap, never editing it", async () => {
+    mockSpotPolicy({ scheduling: "allowed", maxPrice: "9.999" });
+    await expect(
+      new NebiusProvider().createHost(spotSpec(), creds),
+    ).rejects.toThrow(/does not match its platform and cap/);
+    expect(pricingPoliciesCreateMock).not.toHaveBeenCalled();
+    expect(disksCreateMock).not.toHaveBeenCalled();
+    expect(instancesCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses when Nebius's price is already above the cap, before creating disks", async () => {
+    mockSpotPolicy({ scheduling: "blocked" });
+    await expect(
+      new NebiusProvider().createHost(spotSpec(), creds),
+    ).rejects.toThrow(/above this VM's cap \(\$2\.400/);
+    expect(disksCreateMock).not.toHaveBeenCalled();
+    expect(instancesCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("starts a Spot VM only under its policy and within its cap", async () => {
+    const provider = new NebiusProvider();
+    mockSpotPolicy({ scheduling: "allowed" });
+    mockSpotPrice("2.100");
+    instancesGetMock.mockResolvedValue(preemptibleWithPolicy);
+    await provider.startHost(runtime, creds);
+    expect(instancesStartMock).toHaveBeenCalledTimes(1);
+
+    // the live price is above the cap, though Nebius hasn't blocked yet
+    mockSpotPrice("2.401");
+    await expect(provider.startHost(runtime, creds)).rejects.toThrow(
+      /above this VM's cap/,
+    );
+    // Nebius blocks the policy
+    mockSpotPolicy({ scheduling: "blocked" });
+    mockSpotPrice("2.100");
+    await expect(provider.startHost(runtime, creds)).rejects.toThrow(
+      /above this VM's cap/,
+    );
+    // no quote for this region and platform
+    mockSpotPolicy({ scheduling: "allowed" });
+    mockSpotPrice("2.100", "us-central1");
+    await expect(provider.startHost(runtime, creds)).rejects.toThrow(
+      /price .* is unavailable/,
+    );
+    expect(instancesStartMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to start or restart a preemptible instance without a pricing policy", async () => {
+    instancesGetMock.mockResolvedValue({
+      spec: {
+        preemptible: {
+          onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+          priority: 0,
+        },
+      },
+    });
+    const provider = new NebiusProvider();
+    await expect(provider.startHost(runtime, creds)).rejects.toThrow(
+      /no pricing policy/,
+    );
+    await expect(provider.restartHost(runtime, creds)).rejects.toThrow(
+      /no pricing policy/,
+    );
+    expect(instancesStopMock).not.toHaveBeenCalled();
+    expect(instancesStartMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a price stop only for a blocked policy", async () => {
+    const provider = new NebiusProvider();
+    instancesGetMock.mockResolvedValue(preemptibleWithPolicy);
+    mockSpotPolicy({ scheduling: "blocked" });
+    await expect(provider.spotPriceStopCap(runtime, creds)).resolves.toBe(
+      "2.400",
+    );
+    mockSpotPolicy({ scheduling: "allowed" });
+    await expect(
+      provider.spotPriceStopCap(runtime, creds),
+    ).resolves.toBeUndefined();
+    instancesGetMock.mockResolvedValue({ spec: {} });
+    await expect(
+      provider.spotPriceStopCap(runtime, creds),
+    ).resolves.toBeUndefined();
+    instancesGetMock.mockRejectedValue(new Error("NOT_FOUND"));
+    await expect(
+      provider.spotPriceStopCap(runtime, creds),
+    ).resolves.toBeUndefined();
+  });
+
+  it("quotes the highest matching USD price for the region and platform", async () => {
+    spotPricesListMock.mockReset();
+    spotPricesListMock
+      .mockResolvedValueOnce({
+        items: [
+          {
+            region: "eu-north1",
+            computeInstance: { platform: "spot-platform" },
+            price: { value: "1.900", currency: "USD" },
+          },
+          {
+            region: "eu-north1",
+            computeInstance: { platform: "other-platform" },
+            price: { value: "9.000", currency: "USD" },
+          },
+        ],
+        nextPageToken: "page-2",
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            region: "eu-north1",
+            computeInstance: { platform: "spot-platform" },
+            price: { value: "2.050", currency: "USD" },
+          },
+          {
+            region: "eu-north1",
+            computeInstance: { platform: "spot-platform" },
+            price: { value: "5.000", currency: "EUR" },
+          },
+        ],
+        nextPageToken: "",
+      });
+    const quote = await new NebiusProvider().quoteSpotPrice(creds, {
+      region: "eu-north1",
+      platform: "spot-platform",
+    });
+    expect(quote.price_per_gpu_hour).toBe("2.050");
+    expect(spotPricesListMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("NebiusProvider Spot instances must match their billed cap (#684)", () => {
+  const creds = {
+    parentId: "project-1",
+    serviceAccountId: "svc-1",
+    publicKeyId: "pub-1",
+    privateKeyPem: "key",
+    sshPublicKey: "ssh-ed25519 AAAA",
+    subnetId: "subnet-1",
+  };
+  const spotInstance = {
+    metadata: { id: "instance-existing", name: "spot-host" },
+    spec: {
+      networkInterfaces: [],
+      preemptible: {
+        onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+        priority: 0,
+      },
+      pricingModel: {
+        $case: "spotPricingPolicy",
+        spotPricingPolicy: { id: "policy-1" },
+      },
+    },
+  };
+  beforeEach(() => {
+    mockNebiusSpotOffered = true;
+    instancesCreateMock.mockReset();
+    instancesListMock.mockReset();
+    instancesGetMock.mockReset();
+    instancesStartMock.mockReset();
+    instancesStartMock.mockResolvedValue(instanceOp("instance-1"));
+  });
+
+  it("adopts an existing Spot instance only under the requested cap", async () => {
+    instancesListMock.mockResolvedValue({
+      items: [spotInstance],
+      nextPageToken: "",
+    });
+    mockSpotPolicy({ scheduling: "allowed", maxPrice: "1.900" });
+    await expect(
+      new NebiusProvider().createHost(spotSpec(), creds),
+    ).rejects.toThrow(/unexpected pricing model/);
+    mockSpotPolicy({ scheduling: "allowed", platform: "other-platform" });
+    await expect(
+      new NebiusProvider().createHost(spotSpec(), creds),
+    ).rejects.toThrow(/unexpected pricing model/);
+    expect(instancesCreateMock).not.toHaveBeenCalled();
+    // (control) the same cap and platform is adopted
+    mockSpotPolicy({ scheduling: "allowed" });
+    const runtime = await new NebiusProvider().createHost(spotSpec(), creds);
+    expect(runtime.instance_id).toBe("instance-existing");
+  });
+
+  it("never starts a Spot instance under a cap other than the billed one", async () => {
+    instancesGetMock.mockResolvedValue(spotInstance);
+    mockSpotPolicy({ scheduling: "allowed" });
+    mockSpotPrice("2.000");
+    const runtime = {
+      provider: "nebius" as const,
+      instance_id: "instance-existing",
+      zone: "eu-north1",
+      metadata: { expected_spot_max_price_per_gpu_hour: "2.640" },
+    } as any;
+    await expect(
+      new NebiusProvider().startHost(runtime, creds),
+    ).rejects.toThrow(/not its billed cap/);
+    expect(instancesStartMock).not.toHaveBeenCalled();
+    await new NebiusProvider().startHost(
+      {
+        ...runtime,
+        metadata: { expected_spot_max_price_per_gpu_hour: "2.400" },
+      },
+      creds,
+    );
+    expect(instancesStartMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the instance's Spot policy in its observation", async () => {
+    instancesGetMock.mockResolvedValue({
+      ...spotInstance,
+      status: { state: { name: "STOPPED" } },
+    });
+    const observed = await new NebiusProvider().getInstance(
+      { provider: "nebius", instance_id: "instance-existing" } as any,
+      creds,
+    );
+    expect(observed?.metadata?.spot_pricing_policy_id).toBe("policy-1");
   });
 });
