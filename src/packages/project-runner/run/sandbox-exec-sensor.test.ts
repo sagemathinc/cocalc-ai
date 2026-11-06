@@ -244,6 +244,7 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
   const ROOTFS = `/run/cocalc/project-rootfs/${PROJECT}/root`;
   const reserveMock = jest.fn(async (_name: string) => {});
   const markLaunchedMock = jest.fn(async () => {});
+  const orphanMock = jest.fn(async () => {});
 
   // podman as the separate path sees it: `container exists` answers exit 1
   // (absent) once the container was removed
@@ -287,6 +288,8 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     reserveMock.mockResolvedValue(undefined);
     markLaunchedMock.mockReset();
     markLaunchedMock.mockResolvedValue(undefined);
+    orphanMock.mockReset();
+    orphanMock.mockResolvedValue(undefined);
     acquireSeparateMock.mockReset();
     acquireSeparateMock.mockResolvedValue({
       rootfs: ROOTFS,
@@ -294,6 +297,7 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
       mountViews: async () => {},
       reserve: reserveMock,
       markLaunched: markLaunchedMock,
+      orphan: orphanMock,
       release: releaseMock,
     });
   });
@@ -426,6 +430,18 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     );
   });
 
+  it("orphans the kept holder when a refused mark's container can't be removed (K1)", async () => {
+    markLaunchedMock.mockRejectedValueOnce(
+      new Error("the project is being stopped; not launching"),
+    );
+    fakePodman({ rmFails: true });
+    await expect(run()).rejects.toThrow(
+      "could not remove this run's container",
+    );
+    expect(orphanMock).toHaveBeenCalledTimes(1);
+    expect(releaseMock).not.toHaveBeenCalled();
+  });
+
   it("removes what a failed create may have left before the release (C1)", async () => {
     execFileMock.mockImplementation((_c, args: string[], _o, callback) =>
       args.includes("create")
@@ -451,6 +467,8 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
         "could not remove this run's container",
       );
       expect(releaseMock).not.toHaveBeenCalled();
+      // kept, but droppable by a later stop's proof (K1)
+      expect(orphanMock).toHaveBeenCalledTimes(1);
     },
   );
 
@@ -461,6 +479,7 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
       mountViews: async () => {},
       reserve: reserveMock,
       markLaunched: markLaunchedMock,
+      orphan: orphanMock,
       release: releaseMock,
     });
     await expect(run()).rejects.toThrow("no home view for this run");

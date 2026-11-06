@@ -452,7 +452,14 @@ export async function sandboxExec({
       ) {
         // Never release beneath a container that may still start: the
         // holder stays, and the project's stop removes the container,
-        // proves it gone and drops the holder.
+        // proves it gone and drops the holder (orphaned: droppable by that
+        // proof even if it was never marked launched).
+        await separateHandle.orphan().catch((err) =>
+          logger.warn("could not keep a sandbox's holder for the stop", {
+            project_id,
+            err: `${err}`,
+          }),
+        );
         logger.warn("could not remove a separate sandbox container", {
           project_id,
           name: createdSeparate,

@@ -610,6 +610,11 @@ export interface SeparateRuntimeHandle {
   // create or start anything.
   reserve(containerName: string): Promise<void>;
   markLaunched(): Promise<void>;
+  // For a holder kept because its container couldn't be proven removed
+  // (K1): droppable by any stop's proof begun after this, also while
+  // stopping and without a launch. Its container, if any, was created
+  // before this, so such a proof covers it. Refused once released.
+  orphan(): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -837,6 +842,16 @@ export async function acquireSeparateRuntime({
             throw new Error("this holder already has a container");
           }
           entry.container = containerName;
+        });
+      },
+      orphan: async () => {
+        await withRootfsLock(project_id, async () => {
+          if (released) {
+            throw new Error(
+              "this holder of the project's runtime was released; nothing to keep",
+            );
+          }
+          entry.launchedAt = ++launchSeq;
         });
       },
       markLaunched: async () => {

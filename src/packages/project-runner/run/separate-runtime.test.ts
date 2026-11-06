@@ -402,6 +402,38 @@ describe("separate runtime holders", () => {
     await other.release();
   });
 
+  it("lets a later stop drop an orphaned holder that was never marked launched (K1)", async () => {
+    const rootfs = await import("./rootfs");
+    const holder = await acquire("sandbox", ["home"]);
+    await holder.reserve(`sandbox-${PROJECT}-1`);
+    // the stop begins: marking is refused, and its container can't be removed
+    rootfs.closeSeparateRuntime(PROJECT);
+    await expect(holder.markLaunched()).rejects.toThrow("being stopped");
+    // a proof begun before the orphaning doesn't cover it
+    let proofStarted!: () => void;
+    const started = new Promise<void>((r) => (proofStarted = r));
+    let finishProof!: (gone: boolean) => void;
+    const early = rootfs.dropHoldersProvenGone(PROJECT, ["sandbox"], () => {
+      proofStarted();
+      return new Promise<boolean>((r) => (finishProof = r));
+    });
+    await started;
+    await holder.orphan();
+    finishProof(true);
+    expect(await early).toBe(0);
+    expect(rootfs.separateRuntimeHolders(PROJECT)).toEqual({ sandbox: 1 });
+    // a later proof (the container now gone) drops it, and the last drop detaches
+    expect(
+      await rootfs.dropHoldersProvenGone(PROJECT, ["sandbox"], proven),
+    ).toBe(1);
+    expect(rootfs.separateRuntimeHolders(PROJECT)).toEqual({});
+    expect(views.size).toBe(0);
+    expect([...mounted]).toEqual([]);
+    rootfs.reopenSeparateRuntime(PROJECT);
+    // a released holder can't be orphaned
+    await expect(holder.orphan()).rejects.toThrow("was released");
+  });
+
   it("starts no launch step while the project's runtime is being stopped (C1, R-d)", async () => {
     const rootfs = await import("./rootfs");
     const holder = await acquire("sandbox", ["home"]);
