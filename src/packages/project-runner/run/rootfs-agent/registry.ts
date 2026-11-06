@@ -76,9 +76,11 @@ export function rootfsSandboxOptionsWithoutAgent(project_id: string): {
  * cache alone:
  * - "agent": running, with a known separate uid: through its agent;
  * - "host": running keep-id, its plain rootfs mounted: as before;
- * - "defer": anything else (stopped, starting, stopping, the -1 marker, a
- *   separate-uid project this daemon hasn't reattached yet, whose plain
- *   path isn't mounted): the copy waits; nothing is written.
+ * - "stopped": not running (stopped, starting, stopping): the copy waits
+ *   for the start, however long that takes; nothing is written;
+ * - "defer": running but not ready (the -1 marker, a separate-uid project
+ *   this daemon hasn't reattached yet, whose plain path isn't mounted): the
+ *   copy waits too, but this should pass soon (pending copies bound it).
  */
 export async function rootfsCopyReadiness(
   project_id: string,
@@ -86,11 +88,11 @@ export async function rootfsCopyReadiness(
     state?: (project_id: string) => Promise<string>;
     isMounted?: (opts: { project_id: string }) => Promise<boolean>;
   } = {},
-): Promise<"agent" | "host" | "defer"> {
+): Promise<"agent" | "host" | "defer" | "stopped"> {
   const state =
     deps.state ??
     (async (id: string) => await (await import("../podman")).state(id));
-  if ((await state(project_id)) !== "running") return "defer";
+  if ((await state(project_id)) !== "running") return "stopped";
   const uid = rootfsIdmapUid(project_id);
   if (uid != null) return uid > 0 ? "agent" : "defer";
   return (await (deps.isMounted ?? isMounted)({ project_id }))

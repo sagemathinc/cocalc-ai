@@ -139,18 +139,54 @@ function remainingMs(deadline: number): number {
 
 // A rootfs copy that can't be installed yet (B5): the row goes back to
 // "queued" (nothing was written), and runs once the project is running.
-class DeferredCopy extends Error {}
+// "stopped": the project isn't running, and the copy waits for its start
+// however long that takes; "not-ready": it runs, but its rootfs or agent
+// isn't ready yet, which should pass soon (bounded below).
+class DeferredCopy extends Error {
+  constructor(
+    message: string,
+    readonly reason: "stopped" | "not-ready",
+  ) {
+    super(message);
+  }
+}
 
 // for tests
 export const copyDeps = { rootfsCopyReadiness };
 
-// N1: a row is queued again only while it may still run: within a day of its
-// creation and a bounded number of attempts (the worker ticks every 30s);
-// after that it fails, with the reason, instead of waiting until it expires
+// N1: a copy into a running project that stays not ready (or whose agent
+// keeps going away) fails, with the reason, once that has lasted an hour
+// over at least 10 passes on this host, instead of waiting until the row
+// expires. A copy waiting for a stopped project is never bounded here (B5):
+// a stopped pass ends the streak. Kept in memory, since the hub's claim
+// clears last_error: a restart of this daemon only delays a failure.
 export const DEFER_LIMITS = {
-  maxAgeMs: 24 * 60 * 60 * 1000,
-  maxAttempts: 3000,
+  maxNotReadyMs: 60 * 60 * 1000,
+  minNotReadyPasses: 10,
 };
+const notReady = new Map<string, { since: number; passes: number }>();
+// for tests
+export const notReadyStreaks = notReady;
+
+// true once this not-ready pass ends the row (it then fails)
+function notReadyTooLong(copy_id: string): boolean {
+  const now = Date.now();
+  const streak = notReady.get(copy_id) ?? { since: now, passes: 0 };
+  streak.passes += 1;
+  notReady.set(copy_id, streak);
+  return (
+    now - streak.since >= DEFER_LIMITS.maxNotReadyMs &&
+    streak.passes >= DEFER_LIMITS.minNotReadyPasses
+  );
+}
+
+// rows that left this host's queue some other way (canceled, expired)
+function pruneNotReady(): void {
+  const old = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  for (const [id, streak] of notReady) {
+    if (streak.since < old) notReady.delete(id);
+  }
+}
 
 // The agent's operations that change the destination: once one has been
 // sent, the copy may be partly placed and is never queued again (N1).
@@ -165,7 +201,7 @@ const MUTATING_AGENT_OPS = new Set([
   "utimes",
 ]);
 
-function countingAgent(agent: AgentLike): {
+export function countingAgent(agent: AgentLike): {
   agent: AgentLike;
   changes: () => number;
 } {
@@ -247,9 +283,16 @@ async function applyCopyRow(
   const readiness = intoRootfs
     ? await copyDeps.rootfsCopyReadiness(row.dest_project_id)
     : "host";
+  if (readiness === "stopped") {
+    throw new DeferredCopy(
+      "the destination project isn't running; the copy runs once it is",
+      "stopped",
+    );
+  }
   if (readiness === "defer") {
     throw new DeferredCopy(
-      "the destination project's rootfs isn't live yet; the copy runs once the project is running",
+      "the destination project's rootfs isn't live yet; the copy runs once it is",
+      "not-ready",
     );
   }
   const viaAgent = intoRootfs
@@ -258,6 +301,7 @@ async function applyCopyRow(
   if (readiness === "agent" && viaAgent == null) {
     throw new DeferredCopy(
       "the destination project's rootfs agent isn't available yet",
+      "not-ready",
     );
   }
   const destination = viaAgent
@@ -375,14 +419,6 @@ async function applyCopyRow(
   }
 }
 
-function deferredTooLong(row: ProjectCopyRow): boolean {
-  const created = new Date(row.created_at).getTime();
-  return (
-    (row.attempt ?? 0) >= DEFER_LIMITS.maxAttempts ||
-    (Number.isFinite(created) && Date.now() - created >= DEFER_LIMITS.maxAgeMs)
-  );
-}
-
 async function reportCopyStatus(
   row: ProjectCopyRow,
   status: "done" | "failed" | "queued",
@@ -444,6 +480,7 @@ export async function applyPendingCopies({
     return 0;
   }
 
+  pruneNotReady();
   for (const row of rows) {
     if (Date.now() >= deadline) {
       // Too late to start: leave the row 'applying' so the hub reclaims it
@@ -456,20 +493,28 @@ export async function applyPendingCopies({
     }
     try {
       await applyCopyRow(row, deadline);
+      notReady.delete(row.copy_id);
       await reportCopyStatus(row, "done");
     } catch (err) {
       // a PartlyPlacedCopy is neither: it fails (N1)
       const deferrable =
         err instanceof DeferredCopy || isRetryableAgentError(err);
-      if (deferrable && deferredTooLong(row)) {
-        logger.warn("pending copy deferred too long", {
+      const stopped = err instanceof DeferredCopy && err.reason === "stopped";
+      if (!deferrable || stopped) {
+        notReady.delete(row.copy_id);
+      } else if (notReadyTooLong(row.copy_id)) {
+        const streak = notReady.get(row.copy_id)!;
+        notReady.delete(row.copy_id);
+        logger.warn("pending copy not ready for too long", {
           dest_project_id: row.dest_project_id,
-          attempt: row.attempt,
+          passes: streak.passes,
         });
         await reportCopyStatus(
           row,
           "failed",
-          `the copy could not run in time (${row.attempt} attempts): ${err}`,
+          `the destination project was running but not ready for over ${Math.round(
+            (Date.now() - streak.since) / 60000,
+          )} minutes (${streak.passes} tries): ${err}`,
         );
         continue;
       }

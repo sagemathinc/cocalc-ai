@@ -479,8 +479,9 @@ describe("project-host pending copies", () => {
       );
       await mkdir(path.join(container, "etc"));
       readiness = "agent";
-      const { copyDeps } = await import("./pending-copies");
+      const { copyDeps, notReadyStreaks } = await import("./pending-copies");
       copyDeps.rootfsCopyReadiness = (async () => readiness) as any;
+      notReadyStreaks.clear();
     });
     afterEach(async () => {
       await rm(container, { recursive: true, force: true });
@@ -530,7 +531,7 @@ describe("project-host pending copies", () => {
         readiness === "agent" ? { agent, containerPath: p } : undefined,
       );
       const { applyPendingCopies } = await import("./pending-copies");
-      readiness = "defer";
+      readiness = "stopped";
       rootfsRow("copy-l");
       await applyPendingCopies({ limit: 1 });
       readiness = "agent";
@@ -632,35 +633,148 @@ describe("project-host pending copies", () => {
       expect(await readdir(path.join(container, "etc"))).toEqual([]);
     });
 
-    it("fails a copy deferred too long or too often, with the reason (N1)", async () => {
+    // runs one pass per entry of times (Date.now pinned to each)
+    const passes = async (copy_id: string, times: number[], extra = {}) => {
+      const { applyPendingCopies } = await import("./pending-copies");
+      const now = jest.spyOn(Date, "now");
+      try {
+        for (const t of times) {
+          now.mockReturnValue(t);
+          rootfsRow(copy_id, false, extra);
+          await applyPendingCopies({ limit: 1 });
+        }
+      } finally {
+        now.mockRestore();
+      }
+      return mockStatusUpdates.map((u) => u.status);
+    };
+    const T0 = Date.parse("2026-11-06T00:00:00Z");
+    const MIN = 60_000;
+
+    it("keeps an old, often-tried rootfs copy queued while its project is stopped, and places it after the start (B5, N1)", async () => {
+      const { agent } = fsAgent();
+      mockAgentDest = jest.fn((p: string) =>
+        readiness === "agent" ? { agent, containerPath: p } : undefined,
+      );
+      const { notReadyStreaks } = await import("./pending-copies");
+      const old = {
+        attempt: 5000,
+        created_at: new Date(T0 - 48 * 60 * MIN),
+      };
+      readiness = "stopped";
+      // a day of passes while stopped: every one queued
+      const times = Array.from({ length: 30 }, (_, i) => T0 + i * 60 * MIN);
+      expect(await passes("copy-old", times, old)).toEqual(
+        times.map(() => "queued"),
+      );
+      expect(notReadyStreaks.has("copy-old")).toBe(false);
+      // the post-start pass places it
+      readiness = "agent";
+      expect(await passes("copy-old", [T0 + 31 * 60 * MIN], old)).toEqual([
+        ...times.map(() => "queued"),
+        "done",
+      ]);
+      expect(await readFile(path.join(container, "etc", "foo"), "utf8")).toBe(
+        "notebook payload",
+      );
+    });
+
+    it("fails a copy into a running project that stays not ready, after an hour and 10 tries, with the reason (N1)", async () => {
       readiness = "defer";
       mockAgentDest = jest.fn(() => undefined);
-      const { applyPendingCopies, DEFER_LIMITS } =
-        await import("./pending-copies");
-      const now = Date.now();
-      rootfsRow("copy-fresh", false, {
-        attempt: DEFER_LIMITS.maxAttempts - 1,
-        created_at: new Date(now - DEFER_LIMITS.maxAgeMs + 60_000),
-      });
-      await applyPendingCopies({ limit: 1 });
-      rootfsRow("copy-often", false, {
-        attempt: DEFER_LIMITS.maxAttempts,
-        created_at: new Date(now),
-      });
-      await applyPendingCopies({ limit: 1 });
-      rootfsRow("copy-old", false, {
-        attempt: 1,
-        created_at: new Date(now - DEFER_LIMITS.maxAgeMs - 1),
-      });
-      await applyPendingCopies({ limit: 1 });
-      expect(mockStatusUpdates.map((u) => [u.copy_id, u.status])).toEqual([
-        ["copy-fresh", "queued"],
-        ["copy-often", "failed"],
-        ["copy-old", "failed"],
+      // an hour reached after 7 tries: still queued until the 10th
+      const times = Array.from({ length: 10 }, (_, i) => T0 + i * 10 * MIN);
+      expect(await passes("copy-nr", times)).toEqual([
+        ...Array(9).fill("queued"),
+        "failed",
       ]);
-      expect(mockStatusUpdates[1].last_error).toMatch(/could not run in time/);
+      expect(mockStatusUpdates[9].last_error).toMatch(
+        /running but not ready for over 90 minutes \(10 tries\)/,
+      );
+      const { notReadyStreaks } = await import("./pending-copies");
+      expect(notReadyStreaks.has("copy-nr")).toBe(false);
       expect(mockRustic).not.toHaveBeenCalled();
     });
+
+    it("never fails a not-ready copy before an hour, however many tries (N1)", async () => {
+      readiness = "defer";
+      mockAgentDest = jest.fn(() => undefined);
+      const times = Array.from({ length: 40 }, (_, i) => T0 + i * MIN);
+      expect(await passes("copy-many", times)).toEqual(
+        times.map(() => "queued"),
+      );
+    });
+
+    it("counts a retryable agent failure as not ready, and a stopped pass ends the streak (N1)", async () => {
+      mockAgentDest = jest.fn(() => ({
+        agent: {
+          call: async () => {
+            throw wentAway(true);
+          },
+        },
+        containerPath: "/etc/foo",
+      }));
+      readiness = "agent";
+      const first = Array.from({ length: 9 }, (_, i) => T0 + i * 15 * MIN);
+      await passes("copy-s", first);
+      const { notReadyStreaks } = await import("./pending-copies");
+      expect(notReadyStreaks.get("copy-s")).toMatchObject({ passes: 9 });
+      // stopped in between: the streak ends
+      readiness = "stopped";
+      await passes("copy-s", [T0 + 150 * MIN]);
+      expect(notReadyStreaks.has("copy-s")).toBe(false);
+      // running again: a new streak, so not failed
+      readiness = "agent";
+      expect(await passes("copy-s", [T0 + 160 * MIN])).toEqual(
+        Array(11).fill("queued"),
+      );
+    });
+
+    it("places a scratch copy into a stopped project, never deferring it (R11)", async () => {
+      readiness = "stopped";
+      const asked = jest.fn(async () => readiness);
+      const { copyDeps, applyPendingCopies } = await import("./pending-copies");
+      copyDeps.rootfsCopyReadiness = asked as any;
+      rootfsRow("copy-tmp", false, { dest_path: "/tmp/foo" });
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates).toEqual([
+        expect.objectContaining({ copy_id: "copy-tmp", status: "done" }),
+      ]);
+      expect(asked).not.toHaveBeenCalled();
+      expect(mockResolveAnchored).toHaveBeenCalledWith("/tmp/foo");
+    });
+
+    it.each([
+      "writeFile",
+      "mkdir",
+      "symlink",
+      "unlink",
+      "rm",
+      "rename",
+      "chmod",
+      "utimes",
+    ])(
+      "counts a sent %s whose reply was lost as a change, and not one refused before sending (R8/R10)",
+      async (op) => {
+        const { countingAgent } = await import("./pending-copies");
+        for (const [unsent, expected] of [
+          [false, 1],
+          [true, 0],
+        ] as const) {
+          const c = countingAgent({
+            call: async () => {
+              throw wentAway(unsent);
+            },
+          });
+          await expect(c.agent.call(op, { path: "/x" })).rejects.toThrow();
+          expect(c.changes()).toBe(expected);
+        }
+        const ok = countingAgent({ call: async () => ({ result: null }) });
+        await ok.agent.call(op, { path: "/x" });
+        await ok.agent.call("lstat", { path: "/x" });
+        expect(ok.changes()).toBe(1);
+      },
+    );
 
     it("keeps HOME copies as before, whatever the rootfs readiness (B5)", async () => {
       readiness = "defer";

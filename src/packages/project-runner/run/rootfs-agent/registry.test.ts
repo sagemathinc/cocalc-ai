@@ -85,13 +85,13 @@ describe("rootfs agent registry", () => {
     mockIdmapUid.mockReturnValue(P);
     expect(
       await rootfsCopyReadiness("p", { state: stopped, isMounted: mounted }),
-    ).toBe("defer");
+    ).toBe("stopped");
     expect(
       await rootfsCopyReadiness("p", {
         state: async () => "starting",
         isMounted: mounted,
       }),
-    ).toBe("defer");
+    ).toBe("stopped");
     // running with a known separate uid: the agent
     expect(
       await rootfsCopyReadiness("p", { state: running, isMounted: unmounted }),
