@@ -112,6 +112,15 @@ import {
 } from "./sync-fs-watch";
 export { SyncFsWatchStore };
 import { SyncFsService } from "./sync-fs-service";
+import {
+  callThroughAgent,
+  isWriteMethod,
+  pathArguments,
+  rootfsContainerPath,
+  rootfsNotAvailableError,
+  ROUTED_METHODS,
+  type RootfsAgentOps,
+} from "./rootfs-agent-routes";
 import { runNativeFsTask } from "./native-fs-limit";
 
 const logger = getLogger("sandbox:fs");
@@ -275,6 +284,11 @@ interface Options {
   unsafeMode?: boolean;
   // readonly -- only allow operations that don't change files
   readonly?: boolean;
+  // A project with a separate runtime uid: its rootfs is reachable only from
+  // inside its container, through this agent (see rootfs-agent-routes.ts).
+  rootfsAgent?: RootfsAgentOps;
+  // where HOME is inside the container (for the agent's paths)
+  rootfsAgentHome?: string;
   // optional path to treat as "/" when mounted/available.
   // if set but unavailable, operations fail.
   rootfs?: string;
@@ -327,7 +341,12 @@ export function relativePathWithin(
 
 // If you add any methods below that are NOT for the public api
 // be sure to exclude them here!
+const NOT_THROUGH_AGENT = Symbol("not through the rootfs agent");
+
 const INTERNAL_METHODS = new Set([
+  "rootfsAgent",
+  "rootfsAgentHome",
+  "throughRootfsAgent",
   "safeAbsPath",
   "safeAbsPaths",
   "constructor",
@@ -397,6 +416,8 @@ export class SandboxedFilesystem {
   public readonly allowSafeModeHardlink: boolean;
   public readonly allowSafeModeSymlink: boolean;
   private readonly openAt2Disabled: boolean;
+  private readonly rootfsAgent?: RootfsAgentOps;
+  private readonly rootfsAgentHome: string;
   public rusticRepo: string;
   private host?: string;
   private openAt2Roots = new Map<string, OpenAt2SandboxRoot | null>();
@@ -428,8 +449,12 @@ export class SandboxedFilesystem {
       allowSafeModeHardlink = false,
       allowSafeModeSymlink = false,
       disableOpenAt2 = false,
+      rootfsAgent,
+      rootfsAgentHome = "/home/user",
     }: Options = {},
   ) {
+    this.rootfsAgent = rootfsAgent;
+    this.rootfsAgentHome = rootfsAgentHome;
     this.homeAliases = normalizeHomeAliases(homeAliases);
     this.unsafeMode = !!unsafeMode;
     this.readonly = !!readonly;
@@ -448,6 +473,10 @@ export class SandboxedFilesystem {
       const orig = this[f];
       // @ts-ignore
       this[f] = async (...args) => {
+        if (this.rootfsAgent != null) {
+          const routed = await this.throughRootfsAgent(f, args);
+          if (routed !== NOT_THROUGH_AGENT) return routed;
+        }
         try {
           // @ts-ignore
           return await orig(...args);
@@ -490,6 +519,27 @@ export class SandboxedFilesystem {
       };
     }
   }
+
+  // A separate-uid project: a rootfs path never reaches the host's disk.
+  // The operations the agent does go to it; any other fails explicitly.
+  private throughRootfsAgent = async (
+    method: string,
+    args: any[],
+  ): Promise<unknown> => {
+    const classifier = {
+      homeAliases: this.homeAliases,
+      hasScratch: !!this.scratch,
+      hasSharedScratch: !!this.sharedScratch,
+      containerHome: this.rootfsAgentHome,
+    };
+    const rootfsPath = pathArguments(method, args).find(
+      (p) => rootfsContainerPath(p, classifier) != null,
+    );
+    if (rootfsPath == null) return NOT_THROUGH_AGENT;
+    if (!ROUTED_METHODS.has(method)) throw rootfsNotAvailableError(rootfsPath);
+    if (isWriteMethod(method)) this.assertWritable(rootfsPath);
+    return await callThroughAgent(this.rootfsAgent!, method, args, classifier);
+  };
 
   private resolveHomeAlias(resolvedInput: string): string | undefined {
     for (const alias of this.homeAliases) {
