@@ -511,4 +511,20 @@ describe("provider relay sessions on the project-reachable proxy", () => {
       },
     );
   });
+  it("refuses a token still held after its adapter ended, even in a later turn (B2)", async () => {
+    await withRelay({}, async ({ session, seen }) => {
+      const auth = { Authorization: `Bearer ${session.token}` };
+      session.beginTurn();
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(200);
+      // the adapter's exec client closed (project stop, crash): the host
+      // closes its relay; an orphan process still has the token
+      session.close();
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+      session.beginTurn();
+      session.endTurn();
+      session.beginTurn();
+      expect(await sendRaw(session.baseUrl, "/v1/messages", auth)).toBe(401);
+      expect(seen).toHaveLength(1);
+    });
+  });
 });
