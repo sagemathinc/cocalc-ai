@@ -135,6 +135,32 @@ test("not a subscription, or the controller runtime: no warning", async () => {
   expect(confirmSpy).not.toHaveBeenCalled();
 });
 
+test("an unknown or unset runtime, or no project id: shown (fails toward showing)", async () => {
+  users(ME, OTHER);
+  for (const value of ["something-else", undefined]) {
+    runtime = value;
+    expect(
+      claudeSubscriptionSharingRisk({ accountId: ME, projectId: PROJECT }).show,
+    ).toBe(true);
+  }
+  runtime = "project";
+  expect(
+    await confirmClaudeSubscriptionSharing({
+      accountId: ME,
+      credential: subscription,
+    }),
+  ).toBe(true);
+  expect(confirmSpy).toHaveBeenCalledTimes(1);
+  // and never remembered without a project
+  expect(
+    await confirmClaudeSubscriptionSharing({
+      accountId: ME,
+      credential: subscription,
+    }),
+  ).toBe(true);
+  expect(confirmSpy).toHaveBeenCalledTimes(2);
+});
+
 test("Auto (a subscription the host picks): warned like a subscription", async () => {
   users(ME, OTHER);
   expect(
