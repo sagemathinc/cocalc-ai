@@ -30,14 +30,14 @@ With `CLAUDE_CODE_OAUTH_TOKEN` set to a placeholder and `ANTHROPIC_BASE_URL` poi
 
 ## Design
 
-The subscription path becomes a third credential mode on the existing **in-project ACP path** (`harness-launcher.ts`, the sidecar that already runs API-key and site-funded Claude), and the controller goes away.
+Claude Code is started **the way Codex's app-server is**: `podman exec` into the project's own container (`codex-project.ts`, `projectContainerName`), as the project user, in the thread's cwd. So it shows in `ps`/`top` and can be killed like any project process. (API-key and site-funded Claude currently run in a separate `acp-<project>-<uuid>` sidecar from `harness-launcher.ts`. They move to the same exec path, so all three Claude modes start one way.) The controller goes away.
 
-1. **Launch** (`harness-launcher.ts`): `account-subscription` no longer branches to `launchClaudeSubscriptionController`. It takes the same path as `account-api-key`, with one difference: the relay is built from the subscription credential.
+1. **Launch** (`harness-launcher.ts`): `account-subscription` no longer branches to `launchClaudeSubscriptionController`. Like the other Claude modes, it execs the qualified harness entry in the project container. The host relay is built from the subscription credential.
    - `getClaudeSubscriptionCredential` → `claudeSubscriptionToken(payload)`.
    - It is created with `createCredentialHttpRelay({ upstream: "https://api.anthropic.com", allowedPathPrefix: "/v1/", allowedMethods: ["GET","POST"], credential: { header: "authorization", value: "Bearer <token>" }, authorize })`.
    - The relay replaces the incoming `Authorization` header, so the placeholder is never forwarded. Already true: `createCredentialHttpRelay` always strips an incoming `authorization` and the credential header (`credential-http-relay.ts:58-63`), and sets the credential per request through `authorize`.
-2. **Inside the sidecar** (`qualified-harness-entry.ts`): for `account-subscription`, start the existing loopback `createCredentialRelayBridge` and set:
-   - `ANTHROPIC_BASE_URL=<bridge>`;
+2. **Reaching the relay.** An exec'd process can't get a new bind mount, so the relay socket can't be mounted as for the sidecar. Instead the host relay also listens where the project container can reach it, as the restricted-egress proxy already does (`claude-restricted-egress.ts`, `projectHostAddress()`, a per-session URL). The URL carries an unguessable per-session secret, revoked when the session closes. The harness entry (`qualified-harness-entry.ts`), for every Claude mode, sets:
+   - `ANTHROPIC_BASE_URL=<relay URL>`;
    - `CLAUDE_CODE_OAUTH_TOKEN=<fixed placeholder>`, never a real token;
    - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
    - and unset `ANTHROPIC_API_KEY`.
@@ -49,20 +49,19 @@ The subscription path becomes a third credential mode on the existing **in-proje
 5. **Usage:** rate-limit readings keep arriving as harness `rate_limit` events (`recordHarnessRateLimit`, unchanged).
    - The relay also sees every `anthropic-ratelimit-*` response header. A follow-up can record pool usage on the host from them, without parsing the harness.
 6. **Claude.ai connectors:** already off for setup tokens (`claudeAiConnectors = token ? false : …`). Disabling non-essential traffic loses nothing there.
-7. **Home-snapshot credentials** (older full logins with a refresh token): not supported in the new path. Reconnecting already converts one to a token (`claude-subscription-registry.ts`). A turn on a snapshot credential fails with "Reconnect this Claude subscription", and the settings show the same prompt.
-8. **Transcripts and session continuity.** Today's sessions live in `~/.local/share/cocalc/claude-sessions/<account>/<credential>/-workspace/<session>.jsonl`. The in-project path uses Claude Code's normal store under `CLAUDE_CONFIG_DIR`.
-   - **Choice:** `CLAUDE_CONFIG_DIR=~/.local/share/cocalc/claude-sessions/<account>`, one directory per account, not per credential. Auto moves threads between subscriptions, and a transcript belongs to the conversation, not to the subscription. That also keeps CoCalc sessions out of `~/.claude` (a terminal `claude` login there doesn't mix with them). `~/.claude.json` MCP config still applies, because Claude Code reads it from `$HOME`.
-     - **Open:** verify `CLAUDE_CONFIG_DIR` doesn't also move where it reads `~/.claude.json`. If it does, use `~/.claude` as the config dir and accept the shared store, like Codex.
-   - **Migration, on resume:** if `<session>.jsonl` exists only under the old `<credential>/-workspace/` tree, copy that session (its `.jsonl` and its `<session>/` directory) into `projects/<cwd-key>/` of the new store. The cwd-key is Claude Code's encoding of the real cwd. Copy with the existing beneath-copy helpers, then resume. The old tree is left in place, read-only by convention, and can be pruned later.
-9. **Visibility (`top`):** the sidecar mounts the project home and joins the project's network, but has its own process namespace, so its processes don't show in the project's `top`. That is the same for Codex today. Add `--pid=container:project-<id>` to the ACP sidecar (and Codex's runtime) so project users see agent processes and can kill them.
-   - This is safe now that the sidecar holds no secret: the placeholder and relay token are useless outside the turn.
-   - **Open:** check that the shared PID namespace doesn't break sidecar cleanup ("process exit also terminates surviving children in the isolated PID namespace", `harness-launcher.ts:415`). Cleanup must kill the sidecar's own process tree explicitly.
+7. **Home-snapshot credentials** (older full logins with a refresh token): dropped entirely. William (Nov 5): "no need -- that was very flaky with many agents." Remove their code (`claude-subscription-home.ts`, credential sync, the login path that makes them). Only `setup-token` tokens remain.
+8. **Transcripts and session continuity.** Claude Code uses its normal `~/.claude`. William (Nov 5): "I think using ~/.claude is the best. It's the least confusing for users." Agent sessions, MCP config, skills and settings are the same for the web UI and a terminal `claude`, as Codex shares `~/.codex`.
+   - No `CLAUDE_CONFIG_DIR`. A user who also signs in with `claude` in a terminal has that login in `~/.claude/.credentials.json`, by their own choice. Agent turns are unaffected: `CLAUDE_CODE_OAUTH_TOKEN`, set for the harness, takes precedence.
+     - **Open:** verify that precedence with Claude Code 2.1.300. The debug log already showed "keeping the user-supplied CLAUDE_CODE_OAUTH_TOKEN instead of adopting the stored credential".
+   - **Migration, on resume:** today's sessions are in `~/.local/share/cocalc/claude-sessions/<account>/<credential>/-workspace/<session>.jsonl`. If the resumed session's transcript exists only there, copy it (the `.jsonl` and its `<session>/` directory) into `~/.claude/projects/<cwd-key>/`. The cwd-key is Claude Code's encoding of the real cwd. Copy with the existing beneath-copy helpers, then resume. The old tree stays and can be pruned later.
+9. **Visibility (`top`):** comes from (1). Exec'd into the project container, Claude Code and its tool processes are ordinary project processes, as Codex's are. Stopping a harness kills its process group in the container: reuse the Codex app-server's stop and cleanup code, not the sidecar's "container removal kills everything".
 10. **Remaining exposure, stated plainly.** While a turn runs, project code can call the loopback bridge, and with it the relay token mounted in the sidecar. It could make Anthropic requests on the subscription for the turn's duration. It cannot obtain the token. That is the same exposure API-key Claude has today, and less than Codex (whose refresh-capable `auth.json` is in the project).
 
 ## What gets deleted (after rollout)
 
 - `claude-subscription-controller.ts`, `claude-project-tool-bridge.ts` and the bridge scripts (`claude-project-mcp.cjs`).
-- `claude-transcript-staging.ts`, `claude-subscription-home.ts`, `claude-credential-sync.ts` and `claude-cli-lease` use for controllers.
+- `claude-transcript-staging.ts`, `claude-subscription-home.ts`, `claude-credential-sync.ts` (home snapshots are dropped), and `claude-cli-lease` use for controllers.
+- The `acp-` sidecar launch for API-key and site-funded Claude, replaced by the exec path.
 - The controller egress rules in `claude-restricted-egress.ts`. Keep only what the sidecar needs for projects without internet.
 - Controller reapers.
 - The `claude-subscription-controller` session policy in `ai/acp/harness-client.ts`, and its discovery special case in `lite/hub/acp/harness-runtime.ts`.
@@ -71,7 +70,7 @@ The subscription path becomes a third credential mode on the existing **in-proje
 ## Rollout
 
 1. **PR 1:** the new path behind a site setting, `claude_subscription_runtime: "project" | "controller"` (default `controller`).
-   - Contents: the launcher mode, the relay header, the entry environment, transcript migration on resume, a reconnect error for snapshots, and the PID namespace.
+   - Contents: the exec launch for all Claude modes, the relay header, the relay reachable from the project container, the entry environment, and transcript migration into `~/.claude` on resume.
    - Tests: relay header replacement; entry environment (placeholder, no real token, non-essential traffic off); migration (copy, idempotent, a symlink refused); launcher selection by setting; a fake-upstream end-to-end test through bridge and relay.
 2. **lite1b:** switch the setting and run real turns with claude-1. Check:
    - pinned and Auto turns, including a thread moving between subscriptions;
@@ -82,7 +81,9 @@ The subscription path becomes a third credential mode on the existing **in-proje
 3. **Production:** switch the default to `project`, with `controller` kept for one release as a fallback.
 4. **PR 2:** delete the controller and everything listed above.
 
-## Open questions for William
+## Decisions (William, Nov 5, 10:03 PM PST)
 
-- **The per-account session store:** `CLAUDE_CONFIG_DIR` per account, versus `~/.claude` shared with terminal `claude`, as with Codex's `~/.codex`. The shared store would let `claude --resume` in a terminal see agent sessions.
-- **Shared projects:** no special rule, given the relay? I propose none: the exposure equals API-key Claude's.
+- Sessions in `~/.claude`, shared with a terminal `claude`.
+- Home-snapshot logins: dropped ("no need -- that was very flaky with many agents").
+- Shared projects: no special rule ("ok").
+- Codex runs via `podman exec` in the project container, visible in `ps` (William; confirmed in `codex-project.ts`), and Claude follows it.
