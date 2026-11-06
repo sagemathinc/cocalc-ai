@@ -256,7 +256,7 @@ function nonNegativeInteger(value: unknown): number | undefined {
 }
 
 // The per-cause wait block: fixed cause keys, each exactly a count and the
-// oldest age (and the most failures, optionally). null: malformed.
+// oldest age, plus the most failures for failure_backoff. null: malformed.
 function normalizeSnapshotLaneWaiting(
   raw: unknown,
 ): HostSnapshotLaneMetrics["waiting"] | null {
@@ -274,7 +274,8 @@ function normalizeSnapshotLaneWaiting(
       }
       const count = nonNegativeInteger(entry.count);
       const oldest = nonNegativeInteger(entry.oldest_age_ms);
-      const hasFailures = entry.max_failures != null;
+      // the most failures: exactly on failure_backoff, never elsewhere
+      const hasFailures = cause === "failure_backoff";
       const maxFailures = hasFailures
         ? nonNegativeInteger(entry.max_failures)
         : undefined;

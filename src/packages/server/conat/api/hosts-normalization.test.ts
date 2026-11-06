@@ -348,6 +348,28 @@ describe("parseRow host metrics normalization", () => {
         },
       ],
       [
+        "max failures on a cause other than failure backoff",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              queued: { count: 1, oldest_age_ms: 1, max_failures: 2 },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "failure backoff without max failures",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: { failure_backoff: { count: 1, oldest_age_ms: 1 } },
+            free: {},
+          },
+        },
+      ],
+      [
         "a missing wait class",
         { waiting: { inventory_age_ms: 1, paying: {} } },
       ],
