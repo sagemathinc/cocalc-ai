@@ -23,6 +23,7 @@ import {
 import {
   cleanupHandoff,
   createHandoffDir,
+  defaultHandoffRoot,
   handoffParent,
   handOver,
   type Handoff,
@@ -222,7 +223,7 @@ export async function launchHarnessInProject(
       return await mkdtemp(join(tmpdir(), "cocalc-acp-credential-"));
     }
     relayHandoff = await createHandoffDir(
-      await handoffParent(join(tmpdir(), "cocalc-sidecar-handoff")),
+      await handoffParent(defaultHandoffRoot()),
       "acp-relay",
     );
     return relayHandoff.dir;
@@ -233,7 +234,20 @@ export async function launchHarnessInProject(
       join(relayHandoff.dir, "relay.sock"),
       join(relayHandoff.dir, "token"),
     );
-    await handOver(relayHandoff, runtime.innerUid);
+    await handOver(relayHandoff, {
+      uid: runtime.innerUid,
+      gid: runtime.innerGid,
+    });
+  };
+  // a separate project's views, never its raw dirs
+  const viewOrRaw = (
+    kind: "home" | "scratch" | "secrets",
+    raw: string,
+  ): string => {
+    if (separateHandle == null) return raw;
+    const view = separateHandle.views[kind];
+    if (view == null) throw new Error(`no ${kind} view for this harness`);
+    return view;
   };
   const name = `acp-${projectId}-${randomUUID()}`;
   let created = false;
@@ -245,6 +259,7 @@ export async function launchHarnessInProject(
   let fundedRelay: SiteFundedClaudeRelay | undefined;
   let fundedTurns: SiteFundedClaudeTurns | undefined;
   let restrictedEgress: ClaudeRestrictedEgress | undefined;
+  let relayCleanupError: unknown;
   const cleanup = () =>
     (stopped ??= (async () => {
       // Keep the rootfs lease if removal fails; never unmount beneath a live child.
@@ -278,12 +293,22 @@ export async function launchHarnessInProject(
           }),
         );
         await fundedRelay?.close();
-        if (relayHandoff != null) await cleanupHandoff(relayHandoff);
-        else if (credentialRelayDirectory)
-          await rm(credentialRelayDirectory, { recursive: true, force: true });
+        try {
+          if (relayHandoff != null) await cleanupHandoff(relayHandoff);
+          else if (credentialRelayDirectory)
+            await rm(credentialRelayDirectory, {
+              recursive: true,
+              force: true,
+            });
+        } catch (error) {
+          // the holder still goes below (once the container is gone)
+          relayCleanupError = error;
+        }
       }
+      // Only once the container is gone: never beneath a live child.
       if (separateHandle != null) await separateHandle.release();
       else await unmount(projectId);
+      if (relayCleanupError != null) throw relayCleanupError;
     })().catch((error) => {
       stopped = undefined;
       throw error;
@@ -408,22 +433,18 @@ export async function launchHarnessInProject(
       "--workdir",
       profile.cwd,
       mountArg({
-        source: separateHandle?.views.home ?? home,
+        source: viewOrRaw("home", home),
         target: DEFAULT_PROJECT_RUNTIME_HOME,
       }),
       mountArg({
-        source:
-          separateHandle?.views.secrets ?? projectSecretsHostPath(projectId),
+        source: viewOrRaw("secrets", projectSecretsHostPath(projectId)),
         target: PROJECT_SECRETS_MOUNT_PATH,
         readOnly: true,
       }),
     ];
     if (scratch)
       args.push(
-        mountArg({
-          source: separateHandle?.views.scratch ?? scratch,
-          target: "/tmp",
-        }),
+        mountArg({ source: viewOrRaw("scratch", scratch), target: "/tmp" }),
       );
     if (credentialRelayDirectory) {
       args.push(
@@ -457,6 +478,9 @@ export async function launchHarnessInProject(
       harnessCommand.executable,
       ...harnessCommand.args,
     );
+    // the holder records its container before it exists (and refuses if it
+    // was dropped meanwhile)
+    if (separateHandle != null) await separateHandle.attach(name);
     // Mark before awaiting: timeout/disconnect can leave a successfully created container.
     created = true;
     await command(args);

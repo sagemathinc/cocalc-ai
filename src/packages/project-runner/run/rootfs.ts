@@ -602,6 +602,10 @@ export interface SeparateRuntimeHandle {
   views: Partial<Record<ProjectViewKind, string>>;
   // more views for this holder (the start mounts its rootfs first)
   mountViews(kinds: ProjectViewKind[]): Promise<void>;
+  // The container this holder is about to launch, recorded before the
+  // launch: only a holder with one, proven gone, may be dropped by a stop.
+  // Refused once the holder was released or dropped: then don't launch.
+  attach(containerName: string): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -609,7 +613,14 @@ export interface SeparateRuntimeHandle {
 // (only after its containers are proven gone, R-b).
 const liveHandles = new Map<
   string,
-  Map<number, { holder: SeparateHolderKind; release: () => Promise<void> }>
+  Map<
+    number,
+    {
+      holder: SeparateHolderKind;
+      release: () => Promise<void>;
+      container?: string;
+    }
+  >
 >();
 
 // Projects being stopped: no new holder until the stop ends (R-d).
@@ -624,8 +635,10 @@ export function reopenSeparateRuntime(project_id: string): void {
 }
 
 /**
- * Releases the holders of the given kinds, for a stop that has proven all
- * of the project's containers gone (so those holders' sidecars are dead).
+ * Releases the holders of the given kinds that have launched a container,
+ * for a stop that has proven all of the project's containers gone (so those
+ * holders' sidecars are dead). A holder with no container yet is about to
+ * launch one: it is never dropped.
  */
 export async function dropHoldersProvenGone(
   project_id: string,
@@ -633,7 +646,7 @@ export async function dropHoldersProvenGone(
 ): Promise<number> {
   let dropped = 0;
   for (const entry of [...(liveHandles.get(project_id)?.values() ?? [])]) {
-    if (kinds.includes(entry.holder)) {
+    if (kinds.includes(entry.holder) && entry.container != null) {
       await entry.release();
       dropped += 1;
     }
@@ -710,9 +723,24 @@ export async function acquireSeparateRuntime({
     try {
       await mountKinds(kinds);
     } catch (err) {
-      // nothing else counted yet: give the lease back (its delayed
-      // disposal runs under this lock and rechecks)
+      // Nothing of this call is counted yet: give the lease back. With no
+      // other holder, take down what is mounted now (the rootfs, then the
+      // views, verified), so no unheld view is left behind or recorded as
+      // reusable; with other holders, the views stay theirs.
       await releaseLease();
+      if (
+        (separateHolders.get(project_id)?.size ?? 0) === 0 &&
+        leases.getCount(project_id) === 0
+      ) {
+        await detachBothWays(project_id);
+        await viewOps.umountAll(project_id);
+        ourViews.delete(project_id);
+        if (await viewOps.anyMounted(project_id)) {
+          throw new Error(
+            "could not unmount this project's views after a failed start of its runtime",
+          );
+        }
+      }
       throw err;
     }
     const id = nextHolderId++;
@@ -753,10 +781,28 @@ export async function acquireSeparateRuntime({
       live = new Map();
       liveHandles.set(project_id, live);
     }
-    live.set(id, { holder, release });
+    const entry: {
+      holder: SeparateHolderKind;
+      release: () => Promise<void>;
+      container?: string;
+    } = { holder, release };
+    live.set(id, entry);
     return {
       rootfs: merged,
       views,
+      attach: async (containerName) => {
+        if (!containerName.includes(project_id)) {
+          throw new Error("a holder's container must be the project's");
+        }
+        await withRootfsLock(project_id, async () => {
+          if (released) {
+            throw new Error(
+              "this holder of the project's runtime was released; not launching",
+            );
+          }
+          entry.container = containerName;
+        });
+      },
       mountViews: async (more) => {
         await withRootfsLock(project_id, async () => {
           if (released) throw new Error("this holder was released");

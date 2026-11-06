@@ -37,6 +37,7 @@ const mockHandOver = jest.fn();
 const mockCleanupHandoff = jest.fn();
 jest.mock("@cocalc/project-runner/run/sidecar-handoff", () => ({
   handoffParent: async (root: string) => root,
+  defaultHandoffRoot: () => "/daemon-state/sidecar-handoff",
   createHandoffDir: async () => ({ dir: "/handoff/acp-relay-x", entries: [] }),
   handOver: (...args) => mockHandOver(...args),
   cleanupHandoff: (...args) => mockCleanupHandoff(...args),
@@ -535,10 +536,11 @@ describe("for a project with a separate runtime uid", () => {
     uid: P,
     gid: P,
     innerUid: 4194305,
-    innerGid: 4194305,
+    innerGid: 4194399,
     usernsArgs: ["--uidmap=0:1:2001", "--uidmap=2001:4194305:1"],
     status: { configured: "separate", effective: "separate" },
   };
+  const mockAttach = jest.fn(async (_name: string) => {});
   const VIEWS = {
     home: "/run/cocalc/project-views/p/home",
     scratch: "/run/cocalc/project-views/p/scratch",
@@ -549,11 +551,14 @@ describe("for a project with a separate runtime uid", () => {
     mockSidecarRuntime.mockResolvedValue(SEPARATE);
     mockHandleRelease.mockReset();
     mockHandleRelease.mockResolvedValue(undefined);
+    mockAttach.mockReset();
+    mockAttach.mockResolvedValue(undefined);
     mockAcquire.mockReset();
     mockAcquire.mockResolvedValue({
       rootfs: "/run/cocalc/project-rootfs/p/root",
       views: VIEWS,
       mountViews: async () => {},
+      attach: mockAttach,
       release: mockHandleRelease,
     });
     mockHandOver.mockReset();
@@ -607,7 +612,7 @@ describe("for a project with a separate runtime uid", () => {
           "/handoff/acp-relay-x/token",
         ],
       },
-      4194305,
+      { uid: 4194305, gid: 4194399 },
     );
     const args: string[] = mockExec.mock.calls[0][1];
     const joined = args.join(" ");
@@ -623,6 +628,11 @@ describe("for a project with a separate runtime uid", () => {
     expect(joined).not.toContain("/project-secrets");
     expect(joined).not.toContain("mount:/scratch:");
     expect(args).toContain("/run/cocalc/project-rootfs/p/root");
+    // its container is recorded with its holder before it is created (C1)
+    expect(mockAttach).toHaveBeenCalledTimes(1);
+    expect(mockAttach.mock.invocationCallOrder[0]).toBeLessThan(
+      mockExec.mock.invocationCallOrder[0],
+    );
     await handle.stop();
     expect(mockCleanupHandoff).toHaveBeenCalledTimes(1);
     expect(mockRm).not.toHaveBeenCalledWith(
@@ -631,6 +641,35 @@ describe("for a project with a separate runtime uid", () => {
     );
     expect(mockHandleRelease).toHaveBeenCalledTimes(1);
     expect(mockUnmount).not.toHaveBeenCalled();
+  });
+
+  test("refuses, never the raw dir, when its handle lacks a view", async () => {
+    mockExec.mockClear();
+    mockAcquire.mockResolvedValue({
+      rootfs: "/run/cocalc/project-rootfs/p/root",
+      views: { home: VIEWS.home, scratch: VIEWS.scratch },
+      mountViews: async () => {},
+      attach: mockAttach,
+      release: mockHandleRelease,
+    });
+    await expect(launchHarnessInProject(binding)).rejects.toThrow(
+      "no secrets view for this harness",
+    );
+    expect(mockExec).not.toHaveBeenCalled();
+    expect(mockHandleRelease).toHaveBeenCalledTimes(1);
+  });
+
+  test("launches nothing when its holder was dropped before it attached (C1)", async () => {
+    mockExec.mockClear();
+    mockAttach.mockRejectedValueOnce(
+      new Error("this holder of the project's runtime was released"),
+    );
+    await expect(launchHarnessInProject(binding)).rejects.toThrow(
+      "was released",
+    );
+    expect(mockExec).not.toHaveBeenCalled();
+    // its (already dropped) holder is released, a no-op
+    expect(mockHandleRelease).toHaveBeenCalledTimes(1);
   });
 
   test("stays on keep-id while the project runs keep-id", async () => {

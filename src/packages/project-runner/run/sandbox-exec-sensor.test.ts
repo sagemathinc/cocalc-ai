@@ -242,6 +242,7 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     scratch: `/run/cocalc/project-views/${PROJECT}/scratch`,
   };
   const ROOTFS = `/run/cocalc/project-rootfs/${PROJECT}/root`;
+  const attachMock = jest.fn(async (_name: string) => {});
 
   beforeEach(() => {
     execFileMock
@@ -254,11 +255,14 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     releaseMock.mockResolvedValue(undefined);
     sidecarRuntimeMock.mockReset();
     sidecarRuntimeMock.mockResolvedValue(SEPARATE);
+    attachMock.mockReset();
+    attachMock.mockResolvedValue(undefined);
     acquireSeparateMock.mockReset();
     acquireSeparateMock.mockResolvedValue({
       rootfs: ROOTFS,
       views: VIEWS,
       mountViews: async () => {},
+      attach: attachMock,
       release: releaseMock,
     });
   });
@@ -297,6 +301,35 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     expect(joined).not.toContain("/projects/p/home");
     expect(joined).not.toContain("/scratch/p");
     expect(args[args.indexOf("--rootfs") + 1]).toBe(ROOTFS);
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("records its container with its holder before launching it (C1)", async () => {
+    await run();
+    expect(attachMock).toHaveBeenCalledTimes(1);
+    expect(attachMock.mock.calls[0][0]).toContain(PROJECT);
+    expect(attachMock.mock.invocationCallOrder[0]).toBeLessThan(
+      execFileMock.mock.invocationCallOrder[0],
+    );
+    // a holder dropped by a stop meanwhile: nothing is launched
+    execFileMock.mockClear();
+    attachMock.mockRejectedValueOnce(
+      new Error("this holder of the project's runtime was released"),
+    );
+    await expect(run()).rejects.toThrow("was released");
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses, never the raw dir, when its handle lacks a view", async () => {
+    acquireSeparateMock.mockResolvedValue({
+      rootfs: ROOTFS,
+      views: { scratch: VIEWS.scratch },
+      mountViews: async () => {},
+      attach: attachMock,
+      release: releaseMock,
+    });
+    await expect(run()).rejects.toThrow("no home view for this run");
+    expect(execFileMock).not.toHaveBeenCalled();
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 

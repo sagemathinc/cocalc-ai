@@ -321,15 +321,17 @@ export async function sandboxExec({
         args.push("-e", `${key}=${value}`);
       }
 
-      args.push(
-        mountArg({ source: separateHandle?.views.home ?? home, target: HOME }),
-      );
+      // a separate project's views, never its raw dirs
+      const source = (kind: "home" | "scratch", raw: string): string => {
+        if (separateHandle == null) return raw;
+        const view = separateHandle.views[kind];
+        if (view == null) throw new Error(`no ${kind} view for this run`);
+        return view;
+      };
+      args.push(mountArg({ source: source("home", home), target: HOME }));
       if (useScratch) {
         args.push(
-          mountArg({
-            source: separateHandle?.views.scratch ?? scratch!,
-            target: "/tmp",
-          }),
+          mountArg({ source: source("scratch", scratch!), target: "/tmp" }),
         );
       }
       for (const path of tmpfs ?? []) {
@@ -413,6 +415,11 @@ export async function sandboxExec({
       );
     }
 
+    // the holder records its container before the launch (and refuses if it
+    // was dropped meanwhile)
+    if (separateHandle != null && containerName != null) {
+      await separateHandle.attach(containerName);
+    }
     logger.debug("podman", argsJoin(args));
     // With Podman cgroups disabled, exec processes inherit the caller's
     // cgroup. Admit both run and exec launchers so no project command escapes.

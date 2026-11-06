@@ -103,7 +103,10 @@ import getLogger from "@cocalc/backend/logger";
 import { writeStartupScripts } from "./startup-scripts";
 import { podman } from "@cocalc/backend/podman";
 import getPort from "@cocalc/backend/get-port";
-import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_UID,
+} from "@cocalc/util/project-runtime";
 import { PROJECT_STARTUP_SCRIPT_PATH } from "@cocalc/util/project-startup-script";
 import { getConatClient } from "./conat-client";
 import {
@@ -2189,10 +2192,101 @@ const projectSeparateIdentities = new Map<
   Extract<RuntimeIdentity, { mode: "separate" }>
 >();
 
+// "{[0:1:2001 2001:4194305:1 ...] [0:1:2001 2001:4194305:1 ...]}", from
+// `podman inspect --format '{{.HostConfig.IDMappings}}'`: the uid and gid
+// extents, as container:intermediate:length.
+export function parseInspectIdMappings(
+  text: string,
+): { uid: string[]; gid: string[] } | undefined {
+  const m = /^\{\[([0-9: ]*)\] \[([0-9: ]*)\]\}$/.exec(text.trim());
+  if (!m) return undefined;
+  const extents = (list: string) =>
+    list.trim() === "" ? [] : list.trim().split(/\s+/);
+  return { uid: extents(m[1]), gid: extents(m[2]) };
+}
+
+/**
+ * The identity a running project's container actually has, from its own
+ * config: its id maps and the source of its HOME. With no record of its
+ * start in this daemon (it restarted), this is the only basis a sidecar's
+ * identity may rest on; anything that doesn't match keep-id or the host's
+ * separate identity exactly is refused.
+ */
+export async function liveProjectIdentity({
+  project_id,
+  home,
+}: {
+  project_id: string;
+  home: string;
+}): Promise<RuntimeIdentity> {
+  const refuse = (why: string): never => {
+    throw new Error(
+      `the running project's runtime uid could not be established (${why}); restart the project`,
+    );
+  };
+  let stdout = "";
+  try {
+    ({ stdout } = await podman(
+      [
+        "inspect",
+        "--format",
+        "{{.HostConfig.IDMappings}}|{{range .Mounts}}{{.Source}}>{{.Destination}};{{end}}",
+        projectContainerName(project_id),
+      ],
+      { timeout: 30 },
+    ));
+  } catch {
+    refuse("inspect failed");
+  }
+  const [mapsText, mountsText = ""] = `${stdout ?? ""}`.trim().split("|");
+  const maps = parseInspectIdMappings(mapsText);
+  if (maps == null) refuse("unreadable id maps");
+  const homeSources = mountsText
+    .split(";")
+    .filter(Boolean)
+    .map((entry) => entry.split(">"))
+    .filter(([, destination]) => destination === DEFAULT_PROJECT_RUNTIME_HOME)
+    .map(([source]) => source);
+  if (homeSources.length !== 1) refuse("no single HOME mount");
+  const homeSource = homeSources[0];
+  const user = `${DEFAULT_PROJECT_RUNTIME_UID}`;
+  const uidOf = (list: string[]) =>
+    list.filter((e) => e.startsWith(`${user}:`));
+  const uidExt = uidOf(maps!.uid);
+  const gidExt = uidOf(maps!.gid);
+  if (uidExt.length !== 1 || gidExt.length !== 1)
+    refuse("no single user extent");
+  // keep-id: the user is the runtime user (intermediate 0), on the raw home
+  if (uidExt[0] === `${user}:0:1` && gidExt[0] === `${user}:0:1`) {
+    if (homeSource !== home) refuse("keep-id map without the raw home");
+    return {
+      mode: "keep-id",
+      usernsArgs: keepIdUsernsArgs(),
+      status: { configured: "keep-id", effective: "keep-id" },
+    };
+  }
+  // separate: exactly the host's separate identity, on the home view
+  const host = await runtimeIdentityForStart();
+  if (host.mode !== "separate") refuse("separate map, but not a separate host");
+  const sep = host as Extract<RuntimeIdentity, { mode: "separate" }>;
+  if (
+    uidExt[0] !== `${user}:${sep.innerUid}:1` ||
+    gidExt[0] !== `${user}:${sep.innerGid}:1`
+  ) {
+    refuse("a map that is neither keep-id nor this host's separate one");
+  }
+  if (homeSource !== projectViewPath(project_id, "home")) {
+    refuse("a separate map without the home view");
+  }
+  return sep;
+}
+
 /**
  * The runtime identity a sidecar of the project uses (R1 PR3a §1): the
- * project's own while it runs separate; keep-id while it runs keep-id; the
- * host's decision now, with this project's checks, while it's stopped.
+ * project's own while it runs separate; keep-id while it runs keep-id (both
+ * read from the running container when this daemon has no record of its
+ * start); the host's decision now, with this project's checks, while it's
+ * stopped.
  */
 export async function sidecarRuntimeFor({
   project_id,
@@ -2203,6 +2297,12 @@ export async function sidecarRuntimeFor({
   home: string;
   scratch?: string;
 }): Promise<RuntimeIdentity> {
+  // never while it's starting or stopping, even with a record of it
+  if (starting.has(project_id) || stopping.has(project_id)) {
+    throw new Error(
+      `the project is ${starting.has(project_id) ? "starting" : "stopping"}; try again`,
+    );
+  }
   const recorded = projectSeparateIdentities.get(project_id);
   if (recorded != null && projectSeparateHandles.has(project_id)) {
     return recorded;
@@ -2212,11 +2312,9 @@ export async function sidecarRuntimeFor({
     throw new Error(`the project is ${current}; try again`);
   }
   if (current === "running") {
-    return {
-      mode: "keep-id",
-      usernsArgs: keepIdUsernsArgs(),
-      status: { configured: "keep-id", effective: "keep-id" },
-    };
+    // no record of its start here (e.g. this daemon restarted): the
+    // container's own config, verified, or a refusal
+    return await liveProjectIdentity({ project_id, home });
   }
   const sharedScratchMount = await resolveSharedScratchMount();
   return await separateIdentityForStart({

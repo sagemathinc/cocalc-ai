@@ -28,8 +28,10 @@ namespace allows. Its rules:
 */
 
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, chmod } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, mkdir, mkdtemp, open } from "node:fs/promises";
 import { join } from "node:path";
+import { data } from "@cocalc/backend/data";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 
 // Runs a command inside the runtime user's own user namespace.
@@ -61,24 +63,50 @@ export interface Handoff {
   entries: string[];
 }
 
-/** H1: the daemon-owned 0700 parent of every handed-over directory. */
+/**
+ * H1: the daemon-owned 0700 parent of every handed-over directory, in the
+ * daemon's own state (never a shared, world-writable place where another
+ * user could take the name first). Checked and tightened through one fd
+ * opened without following a symlink.
+ */
 export async function handoffParent(root: string): Promise<string> {
   await mkdir(root, { recursive: true, mode: 0o700 });
-  // Checked before chmod, which would follow a symlink in its place.
-  const before = await lstat(root);
-  if (!before.isDirectory()) {
-    throw new Error("the handoff parent is not a directory");
+  let fh;
+  try {
+    fh = await open(
+      root,
+      fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ELOOP" || code === "ENOTDIR") {
+      throw new Error("the handoff parent is not a directory");
+    }
+    throw err;
   }
-  if (process.getuid && before.uid !== process.getuid()) {
-    throw new Error("the handoff parent is not the daemon's own");
-  }
-  // mkdir doesn't change an existing directory's mode
-  await chmod(root, 0o700);
-  const st = await lstat(root);
-  if (!st.isDirectory() || (st.mode & 0o777) !== 0o700) {
-    throw new Error("the handoff parent is not a 0700 directory");
+  try {
+    const before = await fh.stat();
+    if (!before.isDirectory()) {
+      throw new Error("the handoff parent is not a directory");
+    }
+    if (process.getuid && before.uid !== process.getuid()) {
+      throw new Error("the handoff parent is not the daemon's own");
+    }
+    // mkdir doesn't change an existing directory's mode
+    await fh.chmod(0o700);
+    const st = await fh.stat();
+    if ((st.mode & 0o777) !== 0o700) {
+      throw new Error("the handoff parent is not a 0700 directory");
+    }
+  } finally {
+    await fh.close();
   }
   return root;
+}
+
+/** Where a host's sidecar handoffs live: under the daemon's own state. */
+export function defaultHandoffRoot(): string {
+  return join(data, "sidecar-handoff");
 }
 
 /** A fresh directory under the parent, recorded exactly. */
@@ -91,20 +119,23 @@ export async function createHandoffDir(
   return { dir, entries: [] };
 }
 
-/** H2: chown exactly these recorded paths to the inner id. */
+/**
+ * H2: chown exactly these recorded paths to the project user's inner uid
+ * and gid (each from its own map: they need not be equal).
+ */
 export async function handOver(
   handoff: Handoff,
-  innerId: number,
+  inner: { uid: number; gid: number },
   unshare: Unshare = podmanUnshare,
 ): Promise<void> {
-  if (!Number.isSafeInteger(innerId) || innerId < 1) {
-    throw new Error("bad inner id");
+  for (const id of [inner.uid, inner.gid]) {
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error("bad inner id");
   }
   for (const path of [...handoff.entries, handoff.dir]) {
     await unshare([
       "chown",
       "--no-dereference",
-      `${innerId}:${innerId}`,
+      `${inner.uid}:${inner.gid}`,
       "--",
       path,
     ]);

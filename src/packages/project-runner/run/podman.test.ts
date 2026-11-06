@@ -180,6 +180,7 @@ import {
   resolveHostContainersInternalAddress,
   podmanRuntimeArgs,
   projectBrowserRunHostPath,
+  parseInspectIdMappings,
   projectContainersGone,
   redactConfigurationForLog,
   sidecarRuntimeFor,
@@ -1289,6 +1290,8 @@ describe("project-runner podman orphan fallback", () => {
       mode: "separate",
       uid: P,
       gid: P,
+      innerUid: 4194305,
+      innerGid: 4194399,
       usernsArgs: SEPARATE_ARGS,
       status: { configured: "separate", effective: "separate" },
     };
@@ -1571,6 +1574,56 @@ describe("project-runner podman orphan fallback", () => {
       expect(mockAcquireSeparate).toHaveBeenCalled();
     });
 
+    it("refuses a sidecar while the project is starting or stopping (T5)", async () => {
+      // a start held at its podman create
+      mockProjectStartPodman(project1);
+      const base = mockPodman.getMockImplementation()!;
+      let openCreate!: () => void;
+      const createGate = new Promise<void>((r) => (openCreate = r));
+      let creating = false;
+      mockPodman.mockImplementation(async (args: string[], opts?: any) => {
+        if (args.includes("create")) {
+          creating = true;
+          await createGate;
+        }
+        return await base(args, opts);
+      });
+      const starting = start({
+        project_id: project1,
+        localPath: async () => ({ home }),
+        config: { image: "docker.io/library/ubuntu:latest" },
+      });
+      try {
+        while (!creating) await new Promise((r) => setTimeout(r, 5));
+        await expect(
+          sidecarRuntimeFor({ project_id: project1, home }),
+        ).rejects.toThrow("the project is starting");
+      } finally {
+        openCreate();
+        await starting.catch(() => {});
+      }
+
+      // a stop held at its first podman call
+      let openStop!: () => void;
+      const stopGate = new Promise<void>((r) => (openStop = r));
+      let stopping = false;
+      mockPodman.mockImplementation(async () => {
+        stopping = true;
+        await stopGate;
+        return { stdout: "" };
+      });
+      const stopped = stop({ project_id: project1 });
+      try {
+        while (!stopping) await new Promise((r) => setTimeout(r, 5));
+        await expect(
+          sidecarRuntimeFor({ project_id: project1, home }),
+        ).rejects.toThrow("the project is stopping");
+      } finally {
+        openStop();
+        await stopped.catch(() => {});
+      }
+    });
+
     it("gives a sidecar the project's own identity while it runs separate, and the host's decision while it's stopped", async () => {
       // stopped (no container): the host's decision now, with this
       // project's checks
@@ -1592,6 +1645,103 @@ describe("project-runner podman orphan fallback", () => {
       expect(await sidecarRuntimeFor({ project_id: project1, home })).toBe(
         separate,
       );
+    });
+
+    describe("a running project this daemon has no record of (it restarted)", () => {
+      const SEPARATE_MAPS =
+        "{[0:1:2001 2001:4194305:1 2002:2002:4192303] [0:1:2001 2001:4194399:1 2002:2002:4192303]}";
+      const KEEP_ID_MAPS =
+        "{[0:1:2001 2001:0:1 2002:2002:4257839] [0:1:2001 2001:0:1 2002:2002:4257839]}";
+      const running = (inspect: string | Error) =>
+        mockPodman.mockImplementation(async (args: string[]) => {
+          if (args[0] === "ps" && args.includes("{{.Names}} {{.State}}")) {
+            return { stdout: `project-${project1} running\n` };
+          }
+          if (args[0] === "inspect") {
+            if (inspect instanceof Error) throw inspect;
+            return { stdout: inspect };
+          }
+          return { stdout: "" };
+        });
+      const mounts = (homeSource: string) =>
+        `${homeSource}>/home/user;/tmp/x>/tmp;`;
+
+      it("parses podman's id mappings (as the canary recorded them)", () => {
+        expect(parseInspectIdMappings(SEPARATE_MAPS)).toEqual({
+          uid: ["0:1:2001", "2001:4194305:1", "2002:2002:4192303"],
+          gid: ["0:1:2001", "2001:4194399:1", "2002:2002:4192303"],
+        });
+        expect(parseInspectIdMappings("garbage")).toBeUndefined();
+      });
+
+      it("gives a sidecar separate only from the container's verified map and home view", async () => {
+        running(
+          `${SEPARATE_MAPS}|${mounts(projectViewPath(project1, "home"))}`,
+        );
+        expect(await sidecarRuntimeFor({ project_id: project1, home })).toBe(
+          separate,
+        );
+      });
+
+      it("gives keep-id only from a verified keep-id container on the raw home", async () => {
+        running(`${KEEP_ID_MAPS}|${mounts(home)}`);
+        expect(
+          (await sidecarRuntimeFor({ project_id: project1, home })).mode,
+        ).toBe("keep-id");
+      });
+
+      it.each([
+        [
+          "a separate map on the raw home",
+          () => `${SEPARATE_MAPS}|${mounts(home)}`,
+        ],
+        [
+          "a keep-id map on the home view",
+          () => `${KEEP_ID_MAPS}|${mounts(projectViewPath(project1, "home"))}`,
+        ],
+        [
+          "another inner id",
+          () =>
+            `${SEPARATE_MAPS.replace(/4194305/g, "4194306")}|${mounts(projectViewPath(project1, "home"))}`,
+        ],
+        [
+          "another inner gid, with the right uid",
+          () =>
+            `${SEPARATE_MAPS.replace(/4194399/g, "4194398")}|${mounts(projectViewPath(project1, "home"))}`,
+        ],
+        ["unreadable maps", () => `garbage|${mounts(home)}`],
+        ["no HOME mount", () => `${KEEP_ID_MAPS}|/x>/tmp;`],
+        [
+          "two HOME mounts",
+          () => `${KEEP_ID_MAPS}|${mounts(home)}${home}>/home/user;`,
+        ],
+      ])("refuses %s, never falling back to keep-id", async (_name, out) => {
+        running(out());
+        await expect(
+          sidecarRuntimeFor({ project_id: project1, home }),
+        ).rejects.toThrow("could not be established");
+      });
+
+      it("refuses when the container can't be inspected", async () => {
+        running(new Error("podman failed"));
+        await expect(
+          sidecarRuntimeFor({ project_id: project1, home }),
+        ).rejects.toThrow("could not be established");
+      });
+
+      it("refuses a separate map when the host isn't separate any more", async () => {
+        mockRuntimeIdentity = {
+          mode: "keep-id",
+          usernsArgs: ["--userns=keep-id"],
+          status: { configured: "keep-id", effective: "keep-id" },
+        };
+        running(
+          `${SEPARATE_MAPS}|${mounts(projectViewPath(project1, "home"))}`,
+        );
+        await expect(
+          sidecarRuntimeFor({ project_id: project1, home }),
+        ).rejects.toThrow("could not be established");
+      });
     });
 
     describe("stopping the separate runtime", () => {
@@ -1668,6 +1818,49 @@ describe("project-runner podman orphan fallback", () => {
         );
         expect(mockDropHolders.mock.calls[0][1]).not.toContain("project");
         expect(mockRelease).toHaveBeenCalledTimes(1);
+      });
+
+      it("refuses when the containers' absence can't be proven, dropping nothing (T1)", async () => {
+        await startProject();
+        mockHolders.mockImplementation(() => ({ project: 1, codex: 1 }));
+        mockPodman.mockImplementation(async (args: string[]) => {
+          if (args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")) {
+            throw new Error("podman failed");
+          }
+          return { stdout: "" };
+        });
+        await expect(
+          stopSeparateRuntime(project1, { waitMs: 50 }),
+        ).rejects.toThrow("still in use by: codex ×1");
+        expect(mockDropHolders).not.toHaveBeenCalled();
+        expect(mockRelease).not.toHaveBeenCalled();
+      });
+
+      it("refuses a new holder throughout the stop's wait, not just at its start (T2)", async () => {
+        await startProject();
+        // close/reopen as the real ones do, and an acquire that checks them
+        let closed = false;
+        mockCloseSeparate.mockImplementation(() => (closed = true));
+        mockReopenSeparate.mockImplementation(() => (closed = false));
+        let holding = true;
+        mockHolders.mockImplementation(() =>
+          holding ? { project: 1, sandbox: 1 } : { project: 1 },
+        );
+        ps([]);
+        const tryAcquire = async () => {
+          if (closed) throw new Error("the project is being stopped");
+          return "acquired";
+        };
+        const during: string[] = [];
+        setTimeout(async () => {
+          during.push(await tryAcquire().catch((e) => `${e.message}`));
+          holding = false;
+        }, 60);
+        await stopSeparateRuntime(project1, { waitMs: 2000 });
+        expect(during).toEqual(["the project is being stopped"]);
+        expect(closed).toBe(false);
+        mockCloseSeparate.mockReset();
+        mockReopenSeparate.mockReset();
       });
 
       it("waits for a sidecar that lets go within the bound (R-c)", async () => {

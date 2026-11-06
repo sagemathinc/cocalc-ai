@@ -12,9 +12,11 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { data } from "@cocalc/backend/data";
 import {
   cleanupHandoff,
   createHandoffDir,
+  defaultHandoffRoot,
   handoffParent,
   handOver,
   readBack,
@@ -64,23 +66,59 @@ describe("sidecar handoff", () => {
     expect((await stat(target)).mode & 0o777).toBe(0o755);
   });
 
+  it("puts the handoff parent in the daemon's own state, not a shared tmp (H1)", () => {
+    expect(defaultHandoffRoot()).toBe(join(data, "sidecar-handoff"));
+    expect(defaultHandoffRoot().startsWith(tmpdir())).toBe(false);
+  });
+
+  it("refuses a handoff parent that isn't the daemon's own (H1)", async () => {
+    const parent = join(root, "theirs");
+    await mkdir(parent, { mode: 0o755 });
+    await chmod(parent, 0o755);
+    const real = process.getuid!;
+    const spy = jest
+      .spyOn(process, "getuid")
+      .mockImplementation(() => real.call(process) + 1);
+    try {
+      await expect(handoffParent(parent)).rejects.toThrow(
+        "not the daemon's own",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    // checked before chmod: its mode is untouched
+    expect((await stat(parent)).mode & 0o777).toBe(0o755);
+  });
+
   it("chowns exactly the recorded paths, one at a time, never recursively or through a symlink (H2)", async () => {
     const parent = await handoffParent(join(root, "p"));
     const h = await createHandoffDir(parent, "acp-relay");
     h.entries.push(join(h.dir, "socket"));
-    await handOver(h, 2001, localUnshare(log));
+    // the uid and gid maps may give different inner ids
+    await handOver(h, { uid: 4194305, gid: 4194399 }, localUnshare(log));
     expect(log).toEqual([
-      ["chown", "--no-dereference", "2001:2001", "--", join(h.dir, "socket")],
-      ["chown", "--no-dereference", "2001:2001", "--", h.dir],
+      [
+        "chown",
+        "--no-dereference",
+        "4194305:4194399",
+        "--",
+        join(h.dir, "socket"),
+      ],
+      ["chown", "--no-dereference", "4194305:4194399", "--", h.dir],
     ]);
     for (const argv of log) {
       expect(argv).not.toContain("-R");
       expect(argv).not.toContain("--recursive");
       expect(argv).not.toContain("--dereference");
     }
-    await expect(handOver(h, 0, localUnshare(log))).rejects.toThrow(
-      "bad inner id",
-    );
+    for (const inner of [
+      { uid: 0, gid: 5 },
+      { uid: 5, gid: 0 },
+    ]) {
+      await expect(handOver(h, inner, localUnshare(log))).rejects.toThrow(
+        "bad inner id",
+      );
+    }
   });
 
   it("reads back a regular file within the cap, and nothing else", async () => {
@@ -120,6 +158,20 @@ describe("sidecar handoff", () => {
     // names that aren't one plain component are refused
     for (const name of ["../outside-secret", "a/b", "..", ""]) {
       expect((await readBack(h, name, 1024, unshare)).data).toBeUndefined();
+    }
+  });
+
+  it("refuses a name that leaves the recorded directory, even where that file exists (V16)", async () => {
+    const parent = await handoffParent(join(root, "p"));
+    const h = await createHandoffDir(parent, "codex");
+    // beside the handed-over directory: what "../sibling" would reach
+    await writeFile(join(parent, "sibling"), "not yours");
+    await mkdir(join(h.dir, "a"));
+    await writeFile(join(h.dir, "a", "b"), "nested");
+    for (const name of ["../sibling", ".", "..", "a/b", ""]) {
+      expect(await readBack(h, name, 1024, localUnshare(log))).toEqual({
+        error: "EINVAL",
+      });
     }
   });
 
