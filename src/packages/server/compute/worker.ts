@@ -85,6 +85,7 @@ import {
   inspectProviderComputeVolume,
   getProviderComputePublicEgressBytes,
   listProviderComputeInventory,
+  nebiusComputeInstanceReplacementReason,
   nebiusComputeSpotPriceStopCap,
   probeProviderComputeSpot,
   releaseProviderComputePublicAddress,
@@ -2354,6 +2355,23 @@ async function start(vm: ComputeVmRow) {
       );
     }
     return await markReady(vm, observed.instance ?? {});
+  }
+  // A stopped Nebius instance whose preset, platform or Spot cap no longer
+  // matches the VM (a machine change, or a new cap) is replaced, never started
+  // as is: billing and the provider must agree (#684).
+  const replacementReason = await nebiusComputeInstanceReplacementReason(
+    vm,
+    observed.instance,
+  );
+  if (replacementReason) {
+    await observeVmPhase(vm, "provider_replace_stale_instance", async () =>
+      replaceProviderComputeInstance(vm),
+    );
+    await updateComputeInstance(vm, {
+      deleted: true,
+      terminal_reason: `replaced_${replacementReason}`,
+    });
+    return await provision(vm);
   }
   await observeVmPhase(vm, "provider_set_machine_type", async () =>
     setProviderComputeMachineType(vm),

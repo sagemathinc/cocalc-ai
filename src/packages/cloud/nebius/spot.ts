@@ -256,13 +256,26 @@ export async function getNebiusSpotPolicyStatus(
  * confirm: a missing quote or cap refuses. */
 export async function assertNebiusSpotStartable(
   client: NebiusSpotClient,
-  opts: { policy_id: string; region: string },
+  opts: {
+    policy_id: string;
+    region: string;
+    /** the cap the VM is billed at; a different policy cap never starts */
+    expected_max_price_per_gpu_hour?: string;
+  },
 ): Promise<void> {
   const status = await getNebiusSpotPolicyStatus(client, opts.policy_id);
   const cap = status.max_price_per_gpu_hour;
   if (!cap || !status.platform) {
     throw new Error(
       `Nebius pricing policy '${opts.policy_id}' has no platform or cap`,
+    );
+  }
+  if (
+    opts.expected_max_price_per_gpu_hour != null &&
+    opts.expected_max_price_per_gpu_hour !== cap
+  ) {
+    throw new Error(
+      `Nebius Spot instance runs under cap $${cap}, not its billed cap $${opts.expected_max_price_per_gpu_hour}; replace the instance`,
     );
   }
   if (status.scheduling === "blocked") {

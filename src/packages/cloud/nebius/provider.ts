@@ -157,7 +157,13 @@ async function assertPreemptibleStartAllowed(
       `Nebius Spot instance '${runtime.instance_id}' has no region`,
     );
   }
-  await assertNebiusSpotStartable(client, { policy_id: policyId, region });
+  const expected =
+    `${runtime.metadata?.expected_spot_max_price_per_gpu_hour ?? ""}`.trim();
+  await assertNebiusSpotStartable(client, {
+    policy_id: policyId,
+    region,
+    expected_max_price_per_gpu_hour: expected || undefined,
+  });
 }
 
 function instanceSpotPolicyId(instance: {
@@ -1132,9 +1138,17 @@ export class NebiusProvider implements CloudProvider {
         );
       }
       const requestedPreemptible = spec.pricing_model === "spot";
+      const existingPolicyId = instanceSpotPolicyId(existing as any);
+      const existingPolicy =
+        requestedPreemptible && existingPolicyId
+          ? await getNebiusSpotPolicyStatus(client, existingPolicyId)
+          : undefined;
       if (
         instanceIsPreemptible(existing) !== requestedPreemptible ||
-        (requestedPreemptible && !instanceSpotPolicyId(existing as any))
+        (requestedPreemptible &&
+          (existingPolicy?.platform !==
+            `${spec.metadata?.platform ?? ""}`.trim() ||
+            existingPolicy?.max_price_per_gpu_hour !== spotMaxPrice))
       ) {
         throw new Error(
           `existing Nebius instance '${name}' has an unexpected pricing model`,
@@ -1551,6 +1565,17 @@ export class NebiusProvider implements CloudProvider {
     return await nebiusSpotPriceStopCap(client, policyId);
   }
 
+  /** The per-GPU cap of the policy an existing Spot instance runs under, or
+   * undefined when it has none. */
+  async spotPolicyCap(
+    policyId: string,
+    creds: NebiusProviderCreds,
+  ): Promise<string | undefined> {
+    await using client = new NebiusClient(creds);
+    return (await getNebiusSpotPolicyStatus(client, policyId))
+      .max_price_per_gpu_hour;
+  }
+
   async startHost(
     runtime: HostRuntime,
     creds: NebiusProviderCreds,
@@ -1918,6 +1943,9 @@ export class NebiusProvider implements CloudProvider {
         ...(platform ? { platform } : {}),
         pricing_model: preemptible ? "spot" : "on_demand",
         preemptible,
+        ...(instanceSpotPolicyId(instance as any)
+          ? { spot_pricing_policy_id: instanceSpotPolicyId(instance as any) }
+          : {}),
         provider_state: status,
         reconciling: instance.status?.reconciling ?? false,
         maintenance_event_id: instance.status?.maintenanceEventId || undefined,
