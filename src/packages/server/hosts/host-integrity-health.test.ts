@@ -453,6 +453,34 @@ describe("project runtime uid mode health", () => {
     expect(summary.runtime_uid_modes).toEqual({ unreported: 4 });
   });
 
+  it("never takes the host's label: a host claiming plain separate is shown as partial", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate",
+          }),
+        ),
+        withMode(
+          "b",
+          report({
+            configured: "separate",
+            reason: "helper-old",
+            label: "keep-id",
+          }),
+        ),
+      ],
+      NOW,
+    );
+    expect(summary.runtime_uid_modes).toEqual({
+      "separate (partial)": 1,
+      "keep-id (fallback: helper-old)": 1,
+    });
+  });
+
   it("alerts for a misspelled configured mode that falls back to keep-id", () => {
     const summary = summarizeHostIntegrity(
       [

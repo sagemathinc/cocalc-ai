@@ -21,6 +21,8 @@ import {
   conditionAlert,
   conditionCleared,
 } from "@cocalc/server/hosts/condition-alert";
+import { runtimeUidModeLabel } from "@cocalc/project-runner/run/runtime-host";
+import type { RuntimeUidModeStatus } from "@cocalc/project-runner/run/runtime-identity";
 
 const logger = getLogger("server:hosts:host-integrity-health");
 
@@ -154,17 +156,19 @@ export function normalizeRuntimeUidMode(
 }
 
 /** The label shown for a host: partial is never shown as separate, and an
- * undecided host never as either mode. */
+ * undecided host never as either mode. Derived here from the reported fields
+ * with project-runner's own labelling, never taken from the host's label. */
 function runtimeUidLabel(mode: RuntimeUidModeView): string {
   if (mode.effective === "undecided") {
     return mode.configured === "keep-id"
       ? "undecided"
       : `undecided (configured ${mode.configured})`;
   }
-  if (mode.effective === "keep-id" && mode.configured !== "keep-id") {
-    return `keep-id (fallback: ${mode.reason ?? "unknown"})`;
-  }
-  return mode.label;
+  return runtimeUidModeLabel({
+    configured: mode.configured,
+    effective: mode.effective,
+    reason: mode.reason as RuntimeUidModeStatus["reason"],
+  });
 }
 
 function runtimeUidConditions(
