@@ -173,6 +173,9 @@ describe("parseRow host metrics normalization", () => {
       oldest_pending_due_ms: 1_793_900_000_000,
       completed_10m: { succeeded: 90, deferred: 4 },
       generation_moved: { accepted_r1: 7, accepted_r2: 5, refused: 1 },
+      promoted_pending: 24,
+      promoted_largest_account_count: 20,
+      promoted_dispatched_total: { paying: 31, free: 2 },
     };
     const parse = (snapshot_lane: unknown) =>
       parseRow({
@@ -184,6 +187,14 @@ describe("parseRow host metrics normalization", () => {
 
     it("preserves validated counts and fixed tokens", () => {
       expect(parse(lane)).toEqual(lane);
+      // From a project-host without promotion metrics.
+      const {
+        promoted_pending: _p,
+        promoted_largest_account_count: _l,
+        promoted_dispatched_total: _d,
+        ...older
+      } = lane;
+      expect(parse(older)).toEqual(older);
       const { park_reason: _, oldest_pending_due_ms: __, ...idle } = lane;
       expect(parse({ ...idle, parked: false })).toEqual({
         ...idle,
@@ -231,6 +242,21 @@ describe("parseRow host metrics normalization", () => {
         "a negative generation counter",
         { generation_moved: { accepted_r1: -1, accepted_r2: 0, refused: 0 } },
       ],
+      ["a negative promoted count", { promoted_pending: -1 }],
+      [
+        "a fractional largest account count",
+        { promoted_largest_account_count: 2.5 },
+      ],
+      ["a string promoted count", { promoted_pending: "24" }],
+      [
+        "an extra promoted class",
+        { promoted_dispatched_total: { paying: 1, free: 0, unclassified: 1 } },
+      ],
+      [
+        "a missing promoted class",
+        { promoted_dispatched_total: { paying: 1 } },
+      ],
+      ["promoted dispatches as a number", { promoted_dispatched_total: 3 }],
     ])("drops the whole block for %s", (_label, change) => {
       expect(parse({ ...lane, ...change })).toBeUndefined();
     });

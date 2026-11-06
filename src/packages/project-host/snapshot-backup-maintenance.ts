@@ -95,6 +95,11 @@ const DEFAULT_STARVATION_AGE_MS = 60 * 60 * 1000;
 // snapshot a short btrfs metadata operation.
 const DEFAULT_STARVATION_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_SNAPSHOT_STARVATION_INTERVAL_MS = 60 * 1000;
+// Max-age promotion in the snapshot lane: a snapshot this overdue goes first
+// in its class, oldest due first, regardless of account turns (four cadences
+// for paying; free waits longer). The paid/free interleave is unchanged.
+const SNAPSHOT_PROMOTE_PAYING_MS = DEFAULT_STARVATION_AGE_MS;
+const SNAPSHOT_PROMOTE_FREE_MS = 4 * 60 * 60 * 1000;
 // Scheduled backups normally finish well within 30 minutes. Under the
 // maintenance cgroup's read cap (12 MiB/s on a typical host), 30 minutes reads
 // at most about 22 GB of changed data, and a killed run leaves no snapshot, so
@@ -147,6 +152,17 @@ function queuesForHost(hostId: string) {
           process.env.COCALC_PROJECT_HOST_SNAPSHOT_LANE_PARK_POLL_MS,
           5_000,
         ),
+        ...(snapshotPromotionEnabled()
+          ? {
+              promoteAfterMs: {
+                paying: SNAPSHOT_PROMOTE_PAYING_MS,
+                free: SNAPSHOT_PROMOTE_FREE_MS,
+              },
+              // A snapshot in failure backoff is not promoted when its retry
+              // comes: the backoff decides how often it is tried.
+              promotable: (row) => (row.snapshot_failures ?? 0) === 0,
+            }
+          : {}),
       }),
       backup: new MaintenanceDispatchQueue(),
       reobserve: new MaintenanceDispatchQueue(),
@@ -225,6 +241,24 @@ export function getSnapshotLaneStatus(
     ),
     requeued_total,
     ...(oldest.length ? { oldest_pending_due_ms: Math.min(...oldest) } : {}),
+    promoted_pending: statuses.reduce(
+      (total, status) => total + status.promoted_pending,
+      0,
+    ),
+    promoted_largest_account_count: Math.max(
+      0,
+      ...statuses.map((status) => status.promoted_largest_account_count),
+    ),
+    promoted_dispatched_total: {
+      paying: statuses.reduce(
+        (total, status) => total + status.promoted_dispatched_total.paying,
+        0,
+      ),
+      free: statuses.reduce(
+        (total, status) => total + status.promoted_dispatched_total.free,
+        0,
+      ),
+    },
     completed_10m,
     generation_moved: { ...generationMoved },
   };
@@ -1042,6 +1076,15 @@ function reobservable(
 
 function reobservationEnabled(
   value = process.env.COCALC_PROJECT_HOST_SNAPSHOT_REOBSERVE,
+): boolean {
+  return !["0", "false", "no", "off"].includes(
+    `${value ?? ""}`.trim().toLowerCase(),
+  );
+}
+
+// On unless turned off; read when a host's snapshot lane is created.
+function snapshotPromotionEnabled(
+  value = process.env.COCALC_PROJECT_HOST_SNAPSHOT_PROMOTION,
 ): boolean {
   return !["0", "false", "no", "off"].includes(
     `${value ?? ""}`.trim().toLowerCase(),

@@ -318,6 +318,22 @@ function normalizeSnapshotLaneMetrics(
       return undefined;
     generationMoved = { accepted_r1, accepted_r2, refused };
   }
+  const optionalCount = (raw: unknown): number | undefined | null =>
+    raw == null ? undefined : (nonNegativeInteger(raw) ?? null);
+  const promotedPending = optionalCount(lane.promoted_pending);
+  const promotedLargest = optionalCount(lane.promoted_largest_account_count);
+  if (promotedPending === null || promotedLargest === null) return undefined;
+  let promotedDispatched: HostSnapshotLaneMetrics["promoted_dispatched_total"];
+  if (lane.promoted_dispatched_total != null) {
+    const raw = lane.promoted_dispatched_total;
+    if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const dispatched = raw as Record<string, unknown>;
+    const paying = nonNegativeInteger(dispatched.paying);
+    const free = nonNegativeInteger(dispatched.free);
+    if (Object.keys(dispatched).length !== 2 || paying == null || free == null)
+      return undefined;
+    promotedDispatched = { paying, free };
+  }
   return {
     pending,
     active,
@@ -330,6 +346,13 @@ function normalizeSnapshotLaneMetrics(
     ...(oldest != null ? { oldest_pending_due_ms: oldest } : {}),
     completed_10m: completed,
     ...(generationMoved ? { generation_moved: generationMoved } : {}),
+    ...(promotedPending != null ? { promoted_pending: promotedPending } : {}),
+    ...(promotedLargest != null
+      ? { promoted_largest_account_count: promotedLargest }
+      : {}),
+    ...(promotedDispatched
+      ? { promoted_dispatched_total: promotedDispatched }
+      : {}),
   };
 }
 

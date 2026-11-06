@@ -201,6 +201,55 @@ describe("snapshot-backup-maintenance", () => {
     });
   });
 
+  it("promotes overdue snapshots in the lane, unless in failure backoff or turned off", async () => {
+    // Parked, so the queued snapshot stays pending for the status.
+    snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
+    const {
+      _test,
+      runProjectSnapshotBackupMaintenanceSweepOnce,
+      getSnapshotLaneStatus,
+    } = await import("./snapshot-backup-maintenance");
+    const overdue = {
+      project_id: "proj-1",
+      storage_service_class: "paying" as const,
+      storage_account_id: "acct-1",
+      last_edited: "2026-04-10T22:00:00.000Z",
+      snapshots: { daily: 5 },
+      backups: { disabled: true, weekly: 1 },
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+    };
+    const promotedPending = async (row: object, promotion?: string) => {
+      _test.resetStarvationQueue();
+      if (promotion == null) {
+        delete process.env.COCALC_PROJECT_HOST_SNAPSHOT_PROMOTION;
+      } else {
+        process.env.COCALC_PROJECT_HOST_SNAPSHOT_PROMOTION = promotion;
+      }
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([row]);
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      const status = getSnapshotLaneStatus();
+      expect(status).toMatchObject({ pending: 1, parked: true });
+      return status?.promoted_pending;
+    };
+    expect(await promotedPending(overdue)).toBe(1);
+    expect(getSnapshotLaneStatus()).toMatchObject({
+      promoted_largest_account_count: 1,
+      promoted_dispatched_total: { paying: 0, free: 0 },
+    });
+    // Its retry has come, but it is still in failure backoff.
+    expect(await promotedPending({ ...overdue, snapshot_failures: 2 })).toBe(0);
+    expect(await promotedPending(overdue, "off")).toBe(0);
+    expect(await promotedPending(overdue, "0")).toBe(0);
+    expect(await promotedPending(overdue, "1")).toBe(1);
+  });
+
   it("records due work deferred by emergency pressure without running it", async () => {
     getStorageAdmissionStatusMock.mockReturnValue({
       mode: "enforce",
