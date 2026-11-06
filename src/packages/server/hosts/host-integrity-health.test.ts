@@ -453,6 +453,76 @@ describe("project runtime uid mode health", () => {
     expect(summary.runtime_uid_modes).toEqual({ unreported: 4 });
   });
 
+  it("alerts for a misspelled configured mode that falls back to keep-id", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "seperate",
+            reason: "mode-invalid",
+            label: "keep-id (fallback: mode-invalid)",
+          }),
+        ),
+      ],
+      NOW,
+    );
+    const fallback = summary.conditions.filter(
+      (c) => c.kind === "runtime-uid-fallback",
+    );
+    expect(fallback).toHaveLength(1);
+    expect(fallback[0].facts[0]).toContain("seperate");
+    expect(fallback[0].facts[0]).toContain("reason: mode-invalid");
+  });
+
+  it("counts a complete report with an unknown effective mode, or without a label, as unreported", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode("a", report({ configured: "separate", effective: "garbage" })),
+        withMode("b", {
+          ...report({ configured: "separate" }),
+          label: undefined,
+        }),
+      ],
+      NOW,
+    );
+    expect(summary.conditions).toEqual([]);
+    expect(summary.runtime_uid_modes).toEqual({ unreported: 2 });
+    // not reporting: a fallback alert from before is not cleared by it
+    expect(
+      summary.reporting_subjects.filter(
+        (s) => s.includes("runtime uid") || s.includes("daemon state"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("treats a report stamped well in the future as stale (host clock ahead)", () => {
+    const ahead = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({ configured: "separate", reported_at: ago(-60 * 60_000) }),
+        ),
+      ],
+      NOW,
+    );
+    expect(ahead.conditions).toEqual([]);
+    expect(ahead.runtime_uid_modes).toEqual({ unreported: 1 });
+    // control: a little ahead (ordinary skew) still counts
+    const skew = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({ configured: "separate", reported_at: ago(-60_000) }),
+        ),
+      ],
+      NOW,
+    );
+    expect(skew.conditions.map((c) => c.kind)).toEqual([
+      "runtime-uid-fallback",
+    ]);
+  });
+
   it("clears a fallback alert once the host reports separate in effect", async () => {
     // reporting_subjects lets the alert pass clear it
     const summary = summarizeHostIntegrity(

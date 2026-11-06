@@ -231,6 +231,19 @@ function seenWithin(value: unknown, window: number, now: number): boolean {
   return seen != null && now - seen <= window;
 }
 
+// A runtime uid report stamped more than this far in the future is stale: a
+// host clock running ahead must not keep an old report current forever.
+const MAX_REPORT_CLOCK_AHEAD_MS = 5 * 60_000;
+
+function freshReport(value: unknown, now: number): boolean {
+  const seen = ms(value);
+  return (
+    seen != null &&
+    seen - now <= MAX_REPORT_CLOCK_AHEAD_MS &&
+    now - seen <= HOST_ONLINE_WINDOW_MS
+  );
+}
+
 export function summarizeHostIntegrity(
   rows: HostIntegrityRow[],
   now = Date.now(),
@@ -243,10 +256,7 @@ export function summarizeHostIntegrity(
     // The runtime uid report comes from project-host itself, independent of
     // the watcher's; only a fresh one counts (merged heartbeat metadata).
     const mode = normalizeRuntimeUidMode(row.runtime_uid_mode);
-    if (
-      mode != null &&
-      seenWithin(mode.reported_at, HOST_ONLINE_WINDOW_MS, now)
-    ) {
+    if (mode != null && freshReport(mode.reported_at, now)) {
       const modeLabel = runtimeUidLabel(mode);
       runtime_uid_modes[modeLabel] = (runtime_uid_modes[modeLabel] ?? 0) + 1;
       for (const kind of RUNTIME_UID_KINDS) {

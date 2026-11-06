@@ -85,6 +85,25 @@ describe("checkDaemonState", () => {
     });
   });
 
+  it("reports not restored when the mode is unchanged after a chmod that succeeded", async () => {
+    const handle = dir({ uid: 2000, mode: 0o711 });
+    handle.chmod = async (mode: number) => {
+      handle.chmods.push(mode); // resolves, but the mode stays 0711
+    };
+    const result = await checkDaemonState({
+      path: "/x",
+      runtimeUid: 2000,
+      openDir: async () => handle,
+      now: NOW,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      problem: "mode 0711",
+      restored: false,
+    });
+    expect(handle.chmods).toEqual([0o700]);
+  });
+
   it("never changes a directory owned by someone else", async () => {
     const handle = dir({ uid: 0, mode: 0o777 });
     const result = await checkDaemonState({
