@@ -75,7 +75,9 @@ Agent processes today run in three kinds of separate containers:
    So `launchHarnessInProject` becomes `podman exec` into `project-<id>` for every mode, with Codex's process-group stop and cleanup.
 3. **The `codex-<project>-<context>` container** (`spawnCodexInProjectContainer`). The app-server no longer uses it: it execs into the project container (`spawnCodexAppServerInProjectRuntime`).
    - Its remaining callers are `spawnCodexExec`, which is never called (dead code, delete it), and `codex login --device-auth` (`codex-device-auth.ts`). Device login writes the subscription's new `auth.json` to a host-protected `CODEX_HOME`, not project storage, which is why it uses a separate container.
-   - **Open:** run device login as a host process (no project container needed, since it only talks to OpenAI), or exec in the project with a staging `CODEX_HOME` in the turn's scratch that the host reads back and deletes. A short-lived login is a smaller concern than turns; it can be the last step.
+   - **Decided (William, Nov 5):** run device login on the host, unrelated to any project: "Running as a plain host process instead makes way more sense (it could still be in a container for safety)." For example, a small locked-down container with no project mounts, with `CODEX_HOME` in a host-only staging directory, publishing the result through the existing verified lifecycle operation.
+     - Sign-in then no longer depends on the project's network policy. #1570's refusal (`CODEX_DEVICE_AUTH_NO_INTERNET_ERROR`) and its "This project has no internet access" notice can be removed: a free-plan project user can sign in too.
+     - Lower priority than the Claude work, though Codex login "has always been a bit flaky" (William), and this removes a project dependency from it. A separate PR.
 
 (Shared-browser containers are a separate product feature, not agents, and are out of scope.)
 
