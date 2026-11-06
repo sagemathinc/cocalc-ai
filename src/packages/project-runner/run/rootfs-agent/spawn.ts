@@ -25,8 +25,26 @@ import {
 export const AGENT_USER = `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`;
 export const AGENT_SECURITY_OPT = "--security-opt=no-new-privileges";
 
-// The agent's whole environment. PATH holds the bundle's tools only.
-export const AGENT_ENV_KEYS = ["HOME", "USER", "LOGNAME", "PATH", "LANG"];
+// The environment the spawn sets. `podman exec` merges it over the
+// container's configured environment (which the project may set), so the
+// variables that change how node or the loader start are set explicitly
+// empty. PATH holds the bundle's tools only.
+export const AGENT_BLANKED_ENV = [
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "NODE_EXTRA_CA_CERTS",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "LD_AUDIT",
+];
+export const AGENT_ENV_KEYS = [
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "PATH",
+  "LANG",
+  ...AGENT_BLANKED_ENV,
+];
 
 const CONTAINER_ID = /^[0-9a-f]{64}$/;
 const TOKEN = /^[0-9a-f]{32}$/;
@@ -54,6 +72,7 @@ export function agentEnv({
     LOGNAME: DEFAULT_PROJECT_RUNTIME_USER,
     PATH: toolsPath,
     LANG: "C.UTF-8",
+    ...Object.fromEntries(AGENT_BLANKED_ENV.map((key) => [key, ""])),
   };
 }
 

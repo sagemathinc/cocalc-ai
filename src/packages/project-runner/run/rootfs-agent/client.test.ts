@@ -147,6 +147,27 @@ describe("checkAgentAuthority", () => {
     });
   }
 
+  it.each(["userns", "mntns"] as const)(
+    "refuses an empty container %s, even when the agent's is empty too",
+    (key) => {
+      expect(
+        checkAgentAuthority({ ...FACTS, [key]: "" }, GEN, {
+          ...CONTAINER,
+          [key]: "",
+        }),
+      ).not.toEqual([]);
+    },
+  );
+
+  it("refuses an empty cgroup prefix, even with the agent at the root", () => {
+    expect(
+      checkAgentAuthority({ ...FACTS, cgroup: "" }, GEN, {
+        ...CONTAINER,
+        cgroupPrefix: "",
+      }),
+    ).not.toEqual([]);
+  });
+
   it("refuses when the container's facts are missing", () => {
     expect(
       checkAgentAuthority(FACTS, GEN, {

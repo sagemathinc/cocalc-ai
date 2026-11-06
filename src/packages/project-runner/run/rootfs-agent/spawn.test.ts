@@ -33,6 +33,18 @@ describe("rootfs agent spawn args", () => {
       "PATH=/opt/cocalc/bin2",
       "--env",
       "LANG=C.UTF-8",
+      "--env",
+      "NODE_OPTIONS=",
+      "--env",
+      "NODE_PATH=",
+      "--env",
+      "NODE_EXTRA_CA_CERTS=",
+      "--env",
+      "LD_PRELOAD=",
+      "--env",
+      "LD_LIBRARY_PATH=",
+      "--env",
+      "LD_AUDIT=",
       "a".repeat(64),
       "/opt/cocalc/bin/node",
       "-e",
@@ -124,6 +136,30 @@ describe("rootfs agent spawn args", () => {
       const at = args.indexOf("--env");
       args.splice(at, 0, "--env", entry);
       expect(() => checkAgentExecArgs(args, opts)).toThrow(
+        "refusing to start the rootfs agent",
+      );
+    }
+  });
+
+  it("blanks every node and loader variable the container's own environment might set (B2)", () => {
+    for (const key of [
+      "NODE_OPTIONS",
+      "NODE_PATH",
+      "NODE_EXTRA_CA_CERTS",
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "LD_AUDIT",
+    ]) {
+      const args = good();
+      // dropping the blank, or giving it a value, is refused
+      const at = args.indexOf(`${key}=`);
+      expect(at).toBeGreaterThan(0);
+      const dropped = [...args.slice(0, at - 1), ...args.slice(at + 1)];
+      expect(() => checkAgentExecArgs(dropped, opts)).toThrow(
+        "refusing to start the rootfs agent",
+      );
+      const valued = args.map((x) => (x === `${key}=` ? `${key}=/x` : x));
+      expect(() => checkAgentExecArgs(valued, opts)).toThrow(
         "refusing to start the rootfs agent",
       );
     }

@@ -91,8 +91,9 @@ export interface AgentDeps {
   // the generation now; undefined when the project isn't running separate
   generation(): Promise<AgentGeneration | undefined>;
   spawn(gen: AgentGeneration, token: string): ChildLike;
-  // read by the host, for the agent's in-container pid
-  hostFacts(gen: AgentGeneration, agentPid: number): Promise<AgentHostFacts>;
+  // read by the host for the agent's process, which the host finds by
+  // itself (see host.ts pickAgentProcess), never by the agent's word
+  hostFacts(gen: AgentGeneration, token: string): Promise<AgentHostFacts>;
   containerFacts(gen: AgentGeneration): Promise<ContainerFacts>;
   // stop the agent inside the container (bounded by the caller's timeout)
   killInContainer(gen: AgentGeneration, token: string): Promise<void>;
@@ -418,10 +419,11 @@ export class RootfsAgentClient {
       LIMITS.helloTimeoutMs,
     );
     try {
-      const pid = await helloPid;
+      // the hello only says it's up; its pid is used for nothing
+      await helloPid;
       // its authority, from the host's own reading
       const [facts, container] = await Promise.all([
-        this.deps.hostFacts(gen, pid),
+        this.deps.hostFacts(gen, this.token),
         this.deps.containerFacts(gen),
       ]);
       const failures = checkAgentAuthority(facts, gen, container);

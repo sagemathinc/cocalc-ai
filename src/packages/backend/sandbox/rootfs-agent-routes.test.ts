@@ -182,6 +182,27 @@ describe("SandboxedFilesystem with a rootfs agent", () => {
     expect(calls.map((c) => c.op)).toEqual(["utimes"]);
   });
 
+  it("fails a pending copy's install into the rootfs, and fd/ripgrep/du there, explicitly and without the disk (phase 1)", async () => {
+    const sfs = fs();
+    for (const attempt of [
+      // pending copies resolve their destination this way first
+      () => sfs.resolveAnchoredPath("/opt/data/file.txt"),
+      () => sfs.fd("/etc"),
+      () => sfs.ripgrep("/etc", "x"),
+      () => sfs.du("/usr"),
+      () => sfs.dust("/usr"),
+    ]) {
+      await expect(attempt()).rejects.toThrow(
+        "are not available yet for projects that run with a separate runtime uid",
+      );
+    }
+    expect(calls).toEqual([]);
+    // nothing was created on the host for it either
+    await expect(
+      readFile(join(home, "..", "no-such-rootfs", "opt", "data", "file.txt")),
+    ).rejects.toThrow();
+  });
+
   it("keeps a read-only sandbox read-only", async () => {
     const sfs = fs({ readonly: true });
     await expect(sfs.writeFile("/etc/x", "y")).rejects.toThrow("read only");

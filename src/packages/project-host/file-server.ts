@@ -226,7 +226,10 @@ import {
 import { publishLroEvent } from "./lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
 import { normalizeArchivePath } from "./archive-path";
-import { rootfsSandboxOptions } from "@cocalc/project-runner/run/rootfs-agent/registry";
+import {
+  rootfsSandboxOptions,
+  rootfsSandboxOptionsWithoutAgent,
+} from "@cocalc/project-runner/run/rootfs-agent/registry";
 import {
   extractBaseImage,
   imageCachePath,
@@ -5979,7 +5982,7 @@ export async function initViewerFsServer({
       const projectFs = createProjectSandboxFilesystem({
         project_id,
         home: path,
-        ...rootfsSandboxOptions(project_id),
+        ...rootfsSandboxOptionsWithoutAgent(project_id),
         scratch: getScratchMountpoint(project_id),
         sharedScratch: getSharedScratchMountpoint(),
         deleteSnapshot: async (name: string) =>
@@ -6019,7 +6022,7 @@ export async function initApiKeyViewerFsServer({
       const projectFs = createProjectSandboxFilesystem({
         project_id: binding.project_id,
         home: path,
-        ...rootfsSandboxOptions(binding.project_id),
+        ...rootfsSandboxOptionsWithoutAgent(binding.project_id),
         scratch: getScratchMountpoint(binding.project_id),
         sharedScratch: getSharedScratchMountpoint(),
         deleteSnapshot: async (name: string) =>
@@ -6054,7 +6057,7 @@ export async function initShareFsServer({
       const projectFs = createProjectSandboxFilesystem({
         project_id,
         home: path,
-        ...rootfsSandboxOptions(project_id),
+        ...rootfsSandboxOptionsWithoutAgent(project_id),
         scratch: getScratchMountpoint(project_id),
         sharedScratch: getSharedScratchMountpoint(),
         deleteSnapshot: async (name: string) =>

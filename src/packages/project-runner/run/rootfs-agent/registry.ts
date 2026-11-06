@@ -15,7 +15,10 @@ project from one mode to the other, and a client checks its container
 generation before every request.
 */
 
-import type { RootfsAgentOps } from "@cocalc/backend/sandbox/rootfs-agent-routes";
+import {
+  rootfsNotAvailableError,
+  type RootfsAgentOps,
+} from "@cocalc/backend/sandbox/rootfs-agent-routes";
 import { getRootfsMountpoint, rootfsIdmapUid } from "../rootfs";
 import { RootfsAgentClient } from "./client";
 import { hostAgentDeps } from "./host";
@@ -42,6 +45,25 @@ export function rootfsSandboxOptions(project_id: string): {
   return {
     rootfs: getRootfsMountpoint(project_id),
     rootfsAgent: () => rootfsAgentFor(project_id),
+  };
+}
+
+// For the viewer, API-key viewer and public share servers: their requests
+// never start an agent. A separate-uid project's rootfs is refused there.
+const REFUSING: RootfsAgentOps = {
+  call: async (_op, args) => {
+    throw rootfsNotAvailableError(`${args.path ?? ""}`);
+  },
+};
+
+export function rootfsSandboxOptionsWithoutAgent(project_id: string): {
+  rootfs: string;
+  rootfsAgent: () => RootfsAgentOps | undefined;
+} {
+  return {
+    rootfs: getRootfsMountpoint(project_id),
+    rootfsAgent: () =>
+      rootfsIdmapUid(project_id) == null ? undefined : REFUSING,
   };
 }
 

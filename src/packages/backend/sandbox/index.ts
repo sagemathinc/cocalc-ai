@@ -349,6 +349,7 @@ const INTERNAL_METHODS = new Set([
   "rootfsAgent",
   "rootfsAgentHome",
   "throughRootfsAgent",
+  "currentRootfsAgent",
   "safeAbsPath",
   "safeAbsPaths",
   "constructor",
@@ -524,6 +525,11 @@ export class SandboxedFilesystem {
     }
   }
 
+  private currentRootfsAgent = (): RootfsAgentOps | undefined =>
+    typeof this.rootfsAgent === "function"
+      ? this.rootfsAgent()
+      : this.rootfsAgent;
+
   // A separate-uid project: a rootfs path never reaches the host's disk.
   // The operations the agent does go to it; any other fails explicitly.
   private throughRootfsAgent = async (
@@ -536,10 +542,7 @@ export class SandboxedFilesystem {
       hasSharedScratch: !!this.sharedScratch,
       containerHome: this.rootfsAgentHome,
     };
-    const agent =
-      typeof this.rootfsAgent === "function"
-        ? this.rootfsAgent()
-        : this.rootfsAgent;
+    const agent = this.currentRootfsAgent();
     if (agent == null) return NOT_THROUGH_AGENT;
     const rootfsPath = pathArguments(method, args).find(
       (p) => rootfsContainerPath(p, classifier) != null,
@@ -1138,6 +1141,11 @@ export class SandboxedFilesystem {
       );
     }
 
+    // A project whose rootfs only its agent may touch: no host access to it,
+    // whichever method (or internal helper) got here.
+    if (this.currentRootfsAgent() != null) {
+      throw rootfsNotAvailableError(resolvedInput);
+    }
     const rootBase = await this.requireRootfsForAbsolutePath(resolvedInput);
 
     // Other absolute paths are interpreted from rootfs mount.

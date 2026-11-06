@@ -85,6 +85,56 @@ export function parseProcStatus(text: string): ProcStatus {
   };
 }
 
+export interface ProcRecord {
+  pid: number;
+  ppid: number;
+  pidns: string;
+  // the parent's pid namespace
+  parentPidns: string;
+  cmdline: string[];
+}
+
+/**
+ * The agent's host process, found by the host alone (never by the pid the
+ * agent reports): the one process in the container's pid namespace whose
+ * parent is outside it (only the host's exec runtime starts those; nothing
+ * inside the container can make a process with an outside parent) and whose
+ * command line is exactly the one this spawn used. None, or more than one,
+ * and there is no agent to trust.
+ */
+export function pickAgentProcess(
+  procs: ProcRecord[],
+  containerPidns: string,
+  argv: string[],
+): number {
+  const matches = procs.filter(
+    (p) =>
+      p.pidns === containerPidns &&
+      p.parentPidns !== containerPidns &&
+      p.cmdline.length === argv.length &&
+      p.cmdline.every((a, i) => a === argv[i]),
+  );
+  if (matches.length !== 1) {
+    throw new Error(`found ${matches.length} host processes for the agent`);
+  }
+  return matches[0].pid;
+}
+
+export function parsePpid(status: string): number {
+  const m = /^PPid:\s*(\d+)\s*$/m.exec(status);
+  if (!m) throw new Error("status lacks PPid");
+  return Number(m[1]);
+}
+
+/** The agent's command line in the container (the spawn's, exactly). */
+export function agentCommand(token: string): string[] {
+  return [agentNodePath(), "-e", ROOTFS_AGENT_CODE, "--", token];
+}
+
+function agentNodePath(): string {
+  return nodePath.startsWith("/opt/cocalc/") ? nodePath : CONTAINER_NODE;
+}
+
 /** The cgroup v2 path in /proc/<pid>/cgroup. */
 export function parseCgroup(text: string): string {
   for (const line of text.split("\n")) {
@@ -144,9 +194,7 @@ export function hostAgentDeps(project_id: string): AgentDeps {
       const launcher = projectPoolPodmanLauncher(project_id);
       const args = agentExecArgs({
         containerId: gen.containerId,
-        nodePath: nodePath.startsWith("/opt/cocalc/")
-          ? nodePath
-          : CONTAINER_NODE,
+        nodePath: agentNodePath(),
         agentCode: ROOTFS_AGENT_CODE,
         token,
         toolsPath: CONTAINER_TOOLS,
@@ -169,27 +217,32 @@ export function hostAgentDeps(project_id: string): AgentDeps {
       };
     },
 
-    hostFacts: async (gen, agentPid): Promise<AgentHostFacts> => {
+    hostFacts: async (gen, token): Promise<AgentHostFacts> => {
       const initPid = (gen as HostGeneration).initPid;
-      const pidns = await readlink(`/proc/${initPid}/ns/pid`);
-      const matches: number[] = [];
+      const containerPidns = await readlink(`/proc/${initPid}/ns/pid`);
+      const procs: ProcRecord[] = [];
       for (const name of await readdir("/proc")) {
         if (!/^\d+$/.test(name)) continue;
         try {
-          const status = parseProcStatus(
+          const pidns = await readlink(`/proc/${name}/ns/pid`);
+          if (pidns !== containerPidns) continue;
+          const ppid = parsePpid(
             await readFile(`/proc/${name}/status`, "utf8"),
           );
-          if (status.nspid[status.nspid.length - 1] !== agentPid) continue;
-          if ((await readlink(`/proc/${name}/ns/pid`)) !== pidns) continue;
-          matches.push(Number(name));
+          procs.push({
+            pid: Number(name),
+            ppid,
+            pidns,
+            parentPidns: await readlink(`/proc/${ppid}/ns/pid`),
+            cmdline: (await readFile(`/proc/${name}/cmdline`, "utf8"))
+              .split("\0")
+              .slice(0, -1),
+          });
         } catch {
           // gone, or not ours to read
         }
       }
-      if (matches.length !== 1) {
-        throw new Error(`found ${matches.length} host processes for the agent`);
-      }
-      const pid = matches[0];
+      const pid = pickAgentProcess(procs, containerPidns, agentCommand(token));
       const status = parseProcStatus(
         await readFile(`/proc/${pid}/status`, "utf8"),
       );
