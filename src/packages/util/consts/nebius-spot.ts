@@ -34,8 +34,12 @@ export function assertNebiusProjectHostSpotRefused(
   provider: unknown,
   pricingModel: unknown,
 ): void {
-  assertNebiusSpotOffered(provider, pricingModel);
   if (`${provider ?? ""}`.toLowerCase() !== "nebius") return;
   if (pricingModel !== "spot") return;
-  throw new Error(NEBIUS_PROJECT_HOST_SPOT_MESSAGE);
+  // refused whether or not Spot is offered; only the explanation differs
+  throw new Error(
+    NEBIUS_SPOT_OFFERED
+      ? NEBIUS_PROJECT_HOST_SPOT_MESSAGE
+      : NEBIUS_SPOT_UNAVAILABLE_MESSAGE,
+  );
 }

@@ -57,3 +57,21 @@ describe("sign-in session limits", () => {
     expect(check("14", "400")).toMatch(/from 1 to 365/);
   });
 });
+
+describe("nebius_spot_headroom_percent (#684)", () => {
+  const conf = site_settings_conf.nebius_spot_headroom_percent;
+  const valid = conf.valid as (val: string) => boolean;
+
+  test("defaults to 20% and accepts 0 to 200", () => {
+    expect(conf.default).toBe("20");
+    for (const value of ["0", "20", "35.5", "200"]) {
+      expect(valid(value)).toBe(true);
+    }
+  });
+
+  test("rejects values the cap computation would silently ignore", () => {
+    for (const value of ["-1", "200.1", "1000", "abc"]) {
+      expect(valid(value)).toBe(false);
+    }
+  });
+});

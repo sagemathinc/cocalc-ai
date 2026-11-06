@@ -2162,6 +2162,48 @@ describe("hosts browser fresh auth gating", () => {
     });
   });
 
+  it("refuses Nebius Spot for a project host machine update (#684)", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "eu-north1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "nebius",
+                  machine_type: "gpu-h100-sxm-1gpu",
+                  metadata: { cpu: 16, ram_gb: 200 },
+                },
+                pricing_model: "on_demand",
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        id: HOST_ID,
+        pricing_model: "spot",
+      }),
+    ).rejects.toThrow(/Nebius Spot/);
+  });
+
   it("rejects self-hosted host machine updates for non-admins", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {

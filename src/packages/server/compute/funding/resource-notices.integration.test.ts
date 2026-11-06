@@ -28,7 +28,11 @@ beforeEach(() => {
   mockRemote = false;
   mockDeliver.mockReset();
 });
-async function fixture(action = "stop", state = "queued") {
+async function fixture(
+  action = "stop",
+  state = "queued",
+  keyPrefix = "course-",
+) {
   const account = randomUUID(),
     vm = randomUUID(),
     work = randomUUID();
@@ -44,7 +48,15 @@ async function fixture(action = "stop", state = "queued") {
   await getPool().query(
     `INSERT INTO compute_resource_work (id,resource_kind,resource_id,action,idempotency_key,payload,state,created_at,updated_at)
     VALUES ($1,'vm',$2,$3,$4,'{}',$5,now()-interval '1 second',now())`,
-    [work, vm, action, `course-${action}:${vm}:${randomUUID()}`, state],
+    [
+      work,
+      vm,
+      action,
+      keyPrefix === "course-"
+        ? `course-${action}:${vm}:${randomUUID()}`
+        : `${keyPrefix}${vm}:1:${randomUUID()}`,
+      state,
+    ],
   );
   return { account, vm, work };
 }
@@ -190,3 +202,32 @@ it("reports confirmed home-volume deletion without implying project notebook del
     expect(await notices(f.account)).toHaveLength(1);
   },
 );
+
+it("tells the owner when Nebius stopped a Spot VM for price (#684)", async () => {
+  const f = await fixture("stop", "queued", "spot-price-stop:");
+  mockRemote = true;
+  mockDeliver.mockImplementation(receiveComputeResourceNotice);
+  await deliverComputeResourceNotices();
+  const delivered = mockDeliver.mock.calls
+    .map(([n]) => n)
+    .filter((n) => n.resource_id === f.vm);
+  expect(delivered).toHaveLength(1);
+  expect(delivered[0].reason).toBe("spot_price_above_max");
+  const rows = await notices(f.account);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].payload_json.body_markdown).toContain(
+    "spot price rose above this Spot VM's price cap",
+  );
+});
+
+it("(control) other stops carry no price reason", async () => {
+  const f = await fixture("stop", "queued");
+  mockRemote = true;
+  mockDeliver.mockImplementation(receiveComputeResourceNotice);
+  await deliverComputeResourceNotices();
+  const delivered = mockDeliver.mock.calls
+    .map(([n]) => n)
+    .filter((n) => n.resource_id === f.vm);
+  expect(delivered).toHaveLength(1);
+  expect(delivered[0].reason).toBeUndefined();
+});

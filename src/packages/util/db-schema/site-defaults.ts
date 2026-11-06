@@ -1921,7 +1921,7 @@ export const site_settings_conf: SiteSettings = {
     name: "Dedicated VMs: Nebius Spot - Cap Headroom (%)",
     desc: "A new Nebius Spot VM's price cap is Nebius's live spot price plus this percentage (default 20). The VM is billed at the cap plus the Nebius surcharge, and Nebius stops it if its spot price rises above the cap. More headroom means fewer price stops and a higher price. From 0 to 200.",
     default: "20",
-    valid: onlyNonnegFloat,
+    valid: (value) => onlyNonnegFloat(value) && toFloat(value) <= 200,
     to_val: toFloat,
     tags: ["Project Hosts", "Cloud", "Nebius", "Commercialization"],
     group: "Compute / Project Hosts",

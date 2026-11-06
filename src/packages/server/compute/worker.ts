@@ -3039,7 +3039,18 @@ async function reconcile(vm: ComputeVmRow) {
     vm.desired_pricing_model === "spot" &&
     vm.effective_pricing_model === "spot"
   ) {
-    const cap = await nebiusComputeSpotPriceStopCap(vm);
+    // A failed check (e.g. a Nebius billing outage) must not leave the VM
+    // "ready" and billed: fall through to the usual spot recovery, whose
+    // replacement and start are refused while the price is above the cap.
+    let cap: string | undefined;
+    try {
+      cap = await nebiusComputeSpotPriceStopCap(vm);
+    } catch (err) {
+      logger.warn("nebius spot price-stop check failed; using spot recovery", {
+        vm_id: vm.id,
+        err: `${err}`,
+      });
+    }
     if (cap) return await stopForNebiusSpotPrice(vm, cap, observed);
   }
   // Spot preemption leaves the persistent-root instance terminated. Record it

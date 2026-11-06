@@ -21,6 +21,10 @@ const replaceProviderComputeInstance = jest.fn(async () => undefined);
 const startProviderComputeVm = jest.fn(async () => undefined);
 const setProviderComputeMachineType = jest.fn(async () => undefined);
 const spotPolicyCap = jest.fn(async () => "2.400");
+const appendComputeEvent = jest.fn(async () => undefined);
+const enqueueComputeWork = jest.fn(async () => undefined);
+const nebiusComputeSpotPriceStopCap = jest.fn();
+const stopProviderComputeVm = jest.fn(async () => undefined);
 
 jest.mock("./db", () => ({
   ...jest.requireActual("./db"),
@@ -29,8 +33,8 @@ jest.mock("./db", () => ({
   updateComputeVmProviderObservation: async () => undefined,
   insertComputeInstance: (...a: any[]) => (insertComputeInstance as any)(...a),
   updateComputeInstance: (...a: any[]) => (updateComputeInstance as any)(...a),
-  appendComputeEvent: async () => undefined,
-  enqueueComputeWork: async () => undefined,
+  appendComputeEvent: (...a: any[]) => (appendComputeEvent as any)(...a),
+  enqueueComputeWork: (...a: any[]) => (enqueueComputeWork as any)(...a),
 }));
 jest.mock("./contract", () => ({
   ...jest.requireActual("./contract"),
@@ -48,6 +52,10 @@ jest.mock("./provider", () => {
       (startProviderComputeVm as any)(...a),
     setProviderComputeMachineType: (...a: any[]) =>
       (setProviderComputeMachineType as any)(...a),
+    nebiusComputeSpotPriceStopCap: (...a: any[]) =>
+      (nebiusComputeSpotPriceStopCap as any)(...a),
+    stopProviderComputeVm: (...a: any[]) =>
+      (stopProviderComputeVm as any)(...a),
     // the real decision, with the observed policy cap from a fake Nebius
     nebiusComputeInstanceReplacementReason: async (vm: any, instance: any) =>
       actual.nebiusInstanceReplacementReason(vm, {
@@ -238,5 +246,127 @@ describe("nebiusInstanceReplacementReason", () => {
         { machine_type: "x" },
       ),
     ).toBeUndefined();
+  });
+});
+
+const work = (vm: any, action: string, key: string) =>
+  handleComputeWork({
+    id: "work-2",
+    resource_kind: "vm",
+    resource_id: vm.id,
+    action,
+    idempotency_key: key,
+  } as any);
+
+function preempted() {
+  return {
+    status: "stopped",
+    instance: {
+      instance_id: "computeinstance-abc",
+      status: "STOPPED",
+      metadata: {
+        machine_type: "1gpu-32vcpu-400gb",
+        platform: "gpu-h100-sxm",
+        pricing_model: "spot",
+        spot_pricing_policy_id: "policy-old",
+        provider_state: "STOPPED",
+      },
+    },
+  };
+}
+
+describe("reconcile of a Nebius Spot VM that Nebius stopped (#684)", () => {
+  beforeEach(() => {
+    for (const m of [
+      updateComputeVm,
+      appendComputeEvent,
+      enqueueComputeWork,
+      nebiusComputeSpotPriceStopCap,
+      inspectProviderComputeVm,
+    ])
+      m.mockReset();
+    updateComputeVm.mockImplementation(async (_id: string, patch: any) => {
+      vmRow = { ...vmRow, ...patch };
+      return vmRow;
+    });
+    inspectProviderComputeVm.mockResolvedValue(preempted());
+  });
+
+  const actions = (mock: jest.Mock) =>
+    mock.mock.calls.map((call: any[]) => call[0]?.action);
+
+  it("a blocked policy is a price stop: stop for the user, never a restart", async () => {
+    vmRow = nebiusVm({ state: "ready" });
+    nebiusComputeSpotPriceStopCap.mockResolvedValue("2.640");
+    await work(vmRow, "reconcile", "reconcile-1");
+    expect(actions(appendComputeEvent)).toEqual(["spot_price_stop"]);
+    expect(actions(enqueueComputeWork)).toEqual(["stop"]);
+    expect(
+      (enqueueComputeWork.mock.calls[0] as any)[0].idempotency_key,
+    ).toMatch(/^spot-price-stop:/);
+    expect(vmRow.desired_state).toBe("stopped");
+    expect(vmRow.error).toContain("$2.640 per GPU-hour");
+  });
+
+  it("(control) an unblocked policy is a capacity preemption, recovered as before", async () => {
+    vmRow = nebiusVm({ state: "ready" });
+    nebiusComputeSpotPriceStopCap.mockResolvedValue(undefined);
+    await work(vmRow, "reconcile", "reconcile-2");
+    expect(actions(appendComputeEvent)).toEqual(["spot_interrupted"]);
+    expect(actions(enqueueComputeWork)).not.toContain("stop");
+    expect(vmRow.desired_state).toBe("running");
+  });
+
+  it("a failed price-stop check falls through to the (gated) spot recovery", async () => {
+    vmRow = nebiusVm({ state: "ready" });
+    nebiusComputeSpotPriceStopCap.mockRejectedValue(
+      new Error("billing.v1 unavailable"),
+    );
+    await work(vmRow, "reconcile", "reconcile-3");
+    // recorded as preempted and recovered, never left "ready" and billed
+    expect(actions(appendComputeEvent)).toEqual(["spot_interrupted"]);
+    expect(vmRow.state).toBe("recovering");
+    expect(actions(enqueueComputeWork)).not.toContain("stop");
+  });
+});
+
+describe("the stop after a price stop keeps its explanation (#684)", () => {
+  beforeEach(() => {
+    updateComputeVm.mockReset();
+    updateComputeVm.mockImplementation(async (_id: string, patch: any) => {
+      vmRow = { ...vmRow, ...patch };
+      return vmRow;
+    });
+    stopProviderComputeVm.mockReset();
+    stopProviderComputeVm.mockRejectedValue(new Error("provider stop reached"));
+  });
+  const message = "Nebius stopped this Spot VM because its spot price rose";
+
+  it("keeps vm.error for spot-price-stop work", async () => {
+    vmRow = nebiusVm({
+      state: "stopping",
+      desired_state: "stopped",
+      error: message,
+    });
+    await expect(
+      work(vmRow, "stop", "spot-price-stop:vm:2:2026-11-06T00:00:00.000Z"),
+    ).rejects.toThrow("provider stop reached");
+    expect(updateComputeVm.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ state: "stopping", error: message }),
+    );
+  });
+
+  it("(control) clears it for any other stop", async () => {
+    vmRow = nebiusVm({
+      state: "ready",
+      desired_state: "stopped",
+      error: message,
+    });
+    await expect(work(vmRow, "stop", "user-stop:1")).rejects.toThrow(
+      "provider stop reached",
+    );
+    expect(updateComputeVm.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ state: "stopping", error: null }),
+    );
   });
 });
