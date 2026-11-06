@@ -643,6 +643,73 @@ test("subscription policy exposes only mediated project tools and refuses unknow
   }
 });
 
+test("a Claude subscription run in the project is a normal session whose billing is still verified", async (t) => {
+  for (const [flag, permitted] of [
+    ["--subscription-status", true],
+    // A relay token reports no plan, like the controller's token.
+    ["--none-status", true],
+    ["--api-key-status", false],
+  ]) {
+    const child = spawn(
+      process.execPath,
+      [...profile.args, "--claude-adapter", "--in-project", flag],
+      { env: {}, stdio: "pipe" },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user/work",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+        credential: {
+          version: 1,
+          provider: "anthropic",
+          mode: "account-subscription",
+          credentialId: "11111111-1111-4111-8111-111111111111",
+        },
+      },
+      async () => ({
+        sessionPolicy: "default",
+        subscriptionAuth: "oauth-token",
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+      30_000,
+      undefined,
+      // The caller still picks the controller from the credential: the
+      // launcher's own policy wins.
+      "claude-subscription-controller",
+    );
+    t.after(() => client.dispose());
+    await client.open();
+    if (permitted) {
+      const events = [];
+      await client.prompt("hello", async (event) => events.push(event));
+      assert.ok(events.some((event) => event.type === "message"));
+    } else {
+      await assert.rejects(
+        () => client.prompt("hello", async () => {}),
+        /different billing method/,
+      );
+    }
+    await client.dispose();
+  }
+});
+
 test("a resumed session gets newer CoCalc instructions with its next turn, once", async (t) => {
   for (const [resume, stored, expectUpdate] of [
     [true, undefined, true], // a session from before versions were recorded
@@ -1864,7 +1931,8 @@ test("Claude's Agent tool calls become subagent events; subagent text stays out 
   // The child tool call keeps its parent stamp for grouping in the activity.
   const child = events.find(
     (event) =>
-      event.event?.kind === "update" && event.event.data.toolCallId === "child-1",
+      event.event?.kind === "update" &&
+      event.event.data.toolCallId === "child-1",
   );
   assert.equal(child.event.data._meta.claudeCode.parentToolUseId, "agent-1");
   // The subagent's narration is activity, not part of Claude's reply.
@@ -1886,7 +1954,9 @@ test("Claude's Agent tool calls become subagent events; subagent text stays out 
 
 test("a failed turn doesn't leave its Claude subagents working", async (t) => {
   const { agent, request, events } = adapter(t);
-  await assert.rejects(agent.evaluate({ ...request, prompt: "subagent-crash" }));
+  await assert.rejects(
+    agent.evaluate({ ...request, prompt: "subagent-crash" }),
+  );
   const states = events
     .filter((event) => event.event?.type === "subagent")
     .map((event) => [event.event.threadId, event.event.state]);

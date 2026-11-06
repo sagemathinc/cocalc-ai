@@ -215,7 +215,24 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         });
       if (process.argv.includes("--claude-adapter")) {
         const options = message.params._meta?.claudeCode?.options;
-        if (
+        if (process.argv.includes("--in-project")) {
+          // A subscription session run in the project: a normal session
+          // there, without the controller's tools or settings overrides.
+          if (
+            message.params.cwd !== "/home/user/work" ||
+            message.params.mcpServers.length !== 0 ||
+            options?.tools !== undefined ||
+            options?.settingSources !== undefined ||
+            options?.settings?.env?.CLAUDE_CODE_USE_FOUNDRY !== "0" ||
+            !message.params._meta?.systemPrompt?.append?.startsWith(
+              "[CoCalc session guidance]",
+            )
+          )
+            return send({
+              id: message.id,
+              error: { code: -32602, message: "in-project policy missing" },
+            });
+        } else if (
           message.params.cwd !== "/workspace" ||
           !options ||
           JSON.stringify(options.tools) !==
@@ -539,7 +556,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           claudeCode: { toolName: "Agent" },
           jetbrains: { air: { version: 1, subagent: true } },
         };
-        const child = { claudeCode: { toolName: "Bash", parentToolUseId: "agent-1" } };
+        const child = {
+          claudeCode: { toolName: "Bash", parentToolUseId: "agent-1" },
+        };
         for (const item of [
           {
             sessionUpdate: "tool_call",
@@ -590,7 +609,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             toolCallId: "agent-1",
             status: "completed",
             content: [
-              { type: "content", content: { type: "text", text: "There are 43." } },
+              {
+                type: "content",
+                content: { type: "text", text: "There are 43." },
+              },
             ],
             _meta: {},
           },

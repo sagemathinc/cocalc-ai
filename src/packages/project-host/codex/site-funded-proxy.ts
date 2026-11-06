@@ -9,7 +9,13 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import type { ClientRequest } from "node:http";
 import getLogger from "@cocalc/backend/logger";
+import {
+  forwardProviderRequest,
+  validateProviderRelayPolicy,
+  type ProviderRelayPolicy,
+} from "../acp/credential-http-relay";
 import {
   computeSiteFundedCodexRequestCost,
   siteFundedCodexFinalRequestHeadroomMicrousd,
@@ -412,8 +418,30 @@ function boundedProviderRequest({
   };
 }
 
+/**
+ * A credential relay session on this proxy: requests whose bearer is the
+ * session's token go to the provider with the real credential instead (for
+ * Claude subscription agents running in the project). It shares the proxy
+ * because projects may reach only this host-local port range
+ * (site-funded-proxy-port.ts).
+ */
+export type ProviderRelaySession = {
+  /** The base URL a project process uses, without a path. */
+  baseUrl: string;
+  /** What the process sends as `Authorization: Bearer <token>`. */
+  token: string;
+  close(): void;
+};
+
+type RelaySession = {
+  policy: ProviderRelayPolicy;
+  requests: Set<ClientRequest>;
+  closed: boolean;
+};
+
 class SiteFundedCodexProxy {
   private readonly sessions = new Map<string, Session>();
+  private readonly relaySessions = new Map<string, RelaySession>();
   private server?: ReturnType<typeof createServer>;
   private listening?: Promise<number>;
   // Tests listen on an ephemeral port instead of the host's fixed range.
@@ -566,8 +594,64 @@ class SiteFundedCodexProxy {
     };
   }
 
+  async startRelaySession({
+    upstream,
+    allowedPathPrefix,
+    allowedMethods,
+    credentialHeader,
+    credentialValue,
+    tokenPrefix = "",
+    allowHttpForTests,
+  }: {
+    upstream: string;
+    allowedPathPrefix: string;
+    allowedMethods?: readonly string[];
+    credentialHeader: string;
+    credentialValue: () => Promise<string> | string;
+    /** Prepended to the random token, e.g. so it looks like the provider's. */
+    tokenPrefix?: string;
+    allowHttpForTests?: boolean;
+  }): Promise<ProviderRelaySession> {
+    const checked = validateProviderRelayPolicy({
+      upstream,
+      allowedPathPrefix,
+      credentialHeader,
+      allowedMethods,
+      allowHttpForTests,
+    });
+    if (!/^[A-Za-z0-9_-]*$/.test(tokenPrefix))
+      throw Error("Invalid relay token prefix");
+    const port = await this.ensureListening();
+    const token = `${tokenPrefix}${randomBytes(32).toString("base64url")}`;
+    const session: RelaySession = {
+      policy: {
+        ...checked,
+        allowedPathPrefix,
+        credentialHeader,
+        credentialValue,
+      },
+      requests: new Set(),
+      closed: false,
+    };
+    this.relaySessions.set(token, session);
+    return {
+      baseUrl: `http://host.containers.internal:${port}`,
+      token,
+      close: () => {
+        session.closed = true;
+        this.relaySessions.delete(token);
+        for (const request of session.requests) request.destroy();
+      },
+    };
+  }
+
   async shutdown(): Promise<void> {
     this.sessions.clear();
+    for (const session of this.relaySessions.values()) {
+      session.closed = true;
+      for (const request of session.requests) request.destroy();
+    }
+    this.relaySessions.clear();
     const server = this.server;
     this.server = undefined;
     this.listening = undefined;
@@ -575,6 +659,14 @@ class SiteFundedCodexProxy {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
+  }
+
+  private relaySessionFor(request: IncomingMessage): RelaySession | undefined {
+    const match = /^Bearer\s+(.+)$/i.exec(
+      `${request.headers.authorization ?? ""}`,
+    );
+    const session = match ? this.relaySessions.get(match[1]) : undefined;
+    return session && !session.closed ? session : undefined;
   }
 
   private sessionFor(request: IncomingMessage): Session | undefined {
@@ -666,6 +758,22 @@ class SiteFundedCodexProxy {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
+    const relay = this.relaySessionFor(request);
+    if (relay) {
+      try {
+        await forwardProviderRequest({
+          request,
+          response,
+          policy: relay.policy,
+          requests: relay.requests,
+          isClosed: () => relay.closed,
+        });
+      } catch {
+        request.resume();
+        jsonResponse(response, 403, "Credential is unavailable or revoked");
+      }
+      return;
+    }
     const session = this.sessionFor(request);
     if (!session || session.closed) {
       jsonResponse(response, 401, "invalid or expired funded proxy credential");
@@ -903,6 +1011,13 @@ export async function startSiteFundedCodexProxySession(
   opts: Parameters<SiteFundedCodexProxy["startSession"]>[0],
 ): Promise<SiteFundedProxySession> {
   return await proxy.startSession(opts);
+}
+
+/** A credential relay session on the project-reachable provider proxy. */
+export async function startProviderRelaySession(
+  opts: Parameters<SiteFundedCodexProxy["startRelaySession"]>[0],
+): Promise<ProviderRelaySession> {
+  return await proxy.startRelaySession(opts);
 }
 
 export async function shutdownSiteFundedCodexProxyForTests(): Promise<void> {

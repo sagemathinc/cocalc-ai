@@ -126,6 +126,10 @@ export default async function getCustomize(
 
       // Agent connectors this site has set up (names only).
       cliConnectors: enabledCliConnectors(settings as Record<string, unknown>),
+      claudeSubscriptionRuntime:
+        settings.claude_subscription_runtime === "project"
+          ? "project"
+          : "controller",
 
       verifyEmailAddresses: settings.verify_emails && settings.email_enabled,
       cookieBannerEnabled: settings.cookie_banner_enabled,

@@ -140,6 +140,12 @@ export interface HarnessProcess {
    * long-lived subscription token, which cannot report the account's plan.
    */
   subscriptionAuth?: "oauth-token";
+  /**
+   * Trusted launcher fact: how this process's sessions run, replacing the
+   * policy the caller chose from the credential. A subscription agent run in
+   * the project (not the controller) is a normal session in the project.
+   */
+  sessionPolicy?: HarnessSessionPolicy;
 }
 
 export type HarnessAsyncQuestionHandler = (input: unknown) => Promise<{
@@ -447,9 +453,11 @@ export class AcpHarnessClient {
     const credential = parseAcpHarnessCredential(binding.credential, profile);
     if (!binding.projectId || !binding.accountId)
       throw Error("ACP principal binding is required");
+    const launched = await launch({ ...binding, profile, credential });
+    sessionPolicy = launched.sessionPolicy ?? sessionPolicy;
     const client = new AcpHarnessClient(
       { ...binding, profile, credential },
-      await launch({ ...binding, profile, credential }),
+      launched,
       timeoutMs,
       questionHandler,
       sessionPolicy,
@@ -483,7 +491,8 @@ export class AcpHarnessClient {
           "Harness did not negotiate ACP v1",
         );
       if (
-        sessionPolicy === "claude-subscription-controller" &&
+        (sessionPolicy === "claude-subscription-controller" ||
+          credential.mode === "account-subscription") &&
         (client.info.agentInfo?.name !==
           CLAUDE_CODE_QUALIFICATION.package.name ||
           client.info.agentInfo?.version !==
@@ -491,7 +500,7 @@ export class AcpHarnessClient {
       )
         throw new HarnessError(
           "unsupported",
-          "Subscription controller requires the qualified Claude adapter",
+          "Claude subscriptions require the qualified Claude adapter",
         );
       return client;
     } catch (error) {
@@ -818,6 +827,14 @@ export class AcpHarnessClient {
     }
   }
 
+  /** Funded by a Claude subscription, wherever it runs. */
+  private subscription(): boolean {
+    return (
+      this.sessionPolicy === "claude-subscription-controller" ||
+      this.binding.credential.mode === "account-subscription"
+    );
+  }
+
   private agentName(): string {
     return this.binding.profile.id === "claude-code" ||
       this.sessionPolicy === "claude-subscription-controller"
@@ -827,8 +844,7 @@ export class AcpHarnessClient {
 
   private rejectionMessage(error: unknown, method: RequestMethod): string {
     const { code, data } = error as { code: number; data?: { cwd?: unknown } };
-    const subscription =
-      this.sessionPolicy === "claude-subscription-controller";
+    const subscription = this.subscription();
     const agent = this.agentName();
     let recovery: string;
     if (code === -32000) {
@@ -843,9 +859,10 @@ export class AcpHarnessClient {
       (method === "session/new" || method === "session/load") &&
       typeof data?.cwd === "string"
     ) {
-      recovery = subscription
-        ? "The isolated Claude workspace is unavailable. Ask the site administrator to update or repair the Claude runtime; changing your project directory will not fix this."
-        : "The working directory is unavailable. Use the folder control to select an existing project directory, then retry.";
+      recovery =
+        this.sessionPolicy === "claude-subscription-controller"
+          ? "The isolated Claude workspace is unavailable. Ask the site administrator to update or repair the Claude runtime; changing your project directory will not fix this."
+          : "The working directory is unavailable. Use the folder control to select an existing project directory, then retry.";
     } else if (
       method === "session/set_mode" ||
       method === "session/set_config_option"
@@ -902,7 +919,10 @@ export class AcpHarnessClient {
                 projectToolServerName,
               }),
             }
-          : this.binding.credential.mode === "account-api-key"
+          : // In the project, a subscription session is configured like an
+            // API-key one: only the credential differs.
+            this.binding.credential.mode === "account-api-key" ||
+              this.subscription()
             ? {
                 _meta: claudeAccountApiKeySessionMeta(
                   harnessHasSessionGuidance(this.binding.profile)
@@ -1029,8 +1049,7 @@ export class AcpHarnessClient {
     this.canceled = false;
     this.listener = listener;
     try {
-      if (this.sessionPolicy === "claude-subscription-controller")
-        await this.verifySubscriptionIdentity();
+      if (this.subscription()) await this.verifySubscriptionIdentity();
       await beforeSend?.();
       if (this.canceled || this.disposed || this.failure)
         throw new HarnessError(
