@@ -250,7 +250,7 @@ describe("in-project scripts", () => {
     expect(await readlink(join(home, ".claude/skills/cocalc"))).toBe(
       "/opt/cocalc/project-bundle/skills/cocalc",
     );
-    expect((await readFile(pid, "utf8")).trim()).toMatch(/^\d+$/);
+    expect((await readFile(pid, "utf8")).trim()).toMatch(/^\d+ \d+$/);
     // Running again keeps the link.
     await run("/bin/sh", ["-c", prelude(pid)], {
       env: { HOME: home, PATH: process.env.PATH },
@@ -278,6 +278,14 @@ describe("in-project scripts", () => {
     );
   });
 
+  const startTimeFn = claudeInProjectScript("/tmp/p")
+    .split("\n")
+    .find((line) => line.startsWith("st() "))!;
+  const startOf = async (pid: number) => {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+  };
+
   const alive = (pid: number) => {
     try {
       process.kill(pid, 0);
@@ -298,7 +306,7 @@ describe("in-project scripts", () => {
       "/bin/sh",
       [
         "-c",
-        `echo $$ > ${pidFile}; exec ${process.execPath} -e 'const c=require("child_process").spawn("/bin/sh",["-c","trap \\"\\" TERM; sleep 60 & echo $! > ${childFile}; wait"],{stdio:"ignore"}); setInterval(()=>{},1000)' claude-agent-acp`,
+        `${startTimeFn}\necho "$$ $(st $$)" > ${pidFile}; exec ${process.execPath} -e 'const c=require("child_process").spawn("/bin/sh",["-c","trap \\"\\" TERM; sleep 60 & echo $! > ${childFile}; wait"],{stdio:"ignore"}); setInterval(()=>{},1000)' claude-agent-acp`,
       ],
       { stdio: "ignore" },
     );
@@ -311,7 +319,11 @@ describe("in-project scripts", () => {
         );
       }
       expect(grandchild).toBeGreaterThan(0);
-      const adapterPid = parseInt(await readFile(pidFile, "utf8"));
+      const [adapterPid, adapterStart] = (await readFile(pidFile, "utf8"))
+        .trim()
+        .split(" ")
+        .map(Number);
+      expect(adapterStart).toBeGreaterThan(0);
       expect(alive(adapterPid)).toBe(true);
       await run("/bin/sh", ["-c", claudeInProjectStopScript(pidFile)]);
       await new Promise((r) => setTimeout(r, 200));
@@ -367,13 +379,40 @@ describe("in-project scripts", () => {
     }
   });
 
+  it("stop leaves the adapter's pid alone when its start time is not the recorded one", async () => {
+    // The recorded adapter exited and its pid now belongs to another process
+    // (here: one whose command line would even pass the adapter check).
+    const fake = jest.requireActual("node:child_process")
+      .spawn as typeof realSpawn;
+    const other = fake(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)", "claude-agent-acp"],
+      { stdio: "ignore" },
+    );
+    try {
+      await new Promise((r) => setTimeout(r, 200));
+      const pidFile = join(root, "pid");
+      const start = Number(await startOf(other.pid!));
+      await writeFile(pidFile, `${other.pid} ${start - 1}\n`);
+      await run("/bin/sh", ["-c", claudeInProjectStopScript(pidFile)]);
+      expect(alive(other.pid!)).toBe(true);
+      // With its own identity it is the adapter, and is stopped.
+      await writeFile(pidFile, `${other.pid} ${start}\n`);
+      await run("/bin/sh", ["-c", claudeInProjectStopScript(pidFile)]);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(other.exitCode !== null || other.signalCode !== null).toBe(true);
+    } finally {
+      other.kill("SIGKILL");
+    }
+  }, 20_000);
+
   it("stop leaves a process that is not the adapter alone", async () => {
     const fake = jest.requireActual("node:child_process")
       .spawn as typeof realSpawn;
     const other = fake("sleep", ["30"], { stdio: "ignore" });
     try {
       const pidFile = join(root, "pid");
-      await writeFile(pidFile, `${other.pid}\n`);
+      await writeFile(pidFile, `${other.pid} ${await startOf(other.pid!)}\n`);
       await run("/bin/sh", ["-c", claudeInProjectStopScript(pidFile)]);
       expect(alive(other.pid!)).toBe(true);
       await expect(lstat(pidFile)).rejects.toThrow();

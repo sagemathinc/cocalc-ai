@@ -67,6 +67,10 @@ const CREDENTIAL_RECHECK_MS = 60_000;
 const ADAPTER_ENTRY = `${CLAUDE_CODE_INSTALL_ROOT}/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js`;
 const PROJECT_SKILL = "/opt/cocalc/project-bundle/skills/cocalc";
 const STOP_GRACE_MS = 3_000;
+// The start time (field 22) of a process, from one read of /proc/<pid>/stat.
+// The comm field may hold spaces and parentheses: count from the last ")".
+const START_TIME_FN =
+  'st() { s=$(cat /proc/$1/stat 2>/dev/null) || return 1; set -- ${s##*) }; echo "${20}"; }';
 
 export type ClaudeSubscriptionRuntime = "controller" | "project";
 
@@ -181,32 +185,39 @@ export function claudeInProjectScript(pidFile: string): string {
     // An empty directory is a stale mount point from the old sidecar.
     `if [ ! -e "$skills/cocalc/SKILL.md" ]; then rmdir "$skills/cocalc" 2>/dev/null; [ -e "$skills/cocalc" ] || [ -L "$skills/cocalc" ] || ln -s ${PROJECT_SKILL} "$skills/cocalc" 2>/dev/null; fi`,
     "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN",
-    `echo $$ > ${pidFile}`,
+    // The adapter's identity: its pid and start time (exec keeps both).
+    START_TIME_FN,
+    `echo "$$ $(st $$)" > ${pidFile}`,
     `exec /opt/cocalc/bin/node ${ADAPTER_ENTRY}`,
   ].join("\n");
 }
 
 /**
  * Ends the adapter and everything it started (Claude Code, its shells and
- * MCP servers): TERM to the whole tree, then KILL. The tree comes from
- * /proc, which every project image has, and only if the recorded pid is
- * still the adapter. Each process is recorded with its start time (field 22
- * of /proc/<pid>/stat) and signaled only while that still matches, so a pid
- * reused by another process after an exit is never signaled. Everything runs
- * as the project user, so the worst a project can do by editing the pid file
- * is stop its own processes.
+ * MCP servers): TERM to the whole tree, then KILL. Every process is known by
+ * its pid and start time, never its pid alone, so a pid freed and reused by
+ * another process is never signaled:
+ * - the adapter by the pid and start time it recorded at launch;
+ * - the tree from one read of each /proc/<pid>/stat (parent and start time
+ *   together), so no other process can be mistaken for a child;
+ * - each signal only while that start time still matches.
+ * Everything runs as the project user, so the worst a project can do by
+ * editing the pid file is stop its own processes.
  */
 export function claudeInProjectStopScript(pidFile: string): string {
   return [
-    `p=$(cat ${pidFile} 2>/dev/null) || exit 0`,
+    `read -r p t < ${pidFile} 2>/dev/null || exit 0`,
     `rm -f ${pidFile}`,
-    'case "$p" in ""|*[!0-9]*) exit 0;; esac',
+    'case "$p$t" in ""|*[!0-9]*) exit 0;; esac',
+    START_TIME_FN,
+    '[ "$(st "$p")" = "$t" ] || exit 0',
     `tr '\\000' ' ' < /proc/$p/cmdline 2>/dev/null | grep -q claude-agent-acp || exit 0`,
-    // The comm field may hold spaces and parentheses: count from the last ")".
-    'st() { s=$(cat /proc/$1/stat 2>/dev/null) || return 1; set -- ${s##*) }; echo "${20}"; }',
-    'ppids=$(for d in /proc/[0-9]*; do while IFS=": \t" read -r k v; do if [ "$k" = PPid ]; then echo "${d#/proc/} $v"; break; fi; done 2>/dev/null < "$d/status"; done)',
-    'tree() { echo "$1"; for c in $(echo "$ppids" | while read -r a b; do [ "$b" = "$1" ] && echo "$a"; done); do tree "$c"; done; }',
-    'procs=$(for q in $(tree "$p"); do t=$(st "$q") && echo "$q:$t"; done)',
+    // pid, parent and start time of every process, one stat read each
+    'snap=$(for d in /proc/[0-9]*; do s=$(cat "$d/stat" 2>/dev/null) || continue; set -- ${s##*) }; echo "${d#/proc/} $2 ${20}"; done)',
+    'tree() { echo "$snap" | while read -r a b c; do [ "$b" = "$1" ] && echo "$a:$c" && tree "$a"; done; }',
+    'procs="$p:$t $(tree "$p")"',
+    // The adapter is still the one recorded: its children are its own.
+    '[ "$(st "$p")" = "$t" ] || exit 0',
     'signal() { for e in $procs; do [ "$(st "${e%%:*}")" = "${e#*:}" ] && kill -"$1" "${e%%:*}" 2>/dev/null; done; true; }',
     "signal TERM",
     "sleep 2",
