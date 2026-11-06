@@ -103,7 +103,7 @@ export async function checkDaemonState({
   }
 }
 
-async function openHostDir(path: string): Promise<OpenDir | undefined> {
+export async function openHostDir(path: string): Promise<OpenDir | undefined> {
   let handle;
   try {
     handle = await open(

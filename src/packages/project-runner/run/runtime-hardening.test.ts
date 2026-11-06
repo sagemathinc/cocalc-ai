@@ -11,9 +11,14 @@ jest.mock("./runtime-host", () => ({
 import {
   checkDaemonState,
   configuredRuntimeUidMode,
+  openHostDir,
   runtimeUidModeHeartbeat,
   type OpenDir,
 } from "./runtime-hardening";
+
+import { chmod, mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const NOW = new Date("2026-11-06T08:00:00.000Z");
 
@@ -204,6 +209,61 @@ describe("runtimeUidModeHeartbeat", () => {
       detail: "reboot pending",
       label: "keep-id (fallback: map-missing-block)",
       reported_at: NOW.toISOString(),
+    });
+  });
+});
+
+describe("checkDaemonState on real directories (openHostDir)", () => {
+  let dir: string;
+  const uid = process.getuid!();
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "daemon-state-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  const check = (path: string) =>
+    checkDaemonState({ path, runtimeUid: uid, openDir: openHostDir, now: NOW });
+  const modeOf = async (path: string) => (await stat(path)).mode & 0o7777;
+
+  it("never follows a symlink, and never changes the target's mode", async () => {
+    const target = join(dir, "target");
+    await mkdir(target);
+    await chmod(target, 0o755);
+    const link = join(dir, "state");
+    await symlink(target, link);
+    const result = await check(link);
+    expect(result).toMatchObject({
+      ok: false,
+      problem: "not a directory or a symlink",
+    });
+    expect(result.restored).toBeUndefined();
+    expect(await modeOf(target)).toBe(0o755);
+  });
+
+  it("(control) restores a real 0711 directory to 0700", async () => {
+    const state = join(dir, "state");
+    await mkdir(state);
+    await chmod(state, 0o711);
+    await expect(check(state)).resolves.toMatchObject({
+      ok: false,
+      problem: "mode 0711",
+      restored: true,
+    });
+    expect(await modeOf(state)).toBe(0o700);
+  });
+
+  it("reports a missing path as missing, and a 0700 directory as ok", async () => {
+    await expect(check(join(dir, "absent"))).resolves.toMatchObject({
+      ok: false,
+      problem: "missing",
+    });
+    const state = join(dir, "ok");
+    await mkdir(state);
+    await chmod(state, 0o700);
+    await expect(check(state)).resolves.toEqual({
+      ok: true,
+      checked_at: NOW.toISOString(),
     });
   });
 });
