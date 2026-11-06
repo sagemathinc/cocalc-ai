@@ -1342,6 +1342,32 @@ export interface HostIntegrityFinding {
   first_seen?: string;
   last_seen?: string;
   count: number;
+  // the kind of host uid (e.g. "project-runtime"), when the watcher says
+  uid_class?: string;
+  // placement facts the watcher could not read (names only)
+  unreadable?: string[];
+}
+
+// What the integrity watcher checks on the host, as configured there.
+export interface HostIntegrityDetection {
+  // the project runtime uid mode the watcher was configured with
+  runtime_uid_mode?: string;
+  // its check for the runtime user inside project containers: keep-id,
+  // partial or strict
+  runtime_user_in_container?: string;
+  // the exec monitor: its state (available, degraded, unavailable: ...,
+  // starting or off), how many programs it watches, events it lost and
+  // execs it could not attribute
+  exec_monitor?: {
+    state: string;
+    marked: number;
+    lost: number;
+    unattributed: number;
+  };
+  // the subordinate uid ranges it reads: ok, stale or unavailable
+  ranges_state?: string;
+  // project data layout mismatches it counted
+  layout_problems?: number;
 }
 
 export interface HostIntegrityStatus {
@@ -1361,6 +1387,8 @@ export interface HostIntegrityStatus {
   config_change_count?: number;
   config_baseline_at?: string;
   inventory?: Record<string, number>;
+  // absent from watchers that predate it
+  detection?: HostIntegrityDetection;
   // When the host started needing a reboot to apply updates (null: none).
   reboot_required_since: string | null;
 }

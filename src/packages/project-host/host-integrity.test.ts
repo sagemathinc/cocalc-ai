@@ -195,4 +195,116 @@ describe("host integrity for the heartbeat", () => {
       "/etc/cron.d/job-4",
     );
   });
+
+  it("passes on the uid class and unreadable facts of a finding, sanitized", async () => {
+    const finding = (extra: Record<string, unknown>) => ({
+      rule: "project-uid-outside-container",
+      severity: "critical",
+      comm: "sh",
+      exe: "/usr/bin/dash",
+      uids: [1073741824],
+      userns: "other",
+      parents: [],
+      last_seen: "2026-10-31T00:59:00Z",
+      count: 1,
+      ...extra,
+    });
+    await writeFile(
+      join(dir, "status.json"),
+      JSON.stringify(
+        status({
+          findings: [
+            finding({
+              uid_class: "project-runtime",
+              unreadable: ["cgroup", "root"],
+            }),
+            // not a label, and names that aren't fact names: dropped
+            finding({
+              exe: "/usr/bin/other",
+              uid_class: "x".repeat(100),
+              unreadable: ["mntns", "../etc", 7, "A"],
+            }),
+            // an older watcher: neither field
+            finding({ exe: "/usr/bin/old" }),
+          ],
+        }),
+      ),
+    );
+    const result = await readHostIntegrity({
+      statusPath: join(dir, "status.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    const byExe = Object.fromEntries(result.findings!.map((f) => [f.exe, f]));
+    expect(byExe["/usr/bin/dash"].uid_class).toBe("project-runtime");
+    expect(byExe["/usr/bin/dash"].unreadable).toEqual(["cgroup", "root"]);
+    expect(byExe["/usr/bin/other"].uid_class).toBeUndefined();
+    expect(byExe["/usr/bin/other"].unreadable).toEqual(["mntns"]);
+    expect("uid_class" in byExe["/usr/bin/old"]).toBe(false);
+    expect("unreadable" in byExe["/usr/bin/old"]).toBe(false);
+  });
+
+  it("reports what the watcher checks, and nothing for watchers that predate it", async () => {
+    await writeFile(
+      join(dir, "status.json"),
+      JSON.stringify(
+        status({
+          runtime_uid_mode: "separate",
+          rule2: "partial",
+          rule3: {
+            state: "degraded",
+            marked: 42,
+            lost_events: 2,
+            malformed_records: 1,
+            unattributed: { "/usr/bin/a": 3, "/usr/bin/b": 1 },
+            truncated_mounts: ["/"],
+          },
+          ranges_state: "stale",
+          hardening: {
+            problems: {
+              "project-homes": { mode: 12 },
+              "data-root": { owner: 1 },
+            },
+          },
+        }),
+      ),
+    );
+    const result = await readHostIntegrity({
+      statusPath: join(dir, "status.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect(result.detection).toEqual({
+      runtime_uid_mode: "separate",
+      runtime_user_in_container: "partial",
+      exec_monitor: { state: "degraded", marked: 42, lost: 3, unattributed: 4 },
+      ranges_state: "stale",
+      layout_problems: 13,
+    });
+    // an older watcher's status: no detection block at all
+    await writeFile(join(dir, "old.json"), JSON.stringify(status()));
+    const old = await readHostIntegrity({
+      statusPath: join(dir, "old.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect("detection" in old).toBe(false);
+    // values that aren't labels are dropped, never passed on as text
+    await writeFile(
+      join(dir, "odd.json"),
+      JSON.stringify(
+        status({
+          runtime_uid_mode: "separate; rm -rf /",
+          rule3: { state: { nested: true } },
+        }),
+      ),
+    );
+    const odd = await readHostIntegrity({
+      statusPath: join(dir, "odd.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect(odd.detection?.runtime_uid_mode).toBeUndefined();
+    expect(odd.detection?.exec_monitor?.state).toBe("unknown");
+  });
 });

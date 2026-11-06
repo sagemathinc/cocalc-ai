@@ -12,7 +12,10 @@ lines, environment or file contents; this only trims and passes them on.
 
 import { readFile, stat } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
-import type { HostIntegrityStatus } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostIntegrityDetection,
+  HostIntegrityStatus,
+} from "@cocalc/conat/hub/api/hosts";
 
 const logger = getLogger("project-host:host-integrity");
 
@@ -34,6 +37,60 @@ function iso(value: unknown): string | undefined {
 }
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1 };
+const MAX_UNREADABLE = 8;
+
+// A short label from the watcher (a state, mode or class), or undefined.
+function word(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9:_ .-]{1,64}$/.test(value)
+    ? value
+    : undefined;
+}
+
+function total(value: unknown): number {
+  if (value == null || typeof value !== "object") return 0;
+  return Object.values(value).reduce<number>(
+    (sum, n) => sum + (Number(n) || 0),
+    0,
+  );
+}
+
+// What the watcher checks, from the fields newer watchers write; undefined
+// for older ones.
+function detection(raw: any): HostIntegrityDetection | undefined {
+  const keys = [
+    "runtime_uid_mode",
+    "rule2",
+    "rule3",
+    "ranges_state",
+    "hardening",
+  ];
+  if (!keys.some((key) => raw?.[key] != null)) return undefined;
+  const rule3 =
+    raw?.rule3 != null && typeof raw.rule3 === "object" ? raw.rule3 : undefined;
+  const problems = raw?.hardening?.problems;
+  return {
+    runtime_uid_mode: word(raw?.runtime_uid_mode),
+    runtime_user_in_container: word(raw?.rule2),
+    exec_monitor: rule3
+      ? {
+          state: word(rule3.state) ?? "unknown",
+          marked: Number(rule3.marked) || 0,
+          lost:
+            (Number(rule3.lost_events) || 0) +
+            (Number(rule3.malformed_records) || 0),
+          unattributed: total(rule3.unattributed),
+        }
+      : undefined,
+    ranges_state: word(raw?.ranges_state),
+    layout_problems:
+      problems != null && typeof problems === "object"
+        ? Object.values(problems as Record<string, unknown>).reduce<number>(
+            (sum, counts) => sum + total(counts),
+            0,
+          )
+        : undefined,
+  };
+}
 
 // Most severe, then newest first, so the caps keep what matters.
 function worstNewestFirst(items: unknown): any[] {
@@ -78,6 +135,7 @@ export async function readHostIntegrity({
   const changes = worstNewestFirst(raw?.config?.changes);
   const inventory =
     raw?.inventory && typeof raw.inventory === "object" ? raw.inventory : {};
+  const detected = detection(raw);
   return {
     watcher: stale ? "stale" : "running",
     observed_at: new Date(now).toISOString(),
@@ -97,6 +155,17 @@ export async function readHostIntegrity({
       first_seen: iso(f?.first_seen),
       last_seen: iso(f?.last_seen),
       count: Number(f?.count) || 0,
+      ...(word(f?.uid_class) ? { uid_class: word(f.uid_class) } : {}),
+      ...(Array.isArray(f?.unreadable)
+        ? {
+            unreadable: f.unreadable
+              .filter(
+                (name: unknown) =>
+                  typeof name === "string" && /^[a-z]{1,16}$/.test(name),
+              )
+              .slice(0, MAX_UNREADABLE),
+          }
+        : {}),
     })),
     finding_count: findings.length,
     config_changes: changes.slice(0, MAX_CONFIG_CHANGES).map((c: any) => ({
@@ -112,6 +181,7 @@ export async function readHostIntegrity({
         .sort((a, b) => b[1] - a[1])
         .slice(0, MAX_INVENTORY),
     ),
+    ...(detected ? { detection: detected } : {}),
     reboot_required_since,
   };
 }
