@@ -203,6 +203,26 @@ describe("SandboxedFilesystem with a rootfs agent", () => {
     ).rejects.toThrow();
   });
 
+  it("never starts the agent for a cross-project cp: its path checks refuse first (S1)", async () => {
+    // project-host's cp() resolves both sides with these before copying;
+    // the hub has authorized the caller for both projects before that.
+    const src = fs();
+    const dest = fs();
+    await expect(src.safeAbsPaths(["/etc/a", "b.txt"])).rejects.toThrow(
+      "are not available yet",
+    );
+    await expect(dest.safeAbsPath("/opt/b")).rejects.toThrow(
+      "are not available yet",
+    );
+    await expect(dest.resolveAnchoredPath("/opt/b")).rejects.toThrow(
+      "are not available yet",
+    );
+    expect(calls).toEqual([]);
+    // HOME on both sides still works, without the agent
+    expect(await src.safeAbsPaths(["b.txt"])).toHaveLength(1);
+    expect(calls).toEqual([]);
+  });
+
   it("keeps a read-only sandbox read-only", async () => {
     const sfs = fs({ readonly: true });
     await expect(sfs.writeFile("/etc/x", "y")).rejects.toThrow("read only");
