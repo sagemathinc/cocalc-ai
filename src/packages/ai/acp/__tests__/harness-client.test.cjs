@@ -263,40 +263,42 @@ test(
       credentialMode: "project-managed",
       executionPolicy: "full-access",
     };
-    const client = await AcpHarnessClient.start(
-      {
-        projectId: "qualification-project",
-        accountId: "qualification-account",
-        profile: probeProfile,
-      },
-      async ({ profile }) => {
-        const child = spawn(profile.executable, profile.args, {
-          cwd: profile.cwd,
-          env: {
-            HOME:
-              process.env.CLAUDE_AGENT_ACP_PROBE_HOME ??
-              "/tmp/cocalc-claude-agent-acp-probe",
-            PATH: process.env.PATH,
-            LANG: "C.UTF-8",
-          },
-          stdio: "pipe",
-        });
-        const closed = new Promise((resolve) => {
-          child.once("close", resolve);
-          child.once("error", resolve);
-        });
-        return {
-          stdin: child.stdin,
-          stdout: child.stdout,
-          stderr: child.stderr,
-          closed,
-          stop: async () => {
-            child.kill("SIGKILL");
-            await closed;
-          },
-        };
-      },
-    );
+    const start = (profile) =>
+      AcpHarnessClient.start(
+        {
+          projectId: "qualification-project",
+          accountId: "qualification-account",
+          profile,
+        },
+        async ({ profile }) => {
+          const child = spawn(claudeAgentAcpBin, ["--hide-claude-auth"], {
+            cwd: profile.cwd,
+            env: {
+              HOME:
+                process.env.CLAUDE_AGENT_ACP_PROBE_HOME ??
+                "/tmp/cocalc-claude-agent-acp-probe",
+              PATH: process.env.PATH,
+              LANG: "C.UTF-8",
+            },
+            stdio: "pipe",
+          });
+          const closed = new Promise((resolve) => {
+            child.once("close", resolve);
+            child.once("error", resolve);
+          });
+          return {
+            stdin: child.stdin,
+            stdout: child.stdout,
+            stderr: child.stderr,
+            closed,
+            stop: async () => {
+              child.kill("SIGKILL");
+              await closed;
+            },
+          };
+        },
+      );
+    const client = await start(probeProfile);
     t.after(() => client.dispose());
 
     const info = client.capabilities;
@@ -309,7 +311,28 @@ test(
     assert.deepEqual(info.authMethods, []);
     assert.equal(info.agentCapabilities.loadSession, true);
     assert.equal(info.agentCapabilities.promptCapabilities.image, true);
-    assert.deepEqual(info.agentCapabilities.sessionCapabilities.subagents, {});
+    // The adapter advertises its subagents capability only to a client that
+    // negotiates the AIR extension (claude-agent-acp dist/acp-agent.js,
+    // sessionCapabilities): this version 1 profile does not, a version 2
+    // Claude Code profile does.
+    assert.equal(
+      info.agentCapabilities.sessionCapabilities.subagents,
+      undefined,
+    );
+    const air = await start({
+      version: 2,
+      kind: "acp",
+      id: "claude-code",
+      revision: "0.93.0",
+      cwd: "/tmp",
+      credentialMode: "project-managed",
+      executionPolicy: "full-access",
+    });
+    t.after(() => air.dispose());
+    assert.deepEqual(
+      air.capabilities.agentCapabilities.sessionCapabilities.subagents,
+      {},
+    );
   },
 );
 
