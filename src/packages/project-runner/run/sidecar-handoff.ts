@@ -64,14 +64,19 @@ export interface Handoff {
 /** H1: the daemon-owned 0700 parent of every handed-over directory. */
 export async function handoffParent(root: string): Promise<string> {
   await mkdir(root, { recursive: true, mode: 0o700 });
+  // Checked before chmod, which would follow a symlink in its place.
+  const before = await lstat(root);
+  if (!before.isDirectory()) {
+    throw new Error("the handoff parent is not a directory");
+  }
+  if (process.getuid && before.uid !== process.getuid()) {
+    throw new Error("the handoff parent is not the daemon's own");
+  }
   // mkdir doesn't change an existing directory's mode
   await chmod(root, 0o700);
   const st = await lstat(root);
   if (!st.isDirectory() || (st.mode & 0o777) !== 0o700) {
     throw new Error("the handoff parent is not a 0700 directory");
-  }
-  if (process.getuid && st.uid !== process.getuid()) {
-    throw new Error("the handoff parent is not the daemon's own");
   }
   return root;
 }

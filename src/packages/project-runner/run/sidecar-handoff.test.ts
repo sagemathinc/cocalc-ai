@@ -54,10 +54,14 @@ describe("sidecar handoff", () => {
     // an existing parent with a looser mode is tightened
     await handoffParent(parent);
     expect((await stat(parent)).mode & 0o777).toBe(0o700);
-    // a symlink in its place is refused
+    // a symlink in its place is refused, and its target's mode untouched
+    const target = join(root, "target");
+    await mkdir(target, { mode: 0o755 });
+    await chmod(target, 0o755);
     const link = join(root, "link");
-    await symlink(parent, link);
-    await expect(handoffParent(link)).rejects.toThrow();
+    await symlink(target, link);
+    await expect(handoffParent(link)).rejects.toThrow("not a directory");
+    expect((await stat(target)).mode & 0o777).toBe(0o755);
   });
 
   it("chowns exactly the recorded paths, one at a time, never recursively or through a symlink (H2)", async () => {

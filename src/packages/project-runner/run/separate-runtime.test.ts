@@ -94,6 +94,8 @@ describe("separate runtime holders", () => {
         events.push("mount-rootfs");
       }
       if (args.includes("umount-overlay-project")) {
+        // every attempt counts, also one that finds nothing to unmount
+        events.push("umount-attempt");
         // like the helper
         if (!mounted.has(args.at(-1)!)) throw new Error("not mounted");
         if (failUmount) throw new Error("target is busy");
@@ -143,11 +145,16 @@ describe("separate runtime holders", () => {
     expect(events).toHaveLength(3);
     expect([...mounted]).toEqual([IDMAPPED]);
     await sandbox.release();
-    expect(events.slice(3)).toEqual(["umount-rootfs", "umount-views"]);
+    expect(events.slice(3)).toEqual([
+      "umount-attempt",
+      "umount-rootfs",
+      "umount-views",
+    ]);
     expect(rootfs.separateRuntimeHolders(PROJECT)).toEqual({});
-    // its lease's delayed disposal finds nothing to do
+    // its lease's delayed disposal finds nothing to do: not even an attempt
     await sleep(3 * DELAY_MS);
     expect(events.filter((e) => e === "umount-rootfs")).toHaveLength(1);
+    expect(events.filter((e) => e === "umount-attempt")).toHaveLength(1);
     // releasing twice is a no-op
     await sandbox.release();
   });
@@ -169,6 +176,7 @@ describe("separate runtime holders", () => {
       "mount-rootfs",
       "mount-view home",
       "mount-view scratch",
+      "umount-attempt",
       "umount-rootfs",
       "umount-views",
     ]);
@@ -195,6 +203,16 @@ describe("separate runtime holders", () => {
     expect(events.filter((e) => e === "mount-view home")).toHaveLength(1);
     await b.release();
     await a.release();
+  });
+
+  it("refuses a new holder while the project's runtime is being stopped (R-d)", async () => {
+    const rootfs = await import("./rootfs");
+    rootfs.closeSeparateRuntime(PROJECT);
+    await expect(acquire("sandbox")).rejects.toThrow("being stopped");
+    expect(events).toEqual([]);
+    rootfs.reopenSeparateRuntime(PROJECT);
+    const holder = await acquire("sandbox");
+    await holder.release();
   });
 
   it("gives the lease back when a view can't be mounted, counting nothing", async () => {
