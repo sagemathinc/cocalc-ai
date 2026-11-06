@@ -21,7 +21,7 @@ describe("rootfs agent frames", () => {
   it("decodes JSON and chunk frames, however the stream is split", () => {
     const stream = Buffer.concat([
       encodeJsonFrame({ id: 1, ok: true }),
-      encodeChunkFrame(Buffer.from("abc")),
+      encodeChunkFrame(1, Buffer.from("abc")),
       encodeJsonFrame({ id: 2 }),
     ]);
     for (let cut = 0; cut <= stream.length; cut++) {
@@ -33,7 +33,7 @@ describe("rootfs agent frames", () => {
       decoder.end();
       expect(frames).toEqual([
         { type: FRAME_JSON, value: { id: 1, ok: true } },
-        { type: FRAME_CHUNK, data: Buffer.from("abc") },
+        { type: FRAME_CHUNK, id: 1, data: Buffer.from("abc") },
         { type: FRAME_JSON, value: { id: 2 } },
       ]);
     }
@@ -79,6 +79,14 @@ describe("rootfs agent frames", () => {
     expect(() => partialBody.end()).toThrow("stream ended inside a frame");
   });
 
+  it("refuses a chunk without a request id", () => {
+    expect(() =>
+      new FrameDecoder().push(
+        Buffer.concat([header(3, FRAME_CHUNK), Buffer.from("ab")]),
+      ),
+    ).toThrow("chunk without a request id");
+  });
+
   it("stays failed after an error", () => {
     const decoder = new FrameDecoder();
     expect(() => decoder.push(header(0))).toThrow(ProtocolError);
@@ -89,7 +97,7 @@ describe("rootfs agent frames", () => {
   });
 
   it("won't encode a frame beyond the bound", () => {
-    expect(() => encodeChunkFrame(Buffer.alloc(16 * 1024 * 1024))).toThrow(
+    expect(() => encodeChunkFrame(1, Buffer.alloc(16 * 1024 * 1024))).toThrow(
       "too large",
     );
   });

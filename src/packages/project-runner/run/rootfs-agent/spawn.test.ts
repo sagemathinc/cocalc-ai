@@ -113,6 +113,22 @@ describe("rootfs agent spawn args", () => {
     });
   }
 
+  it("refuses NODE_OPTIONS, NODE_PATH or any other node variable in the environment (E2)", () => {
+    for (const entry of [
+      "NODE_OPTIONS=--require=/home/user/x.js",
+      "NODE_PATH=/home/user",
+      "NODE_EXTRA_CA_CERTS=/x",
+      "LD_PRELOAD=/home/user/x.so",
+    ]) {
+      const args = good();
+      const at = args.indexOf("--env");
+      args.splice(at, 0, "--env", entry);
+      expect(() => checkAgentExecArgs(args, opts)).toThrow(
+        "refusing to start the rootfs agent",
+      );
+    }
+  });
+
   it("refuses a container name, a bad token or a relative node path", () => {
     for (const bad of [
       { containerId: "project-1" },

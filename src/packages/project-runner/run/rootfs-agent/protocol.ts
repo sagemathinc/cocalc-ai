@@ -13,7 +13,8 @@ the host side treats every byte it sends as hostile, and this module is
 where that starts:
 
 - a frame is a 4-byte big-endian length, then that many bytes: one type
-  byte (JSON or a binary chunk) and the payload;
+  byte (JSON or a binary chunk) and the payload; a chunk's payload starts
+  with the 4-byte id of the request it belongs to;
 - the decoder bounds the frame size and the bytes it buffers, and rejects
   an unknown type, malformed JSON and a partial frame at the end;
 - replies must answer a request that is outstanding, exactly once.
@@ -38,14 +39,16 @@ export class ProtocolError extends Error {
 
 export type Frame =
   | { type: typeof FRAME_JSON; value: unknown }
-  | { type: typeof FRAME_CHUNK; data: Buffer };
+  | { type: typeof FRAME_CHUNK; id: number; data: Buffer };
 
 export function encodeJsonFrame(value: unknown): Buffer {
   return encode(FRAME_JSON, Buffer.from(JSON.stringify(value), "utf8"));
 }
 
-export function encodeChunkFrame(data: Buffer): Buffer {
-  return encode(FRAME_CHUNK, data);
+export function encodeChunkFrame(id: number, data: Buffer): Buffer {
+  const prefix = Buffer.alloc(4);
+  prefix.writeUInt32BE(id, 0);
+  return encode(FRAME_CHUNK, Buffer.concat([prefix, data]));
 }
 
 function encode(type: number, payload: Buffer): Buffer {
@@ -120,7 +123,13 @@ function decodeFrame(body: Buffer): Frame {
   const type = body.readUInt8(0);
   const payload = body.subarray(1);
   if (type === FRAME_CHUNK) {
-    return { type, data: Buffer.from(payload) };
+    if (payload.length < 4)
+      throw new ProtocolError("chunk without a request id");
+    return {
+      type,
+      id: payload.readUInt32BE(0),
+      data: Buffer.from(payload.subarray(4)),
+    };
   }
   if (type !== FRAME_JSON) {
     throw new ProtocolError(`unknown frame type ${type}`);
