@@ -357,6 +357,44 @@ async function downloadToFile(url: string, dest: string) {
   }
 }
 
+// Archives are only a step toward an extracted version directory, so each is
+// removed once extracted. Ones left by a crashed or interrupted install (or
+// by versions that kept every archive) are swept here; the age threshold
+// spares a download another artifact's install is writing right now.
+const STALE_DOWNLOAD_MS = 6 * 3600_000;
+
+async function removeStaleDownloads(
+  root: string,
+  now = Date.now(),
+): Promise<number> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(root, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".tar.xz")) continue;
+    const file = path.join(root, entry.name);
+    try {
+      const stat = await fs.promises.stat(file);
+      if (now - stat.mtimeMs < STALE_DOWNLOAD_MS) continue;
+      await fs.promises.unlink(file);
+      removed += 1;
+    } catch {
+      // gone already, or not ours to remove
+    }
+  }
+  if (removed) {
+    logger.info("upgrade: removed stale downloaded archives", {
+      root,
+      removed,
+    });
+  }
+  return removed;
+}
+
 async function sha256File(filePath: string): Promise<string> {
   return await new Promise((resolve, reject) => {
     const hash = crypto.createHash("sha256");
@@ -1409,69 +1447,75 @@ async function downloadAndInstallUnlocked(
     });
   } else {
     const downloadsRoot = resolveDownloadsRoot();
+    await removeStaleDownloads(downloadsRoot);
     const archivePath = path.join(
       downloadsRoot,
       `${resolved.canonicalArtifact}-${resolved.version}.tar.xz`,
     );
-    logger.info("upgrade: downloading artifact", {
-      artifact: resolved.artifact,
-      version: resolved.version,
-      url: resolved.url,
-    });
-    await downloadToFile(resolved.url, archivePath);
-    logger.info("upgrade: downloaded artifact", {
-      artifact: resolved.artifact,
-      version: resolved.version,
-      archive: archivePath,
-    });
-    if (resolved.sha256) {
-      const actual = await sha256File(archivePath);
-      if (actual !== resolved.sha256) {
-        throw new Error(
-          `sha256 mismatch for ${resolved.artifact} (${resolved.version})`,
-        );
-      }
-      logger.info("upgrade: checksum ok", {
-        artifact: resolved.artifact,
-        version: resolved.version,
-      });
-    }
-    const versionParent = path.dirname(resolved.versionDir);
-    await ensureWritableDir(versionParent);
-    const stagingDir = path.join(
-      versionParent,
-      `.${path.basename(resolved.versionDir)}.extract-${process.pid}-${crypto.randomUUID()}`,
-    );
-    let promoted = false;
-    await ensureWritableDir(stagingDir);
     try {
-      logger.info("upgrade: extracting artifact", {
+      logger.info("upgrade: downloading artifact", {
         artifact: resolved.artifact,
         version: resolved.version,
-        stripComponents: resolved.stripComponents,
-        dir: stagingDir,
+        url: resolved.url,
       });
-      await runTar([
-        "-xJf",
-        archivePath,
-        `--strip-components=${resolved.stripComponents}`,
-        "-C",
-        stagingDir,
-      ]);
-      if (await installedVersionDirExists(resolved.versionDir)) {
-        logger.info("upgrade: another installer promoted artifact version", {
+      await downloadToFile(resolved.url, archivePath);
+      logger.info("upgrade: downloaded artifact", {
+        artifact: resolved.artifact,
+        version: resolved.version,
+        archive: archivePath,
+      });
+      if (resolved.sha256) {
+        const actual = await sha256File(archivePath);
+        if (actual !== resolved.sha256) {
+          throw new Error(
+            `sha256 mismatch for ${resolved.artifact} (${resolved.version})`,
+          );
+        }
+        logger.info("upgrade: checksum ok", {
           artifact: resolved.artifact,
           version: resolved.version,
-          dir: resolved.versionDir,
         });
-      } else {
-        await fs.promises.rename(stagingDir, resolved.versionDir);
-        promoted = true;
+      }
+      const versionParent = path.dirname(resolved.versionDir);
+      await ensureWritableDir(versionParent);
+      const stagingDir = path.join(
+        versionParent,
+        `.${path.basename(resolved.versionDir)}.extract-${process.pid}-${crypto.randomUUID()}`,
+      );
+      let promoted = false;
+      await ensureWritableDir(stagingDir);
+      try {
+        logger.info("upgrade: extracting artifact", {
+          artifact: resolved.artifact,
+          version: resolved.version,
+          stripComponents: resolved.stripComponents,
+          dir: stagingDir,
+        });
+        await runTar([
+          "-xJf",
+          archivePath,
+          `--strip-components=${resolved.stripComponents}`,
+          "-C",
+          stagingDir,
+        ]);
+        if (await installedVersionDirExists(resolved.versionDir)) {
+          logger.info("upgrade: another installer promoted artifact version", {
+            artifact: resolved.artifact,
+            version: resolved.version,
+            dir: resolved.versionDir,
+          });
+        } else {
+          await fs.promises.rename(stagingDir, resolved.versionDir);
+          promoted = true;
+        }
+      } finally {
+        if (!promoted) {
+          await safeRemove(stagingDir).catch(() => undefined);
+        }
       }
     } finally {
-      if (!promoted) {
-        await safeRemove(stagingDir).catch(() => undefined);
-      }
+      // Extracted (or failed): a retry downloads it again.
+      await fs.promises.rm(archivePath, { force: true }).catch(() => undefined);
     }
   }
   logger.info("upgrade: artifact version ready", {
@@ -1870,6 +1914,7 @@ export const __test__ = {
   listLivePodmanMountedArtifactVersions,
   pruneVersionDirs,
   protectedArtifactVersions,
+  removeStaleDownloads,
   referencedToolsVersions,
   withArtifactInstallLock,
   withToolsFilesystemLock,
