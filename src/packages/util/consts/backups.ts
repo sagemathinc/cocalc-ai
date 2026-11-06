@@ -4,12 +4,13 @@ export const BACKUPS = ".backups";
 
 // Files whose apparent size exceeds the backup limit are not backed up, so
 // they are also left out of moves, archives, and cross-host copies, which
-// restore from backups. Sparse files make apparent size unrelated to disk use,
-// and backing one up reads every hole. A dense file cannot exceed the disk
-// quota, so the quota-based limit only affects sparse or compressed files.
-// Restores are dense, so a larger file could not be restored within the quota
-// anyway. The privileged backup helper enforces the same clamp on whatever it
-// is sent.
+// restore from backups. Sparse files make apparent size unrelated to disk use.
+// A dense file cannot exceed the disk quota, so the quota-based limit only
+// affects sparse or compressed files. It is what callers ask for; the
+// privileged backup helper enforces the same clamp, and with a hole-aware
+// rustic (one that reads no holes and restores sparse files sparsely) it
+// applies the ceiling instead, which only bounds the backup's metadata. The
+// report of skipped files carries the limit that was actually applied.
 export const BACKUP_MAX_FILE_QUOTA_MULTIPLE = 1;
 export const BACKUP_MIN_MAX_FILE_BYTES = 1000 ** 3;
 export const BACKUP_DEFAULT_MAX_FILE_BYTES = 100 * 1000 ** 3;
