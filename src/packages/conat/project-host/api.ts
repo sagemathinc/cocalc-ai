@@ -990,8 +990,11 @@ export interface HostControlApi {
   querySqlite: (
     opts: HostSqliteQueryRequest,
   ) => Promise<HostSqliteQueryResponse>;
+  // With a project_id, `profile` reports the project's cached backup profile:
+  // removed, absent (none existed) or failed. Older hosts omit it.
   invalidateBackupConfig: (opts?: { project_id?: string }) => Promise<{
     ok: true;
+    profile?: "removed" | "absent" | "failed";
   }>;
   getManagedComponentStatus: () => Promise<HostManagedComponentStatus[]>;
   getInstalledRuntimeArtifacts: (

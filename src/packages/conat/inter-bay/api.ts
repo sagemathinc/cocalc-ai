@@ -2646,6 +2646,7 @@ export type HostConnectionMethod =
   | "get-project-owner-effective-limits"
   | "get-account-effective-limits"
   | "get-seed-backup-config"
+  | "get-seed-backup-config-for-deletion"
   | "resolve-seed-backup-repo-assignment"
   | "release-seed-backup-repo-assignment"
   | "release-seed-project-app-public-subdomains"
@@ -3355,6 +3356,23 @@ export interface InterBayHostConnectionApi {
       compression: "gzip";
     } | null;
   }>;
+  // For an attached bay's hard delete: the configuration to delete a
+  // deleted project's backups from one of the seed's repositories. Never
+  // assigns a repository. `empty` says why the toml is empty.
+  getSeedBackupConfigForDeletion: (opts: {
+    project_id: string;
+    backup_repo_id: string;
+    source_bay_id: string;
+  }) => Promise<{
+    toml: string;
+    empty?:
+      | "no_backup_repo"
+      | "local_config_missing"
+      | "repo_missing"
+      | "bucket_missing"
+      | "credentials_missing"
+      | "seed_config_unavailable";
+  }>;
   resolveSeedBackupRepoAssignment: (opts: {
     project_id: string;
     project_region?: string | null;
@@ -3451,6 +3469,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getSeedBackupConfig",
     method: "get-seed-backup-config",
+  },
+  {
+    name: "getSeedBackupConfigForDeletion",
+    method: "get-seed-backup-config-for-deletion",
   },
   {
     name: "resolveSeedBackupRepoAssignment",

@@ -50,6 +50,7 @@ import {
   invalidateBackupConfig,
   releaseProjectArchiveFreeze,
 } from "./file-server";
+import { invalidateBackupConfigReply } from "./backup-profile";
 import { getHostIntegrity, refreshHostIntegrity } from "./host-integrity";
 import { getInstalledRuntimeArtifacts, getSoftwareVersions } from "./software";
 import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
@@ -2052,8 +2053,9 @@ export async function startMasterRegistration({
       return querySqlite(opts);
     },
     async invalidateBackupConfig({ project_id } = {}) {
-      await invalidateBackupConfig(project_id);
-      return { ok: true };
+      return invalidateBackupConfigReply(
+        await invalidateBackupConfig(project_id),
+      );
     },
     async getManagedComponentStatus() {
       return getManagedComponentStatus();

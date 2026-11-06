@@ -1754,6 +1754,26 @@ export async function deleteProjectDataOnHost({
   await client.deleteProjectData({ project_id });
 }
 
+// Remove a project's cached backup profile on its host. Returns the host's
+// checked result (removed, absent or failed); an older host answers without
+// one, which callers must not read as removed.
+export async function invalidateProjectBackupConfigOnHostChecked({
+  project_id,
+  host_id,
+  timeout = 15_000,
+}: {
+  project_id: string;
+  host_id: string;
+  timeout?: number;
+}): Promise<{ profile?: "removed" | "absent" | "failed" }> {
+  const client = await getRoutedHostControlClient({ host_id, timeout });
+  const result: any = await client.invalidateBackupConfig({ project_id });
+  const profile = result?.profile;
+  return profile === "removed" || profile === "absent" || profile === "failed"
+    ? { profile }
+    : {};
+}
+
 export async function deleteProjectDataOnHostAfterBackup({
   project_id,
   host_id,

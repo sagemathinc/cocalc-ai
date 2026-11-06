@@ -1091,38 +1091,35 @@ async function releaseProjectBackupRepoAssignmentLocal({
   }
 }
 
+// Records a project's backup repository. It never clears one: a recorded
+// repository is what keeps a later "no_backup_repo" deletion record true (see
+// getDeletedProjectBackupConfigForDeletion), so clearing is only the explicit
+// clear_local_backup_repo_id option of releaseProjectBackupRepoAssignment.
 export async function setProjectBackupRepoId({
   project_id,
   backup_repo_id,
 }: {
   project_id: string;
-  backup_repo_id: string | null;
+  backup_repo_id: string;
 }): Promise<void> {
   if (!project_id || !isValidUUID(project_id)) {
     throw new Error("invalid project_id");
   }
-  if (backup_repo_id && !isValidUUID(backup_repo_id)) {
+  if (!backup_repo_id || !isValidUUID(backup_repo_id)) {
     throw new Error("invalid backup_repo_id");
   }
   await ensureProjectBackupRepoSchema();
-  if (backup_repo_id) {
-    const repo = await loadProjectBackupRepoById(backup_repo_id);
-    if (repo) {
-      await pool().query(
-        `INSERT INTO project_backup_repo_assignments
-          (project_id, region, backup_repo_id, created, updated)
-         VALUES ($1,$2,$3,NOW(),NOW())
-         ON CONFLICT (project_id) DO UPDATE SET
-           region = EXCLUDED.region,
-           backup_repo_id = EXCLUDED.backup_repo_id,
-           updated = NOW()`,
-        [project_id, normalizeBackupRegion(repo.region), backup_repo_id],
-      );
-    }
-  } else {
+  const repo = await loadProjectBackupRepoById(backup_repo_id);
+  if (repo) {
     await pool().query(
-      "DELETE FROM project_backup_repo_assignments WHERE project_id=$1",
-      [project_id],
+      `INSERT INTO project_backup_repo_assignments
+        (project_id, region, backup_repo_id, created, updated)
+       VALUES ($1,$2,$3,NOW(),NOW())
+       ON CONFLICT (project_id) DO UPDATE SET
+         region = EXCLUDED.region,
+         backup_repo_id = EXCLUDED.backup_repo_id,
+         updated = NOW()`,
+      [project_id, normalizeBackupRegion(repo.region), backup_repo_id],
     );
   }
   await pool().query(
@@ -1164,10 +1161,14 @@ export async function resolveProjectBackupRepoAssignment({
         backup_repo_id,
         preferred_backup_repo_id,
       });
-    await pool().query(
-      "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1 AND backup_repo_id IS DISTINCT FROM $2",
-      [project_id, result.backup_repo_id],
-    );
+    // Only ever records a repository: a seed with none to offer must not
+    // clear the one this project already has.
+    if (result.backup_repo_id) {
+      await pool().query(
+        "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1 AND backup_repo_id IS DISTINCT FROM $2",
+        [project_id, result.backup_repo_id],
+      );
+    }
     return result;
   }
   const assigned = await selectProjectBackupRepoForAssignmentLocal({
@@ -2218,7 +2219,7 @@ export async function getProjectBackupConfigForDeletion({
   project_id,
 }: {
   project_id: string;
-}): Promise<{ toml: string }> {
+}): Promise<DeletionBackupConfig> {
   if (!project_id || !isValidUUID(project_id)) {
     throw new Error("invalid project_id");
   }
@@ -2239,6 +2240,29 @@ export async function getProjectBackupConfigForDeletion({
   });
 }
 
+// Why a backup configuration for deleting a project's backups came back
+// empty. Only "no_backup_repo" means there is nothing to delete: a host is
+// handed a backup configuration for a project only after the project's
+// backup_repo_id is recorded (except on self-host-local hosts, see below), so
+// no recorded repository means no host ever had one. Every other reason is a
+// configuration that cannot be built now, for backups that may exist.
+export const DELETION_BACKUP_CONFIG_EMPTY = [
+  "no_backup_repo",
+  "local_config_missing",
+  "repo_missing",
+  "bucket_missing",
+  "credentials_missing",
+  "seed_config_unavailable",
+] as const;
+export type DeletionBackupConfigEmpty =
+  (typeof DELETION_BACKUP_CONFIG_EMPTY)[number];
+
+export type DeletionBackupConfig = {
+  toml: string;
+  // set if and only if toml is empty
+  empty?: DeletionBackupConfigEmpty;
+};
+
 export async function getDeletedProjectBackupConfigForDeletion({
   project_id,
   host_id,
@@ -2247,7 +2271,7 @@ export async function getDeletedProjectBackupConfigForDeletion({
   project_id: string;
   host_id?: string | null;
   backup_repo_id?: string | null;
-}): Promise<{ toml: string }> {
+}): Promise<DeletionBackupConfig> {
   if (!project_id || !isValidUUID(project_id)) {
     throw new Error("invalid project_id");
   }
@@ -2263,19 +2287,84 @@ export async function getDeletedProjectBackupConfigForDeletion({
       if (config.toml.trim()) {
         return { toml: config.toml };
       }
+      // A self-host-local host gets its projects' backup configuration from
+      // the local builder, without recording a backup_repo_id, so an empty one
+      // now says nothing about whether the project had backups.
+      if (!backup_repo_id) {
+        return { toml: "", empty: "local_config_missing" };
+      }
     }
   }
 
   if (!backup_repo_id) {
-    return { toml: "" };
+    return { toml: "", empty: "no_backup_repo" };
   }
+  if (shouldUseSeedManagedProjectBackups()) {
+    // An attached bay has no repository or bucket rows: they are the seed's.
+    return await getSeedManagedDeletionBackupConfig({
+      project_id,
+      backup_repo_id,
+    });
+  }
+  return await buildDeletionBackupConfigFromRepoId(backup_repo_id);
+}
+
+async function getSeedManagedDeletionBackupConfig({
+  project_id,
+  backup_repo_id,
+}: {
+  project_id: string;
+  backup_repo_id: string;
+}): Promise<DeletionBackupConfig> {
+  try {
+    const cluster = getClusterConfig();
+    const { getInterBayBridge } =
+      await import("@cocalc/server/inter-bay/bridge");
+    const config = await getInterBayBridge()
+      .hostConnection(cluster.seed_bay_id, { timeout_ms: 30_000 })
+      .getSeedBackupConfigForDeletion({
+        project_id,
+        backup_repo_id,
+        source_bay_id: getConfiguredBayId(),
+      });
+    if (typeof config?.toml === "string" && config.toml.trim()) {
+      return { toml: config.toml };
+    }
+    // The seed has the repository id we sent, so "no repository" can't be its
+    // answer; anything unexpected fails closed.
+    const empty = config?.empty;
+    return {
+      toml: "",
+      empty:
+        empty != null &&
+        empty !== "no_backup_repo" &&
+        (DELETION_BACKUP_CONFIG_EMPTY as readonly string[]).includes(empty)
+          ? empty
+          : "repo_missing",
+    };
+  } catch (err) {
+    // An older seed without the method, or any failure: retried later.
+    logger.warn("seed deletion backup config unavailable", {
+      project_id,
+      backup_repo_id,
+      err: `${err}`,
+    });
+    return { toml: "", empty: "seed_config_unavailable" };
+  }
+}
+
+// The deletion configuration of an existing repository of this bay, built
+// from its repository and bucket rows. It never assigns a repository.
+async function buildDeletionBackupConfigFromRepoId(
+  backup_repo_id: string,
+): Promise<DeletionBackupConfig> {
   const repo = await loadProjectBackupRepoById(backup_repo_id);
   if (!repo?.bucket_id || !repo.root) {
-    return { toml: "" };
+    return { toml: "", empty: "repo_missing" };
   }
   const bucket = await loadBucketById(repo.bucket_id);
   if (!bucket) {
-    return { toml: "" };
+    return { toml: "", empty: "bucket_missing" };
   }
   const accountId =
     (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
@@ -2287,7 +2376,7 @@ export async function getDeletedProjectBackupConfigForDeletion({
     (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined) ??
     bucket.endpoint;
   if (!accountId || !accessKey || !secretKey || !endpoint) {
-    return { toml: "" };
+    return { toml: "", empty: "credentials_missing" };
   }
   return {
     toml: buildS3ProjectBackupToml({
@@ -2299,6 +2388,40 @@ export async function getDeletedProjectBackupConfigForDeletion({
       root: repo.root,
     }),
   };
+}
+
+// On the seed bay, for an attached bay's hard delete: the configuration to
+// delete a deleted project's backups from one of the seed's repositories.
+//
+// It deliberately does NOT check that the project is assigned to the
+// repository: hard delete releases the seed's assignment before a scheduled
+// purge runs, days later, so such a check would fail every scheduled
+// attached-bay purge. The repository must exist here; nothing is assigned.
+export async function getSeedProjectBackupConfigForDeletion({
+  project_id,
+  backup_repo_id,
+  source_bay_id,
+}: {
+  project_id: string;
+  backup_repo_id: string;
+  source_bay_id: string;
+}): Promise<DeletionBackupConfig> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (!backup_repo_id || !isValidUUID(backup_repo_id)) {
+    throw new Error("invalid backup_repo_id");
+  }
+  if (typeof source_bay_id !== "string" || !source_bay_id.trim()) {
+    throw new Error("source_bay_id is required");
+  }
+  // Ids only: never the configuration, which holds the repository's keys.
+  logger.info("seed deletion backup config requested", {
+    source_bay_id,
+    project_id,
+    backup_repo_id,
+  });
+  return await buildDeletionBackupConfigFromRepoId(backup_repo_id);
 }
 
 export async function getProjectBackupInfrastructureStatus({
