@@ -39,3 +39,32 @@ test("Claude access options and security model are public and searchable in both
     );
   }
 });
+
+test("the page on Claude subscriptions in the project states the code's limits, not more", () => {
+  const entry = getDocsEntry("ai/claude-subscription-in-project");
+  assert.ok(entry);
+  // the figures the code has: 15 min relay idle, 10 min agent disposal
+  assert.match(entry.body, /15 minutes without a request/);
+  assert.match(entry.body, /by default 10 minutes after\s+your last turn/);
+  assert.match(entry.body, /new relay token/);
+  // what it must never claim
+  assert.doesNotMatch(entry.body, /invalidated/i);
+  assert.doesNotMatch(
+    entry.body,
+    /every turn gets a new|new token every turn/i,
+  );
+  // the collaborator warning, as approved
+  assert.match(entry.body, /CoCalc cannot protect you from a\s+collaborator/);
+  assert.match(entry.body, /violates Anthropic's terms of service/);
+  // unverified items stay marked as such
+  assert.match(entry.body, /Not yet confirmed in a live session/);
+  assert.ok(
+    searchDocsEntries("Claude subscription collaborators relay token").some(
+      (r) => r.id === entry.id,
+    ),
+  );
+  assert.match(
+    getDocsEntry("ai/claude-code").body,
+    /\/docs\/ai\/claude-subscription-in-project/,
+  );
+});
