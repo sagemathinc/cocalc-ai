@@ -12,7 +12,10 @@
 // the conditions show in admin health and the bay log only.
 
 import getLogger from "@cocalc/backend/logger";
-import type { HostIntegrityStatus } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostIntegrityDetection,
+  HostIntegrityStatus,
+} from "@cocalc/conat/hub/api/hosts";
 import type { LaunchHealthLevel } from "@cocalc/conat/hub/api/system";
 import getPool, { withSessionAdvisoryLock } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -309,9 +312,26 @@ function execMonitorCondition(
   };
 }
 
-// The watcher's own checks that have a condition of their own above; their
-// findings would only repeat it under process placement.
-const DETECTION_FINDING_PREFIXES = ["subuid-ranges-", "exec-monitor-"];
+// The watcher's own checks that have a condition of their own above, each
+// with the detection field that condition reads: their findings would only
+// repeat it under process placement. Without that field they stay there.
+const DETECTION_FINDINGS: [string, (d: HostIntegrityDetection) => unknown][] = [
+  // only when that condition is raised from it: ranges not ok, an exec
+  // monitor that runs but isn't available
+  [
+    "subuid-ranges-",
+    (d) =>
+      d.ranges_state && d.ranges_state !== "ok" ? d.ranges_state : undefined,
+  ],
+  [
+    "exec-monitor-",
+    (d) =>
+      d.exec_monitor &&
+      !["available", "starting", "off"].includes(d.exec_monitor.state)
+        ? d.exec_monitor
+        : undefined,
+  ],
+];
 
 function describeFinding(
   f: HostIntegrityStatus["findings"] extends (infer F)[] | undefined
@@ -494,10 +514,15 @@ export function summarizeHostIntegrity(
     // project data layout findings have their own condition
     const layout = seen.filter((f) => f.rule.startsWith("hardening-"));
     // the watcher's own checks are reported by their own conditions, but
-    // only when it says what they found (an older watcher keeps them here)
+    // only when the status carries the field that condition reads (an older
+    // or partial status keeps them here)
+    const detected = integrity.detection;
     const covered = (f: (typeof seen)[number]) =>
-      integrity.detection != null &&
-      DETECTION_FINDING_PREFIXES.some((prefix) => f.rule.startsWith(prefix));
+      detected != null &&
+      DETECTION_FINDINGS.some(
+        ([prefix, field]) =>
+          f.rule.startsWith(prefix) && field(detected) != null,
+      );
     const recent = seen.filter(
       (f) => !f.rule.startsWith("hardening-") && !covered(f),
     );

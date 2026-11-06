@@ -1258,7 +1258,16 @@ describe("the watcher's own findings", () => {
     const summary = summarizeHostIntegrity(
       [
         host("a", {
-          detection: { runtime_uid_mode: "keep-id", ranges_state: "stale" },
+          detection: {
+            runtime_uid_mode: "keep-id",
+            ranges_state: "stale",
+            exec_monitor: {
+              state: "degraded",
+              marked: 1,
+              lost: 1,
+              unattributed: 0,
+            },
+          },
           findings: [
             own("subuid-ranges-stale"),
             own("exec-monitor-degraded"),
@@ -1275,9 +1284,78 @@ describe("the watcher's own findings", () => {
       "project-uid-outside-container",
     );
     expect(summary.conditions.map((c) => c.kind).sort()).toEqual([
+      "exec-monitor",
       "processes",
       "ranges",
     ]);
+  });
+
+  it("keeps each one when the status lacks the field its condition reads", () => {
+    // ranges reported, the exec monitor not: the exec finding stays
+    const noExec = summarizeHostIntegrity(
+      [
+        host("a", {
+          detection: { runtime_uid_mode: "keep-id", ranges_state: "stale" },
+          findings: [own("subuid-ranges-stale"), own("exec-monitor-degraded")],
+        }),
+      ],
+      NOW,
+    );
+    const p1 = noExec.conditions.find((c) => c.kind === "processes")!;
+    expect(p1.facts.join("\n")).toContain("exec-monitor-degraded");
+    expect(p1.facts.join("\n")).not.toContain("subuid-ranges-stale");
+    // the exec monitor reported, the ranges not (absent, or rejected as a
+    // label): the ranges finding stays
+    for (const ranges_state of [undefined, "ok"]) {
+      const noRanges = summarizeHostIntegrity(
+        [
+          host("a", {
+            detection: {
+              runtime_uid_mode: "keep-id",
+              ranges_state,
+              exec_monitor: {
+                state: "degraded",
+                marked: 1,
+                lost: 1,
+                unattributed: 0,
+              },
+            },
+            findings: [
+              own("subuid-ranges-stale"),
+              own("exec-monitor-degraded"),
+            ],
+          }),
+        ],
+        NOW,
+      );
+      expect(noRanges.conditions.map((c) => c.kind).sort()).toEqual([
+        "exec-monitor",
+        "processes",
+      ]);
+      const p2 = noRanges.conditions.find((c) => c.kind === "processes")!;
+      expect(p2.facts.join("\n")).toContain("subuid-ranges-stale");
+      expect(p2.facts.join("\n")).not.toContain("exec-monitor-degraded");
+    }
+    // an exec monitor reported available, with a degraded finding left over:
+    // the finding stays, since no condition reports it
+    const available = summarizeHostIntegrity(
+      [
+        host("a", {
+          detection: {
+            runtime_uid_mode: "keep-id",
+            exec_monitor: {
+              state: "available",
+              marked: 1,
+              lost: 0,
+              unattributed: 0,
+            },
+          },
+          findings: [own("exec-monitor-degraded")],
+        }),
+      ],
+      NOW,
+    );
+    expect(available.conditions.map((c) => c.kind)).toEqual(["processes"]);
   });
 
   it("keeps them for an older status without a detection block", () => {

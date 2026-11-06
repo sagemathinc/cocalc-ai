@@ -410,6 +410,31 @@ describe("host integrity for the heartbeat", () => {
       unattributed_programs: { "/usr/bin/b": 1 },
     });
     expect("affected" in huge.findings![0]).toBe(false);
+    // finite values that add up past what a double holds: capped, not Infinity
+    await writeFile(
+      join(dir, "big.json"),
+      JSON.stringify(
+        status({
+          rule3: {
+            state: "available",
+            lost_events: 1e308,
+            malformed_records: 1e308,
+            unattributed: { "/usr/bin/a": 1e308, "/usr/bin/b": 1e308 },
+          },
+          hardening: { problems: { a: { x: 1e308 }, b: { y: 1e308 } } },
+        }),
+      ),
+    );
+    const big = await readHostIntegrity({
+      statusPath: join(dir, "big.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect(big.detection!.exec_monitor!.lost).toBe(Number.MAX_SAFE_INTEGER);
+    expect(big.detection!.exec_monitor!.unattributed).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+    expect(big.detection!.layout_problems).toBe(Number.MAX_SAFE_INTEGER);
     // values that aren't labels are dropped, never passed on as text
     await writeFile(
       join(dir, "odd.json"),

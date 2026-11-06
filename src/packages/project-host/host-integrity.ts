@@ -66,9 +66,15 @@ function word(value: unknown): string | undefined {
     : undefined;
 }
 
+// A sum of counts, capped so that large finite values can't add up to
+// Infinity.
+function add(a: number, b: number): number {
+  return Math.min(a + b, Number.MAX_SAFE_INTEGER);
+}
+
 function total(value: unknown): number {
   if (value == null || typeof value !== "object") return 0;
-  return Object.values(value).reduce<number>((sum, n) => sum + count(n), 0);
+  return Object.values(value).reduce<number>((sum, n) => add(sum, count(n)), 0);
 }
 
 // What the watcher checks, from the fields newer watchers write; undefined
@@ -92,7 +98,7 @@ function detection(raw: any): HostIntegrityDetection | undefined {
       ? {
           state: word(rule3.state) ?? "unknown",
           marked: count(rule3.marked),
-          lost: count(rule3.lost_events) + count(rule3.malformed_records),
+          lost: add(count(rule3.lost_events), count(rule3.malformed_records)),
           unattributed: total(rule3.unattributed),
           ...(programCounts(rule3.unattributed)
             ? { unattributed_programs: programCounts(rule3.unattributed) }
@@ -103,7 +109,7 @@ function detection(raw: any): HostIntegrityDetection | undefined {
     layout_problems:
       problems != null && typeof problems === "object"
         ? Object.values(problems as Record<string, unknown>).reduce<number>(
-            (sum, counts) => sum + total(counts),
+            (sum, counts) => add(sum, total(counts)),
             0,
           )
         : undefined,
