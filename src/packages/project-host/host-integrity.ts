@@ -40,12 +40,19 @@ const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1 };
 const MAX_UNREADABLE = 8;
 const MAX_PROGRAMS = 10;
 
+// A count from the watcher: a finite number that isn't negative, else 0
+// (JSON can't spell Infinity, but 1e999 parses to it).
+function count(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 // Program paths from the watcher's counts: absolute, plain characters only.
 function programCounts(value: unknown): Record<string, number> | undefined {
   if (value == null || typeof value !== "object") return undefined;
   const entries = Object.entries(value)
     .filter(([path]) => /^\/[A-Za-z0-9/_.+-]{1,127}$/.test(path))
-    .map(([path, n]) => [path, Number(n) || 0] as [string, number])
+    .map(([path, n]) => [path, count(n)] as [string, number])
     .filter(([, n]) => n > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, MAX_PROGRAMS);
@@ -61,10 +68,7 @@ function word(value: unknown): string | undefined {
 
 function total(value: unknown): number {
   if (value == null || typeof value !== "object") return 0;
-  return Object.values(value).reduce<number>(
-    (sum, n) => sum + (Number(n) || 0),
-    0,
-  );
+  return Object.values(value).reduce<number>((sum, n) => sum + count(n), 0);
 }
 
 // What the watcher checks, from the fields newer watchers write; undefined
@@ -87,10 +91,8 @@ function detection(raw: any): HostIntegrityDetection | undefined {
     exec_monitor: rule3
       ? {
           state: word(rule3.state) ?? "unknown",
-          marked: Number(rule3.marked) || 0,
-          lost:
-            (Number(rule3.lost_events) || 0) +
-            (Number(rule3.malformed_records) || 0),
+          marked: count(rule3.marked),
+          lost: count(rule3.lost_events) + count(rule3.malformed_records),
           unattributed: total(rule3.unattributed),
           ...(programCounts(rule3.unattributed)
             ? { unattributed_programs: programCounts(rule3.unattributed) }
@@ -182,7 +184,7 @@ export async function readHostIntegrity({
               .slice(0, MAX_UNREADABLE),
           }
         : {}),
-      ...(Number(f?.affected) > 0 ? { affected: Number(f.affected) } : {}),
+      ...(count(f?.affected) > 0 ? { affected: count(f.affected) } : {}),
     })),
     finding_count: findings.length,
     config_changes: changes.slice(0, MAX_CONFIG_CHANGES).map((c: any) => ({

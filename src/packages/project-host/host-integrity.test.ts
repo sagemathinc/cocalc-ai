@@ -111,6 +111,8 @@ describe("host integrity for the heartbeat", () => {
       now,
     });
     expect(result.watcher).toBe("running");
+    // the exec monitor's start bound is measured from it
+    expect(result.started_at).toBe("2026-10-31T00:00:00.000Z");
     expect(result.scans).toBe(1800);
     expect(result.finding_count).toBe(30);
     expect(result.findings).toHaveLength(20);
@@ -367,6 +369,47 @@ describe("host integrity for the heartbeat", () => {
     expect(few.detection!.exec_monitor!.unattributed_programs).toEqual({
       "/usr/bin/a": 2,
     });
+    // numbers too large for a double parse to Infinity: never passed on
+    await writeFile(
+      join(dir, "huge.json"),
+      JSON.stringify(
+        status({
+          findings: [
+            {
+              rule: "hardening-project-homes",
+              severity: "high",
+              comm: "project-homes",
+              exe: "mode",
+              uids: [],
+              userns: "host",
+              parents: [],
+              last_seen: "2026-10-31T00:59:00Z",
+              count: 1,
+              affected: "HUGE",
+            },
+          ],
+          rule3: {
+            state: "available",
+            marked: "HUGE",
+            lost_events: "HUGE",
+            unattributed: { "/usr/bin/a": "HUGE", "/usr/bin/b": 1 },
+          },
+        }),
+      ).replace(/"HUGE"/g, "1e999"),
+    );
+    const huge = await readHostIntegrity({
+      statusPath: join(dir, "huge.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect(huge.detection!.exec_monitor).toEqual({
+      state: "available",
+      marked: 0,
+      lost: 0,
+      unattributed: 1,
+      unattributed_programs: { "/usr/bin/b": 1 },
+    });
+    expect("affected" in huge.findings![0]).toBe(false);
     // values that aren't labels are dropped, never passed on as text
     await writeFile(
       join(dir, "odd.json"),

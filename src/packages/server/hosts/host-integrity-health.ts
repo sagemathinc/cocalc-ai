@@ -57,7 +57,9 @@ export type HostIntegrityCondition = {
     | "runtime-uid-fallback"
     | "daemon-state"
     | "watcher-mode"
-    | "hardening";
+    | "hardening"
+    | "ranges"
+    | "exec-monitor";
   level: "critical" | "warning";
   subject: string;
   // stable facts only (the alert dedupe compares bodies)
@@ -93,6 +95,8 @@ const SUBJECTS: Record<HostIntegrityCondition["kind"], string> = {
   "daemon-state": "daemon state not private",
   "watcher-mode": "integrity watcher mode differs",
   hardening: "project data layout",
+  ranges: "subordinate uid ranges not current",
+  "exec-monitor": "exec monitor not available",
 };
 // reported by the integrity watcher (the rest come from project-host)
 const WATCHER_KINDS: HostIntegrityCondition["kind"][] = [
@@ -213,7 +217,14 @@ function watcherModeCondition(
         exec === "starting" &&
         started != null &&
         now - started <= EXEC_MONITOR_START_MS;
-      if (exec !== "available" && !stillStarting) {
+      // degraded or unavailable warn on every host (execMonitorCondition)
+      const reportedElsewhere = ![
+        "available",
+        "starting",
+        "off",
+        "unreported",
+      ].includes(exec);
+      if (exec !== "available" && !stillStarting && !reportedElsewhere) {
         facts.push(
           `${label}: projects start separate, but the exec monitor is ${exec}`,
         );
@@ -223,7 +234,8 @@ function watcherModeCondition(
           `${label}: projects start separate, but the runtime user check in containers is ${inContainer}`,
         );
       }
-      if (ranges !== "ok") {
+      // stale or unavailable ranges warn on every host (rangesCondition)
+      if (ranges === "unreported") {
         facts.push(
           `${label}: projects start separate, but the subordinate uid ranges are ${ranges}`,
         );
@@ -248,6 +260,58 @@ function watcherModeCondition(
     ),
   };
 }
+
+/** The watcher classifies project uids with the subordinate ranges it read:
+ * stale (the last good ones kept) or unavailable (none) weakens that on any
+ * host, whatever the mode. Older watchers don't report it. */
+function rangesCondition(
+  row: HostIntegrityRow,
+  integrity: HostIntegrityStatus,
+): HostIntegrityCondition | undefined {
+  const ranges = integrity.detection?.ranges_state;
+  if (ranges == null || ranges === "ok") return undefined;
+  const label = hostLabel(row);
+  const fact = `${label}: the integrity watcher's subordinate uid ranges are ${ranges}`;
+  return {
+    host_id: row.id,
+    host_name: row.name,
+    kind: "ranges",
+    level: "warning",
+    subject: subject(row, "ranges"),
+    facts: [fact],
+    details: [
+      `${fact} (${ranges === "stale" ? "it keeps the last ranges it could read" : "it has no ranges"})`,
+    ],
+  };
+}
+
+/** An exec monitor that runs but isn't available (degraded, or unavailable:
+ * ...), on any host. Off, starting and older watchers say nothing here. */
+function execMonitorCondition(
+  row: HostIntegrityRow,
+  integrity: HostIntegrityStatus,
+): HostIntegrityCondition | undefined {
+  const exec = integrity.detection?.exec_monitor;
+  if (exec == null || ["available", "starting", "off"].includes(exec.state)) {
+    return undefined;
+  }
+  const fact = `${hostLabel(row)}: the exec monitor is ${exec.state}`;
+  return {
+    host_id: row.id,
+    host_name: row.name,
+    kind: "exec-monitor",
+    level: "warning",
+    subject: subject(row, "exec-monitor"),
+    facts: [fact],
+    details: [
+      `${fact} (watching ${exec.marked} programs; ${exec.lost} events lost)`,
+    ],
+  };
+}
+
+// The watcher's own checks that have a condition of their own above; their
+// findings would only repeat it under process placement.
+const DETECTION_FINDING_PREFIXES = ["subuid-ranges-", "exec-monitor-"];
 
 function describeFinding(
   f: HostIntegrityStatus["findings"] extends (infer F)[] | undefined
@@ -398,6 +462,14 @@ export function summarizeHostIntegrity(
     }
     // only a running watcher's report is compared (a stale status must not
     // clear the alert)
+    if (integrity.watcher === "running") {
+      reporting_subjects.push(subject(row, "ranges"));
+      const rangesNotCurrent = rangesCondition(row, integrity);
+      if (rangesNotCurrent) conditions.push(rangesNotCurrent);
+      reporting_subjects.push(subject(row, "exec-monitor"));
+      const execNotAvailable = execMonitorCondition(row, integrity);
+      if (execNotAvailable) conditions.push(execNotAvailable);
+    }
     if (mode != null && integrity.watcher === "running") {
       // both sides report: compare them
       reporting_subjects.push(subject(row, "watcher-mode"));
@@ -421,7 +493,14 @@ export function summarizeHostIntegrity(
     );
     // project data layout findings have their own condition
     const layout = seen.filter((f) => f.rule.startsWith("hardening-"));
-    const recent = seen.filter((f) => !f.rule.startsWith("hardening-"));
+    // the watcher's own checks are reported by their own conditions, but
+    // only when it says what they found (an older watcher keeps them here)
+    const covered = (f: (typeof seen)[number]) =>
+      integrity.detection != null &&
+      DETECTION_FINDING_PREFIXES.some((prefix) => f.rule.startsWith(prefix));
+    const recent = seen.filter(
+      (f) => !f.rule.startsWith("hardening-") && !covered(f),
+    );
     if (layout.length > 0) {
       const current = layout.filter((f) =>
         seenWithin(f.last_seen, CURRENT_FINDING_MS, now),
