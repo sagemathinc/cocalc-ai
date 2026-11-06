@@ -94,10 +94,39 @@ jest.mock("./filesystem", () => ({
   setQuota: jest.fn(),
 }));
 
+const mockDetachLeftovers = jest.fn(async () => {});
 jest.mock("./rootfs", () => ({
+  detachLeftovers: (...args: any[]) => mockDetachLeftovers(...args),
   mount: jest.fn(),
   unmountAll: (...args: any[]) => mockUnmountAll(...args),
 }));
+
+// Separate-runtime-uid starts: the host's decision, the helper's views and
+// the view sources are replaced here; everything else is the real module.
+let mockRuntimeIdentity: any;
+let mockViewSources: Record<string, string> | undefined;
+let mockMountinfo: string | undefined;
+const mockMountProjectView = jest.fn();
+const mockHardenProjectDataRoot = jest.fn(async () => {});
+const mockProjectHasViews = jest.fn(async () => false);
+const mockUmountProjectViews = jest.fn(async () => {});
+
+jest.mock("./runtime-host", () => {
+  const actual = jest.requireActual("./runtime-host");
+  return {
+    ...actual,
+    projectViewSource: (project_id: string, kind: string) =>
+      mockViewSources?.[kind] ?? actual.projectViewSource(project_id, kind),
+    readMountinfo: async () => mockMountinfo ?? (await actual.readMountinfo()),
+    runtimeIdentityForStart: async (...args: any[]) =>
+      mockRuntimeIdentity ?? (await actual.runtimeIdentityForStart(...args)),
+    mountProjectView: (...args: any[]) => mockMountProjectView(...args),
+    hardenProjectDataRoot: (...args: any[]) =>
+      mockHardenProjectDataRoot(...args),
+    projectHasViews: (...args: any[]) => mockProjectHasViews(...args),
+    umountProjectViews: (...args: any[]) => mockUmountProjectViews(...args),
+  };
+});
 
 jest.mock("./limits", () => ({
   podmanLimits: (...args: any[]) => mockPodmanLimits(...args),
@@ -116,6 +145,8 @@ jest.mock("./conat-client", () => ({
 
 import getPort from "@cocalc/backend/get-port";
 import { mountArg } from "@cocalc/backend/podman";
+import { mount as mountRootFs } from "./rootfs";
+import { projectViewPath, runtimeUidModeReport } from "./runtime-host";
 import {
   mkdir,
   mkdtemp,
@@ -138,6 +169,8 @@ import {
   refreshProjectSecretsHostPath,
   resolveHostContainersInternalAddress,
   podmanRuntimeArgs,
+  projectBrowserRunHostPath,
+  projectContainersGone,
   redactConfigurationForLog,
   start,
   state,
@@ -970,10 +1003,12 @@ describe("project-runner podman orphan fallback", () => {
     let dateNowSpy: jest.SpyInstance;
     beforeEach(() => {
       skew = 0;
-      const realNow = Date.now.bind(Date);
+      // The clock moves only by skew: a real millisecond between the
+      // deadline and the first inspect would make its timeout 59s, not 60s.
+      const base = Date.now();
       dateNowSpy = jest
         .spyOn(Date, "now")
-        .mockImplementation(() => realNow() + skew);
+        .mockImplementation(() => base + skew);
     });
     afterEach(() => dateNowSpy.mockRestore());
 
@@ -1233,6 +1268,266 @@ describe("project-runner podman orphan fallback", () => {
     ).rejects.toThrow(
       "shared scratch is enabled but host mount /tmp/missing-scratch-11111111-1111-4111-8111-111111111111 does not exist",
     );
+  });
+
+  describe("with a separate runtime uid", () => {
+    const P = 1073741824;
+    const SEPARATE_ARGS = ["--uidmap=0:1:2001", "--uidmap=2001:4194305:1"];
+    const separate = {
+      mode: "separate",
+      uid: P,
+      gid: P,
+      usernsArgs: SEPARATE_ARGS,
+      status: { configured: "separate", effective: "separate" },
+    };
+    const home = `/tmp/project-${project1}`;
+    const SAFE =
+      "22 1 8:1 / / rw,nosuid,nodev,relatime shared:1 - ext4 /dev/sda1 rw";
+    const raw = () => [
+      home,
+      projectSecretsHostPath(project1),
+      projectBrowserRunHostPath(project1),
+    ];
+
+    beforeEach(() => {
+      mockRuntimeIdentity = separate;
+      mockViewSources = {
+        home,
+        secrets: projectSecretsHostPath(project1),
+        "browser-run": projectBrowserRunHostPath(project1),
+      };
+      mockMountinfo = SAFE;
+      mockMountProjectView.mockImplementation(async ({ project_id, kind }) =>
+        projectViewPath(project_id, kind),
+      );
+      mockProjectHasViews.mockResolvedValue(false);
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+    });
+
+    afterEach(() => {
+      mockRuntimeIdentity = undefined;
+      mockViewSources = undefined;
+      mockMountinfo = undefined;
+      // no test here may leave a failing podman or conmon behind
+      mockPodman.mockReset();
+      mockPodman.mockResolvedValue({ stdout: "" });
+      mockGetConmonContainerProcesses.mockReset();
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+    });
+
+    const startProject = async () => {
+      mockProjectStartPodman(project1);
+      await start({
+        project_id: project1,
+        localPath: async () => ({ home }),
+        config: { image: "docker.io/library/ubuntu:latest" },
+      });
+    };
+    const sources = () =>
+      (mountArg as jest.Mock).mock.calls.map(([arg]) => arg.source);
+    const createArgs = (): string[] =>
+      mockPodman.mock.calls
+        .map(([args]) => args as string[])
+        .find((args) => args.includes("--name"))!;
+
+    it("hands Podman only the views, the idmapped rootfs and the separate map", async () => {
+      process.env.COCALC_SHARED_SCRATCH_ENABLED = "1";
+      process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT = "/";
+      await startProject();
+
+      expect(mockHardenProjectDataRoot).toHaveBeenCalled();
+      for (const kind of ["home", "secrets", "browser-run"]) {
+        expect(mockMountProjectView).toHaveBeenCalledWith({
+          project_id: project1,
+          kind,
+          uid: P,
+        });
+        expect(sources()).toContain(projectViewPath(project1, kind));
+      }
+      expect(mountArg).toHaveBeenCalledWith({
+        source: projectViewPath(project1, "secrets"),
+        target: expect.any(String),
+        readOnly: true,
+      });
+      // no raw project dir and no shared scratch reaches the container
+      for (const path of raw()) expect(sources()).not.toContain(path);
+      expect(mountArg).not.toHaveBeenCalledWith(
+        expect.objectContaining({ target: "/scratch" }),
+      );
+      expect(mountRootFs).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: project1, idmapUid: P }),
+      );
+      const args = createArgs();
+      expect(args).toEqual(expect.arrayContaining(SEPARATE_ARGS));
+      expect(args.some((a) => `${a}`.startsWith("--userns=keep-id"))).toBe(
+        false,
+      );
+    });
+
+    it("falls back to keep-id, visibly, when a source is not where the helper takes it", async () => {
+      mockViewSources!.home = "/mnt/cocalc/elsewhere";
+      await startProject();
+
+      expect(mockMountProjectView).not.toHaveBeenCalled();
+      expect(sources()).toContain(home);
+      expect(mountRootFs).toHaveBeenCalledWith(
+        expect.objectContaining({ idmapUid: undefined }),
+      );
+      const args = createArgs();
+      expect(args.some((a) => `${a}`.startsWith("--userns=keep-id"))).toBe(
+        true,
+      );
+      expect(args).not.toEqual(expect.arrayContaining(SEPARATE_ARGS));
+      expect(runtimeUidModeReport()?.label).toBe(
+        "keep-id (fallback: host-unsafe)",
+      );
+    });
+
+    it("falls back to keep-id when a view source's mount allows setuid", async () => {
+      mockMountinfo = SAFE.replace("rw,nosuid,nodev,relatime", "rw,relatime");
+      await startProject();
+
+      expect(mockMountProjectView).not.toHaveBeenCalled();
+      expect(
+        createArgs().some((a) => `${a}`.startsWith("--userns=keep-id")),
+      ).toBe(true);
+      expect(runtimeUidModeReport()).toMatchObject({
+        reason: "host-unsafe",
+        detail: expect.stringContaining("not mounted nosuid"),
+      });
+    });
+
+    it("proves the rootfs unused only when none of the project's containers is alive", async () => {
+      const ps = (rows: string[]) =>
+        mockPodman.mockImplementation(async (args: string[]) =>
+          args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
+            ? { stdout: rows.join("\n") }
+            : { stdout: "" },
+        );
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+      const other = "22222222-2222-4222-8222-222222222222";
+
+      ps([`project-${project1}|exited`, `project-${other}|running`]);
+      expect(await projectContainersGone(project1)).toBe(true);
+      // a sidecar still running (e.g. after a daemon restart)
+      for (const name of [
+        `codex-${project1}-0123456789ab`,
+        `sandbox-${project1}-1-ab`,
+        `acp-${project1}-x`,
+        `cocalc-browser-${project1}-app`,
+        `project-${project1}`,
+      ]) {
+        ps([`${name}|running`]);
+        expect(await projectContainersGone(project1)).toBe(false);
+      }
+      ps([`codex-${project1}-0123456789ab|paused`]);
+      expect(await projectContainersGone(project1)).toBe(false);
+      ps([`codex-${project1}-0123456789ab|some-new-state`]);
+      expect(await projectContainersGone(project1)).toBe(false);
+      // conmon still sees one that Podman doesn't
+      ps([]);
+      mockGetConmonContainerProcesses.mockResolvedValue(
+        new Map([[`project-${project1}`, { project_id: project1 }]]),
+      );
+      expect(await projectContainersGone(project1)).toBe(false);
+      // a conmon process known by its project id, whatever its name
+      mockGetConmonContainerProcesses.mockResolvedValue(
+        new Map([["some-other-name", { project_id: project1 }]]),
+      );
+      expect(await projectContainersGone(project1)).toBe(false);
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+      // not a project id: never "gone"
+      expect(await projectContainersGone("not-a-uuid")).toBe(false);
+      expect(await projectContainersGone("")).toBe(false);
+      // podman failing is not a proof
+      mockPodman.mockRejectedValue(new Error("podman failed"));
+      await expect(projectContainersGone(project1)).rejects.toThrow();
+    });
+
+    it("takes down leftover views only through the locked, proven detach", async () => {
+      mockProjectHasViews.mockResolvedValue(true);
+      await startProject();
+      expect(mockDetachLeftovers).toHaveBeenCalledTimes(1);
+      const [id, opts] = mockDetachLeftovers.mock.calls[0] as any[];
+      expect(id).toBe(project1);
+      // nothing else takes them down
+      expect(mockUmountProjectViews).not.toHaveBeenCalled();
+      expect(mockUnmountAll).not.toHaveBeenCalledWith(project1, {
+        immediate: true,
+      });
+      // its proof is the containers' absence
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+      mockPodman.mockImplementation(async (args: string[]) =>
+        args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
+          ? { stdout: `sandbox-${project1}-1-ab|running\n` }
+          : { stdout: "" },
+      );
+      expect(await opts.proveUnused()).toBe(false);
+      mockPodman.mockImplementation(async () => ({ stdout: "" }));
+      expect(await opts.proveUnused()).toBe(true);
+      // and what it also takes down is the views
+      await opts.alsoDetach();
+      expect(mockUmountProjectViews).toHaveBeenCalledWith(project1);
+    });
+
+    it("fails the start, and takes down nothing, when the leftovers may be in use", async () => {
+      mockProjectHasViews.mockResolvedValue(true);
+      mockDetachLeftovers.mockRejectedValueOnce(
+        new Error(
+          "this project's earlier views and RootFS may still be in use",
+        ),
+      );
+      await expect(startProject()).rejects.toThrow("may still be in use");
+      expect(mockUmountProjectViews).not.toHaveBeenCalled();
+      expect(mockUnmountAll).not.toHaveBeenCalled();
+    });
+
+    it("lets only the start prove the rootfs unused, by its containers", async () => {
+      await startProject();
+      const [opts] = (mountRootFs as jest.Mock).mock.calls.at(-1)!;
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+      mockPodman.mockImplementation(async (args: string[]) =>
+        args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
+          ? { stdout: `codex-${project1}-0123456789ab|running\n` }
+          : { stdout: "" },
+      );
+      expect(await opts.proveUnused()).toBe(false);
+      mockPodman.mockImplementation(async () => ({ stdout: "" }));
+      expect(await opts.proveUnused()).toBe(true);
+    });
+
+    it("takes the views down at stop only after the idmapped rootfs is detached", async () => {
+      noBrowserContainers();
+      mockProjectHasViews.mockResolvedValue(true);
+      let detached = false;
+      let detachedFirst: boolean | undefined;
+      mockUnmountAll.mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        detached = true;
+      });
+      mockUmountProjectViews.mockImplementationOnce(async () => {
+        detachedFirst = detached;
+      });
+      await stop({ project_id: project1 });
+
+      expect(mockUnmountAll).toHaveBeenCalledWith(project1, {
+        immediate: true,
+      });
+      expect(mockUmountProjectViews).toHaveBeenCalledWith(project1);
+      expect(detachedFirst).toBe(true);
+    });
+
+    it("leaves the views mounted when the rootfs couldn't be detached at stop", async () => {
+      noBrowserContainers();
+      mockProjectHasViews.mockResolvedValue(true);
+      mockUnmountAll.mockRejectedValueOnce(
+        new Error("could not unmount this project's RootFS"),
+      );
+      await expect(stop({ project_id: project1 })).rejects.toThrow(
+        "could not unmount",
+      );
+      expect(mockUmountProjectViews).not.toHaveBeenCalled();
+    });
   });
 
   it("materializes project secrets as private runtime files", async () => {

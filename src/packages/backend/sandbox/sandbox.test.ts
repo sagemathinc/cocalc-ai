@@ -3,6 +3,7 @@ import {
   SandboxedFilesystem,
 } from "@cocalc/backend/sandbox";
 import {
+  chmod,
   mkdtemp,
   mkdir,
   readdir,
@@ -1861,6 +1862,30 @@ describeIfLinux("rootfs option sandbox", () => {
     await fs.writeFile("relative-ok.txt", "ok");
     expect(await fs.readFile("/home/user/home-ok.txt", "utf8")).toBe("ok");
     expect(await fs.readFile("relative-ok.txt", "utf8")).toBe("ok");
+  });
+
+  it("says why when the host may not enter the rootfs (separate runtime uid)", async () => {
+    if (process.getuid?.() === 0) return; // root ignores the mode below
+    const homeDir = join(tempDir, "test-rootfs-sealed-home");
+    const sealed = join(tempDir, "test-rootfs-sealed");
+    await mkdir(homeDir);
+    await mkdir(join(sealed, "root"), { recursive: true });
+    await chmod(sealed, 0o000);
+    try {
+      const sealedFs = new SandboxedFilesystem(homeDir, {
+        rootfs: join(sealed, "root"),
+        homeAliases: ["/home/user"],
+      });
+      const err = await expectRejectsWithError(
+        sealedFs.readFile("/etc/os-release", "utf8"),
+      );
+      expect(err.message).toContain(
+        "files outside HOME (such as '/etc/os-release') are not available yet for projects that run with a separate runtime uid",
+      );
+      expect(err.message).not.toContain(sealed);
+    } finally {
+      await chmod(sealed, 0o700);
+    }
   });
 
   it("does not leak mount paths when scratch is missing", async () => {
