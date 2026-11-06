@@ -27,7 +27,8 @@ import { ClaudeSubscriptionSharingBanner } from "./claude-subscription-sharing";
 const CLAUDE_CREDENTIALS_EVENT = "cocalc:claude-credentials";
 const CLAUDE_CREDENTIALS_MAX_AGE_MS = 60_000;
 let claudeCredentials:
-  { at: number; promise: Promise<ExternalCredentialInfo[]> } | undefined;
+  | { at: number; promise: Promise<ExternalCredentialInfo[]> }
+  | undefined;
 
 /**
  * The account's Claude credentials (one list call, shared by every footer),
