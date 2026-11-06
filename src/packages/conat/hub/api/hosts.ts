@@ -1179,7 +1179,50 @@ export interface HostSnapshotLaneMetrics {
   /** Dispatches that went first by promotion, by class, since project-host
    * start. */
   promoted_dispatched_total?: { paying: number; free: number };
+  /** Why each snapshot that was overdue in the host's last full inventory
+   * still waits, by class (free: everything not paying). Absent until the
+   * first full inventory. */
+  waiting?: {
+    /** How long ago that inventory was taken. */
+    inventory_age_ms: number;
+    paying: SnapshotLaneWaiting;
+    free: SnapshotLaneWaiting;
+  };
 }
+
+/** Why an overdue scheduled snapshot waits:
+ * - running: its snapshot runs now;
+ * - queued / queued_promoted: in the lane's queue (promoted: past the
+ *   promote age, so it goes first in its class);
+ * - parked: in the queue of a parked lane;
+ * - deferred_retry: refused or put off, waiting for its retry;
+ * - failure_backoff: failed, waiting out the failure backoff;
+ * - limit_prune_deferred: at its snapshot limit, waiting for the prune;
+ * - generation_moved: refused because the project kept changing;
+ * - memory_gate: the host's memory gate holds all maintenance;
+ * - not_dispatched: none of these (should be 0). */
+export const SNAPSHOT_LANE_WAIT_CAUSES = [
+  "running",
+  "queued",
+  "queued_promoted",
+  "parked",
+  "deferred_retry",
+  "failure_backoff",
+  "limit_prune_deferred",
+  "generation_moved",
+  "memory_gate",
+  "not_dispatched",
+] as const;
+export type SnapshotLaneWaitCause = (typeof SNAPSHOT_LANE_WAIT_CAUSES)[number];
+
+/** Per cause: how many, the oldest overdue age, and for failure_backoff the
+ * most consecutive failures. */
+export type SnapshotLaneWaiting = Partial<
+  Record<
+    SnapshotLaneWaitCause,
+    { count: number; oldest_age_ms: number; max_failures?: number }
+  >
+>;
 
 export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
 

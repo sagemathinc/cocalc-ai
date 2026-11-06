@@ -59,7 +59,14 @@ import { MaintenanceScheduleRefresh } from "./maintenance-schedule-refresh";
 import { createMaintenanceStarvationQueue } from "./maintenance-starvation";
 import type { StarvedMaintenance } from "./maintenance-starvation";
 import { recoveryFailureReason } from "./recovery-failure-reason";
-import { setSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
+import type {
+  HostSnapshotLaneMetrics,
+  SnapshotLaneWaitCause,
+} from "@cocalc/conat/hub/api/hosts";
+import {
+  getSnapshotBackupMaintenanceGate,
+  setSnapshotBackupMaintenanceGate,
+} from "./snapshot-backup-gate";
 import { setSnapshotLaneStatusProvider } from "./snapshot-lane-status";
 import { markProjectLastChanged, onProjectChangeReported } from "./last-edited";
 import {
@@ -201,9 +208,172 @@ function noteSnapshotLaneOutcome(outcome: SnapshotLaneOutcome): void {
 // (a created snapshot or an interval wait), or refused after it.
 const generationMoved = { accepted_r1: 0, accepted_r2: 0, refused: 0 };
 
+// Why each snapshot overdue in a host's last full inventory still waits: the
+// inventory's overdue rows (taken as the lane is fed), and how this process's
+// attempts on them ended since. Only counts and ages reach the metrics.
+type SnapshotLaneAttemptWait = Extract<
+  SnapshotLaneWaitCause,
+  | "deferred_retry"
+  | "failure_backoff"
+  | "limit_prune_deferred"
+  | "generation_moved"
+>;
+interface SnapshotLaneInventory {
+  at: number;
+  rows: Map<
+    string,
+    {
+      paying: boolean;
+      dueAt: number;
+      retryAt: number | null;
+      failures: number;
+    }
+  >;
+  // null: no longer waiting (done, not due after all, or gone from the host)
+  attempts: Map<string, SnapshotLaneAttempt | null>;
+}
+interface SnapshotLaneAttempt {
+  cause: SnapshotLaneAttemptWait;
+  failures: number;
+  // when it is fed to the lane again, if known
+  retryAt: number | null;
+}
+const snapshotLaneInventories = new Map<string, SnapshotLaneInventory>();
+// A retry that came this long ago without the snapshot being queued again
+// (a change-event batch normally queues it within about a minute) no longer
+// explains the wait.
+const SNAPSHOT_LANE_DISPATCH_GRACE_MS = 2 * 60_000;
+
+function noteSnapshotLaneInventory(
+  hostId: string,
+  rows: HostProjectMaintenanceSchedule[],
+  at: number,
+): void {
+  const overdue: SnapshotLaneInventory["rows"] = new Map();
+  for (const row of rows) {
+    const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
+    if (schedule.disabled) continue;
+    const dueAt = snapshotDueAt(row, schedule);
+    if (dueAt == null || dueAt > at) continue;
+    overdue.set(row.project_id, {
+      paying: row.storage_service_class === "paying",
+      dueAt,
+      retryAt: parseTimestampMs(row.snapshot_retry_at) ?? null,
+      failures: row.snapshot_failures ?? 0,
+    });
+  }
+  snapshotLaneInventories.set(hostId, {
+    at,
+    rows: overdue,
+    attempts: new Map(),
+  });
+}
+
+// How an attempt left a snapshot: still waiting (and why), or not (null).
+function snapshotLaneAttemptWait(
+  outcome: SnapshotLaneOutcome,
+  reason: string | undefined,
+  failures: number,
+  retryAt: number | null,
+): SnapshotLaneAttempt | null {
+  if (outcome === "succeeded" || outcome === "skipped") return null;
+  const cause: SnapshotLaneAttemptWait =
+    outcome === "failed"
+      ? "failure_backoff"
+      : reason === "snapshot_prune_deferred"
+        ? "limit_prune_deferred"
+        : reason === "change_generation_changed"
+          ? "generation_moved"
+          : failures > 0
+            ? "failure_backoff"
+            : "deferred_retry";
+  return { cause, failures, retryAt };
+}
+
+function noteSnapshotLaneAttempt(
+  hostId: string,
+  project_id: string,
+  wait: SnapshotLaneAttempt | null,
+): void {
+  const inventory = snapshotLaneInventories.get(hostId);
+  if (inventory?.rows.has(project_id)) inventory.attempts.set(project_id, wait);
+}
+
+function snapshotLaneWaiting(
+  now: number,
+): HostSnapshotLaneMetrics["waiting"] | undefined {
+  if (!snapshotLaneInventories.size) return undefined;
+  const waiting: NonNullable<HostSnapshotLaneMetrics["waiting"]> = {
+    inventory_age_ms: 0,
+    paying: {},
+    free: {},
+  };
+  const memoryGated =
+    getSnapshotBackupMaintenanceGate()?.blocked_reason != null;
+  for (const [hostId, inventory] of snapshotLaneInventories) {
+    waiting.inventory_age_ms = Math.max(
+      waiting.inventory_age_ms,
+      Math.max(0, now - inventory.at),
+    );
+    const queue = dispatchQueues.get(hostId)?.snapshot;
+    const parked = queue?.isParked() === true;
+    for (const [project_id, row] of inventory.rows) {
+      let cause: SnapshotLaneWaitCause;
+      let failures = row.failures;
+      const queued = queue?.has(project_id);
+      if (queued === "active" || inFlightSnapshots.has(project_id)) {
+        cause = "running";
+      } else if (queued === "pending") {
+        cause = parked
+          ? "parked"
+          : queue!.pendingPromoted(project_id)
+            ? "queued_promoted"
+            : "queued";
+      } else {
+        const attempt = inventory.attempts.get(project_id);
+        if (attempt === null) continue; // done, or no longer due here
+        // Waiting for a retry: from this process's attempt, or (not yet
+        // attempted) a retry that kept it out of the lane at the inventory.
+        const wait: SnapshotLaneAttempt | undefined =
+          attempt ??
+          (row.retryAt != null && row.retryAt > inventory.at
+            ? {
+                cause: row.failures > 0 ? "failure_backoff" : "deferred_retry",
+                failures: row.failures,
+                retryAt: row.retryAt,
+              }
+            : undefined);
+        if (
+          wait != null &&
+          (wait.retryAt == null ||
+            wait.retryAt > now - SNAPSHOT_LANE_DISPATCH_GRACE_MS)
+        ) {
+          cause = wait.cause;
+          failures = wait.failures;
+        } else {
+          // Should be queued or running, and is not.
+          cause = memoryGated ? "memory_gate" : "not_dispatched";
+        }
+      }
+      const byCause = row.paying ? waiting.paying : waiting.free;
+      const entry = (byCause[cause] ??= { count: 0, oldest_age_ms: 0 });
+      entry.count += 1;
+      entry.oldest_age_ms = Math.max(
+        entry.oldest_age_ms,
+        Math.max(0, now - row.dueAt),
+      );
+      if (cause === "failure_backoff") {
+        entry.max_failures = Math.max(entry.max_failures ?? 0, failures);
+      }
+    }
+  }
+  return waiting;
+}
+
 export interface SnapshotLaneStatus extends MaintenanceDispatchQueueStatus {
   completed_10m: Partial<Record<SnapshotLaneOutcome, number>>;
   generation_moved: typeof generationMoved;
+  waiting?: HostSnapshotLaneMetrics["waiting"];
 }
 
 /** The snapshot lane of this host (all of its queues, normally one): queue
@@ -230,6 +400,7 @@ export function getSnapshotLaneStatus(
     if (at < now - SNAPSHOT_LANE_WINDOW_MS) continue;
     completed_10m[outcome] = (completed_10m[outcome] ?? 0) + 1;
   }
+  const waiting = snapshotLaneWaiting(now);
   return {
     pending: statuses.reduce((total, status) => total + status.pending, 0),
     active: statuses.reduce((total, status) => total + status.active, 0),
@@ -261,6 +432,7 @@ export function getSnapshotLaneStatus(
     },
     completed_10m,
     generation_moved: { ...generationMoved },
+    ...(waiting ? { waiting } : {}),
   };
 }
 
@@ -1809,6 +1981,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     if (!queued) {
       // Gone from this host: it must not hold the recovery head.
       dropRecoveryWaiting([candidate.project_id]);
+      noteSnapshotLaneAttempt(hostId, candidate.project_id, null);
       return;
     }
     // (replaced by a fresh row when the content generation moved; see below)
@@ -1824,6 +1997,20 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       ((parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() &&
         !recoverySlotOpenFor(project_id))
     ) {
+      if (project_id) {
+        noteSnapshotLaneAttempt(
+          hostId,
+          project_id,
+          notDue
+            ? null
+            : snapshotLaneAttemptWait(
+                "deferred",
+                undefined,
+                row.snapshot_failures ?? 0,
+                parseTimestampMs(row.snapshot_retry_at) ?? null,
+              ),
+        );
+      }
       return;
     }
     if (inFlightSnapshots.has(project_id)) {
@@ -2019,6 +2206,16 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         dueAt,
         retryAt(outcome, row.snapshot_failures ?? 0),
       );
+      noteSnapshotLaneAttempt(
+        hostId,
+        project_id,
+        snapshotLaneAttemptWait(
+          outcome,
+          reason,
+          outcome === "succeeded" ? 0 : (row.snapshot_failures ?? 0),
+          nextRetry ? Date.parse(nextRetry) : null,
+        ),
+      );
       // Refused up front, or at the first mutation boundary after it
       // started; not if a snapshot was made before a prune was refused.
       refused =
@@ -2099,6 +2296,16 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         dueAt,
         retryAt("failed", (row.snapshot_failures ?? 0) + 1),
       );
+      noteSnapshotLaneAttempt(
+        hostId,
+        project_id,
+        snapshotLaneAttemptWait(
+          "failed",
+          undefined,
+          (row.snapshot_failures ?? 0) + 1,
+          nextRetry ? Date.parse(nextRetry) : null,
+        ),
+      );
       if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
       await report({
         host_id: hostId,
@@ -2138,6 +2345,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       run: runSnapshot,
     });
   const snapshotLane = async () => {
+    // A full inventory: what is overdue now, to tell later why it waits.
+    if (!projectIds) noteSnapshotLaneInventory(hostId, snapshotRows, queuedAt);
     await submitSnapshots(
       snapshotRows.filter(
         (row) =>
@@ -2843,6 +3052,7 @@ export const _test = {
     }
     dispatchQueues.clear();
     snapshotLaneOutcomes = [];
+    snapshotLaneInventories.clear();
     generationMoved.accepted_r1 = 0;
     generationMoved.accepted_r2 = 0;
     generationMoved.refused = 0;
@@ -2852,4 +3062,5 @@ export const _test = {
   backupDueAt,
   snapshotDueAt,
   runScheduledStorageOperation,
+  snapshotLaneAttemptWait,
 };

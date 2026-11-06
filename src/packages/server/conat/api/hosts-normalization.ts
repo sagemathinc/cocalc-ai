@@ -51,7 +51,10 @@ import type {
   HostStatus,
   HostSnapshotLaneMetrics,
   HostStorageAdmissionMetrics,
+  SnapshotLaneWaitCause,
+  SnapshotLaneWaiting,
 } from "@cocalc/conat/hub/api/hosts";
+import { SNAPSHOT_LANE_WAIT_CAUSES } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostManagedComponentStatus,
   ManagedComponentKind,
@@ -242,11 +245,59 @@ const SNAPSHOT_LANE_OUTCOMES = new Set([
   "failed",
 ]);
 const SNAPSHOT_LANE_MAX_REASONS = 16;
+const SNAPSHOT_LANE_WAIT_CAUSE_SET: ReadonlySet<string> = new Set(
+  SNAPSHOT_LANE_WAIT_CAUSES,
+);
 
 function nonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? value
     : undefined;
+}
+
+// The per-cause wait block: fixed cause keys, each exactly a count and the
+// oldest age (and the most failures, optionally). null: malformed.
+function normalizeSnapshotLaneWaiting(
+  raw: unknown,
+): HostSnapshotLaneMetrics["waiting"] | null {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value != null && typeof value === "object" && !Array.isArray(value);
+  if (!isRecord(raw) || Object.keys(raw).length !== 3) return null;
+  const inventoryAge = nonNegativeInteger(raw.inventory_age_ms);
+  if (inventoryAge == null) return null;
+  const byCause = (value: unknown): SnapshotLaneWaiting | null => {
+    if (!isRecord(value)) return null;
+    const out: SnapshotLaneWaiting = {};
+    for (const [cause, entry] of Object.entries(value)) {
+      if (!SNAPSHOT_LANE_WAIT_CAUSE_SET.has(cause) || !isRecord(entry)) {
+        return null;
+      }
+      const count = nonNegativeInteger(entry.count);
+      const oldest = nonNegativeInteger(entry.oldest_age_ms);
+      const hasFailures = entry.max_failures != null;
+      const maxFailures = hasFailures
+        ? nonNegativeInteger(entry.max_failures)
+        : undefined;
+      if (
+        count == null ||
+        oldest == null ||
+        (hasFailures && maxFailures == null) ||
+        Object.keys(entry).length !== (hasFailures ? 3 : 2)
+      ) {
+        return null;
+      }
+      out[cause as SnapshotLaneWaitCause] = {
+        count,
+        oldest_age_ms: oldest,
+        ...(maxFailures != null ? { max_failures: maxFailures } : {}),
+      };
+    }
+    return out;
+  };
+  const paying = byCause(raw.paying);
+  const free = byCause(raw.free);
+  if (!paying || !free) return null;
+  return { inventory_age_ms: inventoryAge, paying, free };
 }
 
 function normalizeSnapshotLaneMetrics(
@@ -334,6 +385,12 @@ function normalizeSnapshotLaneMetrics(
       return undefined;
     promotedDispatched = { paying, free };
   }
+  let waiting: HostSnapshotLaneMetrics["waiting"];
+  if (lane.waiting != null) {
+    const normalized = normalizeSnapshotLaneWaiting(lane.waiting);
+    if (!normalized) return undefined;
+    waiting = normalized;
+  }
   return {
     pending,
     active,
@@ -353,6 +410,7 @@ function normalizeSnapshotLaneMetrics(
     ...(promotedDispatched
       ? { promoted_dispatched_total: promotedDispatched }
       : {}),
+    ...(waiting ? { waiting } : {}),
   };
 }
 
