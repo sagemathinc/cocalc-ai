@@ -2202,6 +2202,18 @@ async function projectMountSources({
   return views;
 }
 
+// Bumped at every start and stop of a project: a client bound to one
+// container generation (the rootfs agent) checks it before every request.
+const startCounters = new Map<string, number>();
+
+export function projectStartCounter(project_id: string): number {
+  return startCounters.get(project_id) ?? 0;
+}
+
+function bumpStartCounter(project_id: string): void {
+  startCounters.set(project_id, projectStartCounter(project_id) + 1);
+}
+
 async function startUnlocked({
   project_id,
   config = {},
@@ -2224,6 +2236,7 @@ async function startUnlocked({
   const timings = createPhaseTimingRecorder();
   const totalStarted = Date.now();
   const mountedHere = { rootfs: false, views: false };
+  bumpStartCounter(project_id);
   try {
     starting.add(project_id);
     report({ type: "start-project", progress: 0 });
@@ -2910,6 +2923,7 @@ async function stopUnlocked({ project_id }: { project_id: string }) {
   if (stopping.has(project_id) || starting.has(project_id)) {
     return;
   }
+  bumpStartCounter(project_id);
   try {
     stopping.add(project_id);
     try {
