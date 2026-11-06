@@ -226,7 +226,7 @@ import {
 import { publishLroEvent } from "./lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
 import { normalizeArchivePath } from "./archive-path";
-import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
+import { rootfsSandboxOptions } from "@cocalc/project-runner/run/rootfs-agent/registry";
 import {
   extractBaseImage,
   imageCachePath,
@@ -1782,7 +1782,7 @@ export function getProjectSandboxFilesystem(
   return createProjectSandboxFilesystem({
     project_id,
     home: projectMountpoint(project_id),
-    rootfs: getRootfsMountpoint(project_id),
+    ...rootfsSandboxOptions(project_id),
     scratch: getScratchMountpoint(project_id),
     sharedScratch: getSharedScratchMountpoint(),
   });
@@ -2838,13 +2838,13 @@ async function cp({
   const srcFs = createProjectSandboxFilesystem({
     project_id: src.project_id,
     home: srcVolume.path,
-    rootfs: getRootfsMountpoint(src.project_id),
+    ...rootfsSandboxOptions(src.project_id),
     scratch: getScratchMountpoint(src.project_id),
   });
   const destFs = createProjectSandboxFilesystem({
     project_id: dest.project_id,
     home: destVolume.path,
-    rootfs: getRootfsMountpoint(dest.project_id),
+    ...rootfsSandboxOptions(dest.project_id),
     scratch: getScratchMountpoint(dest.project_id),
   });
   // Up-front errors for paths that resolve outside the sandboxes as they are
@@ -3184,7 +3184,7 @@ async function applyPathCopyArchive({
       const destFs = createProjectSandboxFilesystem({
         project_id: dest.project_id,
         home: projectRoot,
-        rootfs: getRootfsMountpoint(dest.project_id),
+        ...rootfsSandboxOptions(dest.project_id),
         scratch: getScratchMountpoint(dest.project_id),
       });
       for (const rootDest of dest.roots) {
@@ -5714,7 +5714,7 @@ export async function initFsServer({
         createProjectSandboxFilesystem({
           project_id,
           home: path,
-          rootfs: getRootfsMountpoint(project_id),
+          ...rootfsSandboxOptions(project_id),
           scratch: getScratchMountpoint(project_id),
           sharedScratch: getSharedScratchMountpoint(),
           deleteSnapshot: async (name: string) =>
@@ -5773,7 +5773,7 @@ async function createProjectFilesystem(project_id: string) {
   return createProjectSandboxFilesystem({
     project_id,
     home,
-    rootfs: getRootfsMountpoint(project_id),
+    ...rootfsSandboxOptions(project_id),
     scratch: getScratchMountpoint(project_id),
     sharedScratch: getSharedScratchMountpoint(),
     deleteSnapshot: async (name: string) =>
@@ -5939,7 +5939,7 @@ export async function ensureFileUploadWriteServer({
         const fs = createProjectSandboxFilesystem({
           project_id,
           home,
-          rootfs: getRootfsMountpoint(project_id),
+          ...rootfsSandboxOptions(project_id),
           scratch: getScratchMountpoint(project_id),
           sharedScratch: getSharedScratchMountpoint(),
           deleteSnapshot: async (name: string) =>
@@ -5979,7 +5979,7 @@ export async function initViewerFsServer({
       const projectFs = createProjectSandboxFilesystem({
         project_id,
         home: path,
-        rootfs: getRootfsMountpoint(project_id),
+        ...rootfsSandboxOptions(project_id),
         scratch: getScratchMountpoint(project_id),
         sharedScratch: getSharedScratchMountpoint(),
         deleteSnapshot: async (name: string) =>
@@ -6019,7 +6019,7 @@ export async function initApiKeyViewerFsServer({
       const projectFs = createProjectSandboxFilesystem({
         project_id: binding.project_id,
         home: path,
-        rootfs: getRootfsMountpoint(binding.project_id),
+        ...rootfsSandboxOptions(binding.project_id),
         scratch: getScratchMountpoint(binding.project_id),
         sharedScratch: getSharedScratchMountpoint(),
         deleteSnapshot: async (name: string) =>
@@ -6054,7 +6054,7 @@ export async function initShareFsServer({
       const projectFs = createProjectSandboxFilesystem({
         project_id,
         home: path,
-        rootfs: getRootfsMountpoint(project_id),
+        ...rootfsSandboxOptions(project_id),
         scratch: getScratchMountpoint(project_id),
         sharedScratch: getSharedScratchMountpoint(),
         deleteSnapshot: async (name: string) =>

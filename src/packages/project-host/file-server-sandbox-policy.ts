@@ -1,3 +1,4 @@
+import type { RootfsAgentOps } from "@cocalc/backend/sandbox/rootfs-agent-routes";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import {
   getSnapshotPathTarget,
@@ -10,6 +11,7 @@ export function createProjectSandboxFilesystem({
   project_id,
   home,
   rootfs,
+  rootfsAgent,
   scratch,
   sharedScratch,
   deleteSnapshot,
@@ -17,6 +19,7 @@ export function createProjectSandboxFilesystem({
   project_id: string;
   home: string;
   rootfs: string;
+  rootfsAgent?: () => RootfsAgentOps | undefined;
   scratch: string;
   sharedScratch?: string;
   deleteSnapshot?: (name: string) => Promise<void>;
@@ -24,6 +27,7 @@ export function createProjectSandboxFilesystem({
   const fs = new SandboxedFilesystem(home, {
     host: project_id,
     rootfs,
+    rootfsAgent,
     scratch,
     sharedScratch,
     // Keep the runtime HOME writable even when rootfs is stopped. Do not alias

@@ -286,7 +286,9 @@ interface Options {
   readonly?: boolean;
   // A project with a separate runtime uid: its rootfs is reachable only from
   // inside its container, through this agent (see rootfs-agent-routes.ts).
-  rootfsAgent?: RootfsAgentOps;
+  // (or a getter, asked on every call, for a sandbox that outlives a change
+  // of the project's runtime uid mode)
+  rootfsAgent?: RootfsAgentOps | (() => RootfsAgentOps | undefined);
   // where HOME is inside the container (for the agent's paths)
   rootfsAgentHome?: string;
   // optional path to treat as "/" when mounted/available.
@@ -416,7 +418,9 @@ export class SandboxedFilesystem {
   public readonly allowSafeModeHardlink: boolean;
   public readonly allowSafeModeSymlink: boolean;
   private readonly openAt2Disabled: boolean;
-  private readonly rootfsAgent?: RootfsAgentOps;
+  private readonly rootfsAgent?:
+    | RootfsAgentOps
+    | (() => RootfsAgentOps | undefined);
   private readonly rootfsAgentHome: string;
   public rusticRepo: string;
   private host?: string;
@@ -532,13 +536,18 @@ export class SandboxedFilesystem {
       hasSharedScratch: !!this.sharedScratch,
       containerHome: this.rootfsAgentHome,
     };
+    const agent =
+      typeof this.rootfsAgent === "function"
+        ? this.rootfsAgent()
+        : this.rootfsAgent;
+    if (agent == null) return NOT_THROUGH_AGENT;
     const rootfsPath = pathArguments(method, args).find(
       (p) => rootfsContainerPath(p, classifier) != null,
     );
     if (rootfsPath == null) return NOT_THROUGH_AGENT;
     if (!ROUTED_METHODS.has(method)) throw rootfsNotAvailableError(rootfsPath);
     if (isWriteMethod(method)) this.assertWritable(rootfsPath);
-    return await callThroughAgent(this.rootfsAgent!, method, args, classifier);
+    return await callThroughAgent(agent, method, args, classifier);
   };
 
   private resolveHomeAlias(resolvedInput: string): string | undefined {

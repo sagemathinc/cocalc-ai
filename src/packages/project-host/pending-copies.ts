@@ -15,7 +15,7 @@ import {
   getScratchMountpoint,
   resolveRusticRepo,
 } from "./file-server";
-import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
+import { rootfsSandboxOptions } from "@cocalc/project-runner/run/rootfs-agent/registry";
 import type { ProjectCopyRow } from "@cocalc/conat/hub/api/projects";
 import {
   PROJECT_RUNTIME_HOME_ALIASES,
@@ -154,7 +154,7 @@ async function applyCopyRow(
   const projectRoot = volume.path;
 
   const destFs = new SandboxedFilesystem(projectRoot, {
-    rootfs: getRootfsMountpoint(row.dest_project_id),
+    ...rootfsSandboxOptions(row.dest_project_id),
     scratch: getScratchMountpoint(row.dest_project_id),
     homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
