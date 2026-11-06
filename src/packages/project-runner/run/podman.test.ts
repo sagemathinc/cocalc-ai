@@ -94,7 +94,9 @@ jest.mock("./filesystem", () => ({
   setQuota: jest.fn(),
 }));
 
+const mockDetachLeftovers = jest.fn(async () => {});
 jest.mock("./rootfs", () => ({
+  detachLeftovers: (...args: any[]) => mockDetachLeftovers(...args),
   mount: jest.fn(),
   unmountAll: (...args: any[]) => mockUnmountAll(...args),
 }));
@@ -1001,10 +1003,12 @@ describe("project-runner podman orphan fallback", () => {
     let dateNowSpy: jest.SpyInstance;
     beforeEach(() => {
       skew = 0;
-      const realNow = Date.now.bind(Date);
+      // The clock moves only by skew: a real millisecond between the
+      // deadline and the first inspect would make its timeout 59s, not 60s.
+      const base = Date.now();
       dateNowSpy = jest
         .spyOn(Date, "now")
-        .mockImplementation(() => realNow() + skew);
+        .mockImplementation(() => base + skew);
     });
     afterEach(() => dateNowSpy.mockRestore());
 
@@ -1426,31 +1430,56 @@ describe("project-runner podman orphan fallback", () => {
         new Map([[`project-${project1}`, { project_id: project1 }]]),
       );
       expect(await projectContainersGone(project1)).toBe(false);
+      // a conmon process known by its project id, whatever its name
+      mockGetConmonContainerProcesses.mockResolvedValue(
+        new Map([["some-other-name", { project_id: project1 }]]),
+      );
+      expect(await projectContainersGone(project1)).toBe(false);
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+      // not a project id: never "gone"
+      expect(await projectContainersGone("not-a-uuid")).toBe(false);
+      expect(await projectContainersGone("")).toBe(false);
       // podman failing is not a proof
       mockPodman.mockRejectedValue(new Error("podman failed"));
       await expect(projectContainersGone(project1)).rejects.toThrow();
     });
 
-    it("won't take down leftover views while a container of the project may use them", async () => {
+    it("takes down leftover views only through the locked, proven detach", async () => {
       mockProjectHasViews.mockResolvedValue(true);
-      mockProjectStartPodman(project1);
-      const base = mockPodman.getMockImplementation()!;
-      mockPodman.mockImplementation(async (args: string[]) =>
-        args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
-          ? { stdout: `sandbox-${project1}-1-ab|running\n` }
-          : await base(args),
-      );
-      await expect(
-        start({
-          project_id: project1,
-          localPath: async () => ({ home }),
-          config: { image: "docker.io/library/ubuntu:latest" },
-        }),
-      ).rejects.toThrow("may still be in use");
+      await startProject();
+      expect(mockDetachLeftovers).toHaveBeenCalledTimes(1);
+      const [id, opts] = mockDetachLeftovers.mock.calls[0] as any[];
+      expect(id).toBe(project1);
+      // nothing else takes them down
       expect(mockUmountProjectViews).not.toHaveBeenCalled();
       expect(mockUnmountAll).not.toHaveBeenCalledWith(project1, {
         immediate: true,
       });
+      // its proof is the containers' absence
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+      mockPodman.mockImplementation(async (args: string[]) =>
+        args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
+          ? { stdout: `sandbox-${project1}-1-ab|running\n` }
+          : { stdout: "" },
+      );
+      expect(await opts.proveUnused()).toBe(false);
+      mockPodman.mockImplementation(async () => ({ stdout: "" }));
+      expect(await opts.proveUnused()).toBe(true);
+      // and what it also takes down is the views
+      await opts.alsoDetach();
+      expect(mockUmountProjectViews).toHaveBeenCalledWith(project1);
+    });
+
+    it("fails the start, and takes down nothing, when the leftovers may be in use", async () => {
+      mockProjectHasViews.mockResolvedValue(true);
+      mockDetachLeftovers.mockRejectedValueOnce(
+        new Error(
+          "this project's earlier views and RootFS may still be in use",
+        ),
+      );
+      await expect(startProject()).rejects.toThrow("may still be in use");
+      expect(mockUmountProjectViews).not.toHaveBeenCalled();
+      expect(mockUnmountAll).not.toHaveBeenCalled();
     });
 
     it("lets only the start prove the rootfs unused, by its containers", async () => {

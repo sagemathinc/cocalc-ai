@@ -108,10 +108,14 @@ export function getPaths({ home, image, project_id }): {
 // Track mount reference counts so multiple users (e.g., project container +
 // sandboxExec sidecars) can share the same overlay mount safely.
 // Every decision about a project's rootfs mount (read what is mounted, decide,
-// prove it unused, detach, mount, record the way, publish the lease) runs
-// under this per-project lock, as does every detach. Without it a mount
-// could be reused or acquired between another caller's check and its
-// detach.
+// prove it unused, take a lease, detach, mount, record the way) runs under
+// this per-project lock, as does every detach. Without it a mount could be
+// reused or acquired between another caller's check and its detach.
+//
+// Lock order: this lock, then the lease manager's. The lease manager's
+// disposer runs under the lease manager's lock, so it never waits for this
+// one: it only queues a disposal, which then runs under this lock and only
+// if nothing holds the rootfs by then.
 const projectLocks = new Map<string, Promise<void>>();
 
 export async function withRootfsLock<T>(
@@ -134,11 +138,14 @@ export async function withRootfsLock<T>(
 
 const leases = new RefcountLeaseManager<string>({
   delayMs: UNMOUNT_DELAY_MS,
-  disposer: async (project_id: string) =>
-    await withRootfsLock(
-      project_id,
-      async () => await disposeMount(project_id),
-    ),
+  disposer: async (project_id: string) => {
+    void withRootfsLock(project_id, async () => {
+      if (leases.getCount(project_id) > 0) return;
+      await disposeMount(project_id);
+    }).catch((err) =>
+      logger.warn("rootfs disposal failed", { project_id, err: `${err}` }),
+    );
+  },
 });
 // Track release functions for each active lease so unmount can drop one ref.
 const leaseReleases: Map<
@@ -282,7 +289,9 @@ export async function mount({
   proveUnused?: () => Promise<boolean>;
 }) {
   return await withRootfsLock(project_id, async () => {
-    const release = await leases.acquire(project_id);
+    // A lease is taken only once this call reuses or replaces the mount: a
+    // refused or failed call must leave nothing that could dispose of it.
+    let release: Awaited<ReturnType<typeof leases.acquire>> | undefined;
     const op_id = config?.lro_op_id;
     const report = (event: {
       type: string;
@@ -359,9 +368,11 @@ export async function mount({
             .then((info) => info.isDirectory() || info.isSymbolicLink())
             .catch(() => false))
         ) {
+          release = await leases.acquire(project_id);
           addRelease(project_id, release);
           return merged;
         }
+        release = await leases.acquire(project_id);
         await rm(merged, { recursive: true, force: true });
         await mkdir(merged, { recursive: true });
         await executeCode({
@@ -396,7 +407,7 @@ export async function mount({
           idmapUid,
           currentIdmapUid: idmapUids.get(project_id),
           sameImage: mountedImage.trim() === image,
-          holders: leaseReleases.get(project_id)?.length ?? 0,
+          holders: leases.getCount(project_id),
         };
         let decision = rootfsMountAction({ ...state, authorized: false });
         if (
@@ -418,6 +429,7 @@ export async function mount({
         if (decision.action === "reuse") {
           // Already mounted against the requested lowerdir. A quick restart can
           // cancel delayed disposal and safely reuse this mount.
+          release = await leases.acquire(project_id);
           addRelease(project_id, release);
           return merged;
         }
@@ -426,6 +438,7 @@ export async function mount({
             `this project's RootFS ${MISMATCH_TEXT[decision.mismatch]} and may still be in use; stop what uses it (the project and its sidecars) and try again`,
           );
         }
+        release = await leases.acquire(project_id);
         // Never let the restart grace period mask a RootFS change (or a change
         // of runtime uid). Detach the old mounts before replacing the persisted
         // image identity below.
@@ -439,6 +452,7 @@ export async function mount({
         }
       }
 
+      release ??= await leases.acquire(project_id);
       try {
         // workdir must be empty when mount happens -- it is scratch space
         await rm(workdir, { recursive: true, force: true });
@@ -480,11 +494,12 @@ export async function mount({
       });
 
       // Successful mount keeps the lease alive; caller now owns one ref.
-      addRelease(project_id, release);
+      addRelease(project_id, release!);
       return merged;
     } catch (err) {
-      // If something failed, drop the lease immediately.
-      await release();
+      // If something failed after taking the lease, drop it (its delayed
+      // disposal queues behind this call's lock).
+      await release?.();
       throw err;
     }
   });
@@ -518,6 +533,45 @@ export async function unmountAll(
       await detachBothWays(project_id);
     });
   }
+}
+
+/**
+ * At a start, take down what an earlier run left mounted (the rootfs either
+ * way, then alsoDetach, e.g. the project's views) as one step under the
+ * rootfs lock: only if nothing in this daemon holds the rootfs and
+ * proveUnused shows that nothing else does (none of the project's containers
+ * alive). A failed proof is no proof.
+ */
+export async function detachLeftovers(
+  project_id: string,
+  {
+    proveUnused,
+    alsoDetach,
+  }: {
+    proveUnused: () => Promise<boolean>;
+    alsoDetach: () => Promise<void>;
+  },
+): Promise<void> {
+  await withRootfsLock(project_id, async () => {
+    let unused = false;
+    if (leases.getCount(project_id) === 0) {
+      try {
+        unused = await proveUnused();
+      } catch (err) {
+        logger.warn("could not prove the leftovers unused", {
+          project_id,
+          err: `${err}`,
+        });
+      }
+    }
+    if (!unused) {
+      throw new Error(
+        "this project's earlier views and RootFS may still be in use; stop what uses them (the project and its sidecars) and try again",
+      );
+    }
+    await detachBothWays(project_id);
+    await alsoDetach();
+  });
 }
 
 async function detachBothWays(project_id: string): Promise<void> {

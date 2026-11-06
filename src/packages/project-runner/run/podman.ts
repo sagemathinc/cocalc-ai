@@ -58,7 +58,11 @@ import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
 import { basename, join, relative, isAbsolute } from "node:path";
-import { mount as mountRootFs, unmountAll as unmountAllRootFs } from "./rootfs";
+import {
+  detachLeftovers as detachRootfsLeftovers,
+  mount as mountRootFs,
+  unmountAll as unmountAllRootFs,
+} from "./rootfs";
 import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -2334,13 +2338,11 @@ async function startUnlocked({
         // (with the rootfs, whose idmapped upper is one of them).
         await hardenProjectDataRoot();
         if (await projectHasViews(project_id)) {
-          if (!(await projectContainersGone(project_id).catch(() => false))) {
-            throw new Error(
-              "this project's earlier views and RootFS may still be in use; stop what uses them (the project and its sidecars) and try again",
-            );
-          }
-          await unmountAllRootFs(project_id, { immediate: true });
-          await umountProjectViews(project_id);
+          // proof and detach in one step under the rootfs lock
+          await detachRootfsLeftovers(project_id, {
+            proveUnused: async () => await projectContainersGone(project_id),
+            alsoDetach: async () => await umountProjectViews(project_id),
+          });
         }
       });
     }
