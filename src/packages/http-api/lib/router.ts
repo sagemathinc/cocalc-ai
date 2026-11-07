@@ -87,8 +87,8 @@ export default function createApiV2Router(
     }
     next();
   });
-  router.use(express.json({ limit: "10mb" }));
-  router.use(express.urlencoded({ extended: true }));
+  router.use(unlessRawBodyRoute(express.json({ limit: "10mb" })));
+  router.use(unlessRawBodyRoute(express.urlencoded({ extended: true })));
   router.use(ensureCookies);
 
   const routes =
@@ -123,6 +123,27 @@ function wrapHandler(
       logger.warn("api v2 handler error", { routePath, err });
       next(err);
     }
+  };
+}
+
+// Routes that bound and strictly parse their own request bodies, so the shared
+// parsers must not read them first. Matched like Express matches routes:
+// case-insensitively, with or without a trailing slash.
+export const RAW_BODY_ROUTES = new Set(["/support/sagebrush-intake"]);
+
+export function isRawBodyRoute(path: string): boolean {
+  return RAW_BODY_ROUTES.has(`${path ?? ""}`.toLowerCase().replace(/\/+$/, ""));
+}
+
+function unlessRawBodyRoute(
+  parser: (req: Request, res: Response, next: NextFunction) => void,
+) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (isRawBodyRoute(req.path)) {
+      next();
+      return;
+    }
+    parser(req, res, next);
   };
 }
 

@@ -44,6 +44,82 @@ it.each([true, false, undefined])(
   },
 );
 
+describe("the internal policy argument", () => {
+  const { assertSupportTicketRateLimit } = jest.requireMock("./rate-limit");
+  const options = {
+    email: "user@example.com",
+    subject: "Help with files",
+    body: "Please investigate this issue",
+    ip_address: "192.0.2.1",
+  };
+
+  beforeEach(() => {
+    mockCreate.mockClear();
+    assertSupportTicketRateLimit.mockClear();
+  });
+
+  it("passes the source and email policy to one rate-limit check and adds the tags", async () => {
+    await createTicket(options, {
+      source: "sagebrush-intake",
+      skip_email_rules: true,
+      extra_tags: ["sagebrush", "sb-kind-bug", "sb-no-email"],
+    });
+    expect(assertSupportTicketRateLimit).toHaveBeenCalledTimes(1);
+    expect(assertSupportTicketRateLimit).toHaveBeenCalledWith({
+      account_id: undefined,
+      email: "user@example.com",
+      ip_address: "192.0.2.1",
+      source: "sagebrush-intake",
+      skip_email_rules: true,
+    });
+    expect(mockCreate.mock.calls[0][0].ticket.tags).toEqual([
+      "support_content_consent_no",
+      "sagebrush",
+      "sb-kind-bug",
+      "sb-no-email",
+    ]);
+  });
+
+  it("ignores policy keys forged into options (the public route's body)", async () => {
+    await createTicket({
+      ...options,
+      source: "sagebrush-intake",
+      skip_email_rules: true,
+      extra_tags: ["sagebrush"],
+      internal: { source: "sagebrush-intake" },
+    } as any);
+    expect(assertSupportTicketRateLimit).toHaveBeenCalledTimes(1);
+    expect(assertSupportTicketRateLimit).toHaveBeenCalledWith({
+      account_id: undefined,
+      email: "user@example.com",
+      ip_address: "192.0.2.1",
+      source: undefined,
+      skip_email_rules: false,
+    });
+    expect(mockCreate.mock.calls[0][0].ticket.tags).toEqual([
+      "support_content_consent_no",
+    ]);
+  });
+
+  it("never reaches Zendesk when the rate-limit check fails", async () => {
+    assertSupportTicketRateLimit.mockRejectedValueOnce(Error("db down"));
+    await expect(
+      createTicket(options, { source: "sagebrush-intake" }),
+    ).rejects.toThrow("db down");
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("an invalid email is refused before the rate-limit check", async () => {
+    await expect(
+      createTicket(
+        { ...options, email: "not-an-email" },
+        { source: "sagebrush-intake" },
+      ),
+    ).rejects.toThrow("email must be valid");
+    expect(assertSupportTicketRateLimit).not.toHaveBeenCalled();
+  });
+});
+
 jest.mock("@cocalc/database/settings/site-url", () => ({
   __esModule: true,
   default: jest.fn(async () => "https://lite4.cocalc.ai"),

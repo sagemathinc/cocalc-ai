@@ -23,23 +23,33 @@ export class SupportTicketRateLimitError extends Error {
   code = "support_ticket_rate_limited";
 }
 
+// source is the rate-limit namespace: NULL for CoCalc's own support form,
+// "sagebrush-intake" for the Sagebrush intake route. Every attempt row records
+// it and every rule counts only rows of the same namespace.
+// skip_email_rules drops every rule keyed on the email (the email+IP rules
+// included); the intake route sets it only for its server-chosen default email.
 export async function assertSupportTicketRateLimit({
   account_id,
   email,
   ip_address,
+  source,
+  skip_email_rules,
 }: {
   account_id?: string;
   email: string;
   ip_address?: string;
+  source?: string;
+  skip_email_rules?: boolean;
 }): Promise<void> {
   const pool = getPool();
   const attempt_id = uuid();
   const normalizedEmail = normalizeRateLimitEmail(email);
   const normalizedIp = normalizeRateLimitIp(ip_address);
+  const normalizedSource = source ?? null;
   await pool.query(
     `INSERT INTO support_ticket_attempts
-       (id, time, expire, ip_address, email_address, account_id, accepted, reason)
-     VALUES ($1, NOW(), $2, $3, $4, $5, FALSE, $6)`,
+       (id, time, expire, ip_address, email_address, account_id, accepted, reason, source)
+     VALUES ($1, NOW(), $2, $3, $4, $5, FALSE, $6, $7)`,
     [
       attempt_id,
       expireTime(SUPPORT_TICKET_ATTEMPT_TTL_DAYS * 24 * 60 * 60),
@@ -47,6 +57,7 @@ export async function assertSupportTicketRateLimit({
       normalizedEmail,
       account_id ?? null,
       "pending",
+      normalizedSource,
     ],
   );
 
@@ -55,7 +66,9 @@ export async function assertSupportTicketRateLimit({
       account_id,
       email: normalizedEmail,
       ip_address: normalizedIp,
+      skip_email_rules: skip_email_rules === true,
     }),
+    normalizedSource,
   );
   if (blocked != null) {
     await markAttempt({
@@ -75,27 +88,32 @@ function buildRules({
   account_id,
   email,
   ip_address,
+  skip_email_rules,
 }: {
   account_id?: string;
   email: string;
   ip_address?: string;
+  skip_email_rules: boolean;
 }): Rule[] {
-  const rules: Rule[] = [
-    {
-      key: "email_hour",
-      interval: "1 hour",
-      limit: 3,
-      where: "email_address=$1",
-      params: [email],
-    },
-    {
-      key: "email_day",
-      interval: "1 day",
-      limit: 6,
-      where: "email_address=$1",
-      params: [email],
-    },
-  ];
+  const rules: Rule[] = [];
+  if (!skip_email_rules) {
+    rules.push(
+      {
+        key: "email_hour",
+        interval: "1 hour",
+        limit: 3,
+        where: "email_address=$1",
+        params: [email],
+      },
+      {
+        key: "email_day",
+        interval: "1 day",
+        limit: 6,
+        where: "email_address=$1",
+        params: [email],
+      },
+    );
+  }
 
   if (ip_address) {
     rules.push(
@@ -113,21 +131,25 @@ function buildRules({
         where: "ip_address=$1::inet",
         params: [ip_address],
       },
-      {
-        key: "email_ip_10m",
-        interval: "10 minutes",
-        limit: 2,
-        where: "email_address=$1 AND ip_address=$2::inet",
-        params: [email, ip_address],
-      },
-      {
-        key: "email_ip_hour",
-        interval: "1 hour",
-        limit: 4,
-        where: "email_address=$1 AND ip_address=$2::inet",
-        params: [email, ip_address],
-      },
     );
+    if (!skip_email_rules) {
+      rules.push(
+        {
+          key: "email_ip_10m",
+          interval: "10 minutes",
+          limit: 2,
+          where: "email_address=$1 AND ip_address=$2::inet",
+          params: [email, ip_address],
+        },
+        {
+          key: "email_ip_hour",
+          interval: "1 hour",
+          limit: 4,
+          where: "email_address=$1 AND ip_address=$2::inet",
+          params: [email, ip_address],
+        },
+      );
+    }
   }
 
   if (account_id) {
@@ -152,23 +174,27 @@ function buildRules({
   return rules;
 }
 
-async function firstBlockedRule(rules: Rule[]): Promise<string | undefined> {
+async function firstBlockedRule(
+  rules: Rule[],
+  source: string | null,
+): Promise<string | undefined> {
   for (const rule of rules) {
-    const count = await countRecent(rule);
+    const count = await countRecent(rule, source);
     if (count > rule.limit) {
       return rule.key;
     }
   }
 }
 
-async function countRecent(rule: Rule): Promise<number> {
+async function countRecent(rule: Rule, source: string | null): Promise<number> {
   const pool = getPool();
   const { rows } = await pool.query(
     `SELECT COUNT(*)::INT AS count
        FROM support_ticket_attempts
       WHERE time >= NOW() - INTERVAL '${rule.interval}'
-        AND ${rule.where}`,
-    rule.params,
+        AND ${rule.where}
+        AND source IS NOT DISTINCT FROM $${rule.params.length + 1}::TEXT`,
+    [...rule.params, source],
   );
   return Number(rows[0]?.count ?? 0);
 }
