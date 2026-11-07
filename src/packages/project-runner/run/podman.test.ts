@@ -849,6 +849,14 @@ describe("project-runner podman orphan fallback", () => {
         }),
       }),
     );
+    expect(mockPodman).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "create",
+        "--security-opt",
+        expect.stringMatching(/^seccomp=.*cocalc-project-[0-9a-f]{16}\.json$/),
+      ]),
+      expect.anything(),
+    );
     expect(mockExecuteCode).toHaveBeenCalledWith(
       expect.objectContaining({
         command: "sudo",
