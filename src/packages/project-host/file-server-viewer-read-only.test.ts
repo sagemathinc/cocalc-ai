@@ -7,12 +7,13 @@ import { DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY } from "@cocalc/util/project-ac
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import type { Filesystem } from "@cocalc/conat/files/fs";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assertViewerCanonicalPathAllowed,
   createViewerReadOnlyFilesystem,
+  VIEWER_READ_MAX_BYTES,
 } from "./viewer-read-only-filesystem";
 
 function mockFilesystem(
@@ -56,6 +57,35 @@ describe("viewer read-only filesystem boundary", () => {
       );
       await expect(viewerFs.readFile("pipe")).rejects.toMatchObject({
         code: "EACCES",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads files up to the viewer limit, which covers large notebooks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cocalc-viewer-"));
+    try {
+      const viewerFs = createViewerReadOnlyFilesystem({
+        fs: new SandboxedFilesystem(root),
+        readPolicy: DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+      });
+      expect(VIEWER_READ_MAX_BYTES).toBe(20 * 1024 * 1024);
+      // above the sandbox's 8 MiB default
+      await writeFile(join(root, "big.ipynb"), "");
+      await truncate(join(root, "big.ipynb"), 14 * 1024 * 1024);
+      await expect(viewerFs.readFile("big.ipynb")).resolves.toHaveLength(
+        14 * 1024 * 1024,
+      );
+      await writeFile(join(root, "at-limit"), "");
+      await truncate(join(root, "at-limit"), VIEWER_READ_MAX_BYTES);
+      await expect(viewerFs.readFile("at-limit")).resolves.toHaveLength(
+        VIEWER_READ_MAX_BYTES,
+      );
+      await writeFile(join(root, "too-big"), "");
+      await truncate(join(root, "too-big"), VIEWER_READ_MAX_BYTES + 1);
+      await expect(viewerFs.readFile("too-big")).rejects.toMatchObject({
+        code: "EFBIG",
       });
     } finally {
       await rm(root, { recursive: true, force: true });

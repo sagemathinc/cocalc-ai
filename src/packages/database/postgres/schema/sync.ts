@@ -37,6 +37,10 @@ import {
   syncTableSchemaColumnInvariants,
 } from "./column-invariants";
 import { getIndexActions, syncTableSchemaIndexes } from "./index-convergence";
+import {
+  artifactCatalogChangeCheckNeedsSync,
+  ensureArtifactCatalogChangeCheck,
+} from "./artifact-catalog-change-check";
 import { backfillComputeVmProjectAccess } from "./compute-vm-project-access";
 import { cleanupLegacyCrmBeforeSchemaSync } from "./crm-legacy-cleanup";
 import {
@@ -514,6 +518,9 @@ export async function syncSchema(
     if (dbSchema.commercial_orders != null) {
       await ensureCommercialNextActionSchema(db);
     }
+    if (dbSchema.artifact_catalog_changes != null) {
+      await ensureArtifactCatalogChangeCheck(db);
+    }
     if (dbSchema.commercial_quotes != null) {
       await ensureCommercialQuoteLifecycleSchema(db);
     }
@@ -654,6 +661,13 @@ export async function schemaNeedsSync(
       (await projectHostDesiredStateSchemaNeedsSync(db))
     ) {
       dbg("detected missing project host desired-state guard");
+      return true;
+    }
+    if (
+      dbSchema.artifact_catalog_changes != null &&
+      (await artifactCatalogChangeCheckNeedsSync(db))
+    ) {
+      dbg("detected missing artifact catalog change check");
       return true;
     }
     if (

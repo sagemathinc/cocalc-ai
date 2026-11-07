@@ -2653,6 +2653,13 @@ describe("project collaborators local bay access", () => {
     const accept = statementIndex((sql) =>
       sql.includes("SET status='accepted'"),
     );
+    // the acceptance durably records that it granted access, so course
+    // reconciliation never treats it as a legacy grant-less acceptance
+    expect(
+      queryMock.mock.calls.find(([sql]) =>
+        sql.includes("SET status='accepted'"),
+      )[0],
+    ).toContain("'{membership_granted}'");
     const commit = statementIndex((sql) => sql === "COMMIT");
     // the membership audit records who accepted and who sent the invite,
     // set in the same transaction before the grant

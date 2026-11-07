@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -518,6 +518,7 @@ describe("exit watchers", () => {
       dir: "~/.local/share/cocalc/sensors/exits",
       status: `~/.local/share/cocalc/sensors/exits/${id}.json`,
       log: `~/.local/share/cocalc/sensors/exits/${id}.log`,
+      beat: `~/.local/share/cocalc/sensors/exits/${id}.beat`,
     });
     for (const watch of [
       { type: "exit", id: "../../etc/passwd", command: "x" },
@@ -550,6 +551,46 @@ describe("exit watchers", () => {
     expect(data.exit_code).toBe(2);
     expect(data.output_tail.length).toBe(SENSOR_LIMITS.maxExitLogBytes);
     expect(data.output_tail.endsWith("error: 2 tests failed\n")).toBe(true);
+  });
+
+  it("wakes when the command's terminal ended before it exited", () => {
+    const home = mkdtempSync(join(tmpdir(), "watch-exit-lost-"));
+    const dir = join(home, ".local/share/cocalc/sensors/exits");
+    mkdirSync(dir, { recursive: true });
+    const script = sensorWatchScript({ type: "exit", id, command: "make" })!;
+    const run = () =>
+      execFileSync("python3", ["-c", script], {
+        cwd: home,
+        env: { ...process.env, HOME: home },
+        encoding: "utf8",
+      });
+    const beat = join(dir, `${id}.beat`);
+    const ago = (seconds: number) => {
+      const t = Date.now() / 1000 - seconds;
+      utimesSync(beat, t, t);
+    };
+    // Not started yet, or a command started before heartbeats: quiet.
+    expect(run()).toBe("");
+    // Running: its heartbeat is fresh.
+    writeFileSync(beat, "");
+    expect(run()).toBe("");
+    ago(SENSOR_LIMITS.exitLostAfterSeconds - 30);
+    expect(run()).toBe("");
+    // Its heartbeat stopped and it never wrote an exit code.
+    writeFileSync(join(dir, `${id}.log`), "step 1 ok\n");
+    ago(SENSOR_LIMITS.exitLostAfterSeconds + 30);
+    const wake = parseSensorWake(run())!;
+    expect(wake.summary).toMatch(
+      /^"make" stopped without an exit code: its terminal ended/,
+    );
+    expect(wake.data).toMatchObject({
+      exit_code: null,
+      reason: "terminal-ended",
+      output_tail: "step 1 ok\n",
+    });
+    // A stale heartbeat with an exit code: it finished.
+    writeFileSync(join(dir, `${id}.json`), '{"exit_code": 0}\n');
+    expect(parseSensorWake(run())!.summary).toBe('"make" exited with code 0');
   });
 });
 

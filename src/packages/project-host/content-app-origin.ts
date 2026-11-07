@@ -15,7 +15,7 @@ so that whatever it serves (a collaborator's server, student HTML) never runs
 with the CoCalc app's or the host's credentials, nor another app's.
 
 - The hub's /app-open signs a short-lived, single-use app capability; the
-  browser brings it to /_a/<capability> here as a top-level navigation from
+  browser brings it to /.cocalc/a/<capability> here as a top-level navigation from
   the site, and gets a session cookie for this one origin (__Host-cocalc-app).
 - Every other request on the hostname needs that session, for exactly this
   project and app, and a path of that app: anything else gets a 404.
@@ -42,10 +42,13 @@ import {
 } from "@cocalc/conat/auth/project-app-capability";
 
 export const APP_SESSION_COOKIE = "__Host-cocalc-app";
-export const APP_BOOTSTRAP_PREFIX = "/_a/";
+// CoCalc's own paths on an app origin, under a prefix no app uses (the rest
+// of the origin, including its root, belongs to the app).
+export const APP_RESERVED_PREFIX = "/.cocalc/";
+export const APP_BOOTSTRAP_PREFIX = "/.cocalc/a/";
 // The app framed by the site (a chat card): its own partitioned session.
 export const APP_FRAME_SESSION_COOKIE = "__Host-cocalc-app-frame";
-export const APP_FRAME_BOOTSTRAP_PREFIX = "/_af/";
+export const APP_FRAME_BOOTSTRAP_PREFIX = "/.cocalc/af/";
 export const APP_FRAME_SESSION_MAX_SECONDS = 60 * 60;
 const APP_SESSION_VERSION = "project-app-session-v1";
 export const APP_SESSION_MAX_SECONDS = 12 * 60 * 60;
@@ -85,7 +88,7 @@ export function parseAppHostname(
 export type AppSessionKind = "app" | "app-frame";
 
 export interface AppSession {
-  // "app": the top-level session (/_a/); "app-frame": the framed one (/_af/).
+  // "app": the top-level session (/.cocalc/a/); "app-frame": the framed one (/.cocalc/af/).
   kind?: AppSessionKind;
   account_id: string;
   project_id: string;
@@ -243,7 +246,7 @@ function originOf(value: unknown): string | undefined {
 // link to the app), and for Sec-Fetch-Site: none (typed, bookmarked) only
 // safe methods.  Same-site requests (other apps under the content domain)
 // are refused unless they are top-level navigations.  Sessions are only
-// issued to browsers that send fetch metadata (/_a/ requires it), so a
+// issued to browsers that send fetch metadata (/.cocalc/a/ requires it), so a
 // request without it is refused.
 export function appRequestRejection(
   req: Pick<IncomingMessage, "headers" | "method">,
@@ -304,6 +307,112 @@ export async function appKeyOfPath({
   }
 }
 
+// ---- root mode (phase 7c) ----
+//
+// An app origin also serves its app at the root, with no base URL: any path
+// that isn't the legacy /<project_id>/... form (or CoCalc's reserved prefix)
+// is the root form.  For a port app (key p<N>) the host forwards it to the
+// project's strip-mode route /<project_id>/proxy/<N>/..., so the app sees
+// exactly the path the browser asked for.  An app at its own base path
+// (s-key) is forwarded under that base path the same way, if its spec strips
+// the prefix and the mapped path still resolves to this app (W4); otherwise
+// it is served in the legacy form only.
+
+// The project-internal mount a root-form path maps under, or undefined.
+export function rootFormMount({
+  project_id,
+  key,
+  pathname,
+}: {
+  project_id: string;
+  key: string;
+  pathname: string;
+}): string | undefined {
+  if (!pathname.startsWith("/")) return;
+  if (pathname === `/${project_id}` || pathname.startsWith(`/${project_id}/`)) {
+    return;
+  }
+  if (
+    pathname === APP_RESERVED_PREFIX.slice(0, -1) ||
+    pathname.startsWith(APP_RESERVED_PREFIX)
+  ) {
+    return;
+  }
+  const m = /^p([1-9][0-9]{0,4})$/.exec(key);
+  if (!m || Number(m[1]) > 65535) return;
+  return `/${project_id}/proxy/${m[1]}`;
+}
+
+// The root form of a legacy path (/<pid>/port|proxy|server/N/x for port
+// app N, or <mount>/x for an app at its own base path -> /x), or undefined.
+export function rootFormOfLegacyPath({
+  project_id,
+  key,
+  path,
+  mount,
+}: {
+  project_id: string;
+  key: string;
+  path: string;
+  mount?: string;
+}): string | undefined {
+  const q = path.indexOf("?");
+  const pathname = q === -1 ? path : path.slice(0, q);
+  const search = q === -1 ? "" : path.slice(q);
+  const m = /^p([1-9][0-9]{0,4})$/.exec(key);
+  const prefixes = m
+    ? ["port", "proxy", "server"].map(
+        (kind) => `/${project_id}/${kind}/${m[1]}`,
+      )
+    : mount
+      ? [mount]
+      : [];
+  for (const prefix of prefixes) {
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
+      const rest = pathname.slice(prefix.length) || "/";
+      return `${rest}${search}`;
+    }
+  }
+}
+
+function isRootFormPath(project_id: string, pathname: string): boolean {
+  return (
+    pathname.startsWith("/") &&
+    pathname !== `/${project_id}` &&
+    !pathname.startsWith(`/${project_id}/`) &&
+    pathname !== APP_RESERVED_PREFIX.slice(0, -1) &&
+    !pathname.startsWith(APP_RESERVED_PREFIX)
+  );
+}
+
+// A redirect Location from the project, with the strip-mode mount removed
+// again (the project proxy maps an app's "/x" redirect to "<mount>/x").
+export function unmountLocation(
+  location: string,
+  mount: string,
+  origin: string,
+): string {
+  const value = `${location ?? ""}`.trim();
+  const strip = (path: string): string | undefined => {
+    if (path === mount) return "/";
+    if (path.startsWith(`${mount}/`) || path.startsWith(`${mount}?`)) {
+      const rest = path.slice(mount.length);
+      return rest.startsWith("?") ? `/${rest}` : rest;
+    }
+  };
+  if (value.startsWith("/") && !value.startsWith("//")) {
+    return strip(value) ?? value;
+  }
+  try {
+    const url = new URL(value);
+    if (url.origin !== origin) return value;
+    const stripped = strip(`${url.pathname}${url.search}`);
+    return stripped == null ? value : `${origin}${stripped}${url.hash}`;
+  } catch {
+    return value;
+  }
+}
+
 // ---- the handler ----
 
 export interface AppOriginAuth {
@@ -319,7 +428,7 @@ export interface AppOriginHandlerOptions {
   host_id: string;
   getPublicKey: () => string;
   getSecret: () => string;
-  // Site origins allowed to send browsers to /_a/ (the Referer).
+  // Site origins allowed to send browsers to /.cocalc/a/ (the Referer).
   approvedOrigins: () => Set<string>;
   // Where to send a navigation without a session: <site>/app-open/...
   siteOrigin: (req: IncomingMessage) => string | undefined;
@@ -329,6 +438,12 @@ export interface AppOriginHandlerOptions {
   accountRevokedBeforeMs: (account_id: string) => number | undefined;
   consumeCapability: (opts: { jti: string; exp_ms: number }) => boolean;
   matchApp: Parameters<typeof appKeyOfPath>[0]["matchApp"];
+  // The internal mount of an app at its own base path (s-key), for serving
+  // it at the root of its origin; undefined keeps it legacy-only.
+  appRootMount?: (opts: {
+    project_id: string;
+    key: string;
+  }) => Promise<{ mount: string; app_id: string } | undefined>;
   // Called with the authorized request (URL unchanged, app session cookie
   // removed) to proxy it to the project.
   proxy: (
@@ -420,10 +535,14 @@ function setAppOriginHeaders(res: ServerResponse): void {
 function guardUpstreamHeaders(
   res: ServerResponse,
   csp: string = APP_ORIGIN_CSP,
+  rootMount?: { mount: string; origin: string },
 ): void {
   const setHeader = res.setHeader.bind(res);
   const fix = (name: string, value: any): any => {
     const lower = `${name}`.toLowerCase();
+    if (lower === "location" && rootMount && typeof value === "string") {
+      return unmountLocation(value, rootMount.mount, rootMount.origin);
+    }
     if (lower === "set-cookie") {
       const values = (Array.isArray(value) ? value : [value])
         .map((v) => rewriteUpstreamSetCookie(`${v}`))
@@ -501,6 +620,28 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
   const { domain, host_id } = opts;
   const now = () => opts.now?.() ?? Date.now();
 
+  // The internal mount a root-form path of this origin maps under, or
+  // undefined (legacy path, reserved path, or an app kept legacy-only).
+  const mountOf = async (
+    target: { project_id: string; key: string },
+    pathname: string,
+  ): Promise<{ mount: string; app_id?: string } | undefined> => {
+    if (!isRootFormPath(target.project_id, pathname)) return;
+    const port = rootFormMount({ ...target, pathname });
+    if (port != null) return { mount: port };
+    if (!target.key.startsWith("s")) return;
+    // An app at its own base path (W4): only if the mapped path is still
+    // this app's (no other app's base path overlaps it).
+    const app = await opts.appRootMount?.(target);
+    if (app == null) return;
+    const key = await appKeyOfPath({
+      project_id: target.project_id,
+      pathname: `${app.mount}${pathname}`,
+      matchApp: opts.matchApp,
+    });
+    return key === target.key ? app : undefined;
+  };
+
   // The session of this kind on this request, if valid and still allowed.
   // `stale` says a session cookie was present but is no longer good
   // (expired, revoked, older epoch...).
@@ -543,7 +684,7 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     return { stale: tokens.length > 0, olderEpoch };
   };
 
-  // /_a/ (kind "app") and /_af/ (kind "app-frame"): redeem a single-use
+  // /.cocalc/a/ (kind "app") and /.cocalc/af/ (kind "app-frame"): redeem a single-use
   // capability for a session on this origin, then go to the app's path.
   const bootstrap = async (
     req: IncomingMessage,
@@ -552,7 +693,7 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     url: URL,
     kind: AppSessionKind,
   ): Promise<void> => {
-    // For /_af/, the redirected frame navigation must still carry the
+    // For /.cocalc/af/, the redirected frame navigation must still carry the
     // site's origin as Referer (checked below); the referrer is the site's
     // page, never this capability URL, so nothing leaks either way.
     res.setHeader(
@@ -560,8 +701,8 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
       kind === "app" ? "no-referrer" : "strict-origin",
     );
     res.setHeader("Cache-Control", "no-store");
-    // D4: sent here by the site itself: a top-level navigation for /_a/;
-    // for /_af/ the site's own frame (cross-site only: a same-site parent
+    // D4: sent here by the site itself: a top-level navigation for /.cocalc/a/;
+    // for /.cocalc/af/ the site's own frame (cross-site only: a same-site parent
     // would be a content page).
     const referer = originOf(req.headers.referer);
     const site = header(req, "sec-fetch-site");
@@ -664,8 +805,21 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     if (sessionOf(req, target, kind).olderEpoch) {
       res.setHeader("Clear-Site-Data", '"storage", "cache"');
     }
+    // Root mode (phase 7c): the app runs without a base URL, so go to the
+    // root form of the path.
+    const rootNext =
+      url.searchParams.get("root") === "1"
+        ? rootFormOfLegacyPath({
+            project_id: target.project_id,
+            key: target.key,
+            path: next,
+            mount: target.key.startsWith("s")
+              ? (await opts.appRootMount?.(target))?.mount
+              : undefined,
+          })
+        : undefined;
     // Built from parts: next is a path of this app on this origin.
-    const location = new URL(next, `https://${target.hostname}`);
+    const location = new URL(rootNext ?? next, `https://${target.hostname}`);
     if (location.origin !== `https://${target.hostname}`) {
       return refuse(res, 400, "invalid app path");
     }
@@ -717,17 +871,31 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     if (url.origin !== `https://${target.hostname}`) {
       return refuse(res, 400, "bad request");
     }
+    if (/^\/_af?\//.test(url.pathname)) {
+      // The bootstrap paths before phase 7c: never the app's (a link minted
+      // before the move must not hand its capability to the user's server).
+      return refuse(
+        res,
+        410,
+        "this link is no longer valid; open the app again",
+      );
+    }
     if (url.pathname.startsWith(APP_BOOTSTRAP_PREFIX)) {
       return await bootstrap(req, res, target, url, "app");
     }
     if (url.pathname.startsWith(APP_FRAME_BOOTSTRAP_PREFIX)) {
       return await bootstrap(req, res, target, url, "app-frame");
     }
-    const key = await appKeyOfPath({
-      project_id: target.project_id,
-      pathname: url.pathname,
-      matchApp: opts.matchApp,
-    });
+    const root = await mountOf(target, url.pathname);
+    const mount = root?.mount;
+    const key =
+      mount != null
+        ? target.key
+        : await appKeyOfPath({
+            project_id: target.project_id,
+            pathname: url.pathname,
+            matchApp: opts.matchApp,
+          });
     if (key !== target.key) return refuse(res, 404, "not found");
     const site = header(req, "sec-fetch-site");
     let session: AppSession | undefined;
@@ -761,12 +929,21 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
       if (!session) {
         const siteOrigin = opts.siteOrigin(req);
         if (isNavigation(req) && siteOrigin) {
+          // Back through the site, which opens this app again (in its root
+          // form for a root-form path).
+          const reopen = new URL(
+            `${siteOrigin}/app-open${mount ?? ""}${url.pathname}`,
+          );
+          reopen.search = url.search;
+          if (mount != null) {
+            reopen.searchParams.set("cocalc_root", "1");
+            if (root?.app_id) {
+              reopen.searchParams.set("cocalc_app", root.app_id);
+            }
+          }
           res.statusCode = 302;
           res.setHeader("Cache-Control", "no-store");
-          res.setHeader(
-            "Location",
-            `${siteOrigin}/app-open${url.pathname}${url.search}`,
-          );
+          res.setHeader("Location", reopen.href);
           res.end();
           return;
         }
@@ -786,8 +963,14 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     const cookie = withoutAppSessionCookie(req.headers.cookie);
     if (cookie == null) delete req.headers.cookie;
     else req.headers.cookie = cookie;
-    req.url = `${url.pathname}${url.search}`;
-    guardUpstreamHeaders(res, csp);
+    req.url = `${mount ?? ""}${url.pathname}${url.search}`;
+    guardUpstreamHeaders(
+      res,
+      csp,
+      mount != null
+        ? { mount, origin: `https://${target.hostname}` }
+        : undefined,
+    );
     try {
       await opts.proxy(req, res, {
         account_id: session.account_id,
@@ -820,11 +1003,16 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
       return;
     }
     if (url.origin !== origin) return;
-    const key = await appKeyOfPath({
-      project_id: target.project_id,
-      pathname: url.pathname,
-      matchApp: opts.matchApp,
-    });
+    const root = await mountOf(target, url.pathname);
+    const mount = root?.mount;
+    const key =
+      mount != null
+        ? target.key
+        : await appKeyOfPath({
+            project_id: target.project_id,
+            pathname: url.pathname,
+            matchApp: opts.matchApp,
+          });
     if (key !== target.key) return;
     // The top-level page's session, or the site's frame's.
     const session =
@@ -834,7 +1022,7 @@ export function createAppOriginHandler(opts: AppOriginHandlerOptions) {
     const cookie = withoutAppSessionCookie(req.headers.cookie);
     if (cookie == null) delete req.headers.cookie;
     else req.headers.cookie = cookie;
-    req.url = `${url.pathname}${url.search}`;
+    req.url = `${mount ?? ""}${url.pathname}${url.search}`;
     return {
       account_id: session.account_id,
       issued_at_s: session.auth_iat_s,

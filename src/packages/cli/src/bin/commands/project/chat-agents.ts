@@ -29,6 +29,10 @@ import {
 } from "@cocalc/conat/agents/agent-status";
 import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
 import { CHAT_DRAFT_STORE, isTurnPriority } from "@cocalc/chat";
+import {
+  agentModelLabel,
+  agentRuntimeLabel,
+} from "@cocalc/util/ai/agent-runtime-kind";
 import { chatTarget } from "./chat-card";
 import {
   agentRpcInspectSummary,
@@ -1015,6 +1019,25 @@ function statusOf(member: AgentNetworkDiscovery["peers"][number]["member"]) {
   return status ? { status } : {};
 }
 
+/**
+ * Which runtime and model a registered peer uses, as its host last
+ * reported them (the runtime's own report, not a guess from its name).
+ * Absent when unknown: a peer that has not run a turn since hosts began
+ * reporting models.
+ */
+export function runtimeOf(
+  member: AgentNetworkDiscovery["peers"][number]["member"],
+) {
+  if (member.kind !== "registered" || !member.runtime) return {};
+  const { runtime } = member;
+  const model = agentModelLabel(runtime);
+  return {
+    runtime: agentRuntimeLabel(runtime),
+    ...(model ? { model } : {}),
+    ...(runtime.effort ? { effort: runtime.effort } : {}),
+  };
+}
+
 export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
   const you = friendlyAgentSelf(directory);
   return {
@@ -1032,6 +1055,7 @@ export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
         ? { project: member.project_title }
         : {}),
       ...statusOf(member),
+      ...runtimeOf(member),
       ...(typeof same_project === "boolean" ? { same_project } : {}),
       available: member.available,
       networks: networks.map(({ title, delivery_mode }) => ({
@@ -1134,6 +1158,7 @@ export function agentStatusReport(
         return {
           name: member.name,
           ...(member.project_title ? { project: member.project_title } : {}),
+          ...runtimeOf(member),
           ...(typeof same_project === "boolean" ? { same_project } : {}),
           networks: networks.map(({ title }) => title),
           // A phrase for people: busy, N waiting, idle, unavailable until ...

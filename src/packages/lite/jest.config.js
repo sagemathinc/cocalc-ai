@@ -12,6 +12,7 @@ module.exports = {
     "<rootDir>/artifacts",
     "<rootDir>/hub/acp/__tests__",
     "<rootDir>/hub/acp/executor/__tests__",
+    "<rootDir>/hub/sqlite/__tests__",
   ],
   testMatch: ["**/*.test.ts"],
   maxWorkers: 1,

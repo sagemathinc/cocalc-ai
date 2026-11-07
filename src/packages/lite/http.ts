@@ -1,3 +1,8 @@
+import {
+  setStaticFontCorsHeaders,
+  setWidgetHostHeaders,
+  WIDGET_HOST_FILENAME,
+} from "@cocalc/util/jupyter/widget-host";
 import express, {
   type Application,
   type Request,
@@ -20,7 +25,7 @@ import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { project_id } from "@cocalc/project/data";
 import { handleFileDownload } from "@cocalc/conat/files/file-download";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import initBlobUpload from "./hub/blobs/upload";
 import initBlobDownload from "./hub/blobs/download";
 import initUpload from "./hub/upload";
@@ -192,7 +197,15 @@ export async function initApp({
     next();
   });
 
-  app.use("/static", express.static(pathToStaticAssets));
+  app.use(
+    "/static",
+    express.static(pathToStaticAssets, {
+      setHeaders: (res, path) => {
+        if (basename(path) === WIDGET_HOST_FILENAME) setWidgetHostHeaders(res);
+        setStaticFontCorsHeaders(res, path);
+      },
+    }),
+  );
 
   app.use(
     "/webapp/favicon.ico",

@@ -486,7 +486,19 @@ async function assertProviderComputeNetworkSecurity(config: ComputeVmConfig) {
   networkSecurityCheck = { key, checked_at: Date.now() };
 }
 
-function specFor(
+/** Max-price mode only (#684): a Nebius Spot instance is created with the
+ * cap that its billed Spot rate was set from. Without one the provider
+ * refuses to create it. */
+export function nebiusSpotSpecMetadata(
+  vm: Pick<ComputeVmRow, "metadata">,
+  pricingModel: string,
+): { spot_max_price_per_gpu_hour?: string } {
+  if (pricingModel !== "spot") return {};
+  const cap = vm.metadata?.billing?.nebius_spot?.max_price_per_gpu_hour;
+  return cap ? { spot_max_price_per_gpu_hour: `${cap}` } : {};
+}
+
+export function specFor(
   vm: ComputeVmRow,
   config: ComputeVmConfig,
   subnetwork: string | undefined,
@@ -555,6 +567,7 @@ function specFor(
           : {
               public_address_id: vm.public_address_id,
               shared_disk_device_id: "home",
+              ...nebiusSpotSpecMetadata(vm, pricingModel),
             }),
       ssh_user: vm.ssh_user,
       ssh_public_key: vm.ssh_public_key,
@@ -949,6 +962,13 @@ function runtimeFor(vm: ComputeVmRow): HostRuntime {
       ssh_user: vm.ssh_user,
       public_address_id: vm.public_address_id,
       provisional_instance_id: providerInstanceIdIsProvisional(vm),
+      // a Spot start under any other cap than the billed one is refused
+      ...(vm.provider === "nebius" && vm.effective_pricing_model === "spot"
+        ? {
+            expected_spot_max_price_per_gpu_hour:
+              vm.metadata?.billing?.nebius_spot?.max_price_per_gpu_hour,
+          }
+        : {}),
     },
   };
 }
@@ -983,6 +1003,83 @@ async function context(
   throw new Error(
     "managed compute VM provider credentials are not configured for this environment",
   );
+}
+
+/** Nebius's live spot price for a dedicated VM's cap (#684). */
+export async function quoteNebiusComputeSpotPrice(opts: {
+  region: string;
+  platform: string;
+}) {
+  const { creds } = await context("nebius", opts.region);
+  return await nebiusProvider.quoteSpotPrice(creds, opts);
+}
+
+/** For a Nebius Spot VM that the provider stopped: its cap when the stop was
+ * because the price rose above it, else undefined. */
+export async function nebiusComputeSpotPriceStopCap(
+  vm: ComputeVmRow,
+): Promise<string | undefined> {
+  if (vm.provider !== "nebius" || vm.effective_pricing_model !== "spot") {
+    return undefined;
+  }
+  const { creds } = await context("nebius", vm.region);
+  return await nebiusProvider.spotPriceStopCap(runtimeFor(vm), creds);
+}
+
+/** Why a stopped Nebius instance no longer matches its VM and must be
+ * replaced before it starts (its disks and address are kept): Nebius can't
+ * change an instance's preset, platform or pricing in place. Undefined when
+ * it matches. */
+export function nebiusInstanceReplacementReason(
+  vm: Pick<
+    ComputeVmRow,
+    | "provider"
+    | "machine_type"
+    | "provider_spec"
+    | "effective_pricing_model"
+    | "metadata"
+  >,
+  observed: { machine_type?: string; platform?: string; spot_cap?: string },
+): string | undefined {
+  if (vm.provider !== "nebius") return undefined;
+  if (observed.machine_type && observed.machine_type !== vm.machine_type) {
+    return "machine_type";
+  }
+  const platform = vm.provider_spec?.platform;
+  if (observed.platform && platform && observed.platform !== platform) {
+    return "platform";
+  }
+  if (vm.effective_pricing_model === "spot") {
+    const billed = vm.metadata?.billing?.nebius_spot?.max_price_per_gpu_hour;
+    if (!billed || observed.spot_cap !== `${billed}`) return "spot_cap";
+  }
+  return undefined;
+}
+
+/** nebiusInstanceReplacementReason for an observed instance, reading its
+ * Spot policy's cap from Nebius. */
+export async function nebiusComputeInstanceReplacementReason(
+  vm: ComputeVmRow,
+  instance: { metadata?: Record<string, any> } | undefined,
+): Promise<string | undefined> {
+  if (vm.provider !== "nebius" || !instance) return undefined;
+  const metadata = instance.metadata ?? {};
+  let spotCap: string | undefined;
+  if (
+    vm.effective_pricing_model === "spot" &&
+    metadata.spot_pricing_policy_id
+  ) {
+    const { creds } = await context("nebius", vm.region);
+    spotCap = await nebiusProvider.spotPolicyCap(
+      `${metadata.spot_pricing_policy_id}`,
+      creds,
+    );
+  }
+  return nebiusInstanceReplacementReason(vm, {
+    machine_type: metadata.machine_type,
+    platform: metadata.platform,
+    spot_cap: spotCap,
+  });
 }
 
 async function ensureNebiusManagedComputeSecurityGroup(region: string) {

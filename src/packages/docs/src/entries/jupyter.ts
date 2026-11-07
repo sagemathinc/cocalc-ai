@@ -13,8 +13,25 @@ import {
   USE_JUPYTER_BODY,
 } from "../content/jupyter";
 import { REMOTE_JUPYTER_KERNELS_BODY } from "../content/remote-jupyter";
+import { NOTEBOOK_SECURITY_BODY } from "../content/notebook-security";
 
 export const JUPYTER_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: NOTEBOOK_SECURITY_BODY.trim(),
+    category: "Jupyter",
+    id: "jupyter.notebook-security",
+    lastReviewed: "2026-10-24",
+    noActionReason:
+      "Explains how CoCalc isolates notebook output; there is nothing to configure.",
+    searchKeywords:
+      "trust trusted untrusted notebook security sandbox iframe isolation javascript widgets ipywidgets html output xss content domain why no trust button",
+    slug: "jupyter/security",
+    status: "ready",
+    summary:
+      "Why CoCalc notebooks have no Trust button: notebook output never runs in the CoCalc page, so there is nothing for a trust decision to protect.",
+    title: "Notebook security: why there is no Trust button",
+  },
   {
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: REMOTE_JUPYTER_KERNELS_BODY.trim(),

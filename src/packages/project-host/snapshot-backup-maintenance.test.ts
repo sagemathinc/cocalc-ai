@@ -10,6 +10,7 @@ const runScheduledBackupMaintenanceMock = jest.fn();
 const listProjectBackupIdsMock = jest.fn();
 const admitStorageOperationMock = jest.fn();
 const getStorageAdmissionStatusMock = jest.fn();
+const snapshotLaneParkReasonMock = jest.fn((): string | undefined => undefined);
 const releaseStorageOperationMock = jest.fn();
 const reportProjectMaintenanceMock = jest.fn();
 const listPendingMaintenanceReportsMock = jest.fn();
@@ -91,6 +92,14 @@ jest.mock("./storage-admission", () => ({
   admitStorageOperation: (...args: any[]) => admitStorageOperationMock(...args),
   getStorageAdmissionStatus: (...args: any[]) =>
     getStorageAdmissionStatusMock(...args),
+  snapshotLaneParkReason: (...args: any[]) =>
+    snapshotLaneParkReasonMock(...args),
+  SNAPSHOT_LANE_PARK_REASONS: new Set([
+    "lifecycle_active",
+    "lifecycle_settle",
+    "io_pressure_emergency",
+    "io_pressure_unavailable",
+  ]),
 }));
 
 jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
@@ -116,6 +125,7 @@ describe("snapshot-backup-maintenance", () => {
     getMasterConatClientMock.mockReturnValue({ id: "master-client" });
     confirmProjectMaintenanceAssignmentMock.mockResolvedValue({ valid: true });
     getStorageAdmissionStatusMock.mockReturnValue(undefined);
+    snapshotLaneParkReasonMock.mockReturnValue(undefined);
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {
         project_id: "proj-1",
@@ -191,12 +201,361 @@ describe("snapshot-backup-maintenance", () => {
     });
   });
 
+  describe("why overdue snapshots wait", () => {
+    const overdue = (project_id: string, extra: object = {}) => ({
+      project_id,
+      storage_service_class: "paying" as const,
+      storage_account_id: `acct-${project_id}`,
+      last_edited: "2026-04-10T22:00:00.000Z",
+      snapshots: { daily: 5 },
+      backups: { disabled: true, weekly: 1 },
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+      ...extra,
+    });
+    const drain = async () => {
+      for (let i = 0; i < 40; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
+    const sweep = async (rows: object[]) => {
+      listProjectMaintenanceSchedulesMock.mockResolvedValue(rows);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      await drain();
+    };
+    const waiting = async (now?: number) => {
+      const { getSnapshotLaneStatus } =
+        await import("./snapshot-backup-maintenance");
+      return getSnapshotLaneStatus(now)?.waiting;
+    };
+    const inAMinute = () => new Date(Date.now() + 60_000).toISOString();
+
+    it("classifies a parked lane's queue and the rows kept out by a retry, by class", async () => {
+      snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
+      const { _test } = await import("./snapshot-backup-maintenance");
+      const notYetDue = overdue("fresh", {
+        last_snapshot: new Date(Date.now() - 60_000).toISOString(),
+        last_edited: new Date().toISOString(),
+      });
+      const due = _test.snapshotDueAt(notYetDue as any, { daily: 5 } as any);
+      expect(due).not.toBeNull();
+      expect(due!).toBeGreaterThan(Date.now());
+      await sweep([
+        overdue("p-1"),
+        overdue("p-2"),
+        overdue("f-1", { storage_service_class: "free" }),
+        overdue("retry", { snapshot_retry_at: inAMinute() }),
+        overdue("backoff", {
+          snapshot_retry_at: inAMinute(),
+          snapshot_failures: 3,
+        }),
+        overdue("off", { snapshots: { disabled: true } }),
+        // changed since a snapshot a minute ago: due, but not yet
+        notYetDue,
+      ]);
+      const result = await waiting();
+      expect(result?.inventory_age_ms).toBeGreaterThanOrEqual(0);
+      expect(result?.paying).toEqual({
+        parked: { count: 2, oldest_age_ms: expect.any(Number) },
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+        failure_backoff: {
+          count: 1,
+          oldest_age_ms: expect.any(Number),
+          max_failures: 3,
+        },
+      });
+      expect(result?.free).toEqual({
+        parked: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      // months overdue
+      expect(result!.paying.parked!.oldest_age_ms).toBeGreaterThan(
+        30 * 24 * 3600_000,
+      );
+    });
+
+    it("tells running, promoted and plain queued snapshots apart", async () => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      runScheduledSnapshotMaintenanceMock.mockImplementation(() => held);
+      await sweep([overdue("p-1"), overdue("p-2")]);
+      expect((await waiting())?.paying).toEqual({
+        running: { count: 1, oldest_age_ms: expect.any(Number) },
+        queued_promoted: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      release();
+      await drain();
+
+      const { _test } = await import("./snapshot-backup-maintenance");
+      _test.resetStarvationQueue();
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_PROMOTION = "off";
+      let releaseAgain!: () => void;
+      const heldAgain = new Promise<void>(
+        (resolve) => (releaseAgain = resolve),
+      );
+      runScheduledSnapshotMaintenanceMock.mockImplementation(() => heldAgain);
+      await sweep([overdue("p-1"), overdue("p-2")]);
+      expect((await waiting())?.paying).toEqual({
+        running: { count: 1, oldest_age_ms: expect.any(Number) },
+        queued: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      releaseAgain();
+      await drain();
+    });
+
+    it("keeps a failed attempt as failure backoff, with its failure count", async () => {
+      runScheduledSnapshotMaintenanceMock.mockRejectedValue(
+        new Error("btrfs exploded"),
+      );
+      await sweep([overdue("p-1"), overdue("p-2", { snapshot_failures: 4 })]);
+      expect((await waiting())?.paying).toEqual({
+        failure_backoff: {
+          count: 2,
+          oldest_age_ms: expect.any(Number),
+          max_failures: 5,
+        },
+      });
+    });
+
+    it("keeps an attempt refused by admission as a deferred retry", async () => {
+      admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
+        admitted: false,
+        would_defer: true,
+        starvation_override: false,
+        reason: "io_pressure_contended",
+        operation_id: operation_kind,
+        release: releaseStorageOperationMock,
+      }));
+      await sweep([overdue("p-1")]);
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect((await waiting())?.paying).toEqual({
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+    });
+
+    it("no longer counts a snapshot once it is made", async () => {
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => ({
+        changed: true,
+        created_snapshot_at: "2026-04-10T22:31:00.000Z",
+        latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+      }));
+      await sweep([
+        overdue("p-1"),
+        overdue("f-1", { storage_service_class: "free" }),
+      ]);
+      expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: "p-1",
+          kind: "snapshot",
+          outcome: "succeeded",
+        }),
+      );
+      const result = await waiting();
+      expect(result?.paying).toEqual({});
+      expect(result?.free).toEqual({});
+    });
+
+    it("maps each attempt outcome to its cause", async () => {
+      const { _test } = await import("./snapshot-backup-maintenance");
+      const wait = _test.snapshotLaneAttemptWait;
+      expect(wait("failed", undefined, 1, 5)).toEqual({
+        cause: "failure_backoff",
+        failures: 1,
+        retryAt: 5,
+      });
+      expect(wait("deferred", "snapshot_prune_deferred", 0, 5)?.cause).toBe(
+        "limit_prune_deferred",
+      );
+      expect(wait("deferred", "change_generation_changed", 0, 5)?.cause).toBe(
+        "generation_moved",
+      );
+      expect(wait("deferred", "io_pressure_contended", 0, 5)?.cause).toBe(
+        "deferred_retry",
+      );
+      expect(wait("deferred", "io_pressure_contended", 2, 5)?.cause).toBe(
+        "failure_backoff",
+      );
+    });
+
+    it("counts a snapshot whose retry passed without it being queued as not dispatched, or held by the memory gate", async () => {
+      const retry = Date.now() + 60_000;
+      await sweep([
+        overdue("p-1", { snapshot_retry_at: new Date(retry).toISOString() }),
+      ]);
+      // within its retry and the dispatch grace: still the retry
+      expect((await waiting(retry + 60_000))?.paying).toEqual({
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      // well past it, and not queued
+      expect((await waiting(retry + 5 * 60_000))?.paying).toEqual({
+        not_dispatched: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      const { setSnapshotBackupMaintenanceGate } =
+        await import("./snapshot-backup-gate");
+      setSnapshotBackupMaintenanceGate({
+        checked_at: new Date().toISOString(),
+        blocked_reason: "memory_pressure",
+      });
+      expect((await waiting(retry + 5 * 60_000))?.paying).toEqual({
+        memory_gate: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      setSnapshotBackupMaintenanceGate({
+        checked_at: new Date().toISOString(),
+      });
+    });
+
+    // p-1 runs (held) while p-2 waits behind it; then a partial sweep for p-2
+    // changes or drops its row; then p-1 finishes (a snapshot is made) and
+    // p-2 is dispatched with what the partial sweep saw.
+    const behindARun = async (p2: object | undefined) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        await held;
+        return {
+          changed: true,
+          created_snapshot_at: "2026-04-10T22:31:00.000Z",
+          latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+        };
+      });
+      await sweep([overdue("p-1"), overdue("p-2")]);
+      expect((await waiting())?.paying).toEqual({
+        running: { count: 1, oldest_age_ms: expect.any(Number) },
+        queued_promoted: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+      listProjectMaintenanceSchedulesMock.mockResolvedValue(p2 ? [p2] : []);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        projectIds: ["p-2"],
+        detach: true,
+      });
+      await drain();
+      release();
+      await drain();
+      // p-1 made its snapshot; p-2 was never run
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+    };
+
+    it("drops a snapshot whose fresh row shows it is not due after all", async () => {
+      await behindARun(
+        overdue("p-2", {
+          // changed since a snapshot a minute ago: due, but not yet
+          last_snapshot: new Date(Date.now() - 60_000).toISOString(),
+          last_edited: new Date().toISOString(),
+          // and observed: no reconciliation is owed either
+          last_snapshot_observed_at: new Date().toISOString(),
+        }),
+      );
+      expect((await waiting())?.paying).toEqual({});
+    });
+
+    it("records the retry a fresh row shows, as the wait", async () => {
+      await behindARun(
+        overdue("p-2", {
+          snapshot_retry_at: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      );
+      expect((await waiting())?.paying).toEqual({
+        deferred_retry: { count: 1, oldest_age_ms: expect.any(Number) },
+      });
+    });
+
+    it("drops a snapshot whose project left the host", async () => {
+      await behindARun(undefined);
+      expect((await waiting())?.paying).toEqual({});
+    });
+
+    it("a partial sweep never replaces the full inventory", async () => {
+      snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
+      await sweep([overdue("p-1"), overdue("p-2"), overdue("p-3")]);
+      expect((await waiting())?.paying).toEqual({
+        parked: { count: 3, oldest_age_ms: expect.any(Number) },
+      });
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([overdue("p-1")]);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        projectIds: ["p-1"],
+        detach: true,
+      });
+      await drain();
+      expect(listProjectMaintenanceSchedulesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ project_ids: ["p-1"] }),
+      );
+      expect((await waiting())?.paying).toEqual({
+        parked: { count: 3, oldest_age_ms: expect.any(Number) },
+      });
+    });
+
+    it("reports nothing before the first full inventory", async () => {
+      expect(await waiting()).toBeUndefined();
+    });
+  });
+
+  it("promotes overdue snapshots in the lane, unless in failure backoff or turned off", async () => {
+    // Parked, so the queued snapshot stays pending for the status.
+    snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
+    const {
+      _test,
+      runProjectSnapshotBackupMaintenanceSweepOnce,
+      getSnapshotLaneStatus,
+    } = await import("./snapshot-backup-maintenance");
+    const overdue = {
+      project_id: "proj-1",
+      storage_service_class: "paying" as const,
+      storage_account_id: "acct-1",
+      last_edited: "2026-04-10T22:00:00.000Z",
+      snapshots: { daily: 5 },
+      backups: { disabled: true, weekly: 1 },
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+    };
+    const promotedPending = async (row: object, promotion?: string) => {
+      _test.resetStarvationQueue();
+      if (promotion == null) {
+        delete process.env.COCALC_PROJECT_HOST_SNAPSHOT_PROMOTION;
+      } else {
+        process.env.COCALC_PROJECT_HOST_SNAPSHOT_PROMOTION = promotion;
+      }
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([row]);
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      const status = getSnapshotLaneStatus();
+      expect(status).toMatchObject({ pending: 1, parked: true });
+      return status?.promoted_pending;
+    };
+    expect(await promotedPending(overdue)).toBe(1);
+    expect(getSnapshotLaneStatus()).toMatchObject({
+      promoted_largest_account_count: 1,
+      promoted_dispatched_total: { paying: 0, free: 0 },
+    });
+    // Its retry has come, but it is still in failure backoff.
+    expect(await promotedPending({ ...overdue, snapshot_failures: 2 })).toBe(0);
+    expect(await promotedPending(overdue, "off")).toBe(0);
+    expect(await promotedPending(overdue, "0")).toBe(0);
+    expect(await promotedPending(overdue, "1")).toBe(1);
+  });
+
   it("records due work deferred by emergency pressure without running it", async () => {
     getStorageAdmissionStatusMock.mockReturnValue({
       mode: "enforce",
       lifecycle_active: 0,
       pressure_state: "emergency",
     });
+    // The snapshot lane sees the same refusal locally and parks.
+    snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
     admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
       admitted: false,
       would_defer: true,
@@ -205,10 +564,18 @@ describe("snapshot-backup-maintenance", () => {
       operation_id: operation_kind,
       release: releaseStorageOperationMock,
     }));
-    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
-      await import("./snapshot-backup-maintenance");
+    const {
+      runProjectSnapshotBackupMaintenanceSweepOnce,
+      getSnapshotLaneStatus,
+    } = await import("./snapshot-backup-maintenance");
 
-    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    await runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "host-1",
+      detach: true,
+    });
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
 
     expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith({
       host_id: "host-1",
@@ -217,14 +584,32 @@ describe("snapshot-backup-maintenance", () => {
     });
     expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
     expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+    // The snapshot debt is published as queued; the parked lane neither
+    // admits it nor reports a refusal for it.
     expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "proj-1",
         kind: "snapshot",
         outcome: "deferred",
+        reason: "queued",
+      }),
+    );
+    expect(reportProjectMaintenanceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "snapshot",
         reason: "io_pressure_emergency",
       }),
     );
+    expect(admitStorageOperationMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ operation_kind: "scheduled_snapshot" }),
+    );
+    expect(getSnapshotLaneStatus()).toMatchObject({
+      pending: 1,
+      parked: true,
+      park_reason: "io_pressure_emergency",
+    });
+    // Backups don't park: their refusal is reported as before.
     expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "proj-2",
@@ -233,6 +618,630 @@ describe("snapshot-backup-maintenance", () => {
         reason: "io_pressure_emergency",
       }),
     );
+  });
+
+  describe("a moved content generation (a busy project)", () => {
+    const STALE = "2026-04-10T22:00:00.000Z";
+    const CURRENT = "2026-04-10T22:30:00.000Z";
+    const staleRow = {
+      project_id: "proj-1",
+      last_edited: STALE,
+      snapshots: { daily: 5 },
+      backups: { disabled: true },
+      max_snapshots_per_project: 8,
+    };
+    let freshRow: Record<string, unknown> | undefined;
+    let freshError: Error | undefined;
+    const snapshotReports = () =>
+      reportProjectMaintenanceMock.mock.calls
+        .map(([value]) => value)
+        .filter(
+          (value) => value.kind === "snapshot" && value.reason !== "queued",
+        );
+    const snapshotChecks = () =>
+      confirmProjectMaintenanceAssignmentMock.mock.calls
+        .map(([value]) => value)
+        .filter((value) => value.kind === "snapshot");
+    const moved = () => ({
+      valid: false,
+      reason: "change_generation_changed",
+    });
+
+    beforeEach(() => {
+      freshRow = {
+        ...staleRow,
+        last_edited: CURRENT,
+        max_snapshots_per_project: 12,
+      };
+      freshError = undefined;
+      listProjectMaintenanceSchedulesMock.mockImplementation(
+        async ({ project_ids }) => {
+          if (!project_ids) return [staleRow];
+          if (freshError) throw freshError;
+          return freshRow ? [freshRow] : [];
+        },
+      );
+      // The bay's generation is CURRENT: the queued row's is not.
+      confirmProjectMaintenanceAssignmentMock.mockImplementation(
+        async ({ observed_change_at }) =>
+          observed_change_at === CURRENT ? { valid: true } : moved(),
+      );
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => ({
+        changed: true,
+        created_snapshot_at: "2026-04-10T22:31:00.000Z",
+        latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+      }));
+    });
+
+    it("runs from this dispatch's own fresh row with its current limit (stale N, current N+k)", async () => {
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith({
+        host_id: "host-1",
+        project_ids: ["proj-1"],
+        limit: 1,
+      });
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: "proj-1", limit: 12 }),
+      );
+      // R2 confirms the fresh row's generation (one row for run, check, claim).
+      expect(snapshotChecks().map((check) => check.observed_change_at)).toEqual(
+        [STALE, CURRENT],
+      );
+      expect(snapshotReports()).toEqual([
+        expect.objectContaining({ project_id: "proj-1", outcome: "succeeded" }),
+      ]);
+      expect(getSnapshotLaneStatus()?.generation_moved).toEqual({
+        accepted_r1: 1,
+        accepted_r2: 0,
+        refused: 0,
+      });
+    });
+
+    it.each([
+      ["null", null],
+      ["absent", undefined],
+      ["zero", 0],
+      ["fractional", 2.5],
+      ["a string", "12"],
+    ])(
+      "never runs when the fresh limit is %s (no default limit)",
+      async (_label, limit) => {
+        freshRow = { ...freshRow, max_snapshots_per_project: limit };
+        if (limit === undefined) delete freshRow.max_snapshots_per_project;
+        const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+          await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        });
+        expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            outcome: "deferred",
+            reason: "change_generation_changed",
+          }),
+        ]);
+      },
+    );
+
+    it.each([
+      [
+        "the project left this host",
+        () => (freshRow = undefined),
+        "assignment_changed",
+      ],
+      [
+        "its schedule changed",
+        () => (freshRow = { ...freshRow, snapshots: { daily: 2 } }),
+        "schedule_changed",
+      ],
+      [
+        "the fresh read fails",
+        () => (freshError = new Error("bay unavailable")),
+        "change_generation_changed",
+      ],
+    ])("never runs when %s", async (_label, change, reason) => {
+      change();
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(snapshotReports()).toEqual([
+        expect.objectContaining({ outcome: "deferred", reason }),
+      ]);
+    });
+
+    it("never runs on a leased row during a bay outage", async () => {
+      listProjectMaintenanceSchedulesMock.mockRejectedValue(
+        new Error("bay down"),
+      );
+      listLeasedMaintenanceSchedulesMock.mockReturnValue([staleRow]);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      // no targeted read either: a lease is never a fresh row
+      expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ project_ids: ["proj-1"] }),
+      );
+    });
+
+    describe("the check after the work", () => {
+      // The queued row is current at R1; the project changes during the pass.
+      beforeEach(() => {
+        let checks = 0;
+        listProjectMaintenanceSchedulesMock.mockResolvedValue([
+          { ...staleRow, last_edited: CURRENT },
+        ]);
+        confirmProjectMaintenanceAssignmentMock.mockImplementation(async () =>
+          ++checks === 1 ? { valid: true } : moved(),
+        );
+      });
+
+      it("publishes a created snapshot, due again one interval after it, with no reconciliation", async () => {
+        const {
+          runProjectSnapshotBackupMaintenanceSweepOnce,
+          getSnapshotLaneStatus,
+        } = await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        });
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            outcome: "succeeded",
+            latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+            reconciled_change_at: null,
+            schedule_revision: null,
+            // the 15 min frequent interval (enabled by default)
+            due_at: "2026-04-10T22:46:00.000Z",
+          }),
+        ]);
+        expect(getSnapshotLaneStatus()?.generation_moved).toEqual({
+          accepted_r1: 0,
+          accepted_r2: 1,
+          refused: 0,
+        });
+      });
+
+      it("publishes an interval wait", async () => {
+        const latest = new Date(Date.now() - 60_000).toISOString();
+        runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+          changed: true,
+          created_snapshot_at: null,
+          latest_snapshot_at: latest,
+        });
+        listProjectMaintenanceSchedulesMock.mockResolvedValue([
+          { ...staleRow, last_edited: new Date().toISOString() },
+        ]);
+        const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+          await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        });
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            outcome: "skipped",
+            reason: "snapshot_interval_wait",
+            latest_snapshot_at: latest,
+          }),
+        ]);
+      });
+
+      it.each([
+        [
+          "no change found (the fenced claim)",
+          {
+            changed: false,
+            latest_snapshot_at: "2026-04-10T22:20:00.000Z",
+            created_snapshot_at: null,
+          },
+        ],
+        [
+          "disabled maintenance",
+          {
+            changed: null,
+            disabled: true,
+            latest_snapshot_at: null,
+            created_snapshot_at: null,
+          },
+        ],
+        [
+          "a lifecycle skip",
+          {
+            changed: null,
+            skipped_reason: "project_volume_lifecycle_changed",
+            latest_snapshot_at: null,
+            created_snapshot_at: null,
+          },
+        ],
+        [
+          "an unavailable volume",
+          {
+            changed: null,
+            skipped_reason: "project_volume_unavailable",
+            latest_snapshot_at: null,
+            created_snapshot_at: null,
+          },
+        ],
+        ["no update at all", undefined],
+        [
+          "nothing created, no interval wait",
+          {
+            changed: true,
+            latest_snapshot_at: null,
+            created_snapshot_at: null,
+          },
+        ],
+      ])("refuses %s, publishing nothing", async (_label, updated) => {
+        runScheduledSnapshotMaintenanceMock.mockResolvedValue(updated);
+        const {
+          runProjectSnapshotBackupMaintenanceSweepOnce,
+          getSnapshotLaneStatus,
+        } = await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        });
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            outcome: "deferred",
+            reason: "change_generation_changed",
+            latest_snapshot_at: null,
+            reconciled_change_at: null,
+          }),
+        ]);
+        expect(getSnapshotLaneStatus()?.generation_moved).toEqual({
+          accepted_r1: 0,
+          accepted_r2: 0,
+          refused: 1,
+        });
+      });
+    });
+
+    it("comes due from the bay's later change after such a success (the listed row)", async () => {
+      const { _test } = await import("./snapshot-backup-maintenance");
+      const latest = "2026-04-10T22:31:00.000Z";
+      // The row the bay lists after the success (server's integration test):
+      // the new snapshot, a later change, no reconciliation.
+      for (const changed of [
+        "2026-04-10T22:40:00.000Z",
+        "2026-04-10T23:10:00.000Z",
+      ]) {
+        const row = {
+          ...staleRow,
+          last_edited: changed,
+          last_snapshot: latest,
+          snapshot_reconciled_change_at: null,
+        };
+        const due = _test.snapshotDueAt(
+          row as any,
+          {
+            ...{ frequent: 4, daily: 7, weekly: 4, monthly: 2 },
+            daily: 5,
+          } as any,
+        );
+        expect(due).toBe(
+          Math.max(Date.parse(changed), Date.parse(latest) + 15 * 60_000),
+        );
+      }
+    });
+  });
+
+  describe("the snapshot lane's requeue", () => {
+    const settle = async () => {
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
+    const snapshotReports = () =>
+      reportProjectMaintenanceMock.mock.calls
+        .map(([value]) => value)
+        .filter((value) => value.kind === "snapshot");
+    // (the backup lane runs alongside: take the snapshot's own context)
+    const snapshotContext = () =>
+      mutationContextMock.mock.calls
+        .map(([context]) => context)
+        .filter((context) => context.operation_class === "scheduled_snapshot")
+        .at(-1);
+
+    it("requeues a snapshot refused for a lane-wide reason, without a report", async () => {
+      // A start began after the last sample: the lane's local check can't
+      // see it yet, but admission refuses.
+      admitStorageOperationMock.mockImplementation(
+        ({ operation_kind, project_id }) =>
+          operation_kind === "scheduled_snapshot"
+            ? {
+                admitted: false,
+                would_defer: true,
+                starvation_override: false,
+                reason: "lifecycle_active",
+                operation_id: `${operation_kind}:${project_id}`,
+                release: releaseStorageOperationMock,
+              }
+            : {
+                admitted: true,
+                would_defer: false,
+                starvation_override: false,
+                operation_id: `${operation_kind}:${project_id}`,
+                release: releaseStorageOperationMock,
+              },
+      );
+      admitStorageOperationMock.mockClear();
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      // From the next sample on, the local check sees it too.
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      await settle();
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(
+        snapshotReports().filter((report) => report.reason !== "queued"),
+      ).toEqual([]);
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        pending: 1,
+        active: 0,
+        parked: true,
+        park_reason: "lifecycle_active",
+        requeued_total: { lifecycle_active: 1 },
+      });
+    });
+
+    it("reads a requeued item's row afresh before it runs again", async () => {
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_LANE_PARK_POLL_MS = "10";
+      let refused = false;
+      admitStorageOperationMock.mockImplementation(
+        ({ operation_kind, project_id }) => {
+          const refuse = operation_kind === "scheduled_snapshot" && !refused;
+          if (refuse) refused = true;
+          return refuse
+            ? {
+                admitted: false,
+                would_defer: true,
+                starvation_override: false,
+                reason: "lifecycle_active",
+                operation_id: `${operation_kind}:${project_id}`,
+                release: releaseStorageOperationMock,
+              }
+            : {
+                admitted: true,
+                would_defer: false,
+                starvation_override: false,
+                operation_id: `${operation_kind}:${project_id}`,
+                release: releaseStorageOperationMock,
+              };
+        },
+      );
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      await settle();
+      expect(getSnapshotLaneStatus()?.requeued_total).toEqual({
+        lifecycle_active: 1,
+      });
+      // While it waited, its snapshots were disabled.
+      const listed =
+        listProjectMaintenanceSchedulesMock.getMockImplementation();
+      listProjectMaintenanceSchedulesMock.mockImplementation(async (opts) =>
+        ((await listed!(opts)) as any[]).map((row: any) =>
+          row.project_id === "proj-1"
+            ? { ...row, snapshots: { disabled: true } }
+            : row,
+        ),
+      );
+      snapshotLaneParkReasonMock.mockReturnValue(undefined);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await settle();
+      expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
+        expect.objectContaining({ project_ids: ["proj-1"] }),
+      );
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        pending: 0,
+      });
+    });
+
+    it("runs nothing for a requeued snapshot under the ownership lease (no fresh row)", async () => {
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_LANE_PARK_POLL_MS = "10";
+      listProjectMaintenanceSchedulesMock.mockRejectedValue(
+        new Error("bay unavailable"),
+      );
+      listLeasedMaintenanceSchedulesMock.mockReturnValue([
+        {
+          project_id: "proj-1",
+          last_edited: "2026-04-10T22:00:00.000Z",
+          snapshots: { daily: 5 },
+          backups: { disabled: true },
+          max_snapshots_per_project: 8,
+        },
+      ]);
+      let refused = false;
+      admitStorageOperationMock.mockImplementation(
+        ({ operation_kind, project_id }) => {
+          const refuse = operation_kind === "scheduled_snapshot" && !refused;
+          if (refuse) refused = true;
+          return {
+            admitted: !refuse,
+            would_defer: refuse,
+            starvation_override: false,
+            ...(refuse ? { reason: "lifecycle_active" } : {}),
+            operation_id: `${operation_kind}:${project_id}`,
+            release: releaseStorageOperationMock,
+          };
+        },
+      );
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      await settle();
+      expect(getSnapshotLaneStatus()?.requeued_total).toEqual({
+        lifecycle_active: 1,
+      });
+      snapshotLaneParkReasonMock.mockReturnValue(undefined);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await settle();
+      // The leased row is the dispatched one: not a fresh read, so nothing runs.
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        pending: 0,
+      });
+    });
+
+    it("lets repeated changed-project drains finish while the lane is parked", async () => {
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      // The first one parks the lane before it pops anything.
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      await settle();
+      expect(getSnapshotLaneStatus()?.parked).toBe(true);
+      // Then a drain every 15 s, each awaiting its (non-detached) lanes.
+      const drains = Array.from({ length: 20 }, () =>
+        runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+          projectIds: ["proj-1"],
+        }),
+      );
+      const outcome = await Promise.race([
+        Promise.all(drains).then(() => "finished"),
+        new Promise((resolve) => setTimeout(() => resolve("held"), 1_000)),
+      ]);
+      expect(outcome).toBe("finished");
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: true,
+        pending: 1,
+      });
+    });
+
+    it("reports, never requeues, a refusal after a mutation", async () => {
+      const { BtrfsMutationDeferredError } =
+        await import("@cocalc/file-server/btrfs/operation-cache");
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        snapshotContext().mutations.count += 1;
+        throw Object.assign(
+          new (BtrfsMutationDeferredError as any)("lifecycle_active"),
+          { reason: "lifecycle_active" },
+        );
+      });
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(snapshotReports()).toContainEqual(
+        expect.objectContaining({
+          project_id: "proj-1",
+          outcome: "deferred",
+          reason: "lifecycle_active",
+        }),
+      );
+      expect(getSnapshotLaneStatus()?.requeued_total).toEqual({});
+    });
+
+    it("requeues a refusal at the first mutation boundary with nothing mutated", async () => {
+      const { BtrfsMutationDeferredError } =
+        await import("@cocalc/file-server/btrfs/operation-cache");
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+        throw Object.assign(
+          new (BtrfsMutationDeferredError as any)("lifecycle_active"),
+          { reason: "lifecycle_active" },
+        );
+      });
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      await settle();
+      expect(
+        snapshotReports().filter((report) => report.reason !== "queued"),
+      ).toEqual([]);
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        pending: 1,
+        parked: true,
+        requeued_total: { lifecycle_active: 1 },
+      });
+    });
+
+    it("fails, never requeues, a throw inside the first mutation", async () => {
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        // counted before the mutating call starts, as withBtrfsMutationLock
+        // and noteBtrfsMutation do
+        snapshotContext().mutations.count += 1;
+        throw new Error("btrfs subvolume snapshot failed");
+      });
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(snapshotReports()).toContainEqual(
+        expect.objectContaining({ project_id: "proj-1", outcome: "failed" }),
+      );
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        requeued_total: {},
+        completed_10m: { failed: 1 },
+      });
+    });
+
+    it("keeps today's path for contended pressure (overrides stay possible)", async () => {
+      admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
+        admitted: false,
+        would_defer: true,
+        starvation_override: false,
+        reason: "io_pressure_contended",
+        operation_id: operation_kind,
+        release: releaseStorageOperationMock,
+      }));
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(snapshotReports()).toContainEqual(
+        expect.objectContaining({
+          project_id: "proj-1",
+          outcome: "deferred",
+          reason: "io_pressure_contended",
+        }),
+      );
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        requeued_total: {},
+      });
+    });
   });
 
   it("publishes queued debt before starting a slow backup", async () => {
@@ -262,7 +1271,7 @@ describe("snapshot-backup-maintenance", () => {
     const { scheduledBackupTimeoutMs } =
       await import("./snapshot-backup-maintenance");
     const limits = [0, 1, 2, 3, 26].map((failures) =>
-      scheduledBackupTimeoutMs({ failures, starvationOverride: false }),
+      scheduledBackupTimeoutMs({ failures }),
     );
     expect(limits).toEqual([
       30 * 60_000,
@@ -271,14 +1280,11 @@ describe("snapshot-backup-maintenance", () => {
       2 * 60 * 60_000,
       2 * 60 * 60_000,
     ]);
-    expect(
-      scheduledBackupTimeoutMs({ failures: 26, starvationOverride: true }),
-    ).toBe(30 * 60_000);
   });
 
   it.each([
     [false, 2 * 60 * 60_000],
-    [true, 30 * 60_000],
+    [true, 2 * 60 * 60_000],
   ])(
     "runs a failing backup admitted with starvation override %s with limit %d",
     async (starvationOverride, timeoutMs) => {
@@ -1685,6 +2691,30 @@ describe("snapshot-backup-maintenance", () => {
   });
 
   describe("paced starvation progress", () => {
+    // As in production: the snapshot lane parks on the controller's own
+    // lane-wide refusals, and the controller samples every 5 s.
+    const PARK = new Set([
+      "lifecycle_active",
+      "lifecycle_settle",
+      "io_pressure_emergency",
+      "io_pressure_unavailable",
+    ]);
+    let sampler: ReturnType<typeof setInterval> | undefined;
+    const wireLane = (controller: {
+      currentBackgroundReason: () => string | undefined;
+      sample: () => unknown;
+    }) => {
+      snapshotLaneParkReasonMock.mockImplementation(() => {
+        const reason = controller.currentBackgroundReason();
+        return reason != null && PARK.has(reason) ? reason : undefined;
+      });
+      clearInterval(sampler);
+      sampler = setInterval(() => controller.sample(), 5_000);
+    };
+    afterEach(() => {
+      clearInterval(sampler);
+      sampler = undefined;
+    });
     // Overrides are paced per kind: a snapshot every minute, a backup every
     // five minutes, one override in flight at a time.
     const snapshotInterval = 60_000;
@@ -1746,6 +2776,7 @@ describe("snapshot-backup-maintenance", () => {
       });
       full = 2.3;
       controller.sample();
+      wireLane(controller);
       getStorageAdmissionStatusMock.mockImplementation(() =>
         controller.getStatus(),
       );
@@ -1849,6 +2880,7 @@ describe("snapshot-backup-maintenance", () => {
       });
       full = 3.5;
       controller.sample();
+      wireLane(controller);
       getStorageAdmissionStatusMock.mockImplementation(() =>
         controller.getStatus(),
       );
@@ -1973,6 +3005,39 @@ describe("snapshot-backup-maintenance", () => {
       );
     });
 
+    it("keeps the longest waiting first after a park, even when it is slower to reach admission", async () => {
+      // As above, but the head's fresh read is slow, so with two lane slots
+      // the next project reaches admission first. Only the head may take the
+      // recovery slot (it kept that place while the lane was parked).
+      const projects = Array.from({ length: 4 }, (_, i) => `p${i}`);
+      const { lifecycle, stop } = await startRecoveryDaemon({ projects });
+      const listing =
+        listProjectMaintenanceSchedulesMock.getMockImplementation()!;
+      listProjectMaintenanceSchedulesMock.mockImplementation(async (opts) => {
+        if (opts.project_ids?.length === 1 && opts.project_ids[0] === "p2") {
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+        }
+        return await listing(opts);
+      });
+      try {
+        await jest.advanceTimersByTimeAsync(5_000);
+        expect(snapshotOrder()).toEqual(["snapshot:p3"]);
+        // Parked longer than the 2-minute stale-head bound.
+        lifecycle.starting = 1;
+        await jest.advanceTimersByTimeAsync(180_000);
+        lifecycle.starting = 0;
+        await jest.advanceTimersByTimeAsync(120_000);
+      } finally {
+        stop();
+      }
+      expect(snapshotOrder()).toEqual([
+        "snapshot:p3",
+        "snapshot:p2",
+        "snapshot:p1",
+        "snapshot:p0",
+      ]);
+    });
+
     it.each([
       [
         "moves to another host",
@@ -2053,15 +3118,21 @@ describe("snapshot-backup-maintenance", () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
         await import("./snapshot-backup-maintenance");
       // The sweep's cached status is still recovery; admission must resample.
+      // (Detached: a snapshot refused for emergency waits parked in the lane
+      // instead of completing as a refusal.)
       full = 10;
       for (let i = 0; i < 3; i++) {
-        await sweep({ hostId: "host-1" });
+        await sweep({ hostId: "host-1", detach: true });
         await jest.advanceTimersByTimeAsync(backupInterval);
       }
       expect(attempts).toEqual([]);
       full = 2.3;
-      await sweep({ hostId: "host-1" });
-      await sweep({ hostId: "host-1" });
+      // The controller's next sample ends the emergency; the lane resumes.
+      await jest.advanceTimersByTimeAsync(10_000);
+      await sweep({ hostId: "host-1", detach: true });
+      await jest.advanceTimersByTimeAsync(1_000);
+      await sweep({ hostId: "host-1", detach: true });
+      await jest.advanceTimersByTimeAsync(1_000);
       // Nothing was charged by the refusals: both kinds start with project a.
       expect(attempts).toContain("snapshot:a");
       expect(attempts.every((a) => a.endsWith(":a"))).toBe(true);
@@ -2655,7 +3726,7 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
-  it("keeps assignment fencing for stale candidates outside the refresh budget", async () => {
+  it("runs a stale candidate outside the refresh budget only from a fresh row whose owner and schedule still hold", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));
     const rows = Array.from({ length: 201 }, (_, i) => ({
@@ -2663,14 +3734,29 @@ describe("snapshot-backup-maintenance", () => {
       last_changed: "2026-09-29T14:00:00Z",
       snapshots: { daily: 1 },
       backups: { disabled: true },
+      max_snapshots_per_project: 8,
     }));
     const changedAt = "2026-09-30T15:59:00Z";
+    const moved = rows[199].project_id;
+    const rescheduled = rows[200].project_id;
+    // The bay's current rows: changed content; one project moved away, one
+    // with a new schedule.
     listProjectMaintenanceSchedulesMock.mockImplementation(
       async ({ project_ids }) =>
         project_ids
           ? rows
-              .filter((row) => project_ids.includes(row.project_id))
-              .map((row) => ({ ...row, last_changed: changedAt }))
+              .filter(
+                (row) =>
+                  project_ids.includes(row.project_id) &&
+                  row.project_id !== moved,
+              )
+              .map((row) => ({
+                ...row,
+                last_changed: changedAt,
+                ...(row.project_id === rescheduled
+                  ? { snapshots: { daily: 2 } }
+                  : {}),
+              }))
           : rows,
     );
     confirmProjectMaintenanceAssignmentMock.mockImplementation(
@@ -2702,18 +3788,23 @@ describe("snapshot-backup-maintenance", () => {
     jest.setSystemTime(Date.now() + 60_001);
     release();
     await sweep;
-    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(2);
-    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(101);
-    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ project_id: rows[200].project_id }),
-    );
-    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project_id: rows[200].project_id,
-        outcome: "deferred",
-        reason: "change_generation_changed",
-      }),
-    );
+    // The full listing, the one batch refresh (100 rows), and one targeted
+    // fresh read for each of the 100 stale rows beyond it.
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(102);
+    // A moved generation alone no longer stops a stale row: 199 run...
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(199);
+    // ...but a stale row whose owner or schedule changed still never does.
+    for (const [project_id, reason] of [
+      [moved, "assignment_changed"],
+      [rescheduled, "schedule_changed"],
+    ]) {
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ project_id }),
+      );
+      expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id, outcome: "deferred", reason }),
+      );
+    }
   });
 
   it("continues discovering changed projects while an earlier event batch waits", async () => {

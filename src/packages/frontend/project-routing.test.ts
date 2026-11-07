@@ -3,7 +3,6 @@ import {
   buildProjectScopedTarget,
   getProjectTargetPath,
   getProjectUrlPath,
-  parsePrivateProjectAppHandoffTarget,
   parseProjectTarget,
 } from "./project-routing";
 
@@ -37,28 +36,6 @@ describe("project-routing", () => {
     expect(getProjectUrlPath("project-1", undefined)).toBe(
       "/projects/project-1",
     );
-  });
-
-  describe("parsePrivateProjectAppHandoffTarget", () => {
-    it("extracts the project and decoded app id", () => {
-      expect(
-        parsePrivateProjectAppHandoffTarget(
-          "project-1/private-app/cocalc-dev%20main",
-        ),
-      ).toEqual({
-        projectId: "project-1",
-        appId: "cocalc-dev main",
-      });
-    });
-
-    it("ignores normal and malformed project targets", () => {
-      expect(
-        parsePrivateProjectAppHandoffTarget("project-1/files/work.txt"),
-      ).toBeUndefined();
-      expect(
-        parsePrivateProjectAppHandoffTarget("project-1/private-app/"),
-      ).toBeUndefined();
-    });
   });
 
   it("parses file and directory targets", () => {
@@ -130,13 +107,11 @@ describe("project-routing", () => {
       kind: "app",
       path: "jupyter/lab",
     });
+    // The retired private app hostname route is not a project route.
     expect(
       parseProjectTarget("private-app/cocalc-dev-main", {
         decodeDirectoryPath,
       }),
-    ).toEqual({
-      kind: "private-app",
-      appId: "cocalc-dev-main",
-    });
+    ).toBeUndefined();
   });
 });

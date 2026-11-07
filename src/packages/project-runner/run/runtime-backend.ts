@@ -61,6 +61,7 @@ class PodmanRuntimeBackend implements ProjectRuntimeBackend {
 
   async init(): Promise<RecoveredProject[]> {
     await this.podman.cleanupStaleProjectContainers();
+    await this.podman.cleanupStaleProjectViews();
     await this.podman.cleanupStaleProjectSecretsHostPaths();
     return [];
   }

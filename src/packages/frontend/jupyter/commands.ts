@@ -1360,12 +1360,6 @@ export function commands(actions: AllActions): {
       r: true,
     },
 
-    "trust notebook": {
-      m: "Trust notebook",
-      f: () => actions.jupyter_actions?.trust_notebook(),
-      r: true,
-    },
-
     //     "undo cell deletion": {
     //       m: "Undo cell deletion",
     //       k: [{ mode: "escape", which: 90 }],

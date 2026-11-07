@@ -778,10 +778,13 @@ describe("Auto (the Claude subscription pool)", () => {
     picks,
     failWith,
     picker = jest.fn(async () => picks.shift() ?? {}),
+    previous,
   }: {
     picks: any[];
     failWith?: () => Error;
     picker?: jest.Mock;
+    /** The subscription the conversation's previous turn ran on. */
+    previous?: string;
   }) {
     setClaudePoolPicker(picker);
     const previousEnabled = process.env.COCALC_ACP_HARNESSES;
@@ -814,6 +817,25 @@ describe("Auto (the Claude subscription pool)", () => {
       },
     });
     const request = { ...base, harness_pool: {} };
+    if (previous) {
+      const earlier = enqueueAcpJob({
+        ...request,
+        harness_credential: {
+          ...request.harness_credential!,
+          credentialId: previous,
+        },
+        chat: {
+          ...request.chat!,
+          parent_message_id: "user-0",
+          message_id: "assistant-0",
+        },
+      });
+      getAcpDatabase()
+        .prepare(
+          "UPDATE acp_jobs SET state = 'completed', started_at = ?, finished_at = ? WHERE op_id = ?",
+        )
+        .run(Date.now() - 60_000, Date.now() - 30_000, earlier.op_id);
+    }
     const job = enqueueAcpJob(request);
     const syncdb = makeSyncdb([
       {
@@ -859,6 +881,7 @@ describe("Auto (the Claude subscription pool)", () => {
         before,
         evaluate,
         picker,
+        job: getAcpJobByOpId(job.op_id)!,
         held: listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
       };
     } finally {
@@ -889,6 +912,25 @@ describe("Auto (the Claude subscription pool)", () => {
     expect(evaluate).toHaveBeenCalledTimes(1);
     expect(evaluate.mock.calls[0][0].harness_credential).toMatchObject({
       mode: "account-subscription",
+      credentialId: B,
+    });
+  });
+
+  it("offers the conversation's previous subscription as current, and records where the turn ran", async () => {
+    // Queued on A, but the previous turn ran on B: Auto is asked to keep B
+    // (Claude's prompt cache is per account).
+    const { evaluate, picker, job } = await runPoolTurn({
+      previous: B,
+      picks: [{ credential_id: B, label: "max-b", current_label: "max-b" }],
+    });
+    expect(picker).toHaveBeenCalledWith(
+      expect.objectContaining({ current_credential_id: B }),
+    );
+    expect(evaluate.mock.calls[0][0].harness_credential).toMatchObject({
+      credentialId: B,
+    });
+    // The next turn sees where this one ran, not where it was queued.
+    expect(decodeAcpJobRequest(job).harness_credential).toMatchObject({
       credentialId: B,
     });
   });

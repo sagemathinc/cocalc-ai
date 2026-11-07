@@ -243,6 +243,134 @@ describe("project recovery capacity accounting", () => {
     expect(attempts.rows[0].deferred).toBe(0);
   });
 
+  describe("a success never stores a reconciliation", () => {
+    const setup = async () => {
+      const host_id = uuid();
+      const project_id = uuid();
+      await getPool().query(
+        `INSERT INTO projects
+           (project_id, title, owning_bay_id, host_id, provisioned, snapshots)
+         VALUES ($1, 'reconciliation test', NULL, $2, true, $3)`,
+        [project_id, host_id, { frequent: 4, daily: 0, weekly: 0, monthly: 0 }],
+      );
+      const reconciliation = async () =>
+        (
+          await getPool().query(
+            `SELECT reconciled_change_at, reconciled_schedule_revision
+               FROM project_maintenance_status
+              WHERE project_id=$1 AND kind='snapshot'`,
+            [project_id],
+          )
+        ).rows[0];
+      return { host_id, project_id, reconciliation };
+    };
+
+    it("stores none from a first-ever success that carries one", async () => {
+      const { host_id, project_id, reconciliation } = await setup();
+      const now = Date.now();
+      expect(
+        await recordProjectMaintenanceStatus({
+          host_id,
+          project_id,
+          kind: "snapshot",
+          observed_at: new Date(now).toISOString(),
+          outcome: "succeeded",
+          latest_snapshot_at: new Date(now - 1_000).toISOString(),
+          reconciled_change_at: new Date(now - 500).toISOString(),
+          schedule_revision: "revision-1",
+        }),
+      ).toBe(true);
+      expect(await reconciliation()).toEqual({
+        reconciled_change_at: null,
+        reconciled_schedule_revision: null,
+      });
+    });
+
+    it("stores none from a later success either (the update)", async () => {
+      const { host_id, project_id, reconciliation } = await setup();
+      const now = Date.now();
+      for (const [offset, outcome] of [
+        [-2_000, "deferred"],
+        [-1_000, "succeeded"],
+      ] as const) {
+        expect(
+          await recordProjectMaintenanceStatus({
+            host_id,
+            project_id,
+            kind: "snapshot",
+            observed_at: new Date(now + offset).toISOString(),
+            outcome,
+            reason: outcome === "deferred" ? "queued" : undefined,
+            latest_snapshot_at: new Date(now - 5_000).toISOString(),
+            reconciled_change_at: new Date(now - 500).toISOString(),
+            schedule_revision: "revision-1",
+          }),
+        ).toBe(true);
+      }
+      expect(await reconciliation()).toEqual({
+        reconciled_change_at: null,
+        reconciled_schedule_revision: null,
+      });
+    });
+
+    it("keeps a busy project due after a success, until a real no-change claim", async () => {
+      const { host_id, project_id } = await setup();
+      const now = Date.now();
+      const latest = new Date(now - 10 * 60_000);
+      // The project changed again after its new snapshot (a busy project).
+      const changed = new Date(now - 2 * 60_000);
+      await getPool().query(
+        `UPDATE projects SET last_edited=$2 WHERE project_id=$1`,
+        [project_id, changed],
+      );
+      expect(
+        await recordProjectMaintenanceStatus({
+          host_id,
+          project_id,
+          kind: "snapshot",
+          observed_at: new Date(now - 9 * 60_000).toISOString(),
+          outcome: "succeeded",
+          latest_snapshot_at: latest.toISOString(),
+          // the floor the host reports when the generation moved (D1)
+          due_at: new Date(latest.getTime() + 15 * 60_000).toISOString(),
+          reconciled_change_at: changed.toISOString(),
+          schedule_revision: "ignored-for-a-success",
+        }),
+      ).toBe(true);
+      const status = await getProjectRecoveryStatusLocal(project_id);
+      // due = max(last change, latest snapshot + the 15 min interval)
+      expect(status.snapshot_due_at).toBe(
+        new Date(
+          Math.max(changed.getTime(), latest.getTime() + 15 * 60_000),
+        ).toISOString(),
+      );
+      // Negative control: a real no-change claim covering the change erases
+      // the due state, which is why the host may never publish one against a
+      // moved generation.
+      const { rows } = await getPool().query(
+        `SELECT snapshots FROM projects WHERE project_id=$1`,
+        [project_id],
+      );
+      const { snapshotScheduleRevision } = await import("./maintenance-status");
+      expect(
+        await recordProjectMaintenanceStatus({
+          host_id,
+          project_id,
+          kind: "snapshot",
+          observed_at: new Date(now - 1_000).toISOString(),
+          outcome: "skipped",
+          reason: "no_content_change",
+          latest_snapshot_at: latest.toISOString(),
+          reconciled_change_at: changed.toISOString(),
+          schedule_revision: snapshotScheduleRevision(rows[0].snapshots),
+        }),
+      ).toBe(true);
+      expect(
+        (await getProjectRecoveryStatusLocal(project_id)).snapshot_due_at,
+      ).toBeNull();
+    });
+  });
+
   it("uses lane-specific recent paying completion windows", async () => {
     const host_id = uuid();
     for (const [kind, serviceClass, outcome, minutesAgo] of [

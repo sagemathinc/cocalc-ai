@@ -107,13 +107,17 @@ test("active alone shows all agents and reuses the warm cache and search", async
   const view = render(
     <AgentArtifactBrowser {...props} active={false} activeAgent={agents[0]} />,
   );
-  await waitFor(() => expect(listProject).toHaveBeenCalledTimes(2));
+  // Mounted but hidden (the Agents workspace): no catalog work at all.
+  await act(async () => {});
+  expect(listProject).not.toHaveBeenCalled();
   expect(
     screen.queryByRole("region", { name: "Artifacts page" }),
   ).not.toBeInTheDocument();
   view.rerender(
     <AgentArtifactBrowser {...props} active activeAgent={agents[0]} />,
   );
+  await waitFor(() => expect(listProject).toHaveBeenCalledTimes(2));
+  await screen.findByRole("button", { name: "Open Result two from two" });
   expect(screen.getByRole("heading", { name: "Artifacts" })).toBeVisible();
   expect(screen.getByRole("searchbox")).toHaveFocus();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -176,7 +180,7 @@ test("active alone shows all agents and reuses the warm cache and search", async
   expect(listProject).toHaveBeenCalledTimes(2);
 });
 
-test("catalog continues refreshing while inactive", async () => {
+test("an older hub's catalog never loads while hidden, and polls only while shown", async () => {
   jest.useFakeTimers();
   try {
     const props = {
@@ -186,15 +190,26 @@ test("catalog continues refreshing while inactive", async () => {
     };
     const view = render(<AgentArtifactBrowser {...props} active={false} />);
     await act(async () => {});
+    expect(listProject).not.toHaveBeenCalled();
+    await act(async () => {
+      jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs * 3);
+    });
+    expect(listProject).not.toHaveBeenCalled();
+    view.rerender(<AgentArtifactBrowser {...props} active />);
+    await act(async () => {});
+    await act(async () => {});
+    expect(
+      screen.getByRole("button", { name: "Open Result two from two" }),
+    ).toBeVisible();
     expect(listProject).toHaveBeenCalledTimes(2);
     await act(async () => {
       jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs);
     });
     expect(listProject).toHaveBeenCalledTimes(4);
-    view.rerender(<AgentArtifactBrowser {...props} active />);
-    expect(
-      screen.getByRole("button", { name: "Open Result two from two" }),
-    ).toBeVisible();
+    view.rerender(<AgentArtifactBrowser {...props} active={false} />);
+    await act(async () => {
+      jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs * 3);
+    });
     expect(listProject).toHaveBeenCalledTimes(4);
     view.unmount();
   } finally {
@@ -575,6 +590,7 @@ test("loading and metadata failures are announced, with retry in organization", 
     />,
   );
   expect(screen.getByRole("status")).toHaveTextContent("Loading artifacts...");
+  await waitFor(() => expect(reject).toBeDefined());
   await act(async () => reject(Error("unavailable")));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Artifact metadata unavailable",
@@ -797,6 +813,8 @@ test("account switch clears the old view and rejects late loads", async () => {
       agents={agents.slice(0, 1)}
     />,
   );
+  // The old account's load is in flight when the account changes.
+  await waitFor(() => expect(resolve).toBeDefined());
   view.rerender(
     <AgentArtifactBrowser
       {...props}

@@ -26,7 +26,7 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
       "/public/docs/course-assignment-ede60e1a.webp",
       "Computational coursework in student projects",
     ),
-    lastReviewed: "2026-09-12",
+    lastReviewed: "2026-11-05",
     noActionReason:
       "Compute budgets are configured in a selected course file and require separate financial authorization.",
     searchKeywords:

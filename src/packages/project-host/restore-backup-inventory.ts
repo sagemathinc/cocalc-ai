@@ -65,15 +65,17 @@ export function parseRestoreBackupInventory(
 export async function listRestoreBackups({
   profilePath,
   projectId,
+  timeoutMs = INVENTORY_TIMEOUT_MS,
 }: {
   profilePath: string;
   projectId: string;
+  timeoutMs?: number;
 }): Promise<Backup[]> {
   // Directory-repository development mode initializes missing repositories.
   // Project backup configuration resolves to TOML; never initialize it here.
   if (!profilePath.endsWith(".toml"))
     throw Error("restore inventory requires a repository profile");
-  const deadline = Date.now() + INVENTORY_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   for (let attempt = 0; ; attempt++) {
     let output;
     try {

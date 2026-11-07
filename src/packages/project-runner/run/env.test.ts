@@ -109,6 +109,21 @@ describe("project container environment", () => {
     expect(env.CONAT_SERVER).toContain("host.containers.internal");
   });
 
+  it("runs apps at the root of their origin only when the host has a content domain", async () => {
+    const { getEnvironment } = await import("./env");
+    const opts = {
+      HOME: "/home/user",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      image: "test-image",
+    };
+    delete process.env.COCALC_PROJECT_CONTENT_DOMAIN;
+    expect(
+      (await getEnvironment(opts)).COCALC_PROJECT_APPS_AT_ROOT,
+    ).toBeUndefined();
+    process.env.COCALC_PROJECT_CONTENT_DOMAIN = "usercontent.example";
+    expect((await getEnvironment(opts)).COCALC_PROJECT_APPS_AT_ROOT).toBe("1");
+  });
+
   it("allows project debug logging to be explicitly enabled by the host", async () => {
     process.env.COCALC_PROJECT_DEBUG = "cocalc:project:*";
     process.env.COCALC_PROJECT_DEBUG_CONSOLE = "yes";

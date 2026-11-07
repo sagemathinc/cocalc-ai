@@ -157,6 +157,32 @@ password = ""
     }
   });
 
+  it("reports a timed-out snapshot lookup as a timeout, not a missing snapshot", async () => {
+    await expect(
+      getSnapshot({ id: latestSnapshotId, repo: options.repo, timeout: 1 }),
+    ).rejects.toThrow(/timed out/);
+  });
+
+  it("reports a missing snapshot id as 'no snapshot with id'", async () => {
+    const missing = "0".repeat(64);
+    await expect(
+      getSnapshot({ id: missing, repo: options.repo, timeout: 30_000 }),
+    ).rejects.toThrow(`no snapshot with id ${missing}`);
+  });
+
+  it("reports any other rustic failure as the real error, not a missing snapshot", async () => {
+    const repo = join(home, "no-such-repo");
+    const lookup = getSnapshot({ id: latestSnapshotId, repo, timeout: 30_000 });
+    // rustic's stderr names the repo path; the thrown message must not
+    await expect(lookup).rejects.toThrow(
+      new RegExp(
+        `^rustic snapshot lookup for ${latestSnapshotId} failed \\(exit [1-9][0-9]*\\)$`,
+      ),
+    );
+    await expect(lookup).rejects.not.toThrow(repo);
+    await expect(lookup).rejects.not.toThrow(/no snapshot with id/);
+  });
+
   it("can restore legacy project-migration snapshots without the local cache", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     await writeFile(join(home, "legacy-migration.txt"), "legacy");

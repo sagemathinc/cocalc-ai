@@ -10,6 +10,10 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { assertAccountHomedHere } from "./home-bay";
 import userIsInGroup from "./is-in-group";
 import { getAccountProductAccessTrustLocal } from "./trusted-product-access";
+import {
+  mintSagebrushAdminGrantLocal,
+  sagebrushAdminAnswerLocal,
+} from "@cocalc/server/sagebrush/admin-grant";
 
 async function assertHomedHere(account_id: string): Promise<void> {
   if (!isValidUUID(account_id)) {
@@ -27,5 +31,13 @@ export const accountFactsHome: InterBayAccountFactsApi = {
   async productAccessTrust({ account_id }) {
     await assertHomedHere(account_id);
     return await getAccountProductAccessTrustLocal(account_id);
+  },
+  async sagebrushAdminMint(opts) {
+    await assertHomedHere(opts.account_id);
+    return await mintSagebrushAdminGrantLocal(opts);
+  },
+  async sagebrushAdminAnswer(opts) {
+    await assertHomedHere(opts.account_id);
+    return await sagebrushAdminAnswerLocal(opts);
   },
 };

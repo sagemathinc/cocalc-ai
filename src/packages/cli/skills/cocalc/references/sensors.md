@@ -26,6 +26,12 @@ ends without completing) or `idle` (a turn ends and nothing is running or
 waiting). It reads the status peers see, checked every few minutes, so a turn
 that fails and is followed by a completed one within that time can be missed.
 
+`watch exit` wakes you with the command's exit code and the end of its
+output. If its terminal ends before the command does (the project restarts,
+or the terminal is closed or killed), it wakes you within a few minutes with
+`exit_code: null` and `reason: "terminal-ended"`: the command did not finish,
+so run it again (with a new watcher) if it still matters.
+
 `watch ci` needs this agent's GitHub connector and is refused without it.
 Without it, watch the checks with the project's own `gh` login instead:
 `cocalc sensor watch exit -- gh pr checks 123 --repo owner/name --watch`.

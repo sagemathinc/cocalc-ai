@@ -59,6 +59,7 @@ import { configureHubServiceAdmissionDenialRecorder } from "./api/service-admiss
 import { startConatAdmissionSettingsRefresh } from "./admission-settings";
 import { startHostAvailabilityMaintenance } from "@cocalc/server/hosts/availability";
 import { startHostIntrusionMonitor } from "@cocalc/server/hosts/intrusion-monitor";
+import { startHostIntegrityAlerts } from "@cocalc/server/hosts/host-integrity-health";
 import { startGlobalConfigMirrorRepairMaintenance } from "@cocalc/server/global-config-mirror-maintenance";
 import { startAiSessionReconciliationMaintenance } from "@cocalc/server/ai/acp-sessions";
 import { startSiteFundedCodexMaintenance } from "@cocalc/server/ai/site-funded-codex-maintenance";
@@ -69,6 +70,8 @@ import { startShareViewsRetentionMaintenance } from "@cocalc/server/public-direc
 import { startUsageRetentionMaintenance } from "@cocalc/server/membership/usage-retention-maintenance";
 import { startProjectApiKeyRevocationMaintenance } from "@cocalc/server/api/project-membership-maintenance";
 import { startApiKeyActionMaintenance } from "@cocalc/server/api/key-action-maintenance";
+import { startArtifactCatalogMaintenance } from "@cocalc/server/artifacts/catalog-maintenance";
+import { startArtifactCatalogHintDrainer } from "@cocalc/server/artifacts/catalog-changes";
 import { startApiRelayQuotaMaintenance } from "@cocalc/server/membership/api-relay-maintenance";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import { startOAuthClientPurgeMaintenance } from "@cocalc/server/auth/oauth/purge";
@@ -145,6 +148,7 @@ export function startConatApiBackgroundWorkers(): void {
   startHostAvailabilityMaintenance();
   if (isPrimaryBayWorker()) {
     startHostIntrusionMonitor();
+    startHostIntegrityAlerts();
   }
   startRootfsPublishLroWorker();
   startRootfsReleaseGcMaintenance();
@@ -152,7 +156,10 @@ export function startConatApiBackgroundWorkers(): void {
   startProjectApiKeyRevocationMaintenance();
   startApiKeyActionMaintenance();
   startRestoreLroWorker();
+  // On every worker: a change committed by any worker wakes its own drainer.
+  startArtifactCatalogHintDrainer();
   if (isPrimaryBayWorker()) {
+    startArtifactCatalogMaintenance();
     startLegacyMigrationProjectRestoreWorker();
     startLegacyMigrationArtifactRefreshMaintenance();
   } else {

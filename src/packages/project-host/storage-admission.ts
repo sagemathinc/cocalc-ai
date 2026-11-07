@@ -141,6 +141,9 @@ export interface StorageAdmissionController {
   backgroundDeferralReason: (request?: {
     allow_starvation_override?: boolean;
   }) => string | undefined;
+  /** Why background work would be refused now, from the last sample (no
+   * I/O); undefined when it would be admitted. */
+  currentBackgroundReason: () => string | undefined;
   getStatus: () => HostStorageAdmissionMetrics;
 }
 
@@ -644,7 +647,8 @@ export function createStorageAdmissionController(
   let deferredTotal = 0;
   let observedDeferralTotal = 0;
   const activeByPriority = emptyActiveCounts();
-  let starvationOverrideActive = false;
+  // The kind of the starvation override in flight, if any.
+  let starvationOverrideKind: StorageOperationKind | undefined;
   let recoveryPacedActive = false;
   // One start clock for every scheduled snapshot admitted in recovery,
   // paced or starvation override, so together they keep the pace.
@@ -961,11 +965,19 @@ export function createStorageAdmissionController(
     const spec = getStorageOperationSpec(operation_kind);
     const background =
       spec.priority === "scheduled" || spec.priority === "scavenger";
+    // A scheduled snapshot (a short metadata operation) isn't held back by a
+    // backup's starvation override, which can read for hours: it runs beside
+    // it, one at a time, as it would with no other scheduled work in flight.
+    const besideBackupOverride =
+      operation_kind === "scheduled_snapshot" &&
+      starvationOverrideKind === "scheduled_backup";
     const reason = background
-      ? starvationOverrideActive
+      ? starvationOverrideKind != null && !besideBackupOverride
         ? "maintenance_starvation_in_flight"
         : backgroundReason(current)
       : undefined;
+    const otherScheduledActive =
+      activeByPriority.scheduled - (besideBackupOverride ? 1 : 0);
     const wouldDefer = reason != null;
     const decidedAtMs = now();
     const recoverySnapshot =
@@ -985,8 +997,8 @@ export function createStorageAdmissionController(
       (operation_kind === "scheduled_backup" ||
         operation_kind === "scheduled_snapshot") &&
       wouldDefer &&
-      !starvationOverrideActive &&
-      activeByPriority.scheduled === 0 &&
+      (starvationOverrideKind == null || besideBackupOverride) &&
+      otherScheduledActive === 0 &&
       // An overdue snapshot in recovery also waits for the recovery pace.
       (!recoverySnapshot || recoverySnapshotDue) &&
       starvationOverrideAllowed(current, allow_starvation_override);
@@ -999,14 +1011,14 @@ export function createStorageAdmissionController(
       !recoveryPacedActive &&
       // Never alongside other scheduled storage work, e.g. a backup admitted
       // before the host entered recovery (as for starvation overrides).
-      activeByPriority.scheduled === 0 &&
+      otherScheduledActive === 0 &&
       recoverySnapshotDue;
     const admitted =
       mode !== "enforce" || !wouldDefer || starvationOverride || recoveryPaced;
     if (admitted) {
       if (starvationOverride) {
-        starvationOverrideActive = true;
         starvationOverrideTotal += 1;
+        if (!besideBackupOverride) starvationOverrideKind = operation_kind;
       }
       if (recoveryPaced) {
         recoveryPacedActive = true;
@@ -1048,7 +1060,9 @@ export function createStorageAdmissionController(
       release: () => {
         if (released || !admitted) return;
         released = true;
-        if (starvationOverride) starvationOverrideActive = false;
+        if (starvationOverride && !besideBackupOverride) {
+          starvationOverrideKind = undefined;
+        }
         if (recoveryPaced) recoveryPacedActive = false;
         activeByPriority[spec.priority] = Math.max(
           0,
@@ -1059,7 +1073,14 @@ export function createStorageAdmissionController(
   };
 
   sample();
-  return { sample, admit, backgroundDeferralReason, getStatus: status };
+  return {
+    sample,
+    admit,
+    backgroundDeferralReason,
+    currentBackgroundReason: () =>
+      mode === "enforce" ? backgroundReason(status()) : undefined,
+    getStatus: status,
+  };
 }
 
 let activeController: StorageAdmissionController | undefined;
@@ -1155,6 +1176,26 @@ export function admitStorageOperation(
   request: StorageAdmissionRequest,
 ): StorageAdmissionTicket {
   return controller().admit(request);
+}
+
+// Refusals that hold every scheduled snapshot alike, with no override: while
+// one holds, the snapshot lane parks instead of refusing item after item.
+// Contended and recovery are not here: starvation overrides and the recovery
+// pace admit some snapshots there.
+export const SNAPSHOT_LANE_PARK_REASONS: ReadonlySet<string> = new Set([
+  "lifecycle_active",
+  "lifecycle_settle",
+  "io_pressure_emergency",
+  "io_pressure_unavailable",
+]);
+
+/** The fixed reason the snapshot lane should park for now, if any (enforce
+ * mode only; from the last sample, no I/O). */
+export function snapshotLaneParkReason(): string | undefined {
+  const reason = activeController?.currentBackgroundReason();
+  return reason != null && SNAPSHOT_LANE_PARK_REASONS.has(reason)
+    ? reason
+    : undefined;
 }
 
 export function getStorageAdmissionStatus():

@@ -4,9 +4,7 @@
  */
 
 export type DangerousRpcFreshAuthDecision =
-  | "fresh-auth-required"
-  | "fresh-auth-not-required"
-  | "internal-auth-only";
+  "fresh-auth-required" | "fresh-auth-not-required" | "internal-auth-only";
 
 export type DangerousRpcDecision = {
   decision: DangerousRpcFreshAuthDecision;
@@ -1775,7 +1773,7 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.recordManagedProjectEgress": {
     decision: "fresh-auth-not-required",
     reason:
-      "project- or host-scoped accounting with canonical project attribution and server-side abuse enforcement",
+      "host-scoped accounting with canonical project attribution and server-side abuse enforcement",
   },
   "hosts.updateProjectApiRelayUsage": {
     decision: "fresh-auth-not-required",
@@ -1803,10 +1801,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "account ownership migration mutation",
   },
-  "system.reconcileProjectAppPrivateHostnames": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
-  },
   "system.releaseProjectAppPrivateHostname": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -1822,10 +1816,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.requestRootfsImageDeletion": {
     decision: "fresh-auth-required",
     reason: "RootFS catalog deletion request",
-  },
-  "system.reserveProjectAppPrivateHostname": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
   },
   "system.revokeExternalCredential": {
     decision: "fresh-auth-required",

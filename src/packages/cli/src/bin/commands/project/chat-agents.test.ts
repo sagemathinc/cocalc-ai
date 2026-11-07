@@ -94,6 +94,64 @@ test("friendly discovery omits internal identifiers", () => {
   assert.doesNotMatch(JSON.stringify(value), /agent_network_id|project_id/);
 });
 
+test("discovery and status say which runtime, model and effort a peer uses", () => {
+  const peer = (name: string, runtime?: any) => ({
+    member: {
+      kind: "registered" as const,
+      member_id: randomUUID(),
+      endpoint: { project_id: randomUUID(), agent_id: randomUUID() },
+      name,
+      ...(runtime ? { runtime } : {}),
+      available: true,
+      added_at: new Date().toISOString(),
+    },
+    networks: [],
+  });
+  const directory = {
+    peers: [
+      peer("claude", {
+        kind: "claude-code",
+        model: "opus",
+        model_name: "Opus 5.5",
+        effort: "high",
+      }),
+      peer("codex", { kind: "codex", model: "gpt-6-luna" }),
+      peer("new", { kind: "claude-code" }),
+      peer("old"),
+    ],
+  };
+  const pick = ({ name, runtime, model, effort }: any) => ({
+    name,
+    runtime,
+    model,
+    effort,
+  });
+  const expected = [
+    {
+      name: "claude",
+      runtime: "Claude Code",
+      model: "Opus 5.5 (opus)",
+      effort: "high",
+    },
+    { name: "codex", runtime: "Codex", model: "gpt-6-luna", effort: undefined },
+    {
+      name: "new",
+      runtime: "Claude Code",
+      model: undefined,
+      effort: undefined,
+    },
+    { name: "old", runtime: undefined, model: undefined, effort: undefined },
+  ];
+  assert.deepEqual(
+    friendlyAgentDestinations(directory).peers.map(pick),
+    expected,
+  );
+  assert.deepEqual(
+    agentStatusReport(directory, Date.now()).agents.map(pick),
+    expected,
+  );
+});
+
 test("friendly discovery names an external agent by what agent send takes", () => {
   const member = (label: string, member_id = randomUUID()) => ({
     member: {

@@ -92,6 +92,8 @@ interface Peer {
 async function server(
   type: "ROUTER" | "PUB" | "XPUB" | "REP",
   behavior: "normal" | "silent" | "partial" | "no-ready" | "http" = "normal",
+  // the minor ZMTP version this server greets with (0: ZMTP 3.0, libzmq <= 4.2)
+  minor = 1,
 ) {
   const peers: Peer[] = [];
   const srv = net.createServer((s) => {
@@ -109,7 +111,9 @@ async function server(
       return void s.write("HTTP/1.1 400 Bad Request\r\n\r\n");
     if (behavior === "partial")
       return void s.write(Z.greeting().subarray(0, 20));
-    s.write(Z.greeting());
+    const g = Z.greeting();
+    g[11] = minor;
+    s.write(g);
     if (behavior === "no-ready") return;
     let readied = false;
     const d = new Z.Decoder({
@@ -775,7 +779,34 @@ describe("delivery and flow control", () => {
     await srv.close();
   });
 
-  test("a SUB subscribes with ZMTP 3.1's SUBSCRIBE command, never 3.0's [0x01, prefix] message", async () => {
+  test("a SUB subscribes to a ZMTP 3.0 peer with a [0x01, prefix] message, never the 3.1 command", async () => {
+    // libzmq 4.2 (as bundled with R's pbdZMQ) greets as 3.0 and ignores a
+    // SUBSCRIBE command, so IRkernel published nothing to cocalc
+    const srv = await server("XPUB", "normal", 0);
+    const s = new Z.Subscriber({ reconnectIvl: 20 });
+    s.subscribe("before"); // queued until READY
+    s.connect(srv.url);
+    await until(() => srv.peers[0]?.frames.length === 1);
+    s.subscribe("after"); // on the ready connection
+    await until(() => srv.peers[0].frames.length === 2);
+    assert.deepEqual(
+      srv.peers[0].frames.map((f) => f.map((b) => b.toString("latin1"))),
+      [["\x01before"], ["\x01after"]],
+    );
+    // and again on a new connection
+    srv.peers[0].socket.destroy();
+    await until(() => srv.peers[1]?.frames.length === 2, 3000, "the resend");
+    assert.deepEqual(
+      srv.peers[1].frames.map((f) => f.map((b) => b.toString("latin1"))),
+      [["\x01before"], ["\x01after"]],
+    );
+    assert.equal(srv.peers[0].subscribes.length, 0, "no SUBSCRIBE command");
+    assert.equal(srv.peers[1].subscribes.length, 0, "no SUBSCRIBE command");
+    s.close();
+    await srv.close();
+  });
+
+  test("a SUB subscribes to a ZMTP 3.1 peer with the SUBSCRIBE command, never 3.0's [0x01, prefix] message", async () => {
     const srv = await server("XPUB");
     const s = new Z.Subscriber();
     s.subscribe("before"); // queued until READY
@@ -983,8 +1014,8 @@ const MUTANTS: [
   ],
   [
     "m4: the subscription not resent on reconnect",
-    'for (const s of this.subs) this.write(c, command("SUBSCRIBE", s));',
-    'if (this.counters.attempts === 1) for (const s of this.subs) this.write(c, command("SUBSCRIBE", s));',
+    "for (const s of this.subs) this.write(c, subscription(c, s));",
+    "if (this.counters.attempts === 1) for (const s of this.subs) this.write(c, subscription(c, s));",
     async (Zm) => {
       const srv = await server("XPUB");
       const s = new Zm.Subscriber({ reconnectIvl: 20 });

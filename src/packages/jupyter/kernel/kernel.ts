@@ -947,7 +947,15 @@ export class JupyterKernel
     dbg(`queue has ${n} items; ensure kernel running`);
     try {
       await this.ensureRunning();
-      await this._execute_code_queue[0].go();
+      // The queue may have changed while the kernel started: init code goes
+      // to the front, and closing the kernel empties it (and closes each
+      // execution), so run whatever is at the head now.
+      const code = this._execute_code_queue[0];
+      if (code == null) {
+        dbg("queue emptied while the kernel started");
+        return;
+      }
+      await code.go();
     } catch (err) {
       dbg(`WARNING: error running kernel -- ${err}`);
       for (const code of this._execute_code_queue) {
@@ -959,8 +967,11 @@ export class JupyterKernel
 
   clear_execute_code_queue = (): void => {
     const dbg = this.dbg("_clear_execute_code_queue");
-    // ensure no future queued up evaluation occurs (currently running
-    // one will complete and new executions could happen)
+    // Ensure no future queued up evaluation occurs.  The head of the queue
+    // (running, or about to run once the kernel starts) stays: it finishes on
+    // its own -- when the interrupted code stops, or when the killed kernel
+    // closes -- and its finish shifts it off.  Dropping it here would leave
+    // it waiting forever, or let its finish shift off a newer execution.
     if (this.isClosed()) {
       dbg("no op since state is closed");
       return;
@@ -975,7 +986,7 @@ export class JupyterKernel
       code_execution_emitter.emit_output(mesg);
       code_execution_emitter.close();
     }
-    this._execute_code_queue = [];
+    this._execute_code_queue = this._execute_code_queue.slice(0, 1);
   };
 
   // This is like execute_code, but async and returns all the results.

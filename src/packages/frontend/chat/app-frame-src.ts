@@ -27,10 +27,13 @@ export function useAppFrameSrc({
   projectId,
   appId,
   hostUrl,
+  root = false,
 }: {
   projectId: string;
   appId: string;
   hostUrl?: string;
+  // The app runs without a base URL: frame it at the root of its origin.
+  root?: boolean;
 }): {
   src?: string;
   blocked: boolean;
@@ -57,6 +60,7 @@ export function useAppFrameSrc({
         project_id: projectId,
         path,
         app_id: appId,
+        root,
       });
       if (canceled) return;
       if ("url" in result) {
@@ -78,7 +82,7 @@ export function useAppFrameSrc({
     return () => {
       canceled = true;
     };
-  }, [projectId, appId, hostUrl, path, attempt]);
+  }, [projectId, appId, hostUrl, path, root, attempt]);
   useEffect(() => {
     if (!src) return;
     let frameOrigin: string;
@@ -105,7 +109,7 @@ export function useAppFrameSrc({
     src,
     blocked,
     failed,
-    openUrl: path ? appOpenURL(projectId, path, appId) : undefined,
+    openUrl: path ? appOpenURL(projectId, path, appId, { root }) : undefined,
     retry: () => {
       setBlocked(false);
       setAttempt((n) => n + 1);

@@ -35,7 +35,7 @@ import { useAppStatus } from "@cocalc/frontend/project/apps/use-app-status";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { Button } from "antd";
 import { withProjectHostBase } from "./host-url";
-import { appOpenURL } from "./app-server-open";
+import { appOpenURL, appRunsAtRoot } from "./app-server-open";
 
 const LAUNCHING_SERVER = defineMessage({
   id: "project.named-server-panel.launching_server",
@@ -285,7 +285,9 @@ export function ServerLink({
     void (async () => {
       const open =
         ready && appStatus.status?.url
-          ? appOpenURL(project_id, appStatus.status.url, name)
+          ? appOpenURL(project_id, appStatus.status.url, name, {
+              root: appRunsAtRoot(appStatus.status),
+            })
           : undefined;
       if (open) {
         if (!canceled) setAppUrl(open);

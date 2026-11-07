@@ -99,4 +99,26 @@ describe("public content routes", () => {
     expect(body).toContain('rel="canonical"');
     expect(body).toContain('href="https://cocalc.ai/guides" rel="canonical"');
   });
+
+  it("sends a generic plain-text error when the RSS feed fails", async () => {
+    const { getFeedData } = jest.requireMock("@cocalc/database/postgres/news");
+    getFeedData.mockRejectedValueOnce(
+      Error("<script>alert(document.cookie)</script>"),
+    );
+    const response = await request("/news/rss.xml");
+    expect(response.status).toBe(500);
+    expect(response.headers.get("content-type")).toMatch(/^text\/plain/);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const body = await response.text();
+    expect(body).toBe("Internal server error");
+  });
+
+  it("sends a generic uncached error when the JSON feed fails", async () => {
+    const { getFeedData } = jest.requireMock("@cocalc/database/postgres/news");
+    getFeedData.mockRejectedValueOnce(Error("database password=hunter2"));
+    const response = await request("/news/feed.json");
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ error: "Internal server error" });
+  });
 });

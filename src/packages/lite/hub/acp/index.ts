@@ -33,6 +33,7 @@ import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-repo
 import { SENSOR_WAKE_CLAIM_LEASE_MS } from "@cocalc/conat/agents/sensors";
 import { toolUseTracker } from "./tool-use";
 import { sweepAgentStatus } from "./agent-status-report";
+import { reportAgentModelFromEvent } from "./agent-runtime-report";
 import {
   rpcOutcome,
   type AgentRpcAttempt,
@@ -40,6 +41,7 @@ import {
   type AgentRpcSource,
 } from "@cocalc/conat/agents/rpc";
 import { agentRpcTurnState, agentRpcWithdrawable } from "./agent-rpc-turn";
+import { reconcileSlowAgentRpcReceiptsOnce } from "./agent-rpc-slow-receipts";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
@@ -8516,6 +8518,7 @@ async function executeAcpRequest({
       }
       wrappedStream = async (payload?: AcpStreamPayload | null) => {
         captureRecoveryCode(payload);
+        reportAgentModelFromEvent(request, payload);
         try {
           await chatWriter.handle(payload);
         } catch (err) {
@@ -8531,6 +8534,7 @@ async function executeAcpRequest({
     } else {
       wrappedStream = async (payload?: AcpStreamPayload | null) => {
         captureRecoveryCode(payload);
+        reportAgentModelFromEvent(request, payload);
         await stream(payload);
       };
     }
@@ -13225,6 +13229,15 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
     if (ticks % 6 === 3)
       void releaseRenewedSignInHolds().catch((err) =>
         logger.debug("sign-in hold release failed", { err: `${err}` }),
+      );
+    // Agent messages slow to confirm: their turn, once found (every 30 s).
+    if (ticks % 3 === 1)
+      void reconcileSlowAgentRpcReceiptsOnce({
+        withChat: (project_id, path, fn) =>
+          withChatSyncDB({ client, project_id, path, fn: fn as any }),
+        turnState: agentRpcTurnState,
+      }).catch((err) =>
+        logger.debug("slow receipt reconcile failed", { err: `${err}` }),
       );
     // What each agent here is doing, for its peers and lists.
     void sweepAgentStatus().catch((err) =>

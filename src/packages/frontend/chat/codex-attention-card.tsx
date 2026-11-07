@@ -38,7 +38,9 @@ import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
 import {
   bindAgentName,
+  bindUnambiguousAgentNames,
   hasUnboundAgentName,
+  isAmbiguousAgentName,
 } from "@cocalc/frontend/agents/unbound-mentions";
 import { findWorkspaceAgentForThread } from "@cocalc/frontend/agents/workspace-model";
 
@@ -382,8 +384,19 @@ function RuntimeCodexAttentionCard({
   // `origin` is where focus returns if a network approval opens first.
   // `from` is the draft to send: the rendered one, or, for Shift+Enter, the
   // editor's live value, which may not have rendered yet.
-  const send = (origin: string, from: CodexAttentionDraft = draft) => {
+  const send = (origin: string, typed: CodexAttentionDraft = draft) => {
     lastAnswer.current = origin;
+    // A name only one agent has is bound now, as in the composer.
+    const references = agentMentions.agents.map(namedAgentReference);
+    const other = Object.fromEntries(
+      Object.entries(typed.other).map(([id, value]) => [
+        id,
+        value ? bindUnambiguousAgentNames(value, references).value : value,
+      ]),
+    );
+    const from = { ...typed, other };
+    if (Object.keys(other).some((id) => other[id] !== typed.other[id]))
+      updateDraft((current) => ({ ...current, other }));
     void agentMentions.preflight(
       // Only what the person wrote: an agent's own choices may name agents,
       // with no picker to bind them.
@@ -837,11 +850,16 @@ function RuntimeCodexAttentionCard({
                         {/* A typed @name is checked before sending, as in the
                             composer: offer the same way to resolve it. */}
                         {agentMentions.agents
-                          .filter((agent) =>
-                            hasUnboundAgentName(
-                              draft.other[question.id] ?? "",
-                              agent.name,
-                            ),
+                          .filter(
+                            (agent) =>
+                              hasUnboundAgentName(
+                                draft.other[question.id] ?? "",
+                                agent.name,
+                              ) &&
+                              isAmbiguousAgentName(
+                                agent.name,
+                                agentMentions.agents,
+                              ),
                           )
                           .map((agent) => (
                             <Button

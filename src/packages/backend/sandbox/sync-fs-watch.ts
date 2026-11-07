@@ -327,7 +327,7 @@ export class SyncFsWatchStore {
     this.db = new Database(this.dbPath);
     this.init();
     // Checkpoints fsync; keep them off the event loop.
-    deferWalCheckpoints(this.db, this.dbPath);
+    deferWalCheckpoints(this.db, this.dbPath, { label: "sync-fs-watch" });
   }
 
   close(): void {

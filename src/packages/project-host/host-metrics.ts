@@ -18,6 +18,7 @@ import { readConatPersistMetrics } from "./conat-persist-metrics";
 import { getStorageAdmissionStatus } from "./storage-admission";
 import { getRusticCacheMaintenanceMetrics } from "./rustic-cache-maintenance";
 import { getSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
+import { getSnapshotLaneMetrics } from "./snapshot-lane-status";
 
 const logger = getLogger("project-host:host-metrics");
 
@@ -234,6 +235,7 @@ async function collectSnapshot(
     reservation_bytes,
   );
   const storageAdmission = getStorageAdmissionStatus();
+  const snapshotLane = getSnapshotLaneMetrics();
   return {
     cpuSample,
     snapshot: {
@@ -255,6 +257,7 @@ async function collectSnapshot(
       io_containment,
       ...(storageAdmission ? { storage_admission: storageAdmission } : {}),
       snapshot_backup_maintenance_gate: getSnapshotBackupMaintenanceGate(),
+      ...(snapshotLane ? { snapshot_lane: snapshotLane } : {}),
       ...(conat_persist ? { conat_persist } : {}),
     },
   };

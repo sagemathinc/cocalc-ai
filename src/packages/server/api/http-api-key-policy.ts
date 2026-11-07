@@ -20,6 +20,10 @@ const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "notifications.markRead": "notifications:manage",
   "notifications.save": "notifications:manage",
   "notifications.archive": "notifications:manage",
+  // Curated for keys: limits and usage numbers of the key's own account,
+  // not the raw membership details (purchases, grants, licenses, events).
+  "system.getMembershipUsage": "usage:read",
+  "system.getAiSubscriptionStatus": "ai-subscriptions:read",
 };
 
 const HUB_API_KEY_HELLO_WORLD = new Set(["system.ping"]);

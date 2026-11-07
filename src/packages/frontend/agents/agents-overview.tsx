@@ -8,6 +8,8 @@
 // are the sidebar's pins; "Shared with me" lists agents other people
 // registered in projects you collaborate on.
 
+import { SetConnectorsModal } from "./cli-connectors-bulk";
+import { useEnabledCliConnectors } from "./cli-connectors-store";
 import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
 import { useListQuery } from "@cocalc/frontend/search/list-query";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
@@ -172,6 +174,8 @@ export function AgentsOverview(props: Props) {
   // Phones: two-line rows and compact controls.
   const narrow = !!Grid.useBreakpoint().xs;
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [connectorsOpen, setConnectorsOpen] = useState(false);
+  const cliConnectors = useEnabledCliConnectors();
 
   const projectTitle = (id: string) =>
     (project_map?.getIn([id, "title"]) as string | undefined) ?? "";
@@ -481,6 +485,15 @@ export function AgentsOverview(props: Props) {
               >
                 Set payment method…
               </Button>
+              {cliConnectors.length > 0 && (
+                <Button
+                  size="small"
+                  disabled={selectedAgents.length === 0}
+                  onClick={() => setConnectorsOpen(true)}
+                >
+                  Set connectors…
+                </Button>
+              )}
               <Button
                 size="small"
                 onClick={() => props.onSetHidden(selectedIds, true)}
@@ -538,6 +551,14 @@ export function AgentsOverview(props: Props) {
           payments={payments}
           onClose={() => setPaymentOpen(false)}
         />
+        {connectorsOpen && (
+          <SetConnectorsModal
+            open
+            agents={selectedAgents}
+            connectors={cliConnectors}
+            onClose={() => setConnectorsOpen(false)}
+          />
+        )}
         {preferences.error && (
           <Alert role="alert" type="warning" title={preferences.error} />
         )}

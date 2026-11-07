@@ -1038,9 +1038,6 @@ importers:
       '@jupyter-widgets/controls':
         specifier: 5.0.0-rc.2
         version: 5.0.0-rc.2(bufferutil@4.0.9)(crypto@1.0.1)(react@19.2.3)(utf-8-validate@6.0.5)
-      '@jupyter-widgets/output':
-        specifier: ^4.1.0
-        version: 4.1.7(bufferutil@4.0.9)(react@19.2.3)(utf-8-validate@6.0.5)
       '@microlink/react-json-view':
         specifier: ^1.23.3
         version: 1.27.0(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -4227,9 +4224,6 @@ packages:
 
   '@jupyter-widgets/controls@5.0.0-rc.2':
     resolution: {integrity: sha512-opcHMgOcrpQLPZlibkO/GcmEFgSquL/A9TG6qh894VFAykLj6VcUO7cx+xEDSodSnz0eAl4jC5XqVLRJLgKV6g==}
-
-  '@jupyter-widgets/output@4.1.7':
-    resolution: {integrity: sha512-S3cN9QlEpTl/vkBDT8p3BelL3kpvJrkGJv2EZEOV7EgYNGVqh+jiOopMio8T9JCKL0dvyp8FwVS3g0Fcw6eD+A==}
 
   '@jupyter/ydoc@3.1.0':
     resolution: {integrity: sha512-+hLNUBZr8Zz8NiuaoYKINDURDJHbjFGxg8EcSU52y+rBe412TsoFxfPSng4eP7w3cZFrVlm7D+8K0nAMHxj0ZQ==}
@@ -14321,14 +14315,6 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - crypto
-      - react
-      - utf-8-validate
-
-  '@jupyter-widgets/output@4.1.7(bufferutil@4.0.9)(react@19.2.3)(utf-8-validate@6.0.5)':
-    dependencies:
-      '@jupyter-widgets/base': 4.1.7(bufferutil@4.0.9)(react@19.2.3)(utf-8-validate@6.0.5)
-    transitivePeerDependencies:
-      - bufferutil
       - react
       - utf-8-validate
 

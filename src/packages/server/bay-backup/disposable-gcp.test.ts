@@ -9,6 +9,8 @@ import {
   disposableRestoreInstanceName,
   isRetryableDisposablePitrWalFailure,
   runDisposableGcpRestoreWorker,
+  disposableRestoreCandidateZones,
+  isGcpZoneCapacityError,
   workerStageSeconds,
   type DisposableRestoreWorkerConfig,
   type DisposableRestoreWorkerResult,
@@ -525,6 +527,272 @@ test("GCP worker parses a bounded result and always deletes the VM", async () =>
   const [encodedConfig] = decodedStartupBlocks(startupScript);
   expect(JSON.parse(encodedConfig).worker_timeout_seconds).toBe(7200);
   expect(deleteInstance).toHaveBeenCalledTimes(1);
+});
+
+test("GCP worker moves to the next zone when a zone has no capacity", async () => {
+  const worker = passedWorker();
+  const marker = `COCALC_BAY_RESTORE_DRILL_RESULT_V1_nonce-1=${Buffer.from(
+    JSON.stringify(worker),
+  ).toString("base64")}\n`;
+  const insert = jest.fn(async ({ zone }: { zone: string }) => {
+    if (zone === "us-south1-a") {
+      throw new Error(
+        "ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS: The zone 'projects/p/zones/us-south1-a' does not have enough resources available to fulfill the request.",
+      );
+    }
+    return [{ name: "insert-1", status: "DONE" }];
+  });
+  const deleteInstance = jest.fn(async () => [
+    { name: "delete-1", status: "DONE" },
+  ]);
+  const zonesSeen: string[] = [];
+  const result = await runDisposableGcpRestoreWorker({
+    service_account_json: serviceAccount,
+    zone: "us-south1-a",
+    zones: disposableRestoreCandidateZones("us-south1-a", ""),
+    onZone: (zone) => {
+      zonesSeen.push(zone);
+    },
+    boot_disk_gb: 50,
+    config: config(),
+    clients: {
+      instances: {
+        insert,
+        delete: deleteInstance,
+        get: jest.fn(),
+        getSerialPortOutput: jest.fn(async () => [
+          { contents: marker, next: "100" },
+        ]),
+      } as any,
+      operations: { wait: jest.fn() } as any,
+    },
+  });
+  expect(result.worker.status).toBe("passed");
+  expect(result.zone).toBe("us-south1-b");
+  expect(zonesSeen).toEqual(["us-south1-a", "us-south1-b"]);
+  expect(insert.mock.calls.map(([req]) => req.zone)).toEqual([
+    "us-south1-a",
+    "us-south1-b",
+  ]);
+  const resource = (insert.mock.calls[1][0] as any).instanceResource;
+  expect(resource.machineType).toBe(
+    "zones/us-south1-b/machineTypes/n2-standard-4",
+  );
+  expect(resource.networkInterfaces[0].subnetwork).toMatch(
+    /regions\/us-south1\/subnetworks\/default$/,
+  );
+  // the worker that ran is deleted in its own zone
+  expect(deleteInstance).toHaveBeenLastCalledWith(
+    expect.objectContaining({ zone: "us-south1-b" }),
+  );
+});
+
+test("a capacity error from the insert operation is cleaned up conclusively before the next zone", async () => {
+  const worker = passedWorker();
+  const marker = `COCALC_BAY_RESTORE_DRILL_RESULT_V1_nonce-1=${Buffer.from(
+    JSON.stringify(worker),
+  ).toString("base64")}\n`;
+  // the RPC returns an operation; the operation then fails for lack of capacity
+  const insert = jest.fn(async ({ zone }: { zone: string }) => [
+    { name: `insert-${zone}`, status: "RUNNING" },
+  ]);
+  const wait = jest.fn(async ({ operation }: { operation: string }) =>
+    operation === "insert-us-south1-a"
+      ? [
+          {
+            name: operation,
+            status: "DONE",
+            error: {
+              errors: [
+                {
+                  code: "ZONE_RESOURCE_POOL_EXHAUSTED",
+                  message: "The zone does not have enough resources available",
+                },
+              ],
+            },
+          },
+        ]
+      : [{ name: operation, status: "DONE" }],
+  );
+  const deleteInstance = jest.fn(async ({ zone }: { zone: string }) => [
+    { name: `delete-${zone}`, status: "RUNNING" },
+  ]);
+  const result = await runDisposableGcpRestoreWorker({
+    service_account_json: serviceAccount,
+    zone: "us-south1-a",
+    zones: ["us-south1-b"],
+    boot_disk_gb: 50,
+    config: config(),
+    clients: {
+      instances: {
+        insert,
+        delete: deleteInstance,
+        get: jest.fn(),
+        getSerialPortOutput: jest.fn(async () => [
+          { contents: marker, next: "100" },
+        ]),
+      } as any,
+      operations: { wait } as any,
+    },
+  });
+  expect(result.zone).toBe("us-south1-b");
+  // the first zone's delete was issued AND awaited before the second insert
+  const order = [
+    ...insert.mock.invocationCallOrder.map((n, i) => [
+      n,
+      `insert ${insert.mock.calls[i][0].zone}`,
+    ]),
+    ...deleteInstance.mock.invocationCallOrder.map((n, i) => [
+      n,
+      `delete ${deleteInstance.mock.calls[i][0].zone}`,
+    ]),
+    ...wait.mock.invocationCallOrder.map((n, i) => [
+      n,
+      `wait ${wait.mock.calls[i][0].operation}`,
+    ]),
+  ]
+    .sort((x, y) => (x[0] as number) - (y[0] as number))
+    .map((x) => x[1]);
+  expect(order.slice(0, 5)).toEqual([
+    "insert us-south1-a",
+    "wait insert-us-south1-a",
+    "delete us-south1-a",
+    "wait delete-us-south1-a",
+    "insert us-south1-b",
+  ]);
+});
+
+test("a failed cleanup keeps ownership of the zone and stops the fallback", async () => {
+  const insert = jest.fn(async () => {
+    throw new Error("ZONE_RESOURCE_POOL_EXHAUSTED: no capacity");
+  });
+  const deleteInstance = jest.fn(async () => {
+    throw new Error("backend error");
+  });
+  await expect(
+    runDisposableGcpRestoreWorker({
+      service_account_json: serviceAccount,
+      zone: "us-south1-a",
+      zones: ["us-south1-b"],
+      boot_disk_gb: 50,
+      config: config(),
+      clients: {
+        instances: {
+          insert,
+          delete: deleteInstance,
+          getSerialPortOutput: jest.fn(),
+        } as any,
+        operations: { wait: jest.fn() } as any,
+      },
+    }),
+  ).rejects.toThrow("backend error");
+  // no insert in the next zone; the final cleanup retried the SAME zone
+  expect(insert).toHaveBeenCalledTimes(1);
+  expect(deleteInstance.mock.calls.map(([req]: any) => req.zone)).toEqual([
+    "us-south1-a",
+    "us-south1-a",
+  ]);
+});
+
+test("zones passed to the worker are validated, same-region and deduplicated", async () => {
+  const insert = jest.fn(async () => {
+    throw new Error("ZONE_RESOURCE_POOL_EXHAUSTED: no capacity");
+  });
+  await expect(
+    runDisposableGcpRestoreWorker({
+      service_account_json: serviceAccount,
+      zone: "us-south1-a",
+      zones: ["us-west1-a", "bogus", "us-south1-a", "us-south1-c"],
+      boot_disk_gb: 50,
+      config: config(),
+      clients: {
+        instances: {
+          insert,
+          delete: jest.fn(async () => {
+            const err = new Error("not found") as Error & { code: number };
+            err.code = 404;
+            throw err;
+          }),
+          getSerialPortOutput: jest.fn(),
+        } as any,
+        operations: { wait: jest.fn() } as any,
+      },
+    }),
+  ).rejects.toThrow("ZONE_RESOURCE_POOL_EXHAUSTED");
+  expect(insert.mock.calls.map(([req]: any) => req.zone)).toEqual([
+    "us-south1-a",
+    "us-south1-c",
+  ]);
+});
+
+test("GCP worker does not change zones for other insert errors", async () => {
+  const insert = jest.fn(async () => {
+    throw new Error("permission denied");
+  });
+  await expect(
+    runDisposableGcpRestoreWorker({
+      service_account_json: serviceAccount,
+      zone: "us-south1-a",
+      zones: disposableRestoreCandidateZones("us-south1-a", ""),
+      boot_disk_gb: 50,
+      config: config(),
+      clients: {
+        instances: {
+          insert,
+          delete: jest.fn(async () => [{ name: "d", status: "DONE" }]),
+          getSerialPortOutput: jest.fn(),
+        } as any,
+        operations: { wait: jest.fn() } as any,
+      },
+    }),
+  ).rejects.toThrow("permission denied");
+  expect(insert).toHaveBeenCalledTimes(1);
+});
+
+test("GCP worker reports the capacity error when every zone is full", async () => {
+  const insert = jest.fn(async () => {
+    throw new Error("ZONE_RESOURCE_POOL_EXHAUSTED: no capacity");
+  });
+  await expect(
+    runDisposableGcpRestoreWorker({
+      service_account_json: serviceAccount,
+      zone: "us-south1-a",
+      zones: disposableRestoreCandidateZones("us-south1-a", ""),
+      boot_disk_gb: 50,
+      config: config(),
+      clients: {
+        instances: {
+          insert,
+          delete: jest.fn(async () => [{ name: "d", status: "DONE" }]),
+          getSerialPortOutput: jest.fn(),
+        } as any,
+        operations: { wait: jest.fn() } as any,
+      },
+    }),
+  ).rejects.toThrow("ZONE_RESOURCE_POOL_EXHAUSTED");
+  expect(insert).toHaveBeenCalledTimes(3);
+});
+
+test("candidate zones: primary first, same region only, no duplicates", () => {
+  expect(disposableRestoreCandidateZones("us-south1-a", "")).toEqual([
+    "us-south1-a",
+    "us-south1-b",
+    "us-south1-c",
+  ]);
+  expect(
+    disposableRestoreCandidateZones(
+      "us-south1-b",
+      "us-south1-c, us-west1-a, bogus, us-south1-b",
+    ),
+  ).toEqual(["us-south1-b", "us-south1-c"]);
+  expect(isGcpZoneCapacityError(new Error("permission denied"))).toBe(false);
+  expect(
+    isGcpZoneCapacityError(
+      new Error(
+        "The zone 'z' does not have enough resources available to fulfill the request.",
+      ),
+    ),
+  ).toBe(true);
 });
 
 test("GCP worker waits for a complete serial result line", async () => {

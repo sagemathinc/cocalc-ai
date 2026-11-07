@@ -1142,7 +1142,87 @@ export interface HostCurrentMetrics {
     pressure_attribution?: "bees_cgroup";
   };
   conat_persist?: HostConatPersistMetrics;
+  snapshot_lane?: HostSnapshotLaneMetrics;
 }
+
+/** The host's scheduled-snapshot lane: queue depth, parking and recent
+ * outcomes. Counts, durations and fixed reason tokens only. */
+export interface HostSnapshotLaneMetrics {
+  pending: number;
+  active: number;
+  parked: boolean;
+  /** Why the lane is parked (a fixed token such as lifecycle_active). */
+  park_reason?: string;
+  parked_ms_total: number;
+  /** Operations put back in their place, by park reason. */
+  requeued_total: Record<string, number>;
+  /** The earliest due time (ms since the epoch) among pending items. */
+  oldest_pending_due_ms?: number;
+  /** Attempts in the last 10 minutes, by outcome. */
+  completed_10m: Partial<
+    Record<"succeeded" | "skipped" | "deferred" | "failed", number>
+  >;
+  /** Assignment checks that found only the content generation moved (a busy
+   * project): accepted before the work from a fresh row, accepted after it
+   * (a created snapshot or an interval wait), or refused after it. Since
+   * project-host start. */
+  generation_moved?: {
+    accepted_r1: number;
+    accepted_r2: number;
+    refused: number;
+  };
+  /** Pending snapshots past their class's promote age (60 min paying, 4 h
+   * free), which go first, oldest due first. */
+  promoted_pending?: number;
+  /** The most promoted pending snapshots that belong to one account. */
+  promoted_largest_account_count?: number;
+  /** Dispatches that went first by promotion, by class, since project-host
+   * start. */
+  promoted_dispatched_total?: { paying: number; free: number };
+  /** Why each snapshot that was overdue in the host's last full inventory
+   * still waits, by class (free: everything not paying). Absent until the
+   * first full inventory. */
+  waiting?: {
+    /** How long ago that inventory was taken. */
+    inventory_age_ms: number;
+    paying: SnapshotLaneWaiting;
+    free: SnapshotLaneWaiting;
+  };
+}
+
+/** Why an overdue scheduled snapshot waits:
+ * - running: its snapshot runs now;
+ * - queued / queued_promoted: in the lane's queue (promoted: past the
+ *   promote age, so it goes first in its class);
+ * - parked: in the queue of a parked lane;
+ * - deferred_retry: refused or put off, waiting for its retry;
+ * - failure_backoff: failed, waiting out the failure backoff;
+ * - limit_prune_deferred: at its snapshot limit, waiting for the prune;
+ * - generation_moved: refused because the project kept changing;
+ * - memory_gate: the host's memory gate holds all maintenance;
+ * - not_dispatched: none of these (should be 0). */
+export const SNAPSHOT_LANE_WAIT_CAUSES = [
+  "running",
+  "queued",
+  "queued_promoted",
+  "parked",
+  "deferred_retry",
+  "failure_backoff",
+  "limit_prune_deferred",
+  "generation_moved",
+  "memory_gate",
+  "not_dispatched",
+] as const;
+export type SnapshotLaneWaitCause = (typeof SNAPSHOT_LANE_WAIT_CAUSES)[number];
+
+/** Per cause: how many, the oldest overdue age, and for failure_backoff the
+ * most consecutive failures. */
+export type SnapshotLaneWaiting = Partial<
+  Record<
+    SnapshotLaneWaitCause,
+    { count: number; oldest_age_ms: number; max_failures?: number }
+  >
+>;
 
 export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
 
@@ -1158,6 +1238,10 @@ export interface HostPressureState {
   last_action_project_id?: string;
   last_action_status?: "stopped" | "stop_failed" | "cooldown" | "no_candidates";
   last_action_reason?: string;
+  // Running agent turns (counts only): projects left alone in this
+  // evaluation, and whether the turn leases could not be read.
+  agent_turn_protected_count?: number;
+  agent_turns_unknown?: boolean;
 }
 
 export interface HostMetricsHistoryPoint extends HostCurrentMetrics {
@@ -1245,6 +1329,74 @@ export interface HostPublicRouteProbe {
 
 export type HostPublicRouteMode = "cloudflare-tunnel" | "cloudflare-proxy";
 
+// The host integrity watcher (a root service on the host) and pending reboot
+// for updates, as the project host reports them in its heartbeat.
+export interface HostIntegrityFinding {
+  rule: string;
+  severity: string;
+  comm: string;
+  exe: string;
+  uids: number[];
+  userns: string;
+  parents: string[];
+  first_seen?: string;
+  last_seen?: string;
+  count: number;
+  // the kind of host uid (e.g. "project-runtime"), when the watcher says
+  uid_class?: string;
+  // placement facts the watcher could not read (names only)
+  unreadable?: string[];
+  // for a project data layout finding: how many dirs it applies to
+  affected?: number;
+}
+
+// What the integrity watcher checks on the host, as configured there.
+export interface HostIntegrityDetection {
+  // the project runtime uid mode the watcher was configured with
+  runtime_uid_mode?: string;
+  // its check for the runtime user inside project containers: keep-id,
+  // partial or strict
+  runtime_user_in_container?: string;
+  // the exec monitor: its state (available, degraded, unavailable: ...,
+  // starting or off), how many programs it watches, events it lost and
+  // execs it could not attribute
+  exec_monitor?: {
+    state: string;
+    marked: number;
+    lost: number;
+    unattributed: number;
+    // execs it could not attribute, by program (the most frequent first)
+    unattributed_programs?: Record<string, number>;
+  };
+  // the subordinate uid ranges it reads: ok, stale or unavailable
+  ranges_state?: string;
+  // project data layout mismatches it counted
+  layout_problems?: number;
+}
+
+export interface HostIntegrityStatus {
+  // running: a recent status; stale: the status stopped updating; missing:
+  // no watcher installed (or not yet); unreadable: a broken status file.
+  watcher: "running" | "stale" | "missing" | "unreadable";
+  observed_at: string;
+  schema?: string;
+  heartbeat_at?: string;
+  started_at?: string;
+  scans?: number;
+  errors?: number;
+  findings?: HostIntegrityFinding[];
+  finding_count?: number;
+  // newest first (last_seen), capped; config_change_count counts them all
+  config_changes?: { path: string; first_seen?: string; last_seen?: string }[];
+  config_change_count?: number;
+  config_baseline_at?: string;
+  inventory?: Record<string, number>;
+  // absent from watchers that predate it
+  detection?: HostIntegrityDetection;
+  // When the host started needing a reboot to apply updates (null: none).
+  reboot_required_since: string | null;
+}
+
 export interface HostBeesStatus {
   enabled: boolean;
   running: boolean;
@@ -1308,6 +1460,7 @@ export interface Host {
   host_session_started_at?: string;
   public_route_probe?: HostPublicRouteProbe;
   bees?: HostBeesStatus;
+  host_integrity?: HostIntegrityStatus;
   metrics?: HostMetrics;
   pressure?: HostPressureState;
   placement?: HostPlacementSnapshot;
@@ -1922,6 +2075,7 @@ export const hosts = {
   syncProjectBackupIndexes: authFirstRequireHost,
   deleteProjectBackupIndex: authFirstRequireHost,
   touchProject: authFirstRequireHostWithAccountTarget,
+  touchProjectActivity: authFirstRequireHost,
   markProjectChanged: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   getProjectStartMetadata: authFirstRequireHost,
@@ -2339,6 +2493,14 @@ export interface Hosts {
     account_id?: string;
     account_ids?: string[];
   }) => Promise<void>;
+  // An agent turn is running on the host: moves last_edited only (not
+  // last_changed or last_active). With summary, the project's summary event
+  // is queued in the same transaction so project lists see the new time.
+  touchProjectActivity: (opts: {
+    host_id?: string;
+    project_id: string;
+    summary?: boolean;
+  }) => Promise<void>;
   markProjectChanged: (opts: {
     host_id?: string;
     project_id: string;
@@ -2580,6 +2742,8 @@ export interface Hosts {
     // or an app's own base path (then app_id is required).
     path: string;
     app_id?: string;
+    // The app runs without a base URL: open it at the root of its origin.
+    root?: boolean;
   }) => Promise<
     | { url: string; expires_at: number }
     | {
@@ -2598,6 +2762,8 @@ export interface Hosts {
     project_id: string;
     path: string;
     app_id?: string;
+    // The app runs without a base URL: open it at the root of its origin.
+    root?: boolean;
   }) => Promise<
     | { url: string; expires_at: number }
     | {

@@ -20,7 +20,12 @@ import {
   serializeAgentMention,
 } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
-import { bindAgentName, hasUnboundAgentName } from "./unbound-mentions";
+import {
+  bindAgentName,
+  bindUnambiguousAgentNames,
+  hasUnboundAgentName,
+  isAmbiguousAgentName,
+} from "./unbound-mentions";
 
 const reference: AgentMentionReference = {
   version: 1,
@@ -142,4 +147,44 @@ test("an agent on another site parses and round trips through Markdown and Slate
   expect(
     parseAgentMention(getSlateToMarkdown("agent-mention")({ node } as any)),
   ).toEqual(external);
+});
+
+test("binds a pasted @name only one agent has, and leaves shared names for a pick", () => {
+  const ref = (name: string, agent: string) => ({
+    version: 1 as const,
+    naming_account_id: "00000000-1000-4000-8000-000000000001",
+    target: {
+      project_id: "00000000-5000-4000-8000-000000000005",
+      agent_id: `00000000-6000-4000-8000-00000000000${agent}`,
+    },
+    name,
+  });
+  const text =
+    "@ops2 estimates 1,600 lines; ask @reviewer and `@ops2` in code, and @ops2-x.";
+  const { value, ambiguous } = bindUnambiguousAgentNames(text, [
+    ref("ops2", "1"),
+    ref("reviewer", "2"),
+    ref("reviewer", "3"),
+  ]);
+  expect(ambiguous).toEqual(["reviewer"]);
+  expect(hasUnboundAgentName(value, "ops2")).toBe(false);
+  expect(hasUnboundAgentName(value, "reviewer")).toBe(true);
+  expect(value).toBe(bindAgentName(text, ref("ops2", "1")));
+  // Code and longer names are untouched.
+  expect(value).toContain("`@ops2`");
+  expect(value).toContain("@ops2-x.");
+  // Nothing to bind: unchanged.
+  expect(bindUnambiguousAgentNames("no names", [ref("ops2", "1")])).toEqual({
+    value: "no names",
+    ambiguous: [],
+  });
+  expect(
+    isAmbiguousAgentName("reviewer", [
+      { name: "reviewer" },
+      { name: "reviewer" },
+    ]),
+  ).toBe(true);
+  expect(
+    isAmbiguousAgentName("ops2", [{ name: "ops2" }, { name: "reviewer" }]),
+  ).toBe(false);
 });

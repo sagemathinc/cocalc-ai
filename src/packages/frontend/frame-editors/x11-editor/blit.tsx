@@ -7,7 +7,10 @@ import { Alert, Button, Flex, Spin, Typography } from "antd";
 import { useEffect, useState } from "react";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
 import { exec } from "@cocalc/frontend/frame-editors/generic/client";
-import { getProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
+import {
+  appRunsAtRoot,
+  getProjectAppOpenUrl,
+} from "@cocalc/frontend/project/app-server-open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   addBlitPassphrase,
@@ -51,6 +54,7 @@ export function Blit({
   const [error, setError] = useState<string>();
   const [missingPackages, setMissingPackages] = useState<string[]>([]);
   const [src, setSrc] = useState<string>();
+  const [root, setRoot] = useState(false);
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
@@ -112,6 +116,7 @@ export function Blit({
         // The host URL: BlitFrame turns it into a fresh frame link on the
         // app's own origin each time it is shown.
         setSrc(url);
+        setRoot(appRunsAtRoot(status));
         setStage("ready");
       }
     })().catch((err) => {
@@ -223,7 +228,7 @@ export function Blit({
           project_id={project_id}
           shuttingDown={stage === "stopping"}
         />
-        <BlitFrame project_id={project_id} hostUrl={src} />
+        <BlitFrame project_id={project_id} hostUrl={src} root={root} />
       </Flex>
     );
   }
@@ -296,14 +301,17 @@ export function Blit({
 function BlitFrame({
   project_id,
   hostUrl,
+  root,
 }: {
   project_id: string;
   hostUrl: string;
+  root: boolean;
 }) {
   const frame = useAppFrameSrc({
     projectId: project_id,
     appId: BLIT_APP_ID,
     hostUrl,
+    root,
   });
   if (frame.failed || frame.blocked) {
     return (

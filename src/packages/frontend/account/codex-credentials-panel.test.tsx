@@ -30,6 +30,8 @@ const listExternalCredentials = jest.fn();
 const updateCodexSubscriptionLabel = jest.fn();
 const revokeExternalCredential = jest.fn();
 const codexUploadAuthFileV2 = jest.fn();
+let mockLite = true;
+let mockRunQuota: unknown = undefined;
 const ensureProjectRunningForCodex = jest.fn();
 
 describe("Codex subscription credential ordering", () => {
@@ -235,7 +237,12 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
   ),
 }));
 jest.mock("@cocalc/frontend/lite", () => ({
-  lite: true,
+  get lite() {
+    return mockLite;
+  },
+}));
+jest.mock("@cocalc/frontend/project/use-project-run-quota", () => ({
+  useProjectRunQuota: () => ({ runQuota: mockRunQuota }),
 }));
 jest.mock("@cocalc/frontend/projects/select-project", () => ({
   SelectProject: () => null,
@@ -267,6 +274,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
           getCodexPaymentSource: (...args: any[]) =>
             getCodexPaymentSource(...args),
           getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
+          getOpenAiApiKeyStatus: async () => ({}),
         },
       },
     },
@@ -285,6 +293,8 @@ describe("CodexCredentialsPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    mockLite = true;
+    mockRunQuota = undefined;
     window.localStorage.clear();
     listExternalCredentials.mockResolvedValue([]);
     updateCodexSubscriptionLabel.mockResolvedValue({ updated: true });
@@ -765,6 +775,51 @@ describe("CodexCredentialsPanel", () => {
       ).toBeTruthy();
       expect(screen.queryByText("ChatGPT is connected")).toBeNull();
     });
+  });
+
+  it("says a project without internet access cannot use a ChatGPT plan, and how to upgrade", async () => {
+    mockLite = false;
+    mockRunQuota = { network: false };
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      reason: "Live usage check timed out",
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/^This project has no internet access/),
+      ).toBeTruthy();
+    });
+    const upgrade = screen.getByText("Upgrade your membership");
+    expect(upgrade.closest("a")?.getAttribute("href")).toMatch(
+      /\/settings\/membership$/,
+    );
+  });
+
+  it("does not show the no-internet notice when the project has internet access", async () => {
+    mockLite = false;
+    mockRunQuota = { network: true };
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      reason: "Live usage check timed out",
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Connection not verified")).toBeTruthy();
+    });
+    expect(
+      screen.queryByText(/^This project has no internet access/),
+    ).toBeNull();
   });
 
   it("explains sponsored-slot denial without exposing its raw payload or suggesting sign-in", async () => {

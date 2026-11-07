@@ -101,6 +101,48 @@ describe("HTTP API key policy audit", () => {
     }
   });
 
+  it("lets usage:read and ai-subscriptions:read call only their curated RPCs", async () => {
+    const reader = {
+      ...principal,
+      capabilities: ["usage:read" as const, "ai-subscriptions:read" as const],
+    };
+    for (const name of [
+      "system.getMembershipUsage",
+      "system.getAiSubscriptionStatus",
+    ]) {
+      await expect(
+        assertHttpHubApiKeyAllowed({ principal: reader, name, args: [{}] }),
+      ).resolves.toBeUndefined();
+    }
+    // Both are solo-project privileges for an agent's key.
+    expect(mockSoloCheck).toHaveBeenCalledTimes(2);
+    // Each needs its own capability.
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: { ...principal, capabilities: ["usage:read"] },
+        name: "system.getAiSubscriptionStatus",
+        args: [{}],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: { ...principal, capabilities: ["ai-subscriptions:read"] },
+        name: "system.getMembershipUsage",
+        args: [{}],
+      }),
+    ).rejects.toThrow();
+    // Not the raw membership details (purchases, grants, licenses, events),
+    // nor the credentials themselves.
+    for (const name of [
+      "purchases.getMembershipDetails",
+      "system.listExternalCredentials",
+    ]) {
+      await expect(
+        assertHttpHubApiKeyAllowed({ principal: reader, name, args: [{}] }),
+      ).rejects.toThrow("API keys are not allowed");
+    }
+  });
+
   it("audits unreviewed hub RPC denials", async () => {
     await expect(
       assertHttpHubApiKeyAllowed({

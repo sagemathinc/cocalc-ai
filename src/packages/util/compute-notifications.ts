@@ -20,6 +20,8 @@ export interface ComputeResourceNotice {
   action: "stop" | "delete";
   phase: "requested" | "completed";
   observed_at: string;
+  /** Why CoCalc stopped it, when not the user or a schedule. */
+  reason?: "spot_price_above_max";
 }
 
 export function lowCreditThreshold(

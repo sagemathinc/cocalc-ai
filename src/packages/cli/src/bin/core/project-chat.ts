@@ -28,6 +28,7 @@ import {
 } from "@cocalc/chat/server";
 import { akv } from "@cocalc/conat/sync/akv";
 import { controlAcp, forkAcpSession } from "@cocalc/conat/ai/acp/client";
+import { agentRuntimeFromThread } from "@cocalc/util/ai/agent-runtime-kind";
 import type {
   AcpHarnessCredential,
   AcpHarnessRuntime,
@@ -133,13 +134,24 @@ function summarizeThread(
       value?.event === "chat" &&
       `${value?.thread_id ?? ""}`.trim() === thread_id,
   );
+  // A thread that runs an ACP harness (Claude Code) may keep Codex model
+  // fields from before it switched; they never describe it, so they are
+  // left out and `runtime` says which model it uses.
+  const harness = row.agent_runtime?.profile != null;
+  let acp_config: Record<string, unknown> | null =
+    (row.acp_config as Record<string, unknown> | undefined) ?? null;
+  if (harness && acp_config) {
+    const { model: _model, reasoning: _reasoning, ...rest } = acp_config;
+    acp_config = rest;
+  }
   return {
     thread_id,
     name: row.name ?? null,
+    runtime: agentRuntimeFromThread(row) ?? null,
     agent_kind: row.agent_kind ?? null,
-    agent_model: row.agent_model ?? null,
+    agent_model: harness ? null : (row.agent_model ?? null),
     agent_mode: row.agent_mode ?? null,
-    acp_config: row.acp_config ?? null,
+    acp_config,
     archived: !!row.archived,
     updated_at: row.updated_at ?? null,
     updated_by: row.updated_by ?? null,

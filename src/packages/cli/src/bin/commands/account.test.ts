@@ -283,6 +283,37 @@ test("account membership defaults to the current account", async () => {
   });
 });
 
+test("account usage and subscriptions call their curated RPCs", async () => {
+  const calls: any[] = [];
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      calls.push(
+        await fn({
+          hub: {
+            system: {
+              getMembershipUsage: async (opts) => ({ usage: opts }),
+              getAiSubscriptionStatus: async () => ({ claude: {} }),
+            },
+          },
+        }),
+      );
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+  } as any);
+
+  await program.parseAsync(["node", "test", "account", "usage"]);
+  await program.parseAsync(["node", "test", "account", "subscriptions"]);
+
+  assert.deepEqual(calls, [
+    { usage: { refresh_usage_status: true } },
+    { claude: {} },
+  ]);
+});
+
 test("account membership resolves an explicit account identifier", async () => {
   let capturedArgs: any;
   let resolvedIdentifier: string | undefined;

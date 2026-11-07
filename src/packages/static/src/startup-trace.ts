@@ -60,8 +60,7 @@ export function startupRouteSegment(
 
 function navigationMarks(): Record<string, number> {
   const navigation = performance.getEntriesByType?.("navigation")?.[0] as
-    | PerformanceNavigationTiming
-    | undefined;
+    PerformanceNavigationTiming | undefined;
   const marks: Record<string, number> = { intent: 0 };
   const phases: Array<[string, number | undefined]> = [
     ["dns_done", navigation?.domainLookupEnd],
@@ -86,8 +85,7 @@ function resourceDetails(): Record<string, unknown> {
   const scripts = resources.filter((entry) => entry.initiatorType === "script");
   const connection = (navigator as any).connection;
   const navigation = performance.getEntriesByType?.("navigation")?.[0] as
-    | PerformanceNavigationTiming
-    | undefined;
+    PerformanceNavigationTiming | undefined;
   return {
     build_date: typeof BUILD_DATE === "undefined" ? undefined : BUILD_DATE,
     route_segment: startupRouteSegment(),
