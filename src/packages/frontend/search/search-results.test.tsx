@@ -43,11 +43,20 @@ jest.mock("@cocalc/frontend/components", () => ({
 jest.mock("@cocalc/frontend/chat/search-hit-time", () => ({
   SearchHitTime: () => null,
 }));
-jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
+let mockClient: any = undefined;
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    get conat_client() {
+      return mockClient;
+    },
+  },
+}));
+const mockAcquire = jest.fn(() => () => {});
 jest.mock("@cocalc/frontend/agents/artifact-catalog-store", () => ({
   sharedArtifactCatalog: () => ({
     get: () => ({ entries: [], loading: false }),
     subscribe: () => () => {},
+    acquire: (...a) => mockAcquire(...a),
   }),
   catalogResults: () => [],
 }));
@@ -201,4 +210,29 @@ test("people searches message text in conversations", async () => {
   expect(hit).toHaveTextContent("the budget is due");
   await userEvent.setup().click(hit);
   expect(getSearchState().open).toBe(false);
+});
+
+test("an older hub: global artifact search starts the per-project catalog itself", async () => {
+  // A hub without the account-wide reads (no capabilities method).
+  mockClient = { hub: { artifactCatalog: { listProject: jest.fn() } } };
+  try {
+    act(() => openSearch("report", "artifacts"));
+    render(
+      <SearchResults
+        {...props}
+        agents={[
+          {
+            name: "a",
+            endpoint: { project_id: "p1", agent_id: "a" },
+            path: "/a.chat",
+            thread_id: "t",
+          } as any,
+        ]}
+      />,
+    );
+    await act(async () => {});
+    expect(mockAcquire).toHaveBeenCalledWith(["p1"]);
+  } finally {
+    mockClient = undefined;
+  }
 });

@@ -5,12 +5,12 @@ import {
   authFirstRequireAccountWithBoundSession,
   authFirstRequireAccountOrHost,
   authFirstRequireAccountOrHostWithAccountTarget,
-  authFirstRequireAccountOrProjectOrHost,
   authFirstRequireAuthenticated,
   authFirstRequireHost,
   authFirstRequireProject,
   authFirstRequireProjectOrHost,
   requireAccount,
+  authFirstRequireAccountOrProjectOrHost,
 } from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
@@ -164,6 +164,8 @@ export const system = {
   getSiteFundedClaudeKeys: authFirstRequireAccount,
   manageSiteFundedClaudeKeys: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
+  getAiSubscriptionStatus: authFirstRequireAccount,
+  getMembershipUsage: authFirstRequireAccount,
   getFrontendSourceFingerprint: authFirstRequireAccount,
   getRootfsCatalog: authFirstRequireAccount,
   getRootfsCatalogPage: authFirstRequireAccount,
@@ -182,6 +184,7 @@ export const system = {
   getProjectRootfsStates: authFirstRequireAccount,
   setProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirstRequireAuthenticated,
+  releaseProjectAppPrivateHostname: authFirstRequireAccountOrProjectOrHost,
   testR2Credentials: authFirstRequireAccount,
   testCloudflareVisitorLocationHeaders: authFirstRequireAccount,
   applyCloudflareTunnelSettings: authFirstRequireAccount,
@@ -202,14 +205,10 @@ export const system = {
   listBrowserSessions: authFirstRequireAccount,
   removeBrowserSession: authFirstRequireAccount,
   issueBrowserSignInCookie: authFirstRequireAccount,
-  getProjectAppPrivateHostnamePolicy: authFirstRequireAccountOrProjectOrHost,
-  inspectProjectAppPrivateHostname: authFirstRequireAccountOrProjectOrHost,
-  listProjectAppPrivateHostnames: authFirstRequireAccountOrProjectOrHost,
-  tracePrivateAppHostname: authFirstRequireAccountOrHost,
-  reserveProjectAppPrivateHostname: authFirstRequireAccountOrProjectOrHost,
-  releaseProjectAppPrivateHostname: authFirstRequireAccountOrProjectOrHost,
-  reconcileProjectAppPrivateHostnames: authFirstRequireAccount,
-  recordManagedProjectEgress: authFirstRequireProjectOrHost,
+  // Only hosts report egress: they measure what they serve. A project's own
+  // byte count is not trusted (it could inflate it to exhaust its owner's
+  // egress allowance, or under-report).
+  recordManagedProjectEgress: authFirstRequireHost,
   getManagedProjectEgressPolicy: authFirstRequireProjectOrHost,
   recordManagedProjectCpuUsage: authFirstRequireProjectOrHost,
   recordServiceAdmissionDenial: authFirstRequireProject,
@@ -482,9 +481,7 @@ export interface ProjectCryptominingEvidence {
 }
 
 export type ProjectBandwidthRelaySignalKind =
-  | "tunnel_process"
-  | "bulk_transfer_process"
-  | "automated_uploader_process";
+  "tunnel_process" | "bulk_transfer_process" | "automated_uploader_process";
 
 export interface ProjectBandwidthRelaySignal {
   kind: ProjectBandwidthRelaySignalKind;
@@ -633,10 +630,7 @@ export interface CloudflareTunnelApplyResult {
 }
 
 export type CloudflareTeardownClassification =
-  | "safe_owned"
-  | "probably_owned"
-  | "unknown"
-  | "protected";
+  "safe_owned" | "probably_owned" | "unknown" | "protected";
 
 export interface CloudflareTeardownResource {
   kind: "tunnel" | "dns_record" | "r2_bucket" | "api_token";
@@ -1219,43 +1213,6 @@ export interface ParallelOpsLimitResolution {
   config_source: "constant" | "env-legacy" | "db-override" | "env-debug-cap";
 }
 
-export interface ProjectAppPrivateHostnamePolicy {
-  enabled: boolean;
-  can_reserve: boolean;
-  current_private_hostnames: number;
-  max_private_hostnames: number;
-  current_bay_private_hostnames: number;
-  max_bay_private_hostnames: number;
-  membership_class?: string;
-  browser_origin?: string;
-  site_hostname?: string;
-  host_hostname?: string;
-  dns_target?: string;
-  warnings: string[];
-}
-
-export interface ProjectAppPrivateHostnameRecord {
-  project_id: string;
-  app_id: string;
-  label: string;
-  hostname: string;
-  base_path: string;
-  url: string;
-  dns_record_id?: string;
-  dns_target?: string;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-  last_dns_error?: string;
-}
-
-export interface ReconcileProjectAppPrivateHostnamesResult {
-  project_id: string;
-  checked: number;
-  updated: number;
-  errors: Array<{ app_id: string; error: string }>;
-}
-
 export interface BayInfo {
   bay_id: string;
   label: string;
@@ -1378,10 +1335,7 @@ export interface SiteSettingsReadResult {
 }
 
 export type GlobalConfigPropagationBayState =
-  | "current"
-  | "stale"
-  | "missing"
-  | "error";
+  "current" | "stale" | "missing" | "error";
 
 export interface GlobalConfigPropagationBayStatus {
   bay_id: string;
@@ -1408,11 +1362,7 @@ export interface GlobalConfigPropagationStatus {
 }
 
 export type SiteSetupStepState =
-  | "done"
-  | "blocked"
-  | "warning"
-  | "optional"
-  | "manual";
+  "done" | "blocked" | "warning" | "optional" | "manual";
 
 export interface SiteSetupStep {
   id: string;
@@ -1806,11 +1756,7 @@ export interface BayRestoreReadinessStatus {
   latest_backup_set_id: string | null;
   latest_backup_format: "pg_basebackup" | "pg_dumpall" | null;
   latest_backup_restore_test_status:
-    | "no-backup"
-    | "not-run"
-    | "stale"
-    | "passed"
-    | "failed";
+    "no-backup" | "not-run" | "stale" | "passed" | "failed";
   latest_backup_restore_tested: boolean;
   latest_backup_restore_tested_at: string | null;
   latest_backup_pitr_test_status:
@@ -2229,14 +2175,6 @@ export interface BillingAuthorityStatus {
   };
   completed: number;
   failed: number;
-}
-
-export interface PrivateAppHostnameTrace {
-  matched: boolean;
-  hostname: string;
-  project_id?: string;
-  app_id?: string;
-  base_path?: string;
 }
 
 export interface System {
@@ -3086,6 +3024,21 @@ export interface System {
     credential_id?: string;
   }) => Promise<CodexUsageStatusInfo>;
 
+  // What is known about the account's Claude and Codex subscriptions: each
+  // one's limits as last reported and Auto's view of the pool. No secrets.
+  getAiSubscriptionStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<
+    import("@cocalc/util/ai/subscription-status").AiSubscriptionStatus
+  >;
+
+  // The account's own membership limits and usage ("Usage and limits"),
+  // curated: see MembershipUsage.
+  getMembershipUsage: (opts?: {
+    account_id?: string;
+    refresh_usage_status?: boolean;
+  }) => Promise<import("./purchases").MembershipUsage>;
+
   getFrontendSourceFingerprint: (opts?: {
     account_id?: string;
   }) => Promise<FrontendSourceFingerprintInfo>;
@@ -3210,6 +3163,17 @@ export interface System {
     image_id?: string;
     account_id?: string;
   }) => Promise<ProjectRootfsStateEntry[]>;
+
+  // Retired with private app hostnames (D9): a no-op that only reports
+  // nothing was released.  Kept for one release so project code started
+  // before the upgrade, which calls it before deleting an app, can still
+  // delete apps; remove it in the next release.
+  releaseProjectAppPrivateHostname: (opts: {
+    account_id?: string;
+    host_id?: string;
+    project_id: string;
+    app_id: string;
+  }) => Promise<{ released: boolean }>;
 
   getPublicSiteUrl: (opts?: {
     account_id?: string;
@@ -3376,50 +3340,6 @@ export interface System {
     max_age_ms?: number;
     testing_account_id?: string;
   }) => Promise<BrowserSignInCookieInfo>;
-
-  getProjectAppPrivateHostnamePolicy: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-  }) => Promise<ProjectAppPrivateHostnamePolicy>;
-
-  inspectProjectAppPrivateHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-    app_id: string;
-  }) => Promise<ProjectAppPrivateHostnameRecord | undefined>;
-
-  listProjectAppPrivateHostnames: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-  }) => Promise<ProjectAppPrivateHostnameRecord[]>;
-
-  tracePrivateAppHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    hostname: string;
-  }) => Promise<PrivateAppHostnameTrace>;
-
-  reserveProjectAppPrivateHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-    app_id: string;
-  }) => Promise<ProjectAppPrivateHostnameRecord>;
-
-  releaseProjectAppPrivateHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-    app_id: string;
-  }) => Promise<{ released: boolean }>;
-
-  reconcileProjectAppPrivateHostnames: (opts: {
-    account_id?: string;
-    project_id: string;
-  }) => Promise<ReconcileProjectAppPrivateHostnamesResult>;
 
   recordManagedProjectEgress: (opts: {
     account_id?: string;

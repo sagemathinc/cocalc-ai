@@ -21,13 +21,7 @@ export type ParsedProjectTarget =
   | { kind: "new"; path: string }
   | { kind: "search"; path: string }
   | { kind: "tab"; tab: ProjectFixedRouteTab }
-  | { kind: "app"; path: string }
-  | { kind: "private-app"; appId: string };
-
-export type PrivateProjectAppHandoffTarget = {
-  projectId: string;
-  appId: string;
-};
+  | { kind: "app"; path: string };
 
 type PathEncoder = {
   encodeRelativePath: (path: string) => string;
@@ -145,30 +139,7 @@ export function parseProjectTarget(
         path: segments.slice(1).join("/"),
       };
 
-    case "private-app": {
-      const encoded = segments.slice(1).join("/");
-      if (!encoded) return undefined;
-      try {
-        return { kind: "private-app", appId: decodeURIComponent(encoded) };
-      } catch {
-        return undefined;
-      }
-    }
-
     default:
       return undefined;
   }
-}
-
-export function parsePrivateProjectAppHandoffTarget(
-  target: string,
-): PrivateProjectAppHandoffTarget | undefined {
-  const separator = target.indexOf("/");
-  if (separator <= 0) return;
-  const projectId = target.slice(0, separator);
-  const route = parseProjectTarget(target.slice(separator + 1), {
-    decodeDirectoryPath: (path) => path,
-  });
-  if (route?.kind !== "private-app") return;
-  return { projectId, appId: route.appId };
 }

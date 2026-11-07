@@ -10,6 +10,10 @@ import {
   confirmHostProjectMaintenanceAssignment,
   listHostProjectMaintenanceSchedules,
 } from "./host-status";
+import {
+  ensureProjectMaintenanceStatusTable,
+  recordProjectMaintenanceStatus,
+} from "@cocalc/server/projects/maintenance-status";
 
 describe("host recovery schedule ownership", () => {
   beforeAll(async () => {
@@ -18,6 +22,54 @@ describe("host recovery schedule ownership", () => {
 
   afterAll(async () => {
     await getPool().end();
+  });
+
+  it("lists a busy project's success with its later change and no reconciliation", async () => {
+    await ensureProjectMaintenanceStatusTable();
+    const host_id = uuid();
+    const project_id = uuid();
+    const now = Date.now();
+    const latest = new Date(now - 10 * 60_000);
+    const changed = new Date(now - 2 * 60_000);
+    await getPool().query(
+      `INSERT INTO project_hosts (id, name, bay_id, created, updated)
+       VALUES ($1, 'busy project host', $2, NOW(), NOW())`,
+      [host_id, getConfiguredBayId()],
+    );
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, host_id, owning_bay_id, provisioned, last_edited)
+       VALUES ($1, 'busy', $2, NULL, true, $3)`,
+      [project_id, host_id, changed],
+    );
+    expect(
+      await recordProjectMaintenanceStatus({
+        host_id,
+        project_id,
+        kind: "snapshot",
+        observed_at: new Date(now - 9 * 60_000).toISOString(),
+        outcome: "succeeded",
+        latest_snapshot_at: latest.toISOString(),
+        due_at: new Date(latest.getTime() + 15 * 60_000).toISOString(),
+        reconciled_change_at: changed.toISOString(),
+        schedule_revision: "ignored-for-a-success",
+      }),
+    ).toBe(true);
+    const [row] = await listHostProjectMaintenanceSchedules({
+      host_id,
+      project_ids: [project_id],
+      limit: 1,
+    });
+    // What the host's snapshotDueAt reads (project-host's test feeds this
+    // shape): the new snapshot, a later change, and no reconciliation.
+    expect(row).toMatchObject({
+      project_id,
+      last_snapshot: latest.toISOString(),
+      snapshot_reconciled_change_at: null,
+    });
+    expect(Date.parse(row.last_changed ?? row.last_edited ?? "")).toBe(
+      changed.getTime(),
+    );
   });
 
   it("serves only local and legacy projects to a local host", async () => {

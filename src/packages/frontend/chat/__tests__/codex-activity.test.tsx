@@ -746,7 +746,7 @@ describe("CodexActivity terminal rows", () => {
 
     expect(screen.getByText("Subagents")).not.toBeNull();
     expect(
-      screen.getByRole("region", { name: "Codex subagent activity" }),
+      screen.getByRole("region", { name: "Subagent activity" }),
     ).not.toBeNull();
     expect(screen.getByText(/1 working/)).not.toBeNull();
     expect(screen.getByText("Review the ACP adapter")).not.toBeNull();

@@ -3,11 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// GET /app-open/<project_id>/<path>[?app=<id>&...]: open a project's web
+// GET /app-open/<project_id>/<path>[?cocalc_app=<id>&cocalc_root=1&...]: open a project's web
 // server or app on its own app origin (trust-free step 6, phase 7).
 //
 // From the app itself (Sec-Fetch-Site: same-origin) this issues a single-use
-// app capability and redirects to the host's /_a/<capability>, which sets
+// app capability and redirects to the host's /.cocalc/a/<capability>, which sets
 // the app origin's session.  The host accepts that only as a top-level
 // navigation whose Referer is this site, so this redirect keeps the default
 // referrer policy (the site's origin is all it sends).
@@ -50,71 +50,82 @@ export function initAppOpen(
   router: Router,
   { issue = issueProjectAppUrl }: { issue?: Issue } = {},
 ) {
-  router.get("/app-open/:project_id/*path", async (req: Request, res: Response) => {
-    res.setHeader("Cache-Control", "no-store");
-    // Not no-referrer: the host's /_a/ requires this site's origin as
-    // Referer (the default policy sends exactly the origin cross-site).
-    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-    const project_id = `${req.params.project_id ?? ""}`;
-    if (!isValidUUID(project_id)) {
-      res.status(404).send("not found");
-      return;
-    }
-    const prefix = `/app-open/${project_id}/`;
-    const i = req.path.indexOf(prefix);
-    const rest = i === -1 ? "" : req.path.slice(i + prefix.length);
-    const q = req.originalUrl.indexOf("?");
-    const params = new URLSearchParams(q === -1 ? "" : req.originalUrl.slice(q + 1));
-    const app_id = params.get("app") ?? undefined;
-    params.delete("app");
-    // Sent here by the project host (D7): never send it back there.
-    const fromHost = params.has("cocalc_app_redirect");
-    params.delete("cocalc_app_redirect");
-    const search = params.toString();
-    const path = `/${project_id}/${rest}${search ? `?${search}` : ""}`;
-    const fallback = () => res.redirect(302, projectUrl(project_id));
-    try {
-      const account_id = await getAccountId(req);
-      if (!account_id || req.header("Authorization")) return fallback();
-      const site = `${req.header("Sec-Fetch-Site") ?? ""}`.toLowerCase();
-      const dest = `${req.header("Sec-Fetch-Dest") ?? ""}`.toLowerCase();
-      if (dest && dest !== "document") {
-        res.status(403).send("forbidden");
+  router.get(
+    "/app-open/:project_id/*path",
+    async (req: Request, res: Response) => {
+      res.setHeader("Cache-Control", "no-store");
+      // Not no-referrer: the host's /.cocalc/a/ requires this site's origin as
+      // Referer (the default policy sends exactly the origin cross-site).
+      res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+      const project_id = `${req.params.project_id ?? ""}`;
+      if (!isValidUUID(project_id)) {
+        res.status(404).send("not found");
         return;
       }
-      if (site !== "same-origin") {
-        const nonce = randomBytes(16).toString("base64");
-        res.setHeader(
-          "Content-Security-Policy",
-          `default-src 'none'; style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
-        );
-        res.setHeader("X-Frame-Options", "DENY");
-        res.type("html").send(appOpenConfirmPage(nonce));
-        return;
+      const prefix = `/app-open/${project_id}/`;
+      const i = req.path.indexOf(prefix);
+      const rest = i === -1 ? "" : req.path.slice(i + prefix.length);
+      const q = req.originalUrl.indexOf("?");
+      const params = new URLSearchParams(
+        q === -1 ? "" : req.originalUrl.slice(q + 1),
+      );
+      // CoCalc's own parameters are namespaced: the rest of the query is the
+      // app's own.
+      const app_id = params.get("cocalc_app") ?? undefined;
+      params.delete("cocalc_app");
+      // The app runs without a base URL (phase 7c): open it at the root.
+      const root = params.get("cocalc_root") === "1";
+      params.delete("cocalc_root");
+      // Sent here by the project host (D7): never send it back there.
+      const fromHost = params.has("cocalc_app_redirect");
+      params.delete("cocalc_app_redirect");
+      const search = params.toString();
+      const path = `/${project_id}/${rest}${search ? `?${search}` : ""}`;
+      const fallback = () => res.redirect(302, projectUrl(project_id));
+      try {
+        const account_id = await getAccountId(req);
+        if (!account_id || req.header("Authorization")) return fallback();
+        const site = `${req.header("Sec-Fetch-Site") ?? ""}`.toLowerCase();
+        const dest = `${req.header("Sec-Fetch-Dest") ?? ""}`.toLowerCase();
+        if (dest && dest !== "document") {
+          res.status(403).send("forbidden");
+          return;
+        }
+        if (site !== "same-origin") {
+          const nonce = randomBytes(16).toString("base64");
+          res.setHeader(
+            "Content-Security-Policy",
+            `default-src 'none'; style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+          );
+          res.setHeader("X-Frame-Options", "DENY");
+          res.type("html").send(appOpenConfirmPage(nonce));
+          return;
+        }
+        const issued = await issue({
+          account_id,
+          session_hash: getRememberMeHash(req),
+          project_id,
+          path,
+          app_id,
+          root,
+        });
+        if (!("url" in issued)) {
+          // No app origin for it (the site has none, or the project's host
+          // doesn't serve one yet): the app's path on this site, which the hub
+          // forwards to the host as before.  The path was validated first.
+          if (issued.unavailable === "no-access" || fromHost) return fallback();
+          return res.redirect(302, `${basePath.replace(/\/+$/, "")}${path}`);
+        }
+        res.redirect(302, issued.url);
+      } catch (err) {
+        logger.debug("app-open fell back to the project", {
+          project_id,
+          err: `${err}`,
+        });
+        fallback();
       }
-      const issued = await issue({
-        account_id,
-        session_hash: getRememberMeHash(req),
-        project_id,
-        path,
-        app_id,
-      });
-      if (!("url" in issued)) {
-        // No app origin for it (the site has none, or the project's host
-        // doesn't serve one yet): the app's path on this site, which the hub
-        // forwards to the host as before.  The path was validated first.
-        if (issued.unavailable === "no-access" || fromHost) return fallback();
-        return res.redirect(302, `${basePath.replace(/\/+$/, "")}${path}`);
-      }
-      res.redirect(302, issued.url);
-    } catch (err) {
-      logger.debug("app-open fell back to the project", {
-        project_id,
-        err: `${err}`,
-      });
-      fallback();
-    }
-  });
+    },
+  );
 }
 
 export default initAppOpen;

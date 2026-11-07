@@ -11,11 +11,7 @@ import { join } from "node:path";
 
 jest.mock("@cocalc/project/conat/hub", () => ({
   hubApi: jest.fn(() => ({
-    system: {
-      releaseProjectAppPrivateHostname: jest.fn(async () => ({
-        released: false,
-      })),
-    },
+    system: {},
   })),
 }));
 

@@ -40,10 +40,12 @@ import {
   fchmodSync,
   futimesSync,
   openSync,
+  readSync,
   writeSync,
 } from "node:fs";
 import {
   copyFile,
+  opendir,
   readdir,
   readlink,
   realpath,
@@ -244,6 +246,32 @@ async function readdirBeneath(
   const fd = openVerifiedDir(sandbox, root, rel);
   try {
     return await readdir(`/proc/self/fd/${fd}`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// At most `limit` names, without reading the rest of a (project-controlled,
+// possibly huge) directory; complete is false when there were more.
+async function readdirBeneathUpTo(
+  sandbox: SandboxRoot,
+  root: string,
+  rel: string,
+  limit: number,
+): Promise<{ names: string[]; complete: boolean }> {
+  const fd = openVerifiedDir(sandbox, root, rel);
+  try {
+    const dir = await opendir(`/proc/self/fd/${fd}`, { bufferSize: 32 });
+    const names: string[] = [];
+    try {
+      for (let entry = await dir.read(); entry; entry = await dir.read()) {
+        if (names.length >= limit) return { names, complete: false };
+        names.push(entry.name);
+      }
+    } finally {
+      await dir.close();
+    }
+    return { names, complete: true };
   } finally {
     closeSync(fd);
   }
@@ -803,8 +831,14 @@ export class BeneathDir {
     return this.rel && relName ? `${this.rel}/${relName}` : this.rel || relName;
   }
 
+  // One root descriptor per BeneathDir: each SandboxRoot holds an open fd
+  // until it is garbage collected, so a fresh one per operation lets a loop
+  // over a project-controlled directory exhaust the process's descriptors.
+  private sandboxRoot?: SandboxRoot;
+
   private sandbox(): SandboxRoot {
-    return new SandboxRoot(this.root);
+    this.sandboxRoot ??= new SandboxRoot(this.root);
+    return this.sandboxRoot;
   }
 
   /** Creates this directory (and missing parents), then sets its mode. */
@@ -852,6 +886,39 @@ export class BeneathDir {
     } catch (err) {
       if (errorCode(err) !== "ENOENT") throw err;
     }
+  }
+
+  /**
+   * Reads file `name` in this directory, refusing symlinks like everything
+   * else here; undefined when it is not a regular file or is larger than
+   * maxBytes.
+   */
+  readFile(name: string, maxBytes: number): Buffer | undefined {
+    const fd = this.sandbox().openRead(this.at(name));
+    try {
+      const opened = fstatSync(fd);
+      if (!opened.isFile() || opened.size > maxBytes) return undefined;
+      const data = Buffer.alloc(opened.size);
+      let offset = 0;
+      while (offset < data.length) {
+        const n = readSync(fd, data, offset, data.length - offset, offset);
+        if (n === 0) break;
+        offset += n;
+      }
+      return data.subarray(0, offset);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  /**
+   * At most `limit` names in this directory, stopping there; complete is
+   * false when the directory has more.
+   */
+  async listUpTo(
+    limit: number,
+  ): Promise<{ names: string[]; complete: boolean }> {
+    return await readdirBeneathUpTo(this.sandbox(), this.root, this.rel, limit);
   }
 
   /** The names in this directory. */

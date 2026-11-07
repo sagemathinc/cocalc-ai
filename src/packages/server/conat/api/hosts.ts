@@ -153,7 +153,7 @@ import {
 } from "@cocalc/server/cloud/providers";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { getNebiusComputeCapacityAdvice } from "@cocalc/server/compute/provider";
-import { assertNebiusSpotOffered } from "@cocalc/util/consts/nebius-spot";
+import { assertNebiusProjectHostSpotRefused } from "@cocalc/util/consts/nebius-spot";
 import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
@@ -2187,6 +2187,63 @@ export async function touchProject({
   });
 }
 
+// An agent turn is running on the project's host. Unlike touchProject this
+// moves last_edited only: a running turn is activity, not a content change
+// (last_changed drives backups) and not any account's own activity
+// (last_active). With summary, the project's summary event is queued in the
+// same transaction, so collaborators' project lists (fed by the outbox, not
+// by this table) get the new last_edited; the host sends it at the start and
+// end of a turn and at most every 30 minutes in between.
+export async function touchProjectActivity({
+  host_id,
+  project_id,
+  summary,
+}: {
+  host_id?: string;
+  project_id: string;
+  summary?: boolean;
+}): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error("project_id must be a valid uuid");
+  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rowCount } = await client.query(
+      `UPDATE projects
+          SET last_edited=NOW()
+        WHERE project_id=$1
+          AND host_id=$2
+          AND deleted IS NOT true`,
+      [project_id, host_id],
+    );
+    if (rowCount && summary === true) {
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.summary_changed",
+        project_id,
+        default_bay_id: getConfiguredBayId(),
+      });
+    }
+    await client.query("COMMIT");
+    if (!rowCount) {
+      logger.debug("touchProjectActivity ignored (host mismatch)", {
+        host_id,
+        project_id,
+      });
+    }
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function markProjectChanged({
   host_id,
   project_id,
@@ -2585,12 +2642,14 @@ export async function issueProjectAppUrl({
   project_id,
   path,
   app_id,
+  root,
 }: {
   account_id?: string;
   session_hash?: string;
   project_id: string;
   path: string;
   app_id?: string;
+  root?: boolean;
 }): Promise<ProjectContentUrl> {
   const owner = requireAccount(account_id);
   const browser_session_exp_s = await restrictedBrowserSessionExpiration({
@@ -2603,6 +2662,7 @@ export async function issueProjectAppUrl({
     path,
     app_id,
     browser_session_exp_s,
+    root: root === true,
   });
 }
 
@@ -2612,12 +2672,14 @@ export async function issueProjectAppFrameUrl({
   project_id,
   path,
   app_id,
+  root,
 }: {
   account_id?: string;
   session_hash?: string;
   project_id: string;
   path: string;
   app_id?: string;
+  root?: boolean;
 }): Promise<ProjectContentUrl> {
   const owner = requireAccount(account_id);
   const browser_session_exp_s = await restrictedBrowserSessionExpiration({
@@ -2630,6 +2692,7 @@ export async function issueProjectAppFrameUrl({
     path,
     app_id,
     browser_session_exp_s,
+    root: root === true,
     frame: true,
   });
 }
@@ -7783,7 +7846,7 @@ async function updateHostMachineLocked({
   }
   const nextPricingModel = requestedPricingModel ?? currentPricingModel;
   if (requestedPricingModel || requestedCloud) {
-    assertNebiusSpotOffered(effectiveFundingCloud, nextPricingModel);
+    assertNebiusProjectHostSpotRefused(effectiveFundingCloud, nextPricingModel);
   }
   const currentInterruptionRestorePolicy =
     normalizeHostInterruptionRestorePolicy(

@@ -50,6 +50,8 @@ import {
   invalidateBackupConfig,
   releaseProjectArchiveFreeze,
 } from "./file-server";
+import { getHostIntegrity, refreshHostIntegrity } from "./host-integrity";
+import { runtimeUidModeHeartbeat } from "@cocalc/project-runner/run/runtime-hardening";
 import { getInstalledRuntimeArtifacts, getSoftwareVersions } from "./software";
 import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
@@ -134,6 +136,7 @@ import {
 } from "./exam/controller";
 import { upsertProjectStopPolicy } from "./sqlite/stop-policy";
 import { querySqlite } from "./sqlite/admin-query";
+import { readAgentTurns } from "./agent-turns";
 import { startHostPressureController } from "./host-pressure";
 import { redactRuntimeLogText } from "./runtime-diagnostics-redaction";
 import {
@@ -2167,6 +2170,7 @@ export async function startMasterRegistration({
       refreshMetrics: hostMetrics.refresh,
       getCurrentMetrics: hostMetrics.getCurrentSnapshot,
       stopProject: stopProjectForPressure,
+      readAgentTurns: ({ now }) => readAgentTurns({ now }),
       reportPressureAction: async (opts) => {
         await registry.reportProjectPressureAction({
           host_id: id,
@@ -2228,6 +2232,11 @@ export async function startMasterRegistration({
         runtime_health: runtimeHealth.getSnapshot(),
         acp_worker_health: acpWorkerHealth,
         bees: fileServerStatus?.bees,
+        host_integrity: getHostIntegrity(),
+        // R1: which host uid projects run their user as (keep-id or a
+        // separate uid), why, whether sidecars follow yet, and whether the
+        // daemon state stayed private after a separate start.
+        runtime_uid_mode: runtimeUidModeHeartbeat(),
         observed_components: observedComponents,
         rootfs_scanner: rootfsScanner,
         software: versions,
@@ -2253,6 +2262,7 @@ export async function startMasterRegistration({
     } catch (err) {
       logger.debug("unable to refresh placement cache inventory", { err });
     }
+    await refreshHostIntegrity();
     void refreshCloudflaredDiagnostic().catch((err) => {
       logger.debug("cloudflared diagnostic refresh failed", { err });
     });

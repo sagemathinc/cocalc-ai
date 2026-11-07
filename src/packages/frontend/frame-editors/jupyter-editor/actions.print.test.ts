@@ -5,8 +5,8 @@
  */
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
-jest.mock("@cocalc/frontend/jupyter/widgets/manager", () => ({
-  WidgetManager: class {},
+jest.mock("@cocalc/frontend/jupyter/widgets/frame/relay", () => ({
+  WidgetRelay: class WidgetRelay {},
 }));
 jest.mock("@cocalc/frontend/jupyter/download-html", () => ({
   downloadHTML: jest.fn(),

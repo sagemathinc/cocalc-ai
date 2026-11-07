@@ -1,5 +1,6 @@
 import type { AcpStreamEvent } from "@cocalc/conat/ai/acp/types";
 import { Typography } from "antd";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { ActivityCodeBlock, stripAnsi } from "./activity-code-block";
 
@@ -11,6 +12,13 @@ export interface HarnessToolEntry {
   title: string;
   status: string;
   output: string;
+  // A Claude Agent call: the subagent's task (rawInput.description), and
+  // the text the subagent streamed, if the adapter streams it.
+  task?: string;
+  narration?: string;
+  // A subagent's tool call: the Agent call that ran it, and its task.
+  parentId?: string;
+  parentTitle?: string;
   input?: { script?: string; cwd?: string; jobId?: string };
   result?: {
     stdout: string;
@@ -104,6 +112,19 @@ export function updateHarnessTool(
   if (event.type !== "harness" || event.kind !== "update") return;
   const update = event.data as any;
   if (
+    (update?.sessionUpdate === "agent_message_chunk" ||
+      update?.sessionUpdate === "agent_thought_chunk") &&
+    update.content?.type === "text"
+  ) {
+    // A subagent's own text (kept out of the reply): shown with its Agent call.
+    const parent = tools.get(update._meta?.claudeCode?.parentToolUseId);
+    if (parent && typeof update.content.text === "string")
+      parent.narration = bounded(
+        (parent.narration ?? "") + update.content.text,
+      );
+    return;
+  }
+  if (
     !["tool_call", "tool_call_update"].includes(update?.sessionUpdate) ||
     typeof update.toolCallId !== "string" ||
     !update.toolCallId ||
@@ -120,8 +141,24 @@ export function updateHarnessTool(
     status: "unknown",
     output: "",
   };
+  // Claude stamps a subagent's tool calls with the Agent call that ran them.
+  const parentId = update._meta?.claudeCode?.parentToolUseId;
+  if (
+    previous == null &&
+    typeof parentId === "string" &&
+    parentId &&
+    parentId.length <= 1024 &&
+    parentId !== update.toolCallId
+  ) {
+    entry.parentId = parentId;
+    const parent = tools.get(parentId);
+    entry.parentTitle = parent?.task ?? parent?.title;
+  }
   if (typeof update.title === "string")
     entry.title = bounded(update.title, 512);
+  const description = jsonObject(update.rawInput)?.description;
+  if (typeof description === "string" && description.trim())
+    entry.task = bounded(description.trim(), 512);
   if (typeof update.status === "string") {
     entry.status = ["pending", "in_progress", "completed", "failed"].includes(
       update.status,
@@ -176,7 +213,36 @@ export function updateHarnessTool(
   return previous ? undefined : entry;
 }
 
-export function HarnessToolRow({
+export function HarnessToolRow(props: {
+  entry: HarnessToolEntry;
+  fontSize?: number;
+  editorTheme?: string | null;
+}) {
+  const { entry, fontSize = 14 } = props;
+  if (entry.parentId == null) return <ToolRow {...props} />;
+  return (
+    <div
+      aria-label="Subagent tool call"
+      style={{
+        borderLeft: `2px solid ${UI_COLORS.border}`,
+        paddingLeft: 10,
+        marginLeft: 6,
+      }}
+    >
+      <Typography.Text
+        type="secondary"
+        style={{ display: "block", fontSize: Math.max(11, fontSize - 2) }}
+      >
+        Subagent{entry.parentTitle && entry.parentTitle !== "Task"
+          ? `: ${entry.parentTitle}`
+          : ""}
+      </Typography.Text>
+      <ToolRow {...props} />
+    </div>
+  );
+}
+
+function ToolRow({
   entry,
   fontSize = 14,
   editorTheme,
@@ -297,6 +363,21 @@ export function HarnessToolRow({
       >
         {entry.output || "No text output reported by this harness."}
       </pre>
+      {entry.narration && (
+        <pre
+          role="region"
+          aria-label={`${entry.title || "ACP tool"} subagent narration`}
+          tabIndex={0}
+          style={{
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            maxHeight: 320,
+            overflow: "auto",
+          }}
+        >
+          {entry.narration}
+        </pre>
+      )}
     </details>
   );
 }

@@ -27,6 +27,7 @@ import type {
   Host,
   HostBackupStatus,
   HostBeesStatus,
+  HostIntegrityStatus,
   HostBillingEnforcement,
   HostBillingEnforcementState,
   HostBillingRecoveryAction,
@@ -48,8 +49,12 @@ import type {
   HostSpotRecoveryPolicy,
   HostSpotRecoveryState,
   HostStatus,
+  HostSnapshotLaneMetrics,
   HostStorageAdmissionMetrics,
+  SnapshotLaneWaitCause,
+  SnapshotLaneWaiting,
 } from "@cocalc/conat/hub/api/hosts";
+import { SNAPSHOT_LANE_WAIT_CAUSES } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostManagedComponentStatus,
   ManagedComponentKind,
@@ -96,6 +101,21 @@ const MANAGED_COMPONENT_KINDS = new Set<ManagedComponentKind>([
   "conat-persist",
   "acp-worker",
 ]);
+
+function normalizeHostIntegrity(
+  value: unknown,
+): HostIntegrityStatus | undefined {
+  if (
+    value == null ||
+    typeof value !== "object" ||
+    !["running", "stale", "missing", "unreadable"].includes(
+      `${(value as any).watcher}`,
+    )
+  ) {
+    return undefined;
+  }
+  return value as HostIntegrityStatus;
+}
 
 function normalizeBeesStatus(value: unknown): HostBeesStatus | undefined {
   if (
@@ -206,6 +226,192 @@ function normalizeSnapshotBackupMaintenanceGate(
     ...(gate.pressure_attribution === "bees_cgroup"
       ? { pressure_attribution: "bees_cgroup" as const }
       : {}),
+  };
+}
+
+// Reasons and outcomes are fixed tokens from the host's code; anything else
+// (free text, ids) drops the block rather than being stored.
+const SNAPSHOT_LANE_TOKEN = /^[a-z0-9_]{1,48}$/;
+// Valid tokens, but object keys with special meaning: never used as keys.
+const SNAPSHOT_LANE_RESERVED = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+const SNAPSHOT_LANE_OUTCOMES = new Set([
+  "succeeded",
+  "skipped",
+  "deferred",
+  "failed",
+]);
+const SNAPSHOT_LANE_MAX_REASONS = 16;
+const SNAPSHOT_LANE_WAIT_CAUSE_SET: ReadonlySet<string> = new Set(
+  SNAPSHOT_LANE_WAIT_CAUSES,
+);
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+// The per-cause wait block: fixed cause keys, each exactly a count and the
+// oldest age, plus the most failures for failure_backoff. null: malformed.
+function normalizeSnapshotLaneWaiting(
+  raw: unknown,
+): HostSnapshotLaneMetrics["waiting"] | null {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value != null && typeof value === "object" && !Array.isArray(value);
+  if (!isRecord(raw) || Object.keys(raw).length !== 3) return null;
+  const inventoryAge = nonNegativeInteger(raw.inventory_age_ms);
+  if (inventoryAge == null) return null;
+  const byCause = (value: unknown): SnapshotLaneWaiting | null => {
+    if (!isRecord(value)) return null;
+    const out: SnapshotLaneWaiting = {};
+    for (const [cause, entry] of Object.entries(value)) {
+      if (!SNAPSHOT_LANE_WAIT_CAUSE_SET.has(cause) || !isRecord(entry)) {
+        return null;
+      }
+      const count = nonNegativeInteger(entry.count);
+      const oldest = nonNegativeInteger(entry.oldest_age_ms);
+      // the most failures: exactly on failure_backoff, never elsewhere
+      const hasFailures = cause === "failure_backoff";
+      const maxFailures = hasFailures
+        ? nonNegativeInteger(entry.max_failures)
+        : undefined;
+      if (
+        count == null ||
+        oldest == null ||
+        (hasFailures && maxFailures == null) ||
+        Object.keys(entry).length !== (hasFailures ? 3 : 2)
+      ) {
+        return null;
+      }
+      out[cause as SnapshotLaneWaitCause] = {
+        count,
+        oldest_age_ms: oldest,
+        ...(maxFailures != null ? { max_failures: maxFailures } : {}),
+      };
+    }
+    return out;
+  };
+  const paying = byCause(raw.paying);
+  const free = byCause(raw.free);
+  if (!paying || !free) return null;
+  return { inventory_age_ms: inventoryAge, paying, free };
+}
+
+function normalizeSnapshotLaneMetrics(
+  value: unknown,
+): HostSnapshotLaneMetrics | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const lane = value as Record<string, unknown>;
+  const pending = nonNegativeInteger(lane.pending);
+  const active = nonNegativeInteger(lane.active);
+  const parkedMs = nonNegativeInteger(lane.parked_ms_total);
+  if (
+    pending == null ||
+    active == null ||
+    parkedMs == null ||
+    typeof lane.parked !== "boolean" ||
+    (lane.park_reason != null &&
+      (typeof lane.park_reason !== "string" ||
+        !SNAPSHOT_LANE_TOKEN.test(lane.park_reason)))
+  ) {
+    return undefined;
+  }
+  const counts = (
+    raw: unknown,
+    allowed: (key: string) => boolean,
+  ): Record<string, number> | undefined => {
+    if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+      return undefined;
+    }
+    const entries = Object.entries(raw as Record<string, unknown>);
+    if (entries.length > SNAPSHOT_LANE_MAX_REASONS) return undefined;
+    const out: Record<string, number> = {};
+    for (const [key, n] of entries) {
+      const count = nonNegativeInteger(n);
+      if (!allowed(key) || count == null) return undefined;
+      out[key] = count;
+    }
+    return out;
+  };
+  const requeued = counts(
+    lane.requeued_total,
+    (key) => SNAPSHOT_LANE_TOKEN.test(key) && !SNAPSHOT_LANE_RESERVED.has(key),
+  );
+  const completed = counts(lane.completed_10m, (key) =>
+    SNAPSHOT_LANE_OUTCOMES.has(key),
+  );
+  if (!requeued || !completed) return undefined;
+  const oldest =
+    lane.oldest_pending_due_ms == null
+      ? undefined
+      : nonNegativeInteger(lane.oldest_pending_due_ms);
+  if (lane.oldest_pending_due_ms != null && oldest == null) return undefined;
+  let generationMoved: HostSnapshotLaneMetrics["generation_moved"];
+  if (lane.generation_moved != null) {
+    const raw = lane.generation_moved;
+    if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const moved = raw as Record<string, unknown>;
+    const keys = Object.keys(moved);
+    const accepted_r1 = nonNegativeInteger(moved.accepted_r1);
+    const accepted_r2 = nonNegativeInteger(moved.accepted_r2);
+    const refused = nonNegativeInteger(moved.refused);
+    if (
+      keys.length !== 3 ||
+      accepted_r1 == null ||
+      accepted_r2 == null ||
+      refused == null
+    )
+      return undefined;
+    generationMoved = { accepted_r1, accepted_r2, refused };
+  }
+  const optionalCount = (raw: unknown): number | undefined | null =>
+    raw == null ? undefined : (nonNegativeInteger(raw) ?? null);
+  const promotedPending = optionalCount(lane.promoted_pending);
+  const promotedLargest = optionalCount(lane.promoted_largest_account_count);
+  if (promotedPending === null || promotedLargest === null) return undefined;
+  let promotedDispatched: HostSnapshotLaneMetrics["promoted_dispatched_total"];
+  if (lane.promoted_dispatched_total != null) {
+    const raw = lane.promoted_dispatched_total;
+    if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const dispatched = raw as Record<string, unknown>;
+    const paying = nonNegativeInteger(dispatched.paying);
+    const free = nonNegativeInteger(dispatched.free);
+    if (Object.keys(dispatched).length !== 2 || paying == null || free == null)
+      return undefined;
+    promotedDispatched = { paying, free };
+  }
+  let waiting: HostSnapshotLaneMetrics["waiting"];
+  if (lane.waiting != null) {
+    const normalized = normalizeSnapshotLaneWaiting(lane.waiting);
+    if (!normalized) return undefined;
+    waiting = normalized;
+  }
+  return {
+    pending,
+    active,
+    parked: lane.parked,
+    ...(typeof lane.park_reason === "string"
+      ? { park_reason: lane.park_reason }
+      : {}),
+    parked_ms_total: parkedMs,
+    requeued_total: requeued,
+    ...(oldest != null ? { oldest_pending_due_ms: oldest } : {}),
+    completed_10m: completed,
+    ...(generationMoved ? { generation_moved: generationMoved } : {}),
+    ...(promotedPending != null ? { promoted_pending: promotedPending } : {}),
+    ...(promotedLargest != null
+      ? { promoted_largest_account_count: promotedLargest }
+      : {}),
+    ...(promotedDispatched
+      ? { promoted_dispatched_total: promotedDispatched }
+      : {}),
+    ...(waiting ? { waiting } : {}),
   };
 }
 
@@ -1030,6 +1236,9 @@ export function parseRow(
   const snapshotBackupMaintenanceGate = normalizeSnapshotBackupMaintenanceGate(
     rawCurrentMetrics?.snapshot_backup_maintenance_gate,
   );
+  const snapshotLaneMetrics = normalizeSnapshotLaneMetrics(
+    rawCurrentMetrics?.snapshot_lane,
+  );
   const currentMetrics: HostCurrentMetrics | undefined =
     rawCurrentMetrics && typeof rawCurrentMetrics === "object"
       ? {
@@ -1330,6 +1539,9 @@ export function parseRow(
                 snapshot_backup_maintenance_gate: snapshotBackupMaintenanceGate,
               }
             : {}),
+          ...(snapshotLaneMetrics != null
+            ? { snapshot_lane: snapshotLaneMetrics }
+            : {}),
         }
       : undefined;
   const rawBootstrap = metadata.bootstrap;
@@ -1558,6 +1770,7 @@ export function parseRow(
     host_session_started_at: metadata.host_session_started_at,
     public_route_probe: normalizePublicRouteProbe(metadata.public_route_probe),
     bees: normalizeBeesStatus(metadata.bees),
+    host_integrity: normalizeHostIntegrity(metadata.host_integrity),
     metrics:
       currentMetrics || opts.metrics_history
         ? {

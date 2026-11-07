@@ -29,12 +29,15 @@ describeDb("fresh conversation identity persistence", () => {
   beforeAll(async () => {
     const db = getPool();
     await db.query(
-      "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb)",
+      "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb, owning_bay_id text, deleted boolean)",
     );
     await syncSchema(
       Object.fromEntries(
         [
           "agent_identities",
+          "artifact_catalog",
+          "artifact_catalog_project_state",
+          "artifact_catalog_changes",
           "agent_identity_runs",
           "agent_personal_names",
           "agent_personal_controls",
@@ -188,5 +191,15 @@ describeDb("fresh conversation identity persistence", () => {
       expected_thread_id: "old",
     });
     expect(retry.conversation_history).toHaveLength(1);
+    // The rebind changed which thread is visible: one catalog reset, and the
+    // no-op retry records nothing more.
+    expect(
+      (
+        await getPool().query(
+          "SELECT op FROM artifact_catalog_changes WHERE project_id=$1",
+          [project_id],
+        )
+      ).rows,
+    ).toEqual([{ op: "reset" }]);
   });
 });

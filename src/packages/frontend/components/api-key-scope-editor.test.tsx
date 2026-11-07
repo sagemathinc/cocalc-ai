@@ -127,3 +127,32 @@ test("all-projects access is explicit and the source project is excluded from se
     all_projects: { capabilities: ["file:read"], viewer_read_roots: ["."] },
   });
 });
+
+test("an agent's key says which privileges need a project of its own", () => {
+  const { rerender } = render(
+    <ApiKeyScopeEditor value={EMPTY_API_KEY_SCOPE} onChange={() => {}} />,
+  );
+  // An ordinary key the person makes is not limited: no note.
+  expect(screen.queryByText(/no other collaborators/)).toBeNull();
+  rerender(
+    <ApiKeyScopeEditor
+      value={EMPTY_API_KEY_SCOPE}
+      onChange={() => {}}
+      agentKey
+    />,
+  );
+  for (const label of [
+    "Read and manage my notifications",
+    "Read my membership usage and limits",
+    "Read the usage of my AI subscriptions (Claude, Codex)",
+  ]) {
+    expect(
+      screen.getByRole("checkbox", {
+        name: `${label} (only while this agent's project has no other collaborators)`,
+      }),
+    ).toBeInTheDocument();
+  }
+  expect(
+    screen.getByRole("checkbox", { name: "List my projects" }),
+  ).toBeInTheDocument();
+});

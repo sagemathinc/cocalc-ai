@@ -957,7 +957,7 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
-  it("offers to resolve a typed @name, as the composer does, so the answer can be sent", async () => {
+  it("binds a typed @name only one agent has when the answer is sent", async () => {
     const sagebrush = {
       account_id: "00000000-1000-4000-8000-000000000001",
       name: "sagebrush",
@@ -969,6 +969,60 @@ describe("Codex question attention", () => {
       project_title: "Sagebrush",
     };
     mockMentionAgents = [sagebrush];
+    try {
+      const view = render(
+        <CodexAttentionCard
+          initialRecord={{
+            ...questionRecord,
+            questions: [{ ...questionRecord.questions[0], isOther: true }],
+          }}
+        />,
+      );
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Custom answer for Region" }),
+        { target: { value: "Yes, send it to @sagebrush." } },
+      );
+      // Nothing to choose: no button.
+      expect(screen.queryByRole("button", { name: /Resolve @sagebrush/ })).toBe(
+        null,
+      );
+      mockPreflight.mockImplementationOnce(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "Send response" }));
+      await waitFor(() =>
+        expect(mockPreflight).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /^Yes, send it to <span class="agent-mention" data-agent-reference="[^"]+">@sagebrush<\/span>\.$/,
+          ),
+          expect.any(Function),
+        ),
+      );
+      view.unmount();
+    } finally {
+      mockMentionAgents = [];
+    }
+  });
+
+  it("offers to resolve a typed @name several agents share, so the answer can be sent", async () => {
+    const sagebrush = {
+      account_id: "00000000-1000-4000-8000-000000000001",
+      name: "sagebrush",
+      endpoint: {
+        project_id: "00000000-5000-4000-8000-000000000005",
+        agent_id: "00000000-6000-4000-8000-000000000006",
+      },
+      thread_title: "Coordinator",
+      project_title: "Sagebrush",
+    };
+    const other = {
+      ...sagebrush,
+      endpoint: {
+        project_id: "00000000-5000-4000-8000-000000000007",
+        agent_id: "00000000-6000-4000-8000-000000000008",
+      },
+      thread_title: "Elsewhere",
+      project_title: "Other",
+    };
+    mockMentionAgents = [sagebrush, other];
     try {
       const view = render(
         <CodexAttentionCard

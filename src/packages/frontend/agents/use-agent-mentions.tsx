@@ -296,7 +296,7 @@ export function useAgentMentions({
         );
         if (unresolved)
           throw new Error(
-            `Resolve @${unresolved.name} using the named-agent suggestion below the composer, or select it from the @ picker before sending.`,
+            `Several agents are named @${unresolved.name}: choose one with the suggestions below the composer, or select it from the @ picker before sending.`,
           );
         const references = extractAgentMentions(value);
         agentMentionReferenceMap(references);

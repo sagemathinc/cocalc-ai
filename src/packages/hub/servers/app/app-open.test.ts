@@ -17,7 +17,10 @@ jest.mock("@cocalc/server/auth/remember-me", () => ({
 jest.mock("@cocalc/server/conat/api/hosts", () => ({
   issueProjectAppUrl: jest.fn(),
 }));
-jest.mock("@cocalc/backend/base-path", () => ({ __esModule: true, default: "/" }));
+jest.mock("@cocalc/backend/base-path", () => ({
+  __esModule: true,
+  default: "/",
+}));
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
   default: () => ({ debug: jest.fn() }),
@@ -27,7 +30,7 @@ import { initAppOpen } from "./app-open";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const ACCOUNT = "22222222-2222-4222-8222-222222222222";
-const LINK = "https://ap8000-x.h-y.content.test/_a/CAP?next=%2Fp";
+const LINK = "https://ap8000-x.h-y.content.test/.cocalc/a/CAP?next=%2Fp";
 
 describe("app open", () => {
   let server: ReturnType<ReturnType<typeof express>["listen"]>;
@@ -61,7 +64,7 @@ describe("app open", () => {
 
   it("redirects a same-origin navigation to the app origin, keeping the referrer", async () => {
     const res = await get(
-      `/app-open/${PROJECT}/port/8000/a%20b/?x=1&app=ignored-for-port`,
+      `/app-open/${PROJECT}/port/8000/a%20b/?x=1&cocalc_app=ignored-for-port`,
       sameOrigin,
     );
     expect(res.status).toBe(302);
@@ -74,6 +77,7 @@ describe("app open", () => {
       project_id: PROJECT,
       path: `/${PROJECT}/port/8000/a%20b/?x=1`,
       app_id: "ignored-for-port",
+      root: false,
     });
   });
 
@@ -156,6 +160,20 @@ describe("app open", () => {
     expect(res.headers.get("location")).toBe(`/projects/${PROJECT}`);
   });
 
+  it("leaves the app's own query parameters alone", async () => {
+    await get(
+      `/app-open/${PROJECT}/port/8000/?app=mine&root=yes&cocalc_root=1&cocalc_app=x`,
+      sameOrigin,
+    );
+    expect(issue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: `/${PROJECT}/port/8000/?app=mine&root=yes`,
+        app_id: "x",
+        root: true,
+      }),
+    );
+  });
+
   it("does not issue for bearer-authenticated requests", async () => {
     const res = await get(`/app-open/${PROJECT}/port/8000/`, {
       ...sameOrigin,
@@ -166,6 +184,8 @@ describe("app open", () => {
   });
 
   it("404s an invalid project id", async () => {
-    expect((await get(`/app-open/nope/port/8000/`, sameOrigin)).status).toBe(404);
+    expect((await get(`/app-open/nope/port/8000/`, sameOrigin)).status).toBe(
+      404,
+    );
   });
 });

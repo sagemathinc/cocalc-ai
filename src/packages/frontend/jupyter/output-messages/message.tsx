@@ -123,9 +123,9 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
     let hasIframes: boolean = false;
     let hasError: boolean = false;
     let traceback: string = "";
-    // JavaScript output never runs in this page: in a trusted notebook, a
-    // cell's JavaScript and HTML outputs render together in one opaque
-    // sandboxed frame.  (Untrusted notebooks don't run it at all.)
+    // JavaScript output never runs in this page: a cell's JavaScript and HTML
+    // outputs render together in one opaque sandboxed frame.  (Read-only and
+    // public views pass trust=false and don't run it at all.)
     const { kernelspec } = useJupyterContext();
     const group = React.useMemo(
       () =>
@@ -158,7 +158,9 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
       if (mesg != null && group != null && inGroup.has(n)) {
         if (n === firstInGroup) {
           hasIframes = true;
-          v.push(<ActiveOutputGroup key="active-group" outputs={group} />);
+          v.push(
+            <ActiveOutputGroup key="active-group" outputs={group} />,
+          );
         }
         continue;
       }

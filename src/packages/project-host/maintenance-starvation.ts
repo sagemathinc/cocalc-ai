@@ -24,7 +24,13 @@ export function createMaintenanceStarvationQueue(now = Date.now) {
     snapshot: new Map<string, number>(),
     backup: new Map<string, number>(),
   };
-  let inFlight = false;
+  // One reservation per kind: a backup's, held for its whole read, doesn't
+  // keep the oldest overdue snapshot from its turn (storage admission decides
+  // whether the two may run together).
+  const inFlight: Record<MaintenanceKind, boolean> = {
+    snapshot: false,
+    backup: false,
+  };
   const nextAllowed: Record<MaintenanceKind, number> = {
     snapshot: 0,
     backup: 0,
@@ -85,15 +91,15 @@ export function createMaintenanceStarvationQueue(now = Date.now) {
     kind: MaintenanceKind,
     intervalMs: number,
   ) => {
-    if (inFlight || now() < nextAllowed[kind]) return undefined;
+    if (inFlight[kind] || now() < nextAllowed[kind]) return undefined;
     const candidate = head(kind);
     if (candidate?.projectId !== projectId) return undefined;
-    inFlight = true;
+    inFlight[kind] = true;
     let released = false;
     return (consumed: boolean) => {
       if (released) return;
       released = true;
-      inFlight = false;
+      inFlight[kind] = false;
       if (!consumed) return;
       // Charge attempts, not successes: a failed or invalidated oldest item
       // must neither monopolize the queue nor create a tight retry loop.

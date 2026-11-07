@@ -11,9 +11,12 @@ import { DatabaseSync } from "node:sqlite";
 import {
   deferWalCheckpoints,
   forgetWalCheckpoints,
+  liveWalBytes,
   runCheckpointPass,
+  setCheckpointIntervalForTests,
   setCheckpointWorkerEnabledForTests,
   walCheckpointStatus,
+  walStatus,
 } from "./sqlite-checkpoint";
 
 let dir: string;
@@ -294,5 +297,214 @@ describe("deferWalCheckpoints", () => {
     forgetWalCheckpoints(file);
     expect(walCheckpointStatus(file)).toBeUndefined();
     db.close();
+  });
+});
+
+// A WAL file keeps the size of the largest WAL it ever held: after a
+// complete checkpoint SQLite reuses it from the start. On a host this left a
+// 9.9 GB file around a 1.5 MB live WAL, and the fallback (which looked at
+// the file) put checkpoints back on the event loop again and again.
+describe("the live WAL, not the file", () => {
+  afterEach(() => setCheckpointIntervalForTests(5_000));
+
+  // A database whose WAL file is large but whose live WAL is a few frames,
+  // with a reader holding a snapshot so that no checkpoint completes.
+  function staleHighWater(name: string): {
+    file: string;
+    db: DatabaseSync;
+    reader: DatabaseSync;
+  } {
+    const file = join(dir, name);
+    const db = openDb(file);
+    db.exec("PRAGMA wal_autocheckpoint=0");
+    writeMany(db, 1500);
+    // A complete checkpoint, then a write: the WAL restarts from the
+    // beginning, and its file keeps its size (no journal_size_limit yet).
+    db.prepare("PRAGMA wal_checkpoint(PASSIVE)").get();
+    writeMany(db, 1);
+    const reader = new DatabaseSync(file);
+    reader.exec("BEGIN");
+    reader.prepare("SELECT COUNT(*) FROM t").get();
+    writeMany(db, 2);
+    return { file, db, reader };
+  }
+
+  // The worker's next result for this file, taken no earlier than `after`.
+  async function freshResult(file: string, after = Date.now()) {
+    await runCheckpointPass();
+    await eventually(() => {
+      const result = walCheckpointStatus(file)?.lastResult;
+      return result != null && result.at >= after;
+    });
+    return walCheckpointStatus(file)!.lastResult!;
+  }
+
+  it("a large stale file around a small live WAL does not fall back", async () => {
+    setCheckpointIntervalForTests(100);
+    const { file, db, reader } = staleHighWater("highwater.db");
+    deferWalCheckpoints(db, file, {
+      enableInTests: true,
+      maxWalBytes: 64 * 1024,
+      label: "test",
+    });
+    expect((await stat(`${file}-wal`)).size).toBeGreaterThan(1024 * 1024);
+    const started = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const result = await freshResult(file, started);
+    expect(result.checkpointed!).toBeLessThan(result.log!);
+    expect(liveWalBytes(result)!).toBeLessThan(64 * 1024);
+    // No complete checkpoint for longer than 3 intervals, but the worker's
+    // fresh result shows a small live WAL.
+    await runCheckpointPass(result.at + 100);
+    expect(walCheckpointStatus(file)!.inlineFallback).toBe(false);
+    expect(autocheckpoint(db)).toBe(0);
+    reader.exec("COMMIT");
+    reader.close();
+    forgetWalCheckpoints(file, db);
+    db.close();
+  }, 30_000);
+
+  it("each file is judged by its own result", async () => {
+    setCheckpointIntervalForTests(100);
+    const small = staleHighWater("small-live.db");
+    const big = (() => {
+      const file = join(dir, "big-live.db");
+      const db = openDb(file);
+      const reader = new DatabaseSync(file);
+      reader.exec("BEGIN");
+      reader.prepare("SELECT COUNT(*) FROM t").get();
+      writeMany(db, 100);
+      return { file, db, reader };
+    })();
+    for (const { file, db } of [small, big]) {
+      deferWalCheckpoints(db, file, {
+        enableInTests: true,
+        maxWalBytes: 64 * 1024,
+        label: "test",
+      });
+    }
+    const started = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const smallResult = await freshResult(small.file, started);
+    const bigResult = await freshResult(big.file, started);
+    expect(liveWalBytes(smallResult)!).toBeLessThan(64 * 1024);
+    expect(liveWalBytes(bigResult)!).toBeGreaterThan(64 * 1024);
+    await runCheckpointPass(Math.max(smallResult.at, bigResult.at) + 100);
+    expect(walCheckpointStatus(small.file)!.inlineFallback).toBe(false);
+    expect(walCheckpointStatus(big.file)!.inlineFallback).toBe(true);
+    expect(autocheckpoint(small.db)).toBe(0);
+    expect(autocheckpoint(big.db)).toBe(1000);
+    for (const { file, db, reader } of [small, big]) {
+      reader.exec("COMMIT");
+      reader.close();
+      forgetWalCheckpoints(file, db);
+      db.close();
+    }
+  }, 30_000);
+
+  it("journal_size_limit truncates the WAL file when it restarts", async () => {
+    const file = join(dir, "limit.db");
+    const db = openDb(file);
+    deferWalCheckpoints(db, file, {
+      enableInTests: true,
+      maxWalBytes: 256 * 1024,
+    });
+    expect(
+      Number(
+        (db.prepare("PRAGMA journal_size_limit").get() as any)
+          .journal_size_limit,
+      ),
+    ).toBe(256 * 1024);
+    writeMany(db, 1500);
+    expect((await stat(`${file}-wal`)).size).toBeGreaterThan(1024 * 1024);
+    const result = await freshResult(file);
+    expect(result.checkpointed).toBe(result.log);
+    // The next write restarts the WAL and truncates its file to the limit.
+    writeMany(db, 1);
+    expect((await stat(`${file}-wal`)).size).toBeLessThanOrEqual(256 * 1024);
+    forgetWalCheckpoints(file, db);
+    db.close();
+  }, 30_000);
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 0, -1, -5])(
+    "an invalid maxWalBytes (%s) is refused: SQLite keeps checkpointing inline",
+    (maxWalBytes) => {
+      const file = join(dir, "invalid.db");
+      const db = openDb(file);
+      expect(
+        deferWalCheckpoints(db, file, { enableInTests: true, maxWalBytes }),
+      ).toBe(false);
+      expect(autocheckpoint(db)).toBe(1000);
+      expect(
+        Number(
+          (db.prepare("PRAGMA journal_size_limit").get() as any)
+            .journal_size_limit,
+        ),
+      ).toBe(-1);
+      expect(walCheckpointStatus(file)).toBeUndefined();
+      db.close();
+    },
+  );
+
+  it("a fractional maxWalBytes is a whole number of bytes, also for the worker", async () => {
+    const file = join(dir, "fraction.db");
+    const db = openDb(file);
+    expect(
+      deferWalCheckpoints(db, file, {
+        enableInTests: true,
+        maxWalBytes: 256 * 1024 + 0.5,
+      }),
+    ).toBe(true);
+    expect(walCheckpointStatus(file)?.maxWalBytes).toBe(256 * 1024);
+    expect(
+      Number(
+        (db.prepare("PRAGMA journal_size_limit").get() as any)
+          .journal_size_limit,
+      ),
+    ).toBe(256 * 1024);
+    writeMany(db, 10);
+    // The worker opened its connection with the same limit, without error.
+    const result = await freshResult(file);
+    expect(result.error).toBeUndefined();
+    forgetWalCheckpoints(file, db);
+    db.close();
+  }, 30_000);
+
+  it("the WAL status is counts and ages with the caller's label, never a path", async () => {
+    const { file, db, reader } = staleHighWater("status.db");
+    deferWalCheckpoints(db, file, {
+      enableInTests: true,
+      maxWalBytes: 64 * 1024,
+      label: "test-kind",
+    });
+    await freshResult(file);
+    await runCheckpointPass();
+    const status = walStatus().find((s) => s.label === "test-kind")!;
+    expect(status).toMatchObject({
+      label: "test-kind",
+      inline_fallback: false,
+      connections: 1,
+      page_size: 4096,
+      off: true, // the file is over the limit
+    });
+    expect(status.wal_file_bytes).toBeGreaterThan(1024 * 1024);
+    expect(status.live_wal_bytes!).toBeLessThan(64 * 1024);
+    expect(JSON.stringify(walStatus())).not.toContain(dir);
+    expect(JSON.stringify(walStatus())).not.toContain("status.db");
+    reader.exec("COMMIT");
+    reader.close();
+    forgetWalCheckpoints(file, db);
+    db.close();
+  }, 30_000);
+
+  it("liveWalBytes: header plus frames, nothing without a usable result", () => {
+    expect(liveWalBytes({ file: "f", at: 0, log: 367, page_size: 4096 })).toBe(
+      32 + 367 * 4120,
+    );
+    expect(liveWalBytes({ file: "f", at: 0, log: 0, page_size: 4096 })).toBe(0);
+    expect(liveWalBytes({ file: "f", at: 0, log: 3 })).toBeUndefined();
+    expect(
+      liveWalBytes({ file: "f", at: 0, error: "x", log: 3, page_size: 4096 }),
+    ).toBeUndefined();
   });
 });

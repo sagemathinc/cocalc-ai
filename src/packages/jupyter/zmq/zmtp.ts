@@ -17,7 +17,10 @@ The semantics cocalc relies on follow libzmq's defaults:
 - messages sent before a connection is ready are queued and sent, in order,
   once it is; a message already written to a connection that then drops is
   never replayed;
-- a SUB socket resends its subscriptions on every connection.
+- a SUB socket resends its subscriptions on every connection, in the form the
+  peer's ZMTP version understands: a SUBSCRIBE command to a 3.1 peer, and a
+  [0x01, prefix] message to a 3.0 peer (libzmq 4.2 and older, e.g. the copy
+  bundled with R's pbdZMQ), which ignores the command.
 
 Inbound messages go to a lossless queue read by the async iterator.  When
 the queue reaches the flow-control mark (MARK_COUNT messages or MARK_BYTES
@@ -405,6 +408,8 @@ class Connection {
   socket: net.Socket;
   decoder: Decoder;
   ready = false;
+  // the minor ZMTP version of the peer's greeting (3.0 or 3.1)
+  peerMinor = 1;
   timer?: ReturnType<typeof setTimeout>;
   // the TTL the peer's last PING asked for (0: none), and its deadline
   ttl = 0;
@@ -527,7 +532,7 @@ class ZSocket {
     if (this.type !== "SUB") throw new Error("only a SUB socket subscribes");
     const p = typeof prefix === "string" ? Buffer.from(prefix, "utf8") : prefix;
     this.subs.push(Buffer.from(p));
-    if (this.conn?.ready) this.write(this.conn, command("SUBSCRIBE", p));
+    if (this.conn?.ready) this.write(this.conn, subscription(this.conn, p));
   }
 
   /** Diagnostics and tests: what this socket holds. */
@@ -652,8 +657,9 @@ class ZSocket {
     const socket = net.connect(ep);
     const decoder = new Decoder(
       {
-        greeting: () => {
+        greeting: (g) => {
           if (!live()) return;
+          c.peerMinor = g[11];
           // (the READY each way)
           const props: Record<string, Buffer> = {
             "Socket-Type": Buffer.from(this.type, "ascii"),
@@ -724,8 +730,7 @@ class ZSocket {
       c.ready = true;
       if (c.timer) clearTimeout(c.timer);
       c.timer = undefined;
-      // ZMTP 3.1 (RFC 37): a SUBSCRIBE command, not 3.0's [0x01, prefix] message
-      for (const s of this.subs) this.write(c, command("SUBSCRIBE", s));
+      for (const s of this.subs) this.write(c, subscription(c, s));
       this.flush(c);
     } else if (name === "ERROR") {
       const n = data.length ? data[0] : 0;
@@ -796,6 +801,15 @@ class ZSocket {
     c.decoder.clear();
     c.socket.destroy();
   }
+}
+
+// ZMTP 3.1 (RFC 37) subscribes with a SUBSCRIBE command; a 3.0 peer (RFC 23)
+// only understands a [0x01, prefix] message, and ignores the command, so it
+// would publish nothing.  Both sides speak the lower version.
+function subscription(c: Connection, prefix: Buffer): Buffer[] {
+  return c.peerMinor >= 1
+    ? command("SUBSCRIBE", prefix)
+    : encodeFrames([Buffer.concat([Buffer.from([1]), prefix])]);
 }
 
 export class Dealer extends ZSocket {

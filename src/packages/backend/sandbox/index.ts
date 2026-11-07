@@ -944,8 +944,15 @@ export class SandboxedFilesystem {
         this.rootfsEnabled = true;
         return this.rootfs;
       }
-    } catch {
-      // handled below
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "EACCES") {
+        // A project with a separate runtime uid: its mounted rootfs is
+        // reachable only from inside its own namespace, not from the host.
+        throw new Error(
+          `files outside HOME (such as '${requestedAbsolutePath}') are not available yet for projects that run with a separate runtime uid`,
+        );
+      }
+      // otherwise handled below
     }
     throw new Error(
       `rootfs is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the project and try again.`,

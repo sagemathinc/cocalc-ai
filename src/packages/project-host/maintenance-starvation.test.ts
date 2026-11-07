@@ -37,13 +37,18 @@ describe("shared maintenance starvation queue", () => {
     ]);
   });
 
-  it("paces each kind separately and is single-flight", () => {
+  it("paces each kind separately and is single-flight per kind", () => {
     const queue = createMaintenanceStarvationQueue(() => now);
     queue.update(items);
     const release = queue.reserve("b", "snapshot", 60)!;
     expect(release).toBeDefined();
-    // One override at a time, of either kind.
+    // One reservation per kind; a backup's doesn't wait for a snapshot's (nor
+    // a snapshot's for a backup's): storage admission decides what runs.
+    expect(queue.reserve("b", "snapshot", 60)).toBeUndefined();
+    const backup = queue.reserve("b", "backup", 300);
+    expect(backup).toBeDefined();
     expect(queue.reserve("b", "backup", 300)).toBeUndefined();
+    backup!(false);
     release(true);
     release(true);
     // A snapshot just ran: the backup lane has its own pace.

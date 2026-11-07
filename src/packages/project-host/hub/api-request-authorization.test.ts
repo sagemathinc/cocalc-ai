@@ -251,10 +251,7 @@ describe("project-host hub API request authorization", () => {
         authorizeProjectHostHubApiRequest(projectRequest(name)),
       ).not.toThrow();
     }
-    for (const name of [
-      "compute.authorizeProjectSshKey",
-      "system.reserveProjectAppPrivateHostname",
-    ]) {
+    for (const name of ["compute.authorizeProjectSshKey"]) {
       expectForbidden(() =>
         authorizeProjectHostHubApiRequest(projectRequest(name)),
       );
@@ -265,7 +262,7 @@ describe("project-host hub API request authorization", () => {
     expectForbidden(() =>
       authorizeProjectHostHubApiRequest(
         projectRequest(
-          "system.getProjectAppPrivateHostnamePolicy",
+          "system.getManagedProjectEgressPolicy",
           other_project_id,
         ),
       ),
@@ -305,5 +302,61 @@ describe("project-host hub API request authorization", () => {
         args: [],
       }),
     );
+  });
+
+  describe("project-reported egress", () => {
+    const name = "system.recordManagedProjectEgress";
+    const report = (opts: Record<string, unknown>) => ({
+      subject: `hub.project.${project_id}.api`,
+      name,
+      args: [{ project_id, ...opts }],
+      project_id,
+    });
+
+    // The host measures what it serves; a project's own count is never
+    // trusted, so a project may not report egress at all.
+    it("is not a project method", () => {
+      expect(PROJECT_PROJECT_HOST_HUB_METHODS).not.toContain(name);
+      expect(EXAM_PROJECT_HOST_HUB_METHODS).not.toContain(name);
+    });
+
+    it.each([
+      "file-download",
+      "http-proxy",
+      "ws-proxy",
+      "ssh",
+      "interactive-conat",
+      "control-plane-conat",
+      "raw-network",
+      "backup-upload",
+      undefined,
+    ])("refuses a %s report from a project", (category) => {
+      expectForbidden(() =>
+        authorizeProjectHostHubApiRequest(
+          report({ category, bytes: 1234, metadata: { partial: false } }),
+        ),
+      );
+    });
+
+    it("leaves host-scoped reports untouched", () => {
+      const request = {
+        subject: `hub.host.${host_id}.api`,
+        name,
+        args: [
+          {
+            project_id,
+            category: "raw-network",
+            bytes: 5,
+            bandwidth_relay_evidence: { kind: "relay" },
+          },
+        ],
+        host_id,
+      };
+      authorizeProjectHostHubApiRequest(request);
+      expect(request.args[0]).toMatchObject({
+        category: "raw-network",
+        bandwidth_relay_evidence: { kind: "relay" },
+      });
+    });
   });
 });

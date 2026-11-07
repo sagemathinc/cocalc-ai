@@ -4,8 +4,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {},
 }));
 
-jest.mock("../widgets/manager", () => ({
-  WidgetManager: class WidgetManager {},
+jest.mock("../widgets/frame/relay", () => ({
+  WidgetRelay: class WidgetRelay {},
 }));
 
 import { sha1 } from "@cocalc/util/misc";

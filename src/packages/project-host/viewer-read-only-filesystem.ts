@@ -13,6 +13,12 @@ import {
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
+// Largest file a viewer (e.g. someone opening a published share) can read.
+// Viewers are always authenticated, so this only bounds the file bytes one
+// read returns (the read, serialization and transport each hold copies); it is
+// high enough for large published notebooks.
+export const VIEWER_READ_MAX_BYTES = 20 * 1024 * 1024;
+
 function viewerAccessDenied(path: string): NodeJS.ErrnoException {
   const err = new Error(
     `EACCES: permission denied by viewer read policy, open '${path}'`,
@@ -209,7 +215,7 @@ export function createViewerReadOnlyFilesystem({
             readPolicy,
             path,
           }),
-        maxBytes: 8 * 1024 * 1024,
+        maxBytes: VIEWER_READ_MAX_BYTES,
         encoding,
         lock,
       });

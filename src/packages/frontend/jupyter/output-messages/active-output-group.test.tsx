@@ -99,8 +99,10 @@ describe("CellOutputMessages", () => {
     2: { name: "stdout", text: "plain text" },
   });
 
-  it("trusted: one opaque-scripts frame with a constant shell; no output content in the page", async () => {
-    const { container } = render(<CellOutputMessages output={output} trust />);
+  it("one opaque-scripts frame at once, with a constant shell; no output content in the page", async () => {
+    const { container } = render(
+      <CellOutputMessages output={output} trust id="cell1" />,
+    );
     await act(async () => {});
     const frames = container.querySelectorAll("iframe");
     expect(frames.length).toBe(1);
@@ -144,7 +146,7 @@ describe("CellOutputMessages", () => {
     expect(container.textContent).toContain("ValueError");
   });
 
-  it("untrusted: JavaScript does not run at all", async () => {
+  it("read-only and public views (trust=false): JavaScript does not run at all", async () => {
     const { container } = render(
       <CellOutputMessages output={output} trust={false} />,
     );

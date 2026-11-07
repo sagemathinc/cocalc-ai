@@ -44,7 +44,7 @@ describe("Kernel", () => {
   });
 
   it.each([false, true])(
-    "does not offset the trust button above the header (compact=%s)",
+    "shows no trust indicator, even for a notebook marked untrusted (compact=%s)",
     (compact) => {
       const state = {
         trust: false,
@@ -66,10 +66,9 @@ describe("Kernel", () => {
           />
         </IntlProvider>,
       );
-      const button = screen.getByRole("button", { name: "Not Trusted" });
-      expect(button.style.marginTop).toBe("");
-      button.focus();
-      expect(button).toHaveFocus();
+      // There is no notebook trust (every output renders isolated).
+      expect(screen.queryByText("Not Trusted")).toBeNull();
+      expect(screen.queryByText("Trusted")).toBeNull();
     },
   );
 
@@ -187,7 +186,7 @@ describe("Kernel", () => {
     expect(screen.queryByText(/\(halt/i)).toBeNull();
   });
 
-  it("shows the trust indicator in the studio notebook status bar", () => {
+  it("shows no trust indicator in the studio notebook status bar", () => {
     const actions = {
       name: "jupyter-test",
       project_id: "project-1",
@@ -228,7 +227,7 @@ describe("Kernel", () => {
     getProjectActions.mockReturnValue({ project_id: "project-1" });
 
     // the studio notebook status bar is the compact header with layout
-    // controls; unlike other compact embeds it does show the trust state
+    // controls; like every other header it has no trust state
     render(
       <IntlProvider locale="en" messages={{}}>
         <Kernel
@@ -240,7 +239,7 @@ describe("Kernel", () => {
       </IntlProvider>,
     );
 
-    expect(screen.getByText("Trusted")).toBeTruthy();
+    expect(screen.queryByText("Trusted")).toBeNull();
   });
 
   it("keeps the kernel header visible while kernel selection is undecided", () => {

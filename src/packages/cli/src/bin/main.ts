@@ -1899,6 +1899,8 @@ async function hubCallByName<T>(
       "notifications.markRead",
       "notifications.save",
       "notifications.archive",
+      "system.getMembershipUsage",
+      "system.getAiSubscriptionStatus",
     ].includes(name)
   ) {
     return await callHubWithApiKey<T>({

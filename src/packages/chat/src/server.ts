@@ -82,10 +82,16 @@ export function createChatSyncDB(opts: CreateChatSyncDBOptions): ImmerDB {
 }
 
 // Ref-counted pool using RefcountLeaseManager so a given project/path syncdb is opened once.
-const CLOSE_DELAY_MS = 30_000;
+// An idle syncdb stays open a while: chats such as agent threads are touched
+// every few minutes, and each reopen loads the history since the last
+// snapshot again. At most MAX_IDLE_SYNCDBS wait to close; beyond that the
+// longest idle one closes right away.
+const CLOSE_DELAY_MS = 10 * 60_000;
+const MAX_IDLE_SYNCDBS = 64;
 const openSyncdbs = new Map<string, ImmerDB>();
 const leases = new RefcountLeaseManager<string>({
   delayMs: CLOSE_DELAY_MS,
+  maxIdle: MAX_IDLE_SYNCDBS,
   disposer: async (key: string) => {
     const db = openSyncdbs.get(key);
     if (!db) return;

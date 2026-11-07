@@ -597,10 +597,16 @@ publish the whole project. Whole-project publishing means publishing
 \`/home/user\`, not the operating system, project host, secrets, snapshots, or
 backups.
 
-Public shares never include hidden files and folders at the top of the home
-directory (names starting with a dot, such as \`.ssh\`, \`.config\`, \`.cache\`,
-\`.local\`, \`.snapshots\`, and \`.backups\`), where programs keep settings and
-credentials. You cannot publish a hidden top-level path directly.
+Public shares never include a file or folder at the top level of the home
+directory whose name starts with a dot, such as \`.codex\`, \`.config\`,
+\`.ssh\`, \`.local\`, \`.snapshots\`, or \`.backups\`, or anything inside one.
+That is where programs keep settings and credentials. Publishing such a path
+directly is refused.
+
+Hidden names deeper down are not left out. Hidden files and folders inside a
+regular folder, such as \`analysis/.env\` or \`repo/.github\`, are shared like
+any other file, by a whole-project share and by a share of that folder. Keep
+secrets such as \`.env\` files out of folders you share.
 
 Publishing is only allowed for paths inside \`/home/user\`. Project secrets are
 mounted outside HOME under \`/run/secrets/cocalc\`, so they are not project
@@ -662,8 +668,9 @@ editor viewer, and chat files use a read-only chat view.
 
 Viewers can copy selected files or folders to a project they own or create a
 new project and copy the selected content there. Copying uses the same
-path-restricted policy as viewing. Whole-project copies exclude private and
-internal paths.
+path-restricted policy as viewing, so a whole-project copy leaves out the same
+hidden top-level entries as the share itself and includes hidden files inside
+regular folders.
 
 Copying an exact-file share preserves its filename. Copying a folder share
 creates a folder named after the share slug, copies the shared contents into
