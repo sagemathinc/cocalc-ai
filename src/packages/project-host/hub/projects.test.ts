@@ -88,6 +88,10 @@ jest.mock("@cocalc/lite/hub/acp/harness-runtime", () => ({
 }));
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
+const recordCodexRateLimits = jest.fn();
+jest.mock("../acp/claude-subscription-usage", () => ({
+  recordCodexRateLimits: (report: unknown) => recordCodexRateLimits(report),
+}));
 const releaseAcpProjectFenceResumesAfterStart = jest.fn(
   (_projectId: string) => 0,
 );
@@ -1487,6 +1491,13 @@ describe("project host start ordering", () => {
       isolatedCodexHome: true,
       includeModels: true,
       timeoutMs: 45_000,
+    });
+    // What Codex reported is saved for the subscription that was checked.
+    expect(recordCodexRateLimits).toHaveBeenCalledWith({
+      projectId: project_id,
+      accountId: "acct-1",
+      credentialId: undefined,
+      rateLimits: { rateLimits: true },
     });
     expect(result).toMatchObject({
       available: true,
