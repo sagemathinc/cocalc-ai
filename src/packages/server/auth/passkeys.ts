@@ -43,6 +43,7 @@ import {
   normalizeRecoveryCode,
 } from "@cocalc/server/auth/totp";
 import { isValidUUID } from "@cocalc/util/misc";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 export const FACTOR_TYPE_PASSKEY = "passkey";
 
@@ -151,7 +152,7 @@ function cleanLabel(value: unknown): string {
 }
 
 function cleanFreshAuthDuration(value: unknown): FreshAuthDuration {
-  return value === "extended" ? "extended" : "default";
+  return parseFreshAuthDuration(value);
 }
 
 function toBase64Url(value: Uint8Array): string {

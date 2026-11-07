@@ -6,6 +6,7 @@
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import isPost from "@cocalc/http-api/lib/api/is-post";
 import { startCliLoginChallenge } from "@cocalc/server/auth/cli-auth";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 export default async function cliLoginStart(req, res) {
   if (!isPost(req, res)) {
@@ -15,7 +16,7 @@ export default async function cliLoginStart(req, res) {
   try {
     const { email, elevated_login, duration, client_kind } = getParams(req);
     const elevatedLogin = elevated_login === true || elevated_login === "true";
-    const requestedDuration = duration === "extended" ? "extended" : "default";
+    const requestedDuration = parseFreshAuthDuration(duration);
     res.json(
       await startCliLoginChallenge({
         req,

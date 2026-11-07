@@ -286,6 +286,7 @@ import {
   registerPersistCommand,
   type PersistCommandDeps,
 } from "./commands/persist";
+import type { FreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -864,7 +865,7 @@ async function maybeCreateLocalDevRememberMeCookie({
   globals: GlobalOptions;
   apiBaseUrl: string;
   requestedAccountId: string;
-  freshAuthDuration?: "default" | "extended";
+  freshAuthDuration?: FreshAuthDuration;
 }): Promise<
   | {
       value: string;

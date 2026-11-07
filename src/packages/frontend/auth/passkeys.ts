@@ -15,6 +15,7 @@ import type {
 } from "@simplewebauthn/browser";
 
 import { postAuthApi } from "@cocalc/frontend/auth/api";
+import type { FreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 type PasskeySetupStart = {
   challenge_id: string;
@@ -108,7 +109,7 @@ export async function freshAuthWithPasskey({
   origin,
 }: {
   current_password?: string;
-  duration?: "default" | "extended";
+  duration?: FreshAuthDuration;
   origin?: string;
 }): Promise<PasskeyFreshAuthResult> {
   const unavailable = webAuthnUnavailableMessage();
@@ -138,9 +139,12 @@ export async function freshAuthWithPasskey({
 export async function approveCliElevationWithPasskey({
   challenge_id,
   current_password,
+  confirmed_duration,
 }: {
   challenge_id: string;
   current_password: string;
+  // Required by the server for a request longer than 8 hours.
+  confirmed_duration?: FreshAuthDuration;
 }): Promise<any> {
   const unavailable = webAuthnUnavailableMessage();
   if (unavailable) {
@@ -151,6 +155,7 @@ export async function approveCliElevationWithPasskey({
     body: {
       challenge_id,
       current_password,
+      ...(confirmed_duration ? { confirmed_duration } : {}),
     },
   });
   const response: AuthenticationResponseJSON = await startAuthentication({

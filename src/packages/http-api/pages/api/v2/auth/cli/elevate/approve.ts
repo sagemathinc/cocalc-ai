@@ -19,7 +19,8 @@ export default async function cliElevateApprove(req, res) {
     if (!account_id || !getRememberMeHash(req)) {
       throw new Error("must be signed in");
     }
-    const { challenge_id, current_password, method, code } = getParams(req);
+    const { challenge_id, current_password, method, code, confirmed_duration } =
+      getParams(req);
     res.json(
       await approveCliElevateChallenge({
         challenge_id: `${challenge_id ?? ""}`,
@@ -27,6 +28,7 @@ export default async function cliElevateApprove(req, res) {
         current_password: `${current_password ?? ""}`,
         method: `${method ?? ""}`.trim() || undefined,
         code: `${code ?? ""}`.trim() || undefined,
+        confirmed_duration,
       }),
     );
   } catch (err) {

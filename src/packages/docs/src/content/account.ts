@@ -82,6 +82,23 @@ you need to refresh a session and have CoCalc 2FA enabled, the verification
 dialog uses your configured second factor. Some actions also explicitly require
 recent CoCalc second-factor approval.
 
+## How long a verification lasts
+
+The verification dialog lets you choose how long the verification stays active
+in that browser: 15 minutes, 8 hours, 24 hours, or 72 hours. Anything longer than
+15 minutes needs an authenticator code, a passkey, or Google. Use a long
+verification when you must be able to act quickly while away, for example to
+handle an outage over a long weekend.
+
+| What | How |
+| :-- | :-- |
+| Choose a duration for a CLI | \`cocalc auth elevate --duration 72h\` (any whole number of hours from 1 to 72; \`--short\` is 15 minutes, the default is 8 hours). The approval page shows the duration. |
+| Get told about long ones | Every verification longer than 8 hours sends an email to your account address. |
+| See and end them | [Account Settings -> Profile -> Security](/settings/profile#security) lists every active verification, of this browser, other browsers and CLIs, with the time left. **End now** ends one, **End all** ends all of them; they stay signed in. |
+
+If you get an email about a verification you did not start, end it right away,
+change your password, and end your other sign-in sessions.
+
 ## Why Google SSO 2FA is not enough for every CoCalc action
 
 If you sign in with Google and your Google account has two-factor
