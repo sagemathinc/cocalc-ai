@@ -1028,25 +1028,45 @@ export class GcpProvider implements CloudProvider {
       });
       return;
     }
+    let current = existing;
     if (initialStatus === "STOPPING") {
-      await waitForInstanceLifecycleStatus({
-        client,
-        credentials,
-        runtime,
-        desired: ["TERMINATED"],
-      });
+      // The wait can time out with the instance still STOPPING.
+      current =
+        (await waitForInstanceLifecycleStatus({
+          client,
+          credentials,
+          runtime,
+          desired: ["TERMINATED"],
+        })) ?? current;
     }
     // A pricing change made while the host was stopped only updates the
     // host's record; the stopped instance keeps its old scheduling until it
-    // is set here, before the start.
+    // is set here, before the start. GCP changes scheduling only on a
+    // TERMINATED instance; in any other state the start proceeds as before.
+    const currentStatus = `${current?.status ?? ""}`.trim().toUpperCase();
     if (
       opts?.pricing_model &&
-      pricingModelFromInstance(existing) !== opts.pricing_model
+      pricingModelFromInstance(current) !== opts.pricing_model &&
+      currentStatus !== "TERMINATED"
+    ) {
+      logger.warn(
+        "gcp.startHost cannot apply pricing model; instance is not TERMINATED",
+        {
+          instance_id: runtime.instance_id,
+          zone: runtime.zone,
+          status: currentStatus,
+          from: pricingModelFromInstance(current),
+          to: opts.pricing_model,
+        },
+      );
+    } else if (
+      opts?.pricing_model &&
+      pricingModelFromInstance(current) !== opts.pricing_model
     ) {
       logger.info("gcp.startHost applying pricing model before start", {
         instance_id: runtime.instance_id,
         zone: runtime.zone,
-        from: pricingModelFromInstance(existing),
+        from: pricingModelFromInstance(current),
         to: opts.pricing_model,
       });
       await setSchedulingForPricing({

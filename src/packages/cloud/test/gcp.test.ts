@@ -1299,6 +1299,122 @@ describe("GcpProvider", () => {
     expect(startMock).toHaveBeenCalledTimes(1);
   });
 
+  it("applies the pricing model once a STOPPING instance reaches TERMINATED", async () => {
+    getMock
+      .mockResolvedValueOnce([
+        {
+          status: "STOPPING",
+          scheduling: { preemptible: true, provisioningModel: "SPOT" },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          status: "TERMINATED",
+          scheduling: { preemptible: true, provisioningModel: "SPOT" },
+        },
+      ]);
+    authRequestMock.mockResolvedValueOnce({
+      data: { name: "op-scheduling", status: "DONE" },
+    });
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+    startMock.mockResolvedValueOnce([{}]);
+
+    const provider = new GcpProvider();
+    await provider.startHost(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+      },
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+      { pricing_model: "on_demand" },
+    );
+
+    expect(authRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ provisioningModel: "STANDARD" }),
+      }),
+    );
+    expect(startMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["SUSPENDED", "PROVISIONING", "REPAIRING"])(
+    "does not change scheduling of a %s instance, and starts it as before",
+    async (status) => {
+      getMock.mockResolvedValueOnce([
+        {
+          status,
+          scheduling: { preemptible: true, provisioningModel: "SPOT" },
+        },
+      ]);
+      startMock.mockResolvedValueOnce([{}]);
+
+      const provider = new GcpProvider();
+      await provider.startHost(
+        {
+          provider: "gcp",
+          instance_id: "ph-test",
+          zone: "us-west1-a",
+          ssh_user: "ubuntu",
+        },
+        {
+          project_id: "proj-1",
+          client_email: "svc@example.com",
+          private_key: "key",
+        },
+        { pricing_model: "on_demand" },
+      );
+
+      expect(authRequestMock).not.toHaveBeenCalled();
+      expect(setSchedulingMock).not.toHaveBeenCalled();
+      expect(startMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not change scheduling when the wait for TERMINATED times out", async () => {
+    jest.useFakeTimers();
+    try {
+      // Still STOPPING on every read: the wait gives up.
+      getMock.mockResolvedValue([
+        {
+          status: "STOPPING",
+          scheduling: { preemptible: true, provisioningModel: "SPOT" },
+        },
+      ]);
+      startMock.mockResolvedValueOnce([{}]);
+
+      const provider = new GcpProvider();
+      const started = provider.startHost(
+        {
+          provider: "gcp",
+          instance_id: "ph-test",
+          zone: "us-west1-a",
+          ssh_user: "ubuntu",
+        },
+        {
+          project_id: "proj-1",
+          client_email: "svc@example.com",
+          private_key: "key",
+        },
+        { pricing_model: "on_demand" },
+      );
+      await jest.advanceTimersByTimeAsync(130_000);
+      await started;
+
+      expect(authRequestMock).not.toHaveBeenCalled();
+      expect(setSchedulingMock).not.toHaveBeenCalled();
+      expect(startMock).toHaveBeenCalledTimes(1);
+    } finally {
+      getMock.mockReset();
+      jest.useRealTimers();
+    }
+  });
+
   it("never changes the scheduling of a running instance on start", async () => {
     getMock.mockResolvedValueOnce([
       {
