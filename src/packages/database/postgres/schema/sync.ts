@@ -72,6 +72,10 @@ import {
   ensureFederatedMintLogSchema,
   federatedMintLogSchemaNeedsSync,
 } from "./federated-connector-mint-log";
+import {
+  ensureFederatedConnectorGuards,
+  federatedConnectorGuardsNeedSync,
+} from "./federated-connector-guards";
 
 const log = getLogger("db:schema:sync");
 
@@ -510,6 +514,7 @@ export async function syncSchema(
     if (dbSchema.federated_connector_mint_log != null) {
       await ensureFederatedMintLogSchema(db);
     }
+    await ensureFederatedConnectorGuards(db, new Set(Object.keys(dbSchema)));
     if (dbSchema.purchases != null) {
       await ensurePurchaseCostCentsSchema(db);
     }
@@ -654,6 +659,12 @@ export async function schemaNeedsSync(
       (await federatedMintLogSchemaNeedsSync(db))
     ) {
       dbg("detected missing federated connector mint log guard");
+      return true;
+    }
+    if (
+      await federatedConnectorGuardsNeedSync(db, new Set(Object.keys(dbSchema)))
+    ) {
+      dbg("detected missing federated connector table guard");
       return true;
     }
     if (

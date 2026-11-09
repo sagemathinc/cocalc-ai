@@ -19,6 +19,7 @@ import {
   type ProjectLogRow,
 } from "@cocalc/conat/hub/api/projects";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { revokeFederatedSharedProjectApprovalsForRehome } from "@cocalc/server/federated-connectors/approvals";
 import { assertBayAcceptsProjectOwnership } from "@cocalc/server/bay-registry";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -508,15 +509,30 @@ async function flipSourceOwnershipIfNeeded({
   project_id: string;
   dest_bay_id: string;
 }) {
-  await getPool().query(
-    `
-      UPDATE projects
-         SET owning_bay_id = $2
-       WHERE project_id = $1
-         AND owning_bay_id IS DISTINCT FROM $2
-    `,
-    [project_id, dest_bay_id],
-  );
+  // Shared-project approvals for federated connectors are not copied to the
+  // destination, and the ones left here must never come back to life if the
+  // project later returns to this bay: they end in the same transaction that
+  // hands the project off (also on a retry after the flip).
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `
+        UPDATE projects
+           SET owning_bay_id = $2
+         WHERE project_id = $1
+           AND owning_bay_id IS DISTINCT FROM $2
+      `,
+      [project_id, dest_bay_id],
+    );
+    await revokeFederatedSharedProjectApprovalsForRehome(client, project_id);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
   await updateLocalProjectionRows({
     project_id,
     dest_bay_id,

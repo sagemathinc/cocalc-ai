@@ -98,6 +98,12 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Source sequence and writer epoch are owner-issued fences and require destination registration and rescan rather than raw row copying.",
   },
+  federated_connector_shared_project_approvals: {
+    table: "federated_connector_shared_project_approvals",
+    status: "not-portable",
+    reason:
+      "Owner approvals control which account's cloud credentials may be used in a shared project. Rehome does not copy them, so a rehomed shared project fails closed until a current owner approves again; a future copy rule must preserve revoked_at and revoked_by unchanged.",
+  },
   project_collab_invites: {
     table: "project_collab_invites",
     status: "not-portable",
