@@ -10,6 +10,7 @@ import {
   GoogleIdentityError,
   introspectAccessToken,
   isGoogleUniqueId,
+  metadataIdToken,
   parseSignerRecord,
   parseTokenInfo,
   signerAccessToken,
@@ -301,5 +302,60 @@ describe("verifyGoogleIdToken", () => {
       "id_token_invalid",
     );
     await expect(verifyT("a.b")).rejects.toThrow("id_token_invalid");
+  });
+});
+
+describe("metadataIdToken", () => {
+  const TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln";
+  function fetchOf(status: number, text: string) {
+    const urls: string[] = [];
+    const headers: any[] = [];
+    const f = async (url: string, init: any) => {
+      urls.push(url);
+      headers.push(init.headers);
+      return { status, text: async () => text };
+    };
+    return { f: f as any, urls, headers };
+  }
+
+  it("asks the metadata server only, for the cluster audience, format=full", async () => {
+    const m = fetchOf(200, `${TOKEN}\n`);
+    expect(
+      await metadataIdToken({ fetchImpl: m.f, audience: "cluster-1", env: {} }),
+    ).toBe(TOKEN);
+    expect(m.urls).toEqual([
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=cluster-1&format=full",
+    ]);
+    expect(m.headers[0]).toEqual({ "Metadata-Flavor": "Google" });
+  });
+
+  it("refuses overrides, a bad audience, and anything but a JWT", async () => {
+    await expect(
+      metadataIdToken({
+        fetchImpl: fetchOf(200, TOKEN).f,
+        audience: "cluster-1",
+        env: { GCE_METADATA_HOST: "evil.example" },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      metadataIdToken({
+        fetchImpl: fetchOf(200, TOKEN).f,
+        audience: "a&b=c",
+        env: {},
+      }),
+    ).rejects.toThrow();
+    for (const [status, text] of [
+      [404, TOKEN],
+      [200, "not a token"],
+      [200, "a.b"],
+    ] as const) {
+      await expect(
+        metadataIdToken({
+          fetchImpl: fetchOf(status, text).f,
+          audience: "cluster-1",
+          env: {},
+        }),
+      ).rejects.toThrow();
+    }
   });
 });

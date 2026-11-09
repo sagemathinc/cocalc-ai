@@ -87,6 +87,29 @@ export const isAllowlisted: BrokerDeps["isAllowlisted"] = async (entry) => {
   return rows.length === 1;
 };
 
+/** A mint log row's query parameters, in the order both mint logs use. */
+export function mintLogParams(row: MintLogRow): unknown[] {
+  return [
+    row.outcome,
+    row.reason,
+    row.site_id,
+    row.account_id,
+    row.agent_id,
+    row.project_id,
+    row.host_id,
+    row.run_id,
+    row.connection_id,
+    row.grant_id,
+    row.grant_revision,
+    row.lease_id,
+    row.jti,
+    row.key_version,
+    row.service_account,
+    row.issued_at,
+    row.expires_at,
+  ];
+}
+
 /** Appends a mint log row. The database sets its time. */
 export async function recordMint(row: MintLogRow): Promise<void> {
   await getPool().query(
@@ -100,25 +123,7 @@ export async function recordMint(row: MintLogRow): Promise<void> {
                   ELSE to_timestamp($16::BIGINT / 1000.0) END,
              CASE WHEN $17::BIGINT IS NULL THEN NULL
                   ELSE to_timestamp($17::BIGINT / 1000.0) END)`,
-    [
-      row.outcome,
-      row.reason,
-      row.site_id,
-      row.account_id,
-      row.agent_id,
-      row.project_id,
-      row.host_id,
-      row.run_id,
-      row.connection_id,
-      row.grant_id,
-      row.grant_revision,
-      row.lease_id,
-      row.jti,
-      row.key_version,
-      row.service_account,
-      row.issued_at,
-      row.expires_at,
-    ],
+    mintLogParams(row),
   );
 }
 
@@ -135,8 +140,24 @@ export async function withLeaseLock<T>(
   lease_id: string,
   fn: () => Promise<T>,
 ): Promise<T> {
+  return await withLeaseLockOn(getPool(), lease_id, fn);
+}
+
+/** The pool a lease lock is taken on (the hub's, or the broker store's). */
+export interface LockPool {
+  connect(): Promise<{
+    query(sql: string, params?: unknown[]): Promise<{ rows: any[] }>;
+    release(destroy?: boolean): void;
+  }>;
+}
+
+export async function withLeaseLockOn<T>(
+  pool: LockPool,
+  lease_id: string,
+  fn: () => Promise<T>,
+): Promise<T> {
   const key = `federated-lease:${lease_id}`;
-  const client = await getPool().connect();
+  const client = await pool.connect();
   let locked = false;
   try {
     const deadline = Date.now() + LEASE_LOCK_WAIT_MS;

@@ -261,6 +261,44 @@ export async function signerAccessToken({
   return { accessToken: token.access_token, expiresInS: token.expires_in };
 }
 
+/**
+ * The broker's fabric credential: a Google ID token from the metadata
+ * server only (audience = the cluster id, format=full), never stored. The
+ * fabric verifies it (broker-auth.ts); this only checks its shape.
+ */
+export async function metadataIdToken({
+  fetchImpl,
+  audience,
+  env,
+}: {
+  fetchImpl: TextFetch;
+  audience: string;
+  env: Record<string, string | undefined>;
+}): Promise<string> {
+  if (credentialOverridesPresent(env).length > 0) {
+    throw new GoogleIdentityError("credential_override_present");
+  }
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(audience)) {
+    throw new GoogleIdentityError("broker_not_configured");
+  }
+  const res = await boundedText(
+    fetchImpl,
+    `${METADATA_SA}identity?audience=${audience}&format=full`,
+    { method: "GET", headers: { "Metadata-Flavor": "Google" } },
+    METADATA_TIMEOUT_MS,
+    "metadata_unavailable",
+  );
+  const token = res.text.trim();
+  if (
+    res.status !== 200 ||
+    token.length > MAX_TOKEN_LENGTH ||
+    !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)
+  ) {
+    throw new GoogleIdentityError("metadata_unavailable");
+  }
+  return token;
+}
+
 // ---------------------------------------------------------------------------
 // Google ID tokens: how the broker proves itself to the fabric (§3), with no
 // stored secret. The broker gets one from its metadata server (audience = the
