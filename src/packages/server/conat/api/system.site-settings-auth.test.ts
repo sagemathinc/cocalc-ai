@@ -758,6 +758,26 @@ describe("site settings dangerous-session auth", () => {
     expect(bayStateWrites).toHaveLength(2);
   });
 
+  it("refuses the federated connector gate before applying anything", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => undefined);
+    const setServerSetting = jest.fn(async () => undefined);
+    bayOpsMock = jest.fn(() => ({ setServerSetting }));
+    const { setSiteSettings } = await import("./system");
+
+    await expect(
+      setSiteSettings({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        settings: [
+          { name: "site_name", value: "Seed Name" },
+          { name: "federated_cli_connectors", value: "gcloud" },
+        ],
+      }),
+    ).rejects.toThrow(/only through the federated connector gate/);
+    expect(dbMock.set_server_setting).not.toHaveBeenCalled();
+    expect(setServerSetting).not.toHaveBeenCalled();
+  });
+
   it("keeps Stripe secrets on the seed while mirroring public billing config", async () => {
     requireDangerousSessionAuthMock = jest.fn(async () => undefined);
     listClusterBayRegistryMock = jest.fn(async () => [

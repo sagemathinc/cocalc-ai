@@ -1,4 +1,5 @@
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
+import { FEDERATED_GATE_SETTING } from "@cocalc/util/ai/federated-connectors";
 import {
   aiSubscriptionStatus,
   type AiSubscriptionStatus,
@@ -1062,8 +1063,19 @@ async function assertSiteSettingWritable(name: string): Promise<void> {
   }
 }
 
+// The federated connector gate changes only through
+// server/federated-connectors/site-gate.ts, atomically with its audit row.
+function assertNotFederatedGate(name: string): void {
+  if (name === FEDERATED_GATE_SETTING) {
+    throw Error(
+      `setting '${name}' is changed only through the federated connector gate`,
+    );
+  }
+}
+
 async function setSiteSettingLocal(update: SiteSettingUpdate): Promise<void> {
   const normalized = normalizeSiteSettingUpdate(update);
+  assertNotFederatedGate(normalized.name);
   await assertSiteSettingWritable(normalized.name);
   await callback2(db().set_server_setting, normalized);
   if (isRootfsPrepullSiteSetting(normalized.name)) {
@@ -1180,7 +1192,7 @@ async function getGlobalConfigVersion(
   return version > 0 ? version : undefined;
 }
 
-async function recordGlobalConfigEventOnSeed({
+export async function recordGlobalConfigEventOnSeed({
   scope,
   account_id,
   source_bay_id,
@@ -1261,7 +1273,7 @@ async function recordGlobalConfigBayState({
   );
 }
 
-async function propagateSiteSettingsToBays(
+export async function propagateSiteSettingsToBays(
   settings: SiteSettingUpdate[],
   opts: { scope?: string; version?: number } = {},
 ): Promise<SiteSettingsSyncResult> {
@@ -1345,6 +1357,8 @@ export async function setSiteSettingsOnSeed({
     );
   }
   const updates = settings.map(normalizeSiteSettingUpdate);
+  // Before anything is applied.
+  updates.forEach(({ name }) => assertNotFederatedGate(name));
   await assertSessionLimitSettings(updates);
   const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
     isSignupEmailDomainPolicySetting(name),
@@ -7114,7 +7128,10 @@ function parseMap(raw?: string): Record<string, string> {
 }
 
 function resolveSharedHomeMode():
-  "disabled" | "fallback" | "prefer" | "always" {
+  | "disabled"
+  | "fallback"
+  | "prefer"
+  | "always" {
   const defaultMode =
     `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
       ? "disabled"
@@ -7133,7 +7150,8 @@ const OPENAI_API_KEY_KIND = "openai-api-key";
 
 function toExternalCredentialInfo(
   credential:
-    Awaited<ReturnType<typeof getExternalCredentialRouted>> | undefined,
+    | Awaited<ReturnType<typeof getExternalCredentialRouted>>
+    | undefined,
 ) {
   if (!credential) return undefined;
   return {

@@ -12,6 +12,10 @@ import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import { publicSignupEmailDomainPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 import { hasStripeBillingConfiguration } from "@cocalc/util/stripe/billing";
 import { enabledCliConnectors } from "@cocalc/util/ai/cli-connectors";
+import {
+  FEDERATED_GATE_SETTING,
+  parseFederatedGate,
+} from "@cocalc/util/ai/federated-connectors";
 export type { Customize };
 
 const fallback = (a?: string, b?: string): string =>
@@ -130,6 +134,11 @@ export default async function getCustomize(
         settings.claude_subscription_runtime === "project"
           ? "project"
           : "controller",
+      // Federated connectors the site gate lists (names only); the hub also
+      // refuses their turns server-side when the gate is off.
+      federatedCliConnectors: parseFederatedGate(
+        (settings as Record<string, unknown>)[FEDERATED_GATE_SETTING],
+      ),
 
       verifyEmailAddresses: settings.verify_emails && settings.email_enabled,
       cookieBannerEnabled: settings.cookie_banner_enabled,

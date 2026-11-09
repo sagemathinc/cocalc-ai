@@ -363,6 +363,7 @@ export type SiteSettingsExtrasKeys =
   | "github_connector_app_url"
   | "cloudflare_connector_client_id"
   | "cloudflare_connector_client_secret"
+  | "federated_cli_connectors"
   | "sagebrush_heading"
   | "sagebrush_client_secret"
   | "sagebrush_redirect_uris"
@@ -1044,6 +1045,9 @@ export const EXTRAS: SettingsExtras = {
     "Cloudflare OAuth Client Secret",
     { password: true },
   ),
+  federated_cli_connectors: connectorSetting("Federated Cloud Connectors", {
+    desc: "Cloud CLI connectors that use workload identity federation (gcloud). Changed only through the federated connector gate, which needs fresh authentication and is audited; this form can't change it.",
+  }),
   sagebrush_heading: sagebrushSetting("Sagebrush", {
     desc: "Sign in to sagebrush.space with CoCalc, its upload limits and purging its data when an account is deleted. See docs/sagebrush.md.",
     type: "header",

@@ -16,6 +16,18 @@
 export const FEDERATED_CLI_CONNECTORS = ["gcloud"] as const;
 export type FederatedCliConnector = (typeof FEDERATED_CLI_CONNECTORS)[number];
 
+/** Site setting that turns federated connectors on (the gate). */
+export const FEDERATED_GATE_SETTING = "federated_cli_connectors";
+
+/**
+ * The federated connectors the site gate lists: known names only, unique and
+ * sorted, from a comma- or space-separated value. Public: names only.
+ */
+export function parseFederatedGate(value: unknown): FederatedCliConnector[] {
+  const names = `${value ?? ""}`.split(/[\s,]+/).filter(Boolean);
+  return FEDERATED_CLI_CONNECTORS.filter((c) => names.includes(c));
+}
+
 export function isFederatedCliConnector(
   value: unknown,
 ): value is FederatedCliConnector {

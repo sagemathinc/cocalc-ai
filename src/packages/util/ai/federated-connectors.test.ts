@@ -12,6 +12,7 @@ import {
   isGcpServiceAccount,
   isSaLabel,
   parseFederatedConnectorTurnResult,
+  parseFederatedGate,
   parseGcloudLeasesEnded,
   parseGcloudTurnToken,
   validateFederationAttributes,
@@ -381,5 +382,15 @@ describe("canonicalJson", () => {
     ["a bigint", BigInt(1)],
   ])("refuses %s", (_name, value) => {
     expect(() => canonicalJson(value)).toThrow();
+  });
+});
+
+describe("federated gate setting", () => {
+  it("keeps known names only, unique and in order", () => {
+    expect(parseFederatedGate(undefined)).toEqual([]);
+    expect(parseFederatedGate("")).toEqual([]);
+    expect(parseFederatedGate("gcloud")).toEqual(["gcloud"]);
+    expect(parseFederatedGate(" aws, gcloud gcloud ")).toEqual(["gcloud"]);
+    expect(parseFederatedGate("gcloudx")).toEqual([]);
   });
 });

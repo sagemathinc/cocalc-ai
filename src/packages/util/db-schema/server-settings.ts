@@ -173,6 +173,7 @@ export interface Customize {
   cliConnectors?: ("github" | "cloudflare")[];
   /** Where subscription-paid Claude agents run (site-defaults). */
   claudeSubscriptionRuntime?: "controller" | "project";
+  federatedCliConnectors?: "gcloud"[];
   googleVertexaiEnabled?: boolean;
   mistralEnabled?: boolean;
   anthropicEnabled?: boolean;
