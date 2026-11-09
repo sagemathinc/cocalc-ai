@@ -87,6 +87,7 @@ function setup(
     grant?: any;
     loadGrant?: BrokerDeps["loadGrant"];
     recordMint?: BrokerDeps["recordMint"];
+    recordMints?: BrokerDeps["recordMints"];
     withLeaseLock?: BrokerDeps["withLeaseLock"];
     turnLive?: boolean;
     allowlisted?: boolean;
@@ -150,6 +151,7 @@ function setup(
       (async (row) => {
         rows.push(row);
       }),
+    ...(opts.recordMints ? { recordMints: opts.recordMints } : {}),
     limiter: opts.limiter ?? new TokenBucketLimiter(DEFAULT_RATE_LIMITS),
     random: () => 0.5,
   };
@@ -582,5 +584,140 @@ describe("broker: secrets stay in the token field", () => {
     } finally {
       for (const spy of spies) spy.mockRestore();
     }
+  });
+});
+
+describe("broker: the final home-bay check (design v3.3.2)", () => {
+  // The directory's answer, which a test moves between the checks.
+  function directory(home: string) {
+    const state = { home, fail: false };
+    const guardFor = (bay: string) => ({
+      scope: bay,
+      confirmHome: async () => {
+        if (state.fail) throw Error("seed unavailable");
+        return state.home === bay;
+      },
+    });
+    return { state, guardFor };
+  }
+
+  it("issues when the caller is still the home bay", async () => {
+    const t = setup();
+    const d = directory("bay-a");
+    const r = await t.broker.getToken(request(), d.guardFor("bay-a"));
+    expect(r.status).toBe("issued");
+    expect(t.rows.map((x) => x.outcome)).toEqual(["issued"]);
+  });
+
+  it("withholds a token minted while the account moved: nothing reaches A, nothing is cached, B mints afresh", async () => {
+    const pairs: MintLogRow[][] = [];
+    const t = setup({
+      recordMints: async (rows) => {
+        pairs.push(rows);
+      },
+    });
+    const d = directory("bay-a");
+    // The account moves to B after the initial check, during the mint.
+    let fetches = 0;
+    const realFetch = (t.broker as any).deps.fetchImpl;
+    (t.broker as any).deps.fetchImpl = async (url: string, init: any) => {
+      fetches += 1;
+      if (fetches === 2) d.state.home = "bay-b";
+      return await realFetch(url, init);
+    };
+    const a = await t.broker.getToken(request(), d.guardFor("bay-a"));
+    expect(a).toEqual({ status: "denied", reason: "not_home_bay" });
+    expect(JSON.stringify(a)).not.toContain(ACCESS_TOKEN);
+    // One transaction: the issued row and the home_bay_moved row together.
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].map((x) => [x.outcome, x.reason])).toEqual([
+      ["issued", null],
+      ["denied", "home_bay_moved"],
+    ]);
+    expect(pairs[0][1].lease_id).toBe(UUID(8));
+    expect(t.broker.stats().cached_tokens).toBe(0);
+    expect(t.broker.stats().home_bay_moved).toBe(1);
+    // A again: refused (not home), never the discarded token.
+    expect(
+      (await t.broker.getToken(request(), d.guardFor("bay-a"))).status,
+    ).toBe("denied");
+    // B, the new home: a fresh Google exchange.
+    const before = t.calls.length;
+    const b = await t.broker.getToken(request(), d.guardFor("bay-b"));
+    expect(b.status).toBe("issued");
+    expect(t.calls.length).toBe(before + 2);
+  });
+
+  it("withholds the token when the final check fails or is malformed", async () => {
+    for (const confirmHome of [
+      async () => {
+        throw Error("seed unavailable");
+      },
+      async () => "bay-a" as any,
+      async () => undefined as any,
+    ]) {
+      const t = setup();
+      const r = await t.broker.getToken(request(), {
+        scope: "bay-a",
+        confirmHome,
+      });
+      expect(r).toEqual({ status: "denied", reason: "not_home_bay" });
+      expect(t.rows.map((x) => x.reason)).toEqual([null, "home_bay_moved"]);
+      expect(t.broker.stats().cached_tokens).toBe(0);
+    }
+  });
+
+  it("gives every concurrent waiter not_home_bay, never the token", async () => {
+    const t = setup();
+    const d = directory("bay-b");
+    const results = await Promise.all([
+      t.broker.getToken(request(), d.guardFor("bay-a")),
+      t.broker.getToken(request(), d.guardFor("bay-a")),
+      t.broker.getToken(request(), d.guardFor("bay-a")),
+    ]);
+    for (const r of results) {
+      expect(r).toEqual({ status: "denied", reason: "not_home_bay" });
+    }
+    expect(t.calls).toHaveLength(2); // one exchange, shared and withheld
+  });
+
+  it("never shares an answer across callers", async () => {
+    const t = setup();
+    const d = directory("bay-a");
+    const [a, b] = await Promise.all([
+      t.broker.getToken(request(), d.guardFor("bay-a")),
+      t.broker.getToken(request(), d.guardFor("bay-b")),
+    ]);
+    expect(a.status).toBe("issued");
+    expect(b).toEqual({ status: "denied", reason: "not_home_bay" });
+  });
+
+  it("checks again before returning a cached token", async () => {
+    const t = setup();
+    const d = directory("bay-a");
+    expect(
+      (await t.broker.getToken(request(), d.guardFor("bay-a"))).status,
+    ).toBe("issued");
+    d.state.home = "bay-b";
+    t.advance(60_000);
+    const r = await t.broker.getToken(request(), d.guardFor("bay-a"));
+    expect(r).toEqual({ status: "denied", reason: "not_home_bay" });
+    expect(t.rows.at(-1)).toMatchObject({
+      outcome: "denied",
+      reason: "home_bay_moved",
+    });
+    expect(t.broker.stats().cached_tokens).toBe(0);
+  });
+
+  it("returns no token when the pair of rows can't be written", async () => {
+    const t = setup({
+      recordMints: async () => {
+        throw Error("store down");
+      },
+    });
+    const d = directory("bay-b");
+    const r = await t.broker.getToken(request(), d.guardFor("bay-a"));
+    expect(r).toEqual({ status: "error", reason: "audit_write_failed" });
+    expect(t.broker.stats().cached_tokens).toBe(0);
   });
 });

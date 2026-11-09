@@ -21,7 +21,7 @@ Nothing here logs reply subjects, correlations or tokens.
 
 import { createHash } from "node:crypto";
 import { canonicalJson, isUuid } from "@cocalc/util/ai/federated-connectors";
-import type { MintRequest, MintResult } from "./broker";
+import type { MintGuard, MintRequest, MintResult } from "./broker";
 
 export const BROKER_PUBLIC_KEYS_MAX_BYTES = 16 * 1024;
 const MAX_KEYS = 8;
@@ -232,7 +232,7 @@ export function createBrokerServiceHandler({
   clusterId: string;
   /** The account's home bay, from the directory. */
   homeBayOf(account_id: string): Promise<string | undefined>;
-  getToken(request: MintRequest): Promise<MintResult>;
+  getToken(request: MintRequest, guard: MintGuard): Promise<MintResult>;
   publicKeys(): Promise<PublicKeyEntry[]>;
 }) {
   const counters: BrokerServiceCounters = {
@@ -278,9 +278,16 @@ export function createBrokerServiceHandler({
         counters.not_home_bay += 1;
         throw new BrokerServiceRefusal("not_home_bay");
       }
+      // The final check (v3.3.2) asks the directory again after the mint,
+      // inside the broker core, before anything is cached or returned.
+      const guard: MintGuard = {
+        scope: bay_id,
+        confirmHome: async () =>
+          (await homeBayOf(request.account_id)) === bay_id,
+      };
       return {
         request_sha256: mintRequestSha256(request),
-        result: await getToken(request),
+        result: await getToken(request, guard),
       };
     },
     async publicKeys(

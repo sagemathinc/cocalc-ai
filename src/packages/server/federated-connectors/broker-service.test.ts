@@ -177,6 +177,30 @@ describe("the broker's handler", () => {
     expect(parseMintEnvelope(env, REQ)).toEqual(ISSUED);
   });
 
+  it("hands the core a guard scoped to the caller bay that asks the directory again", async () => {
+    let home = "bay-a";
+    const lookups: string[] = [];
+    const getToken = jest.fn(async (_r: MintRequest, guard: any) => {
+      expect(guard.scope).toBe("bay-a");
+      expect(await guard.confirmHome()).toBe(true);
+      home = "bay-b"; // a rehome between the checks
+      expect(await guard.confirmHome()).toBe(false);
+      return ISSUED;
+    });
+    const handler = createBrokerServiceHandler({
+      clusterId: "cluster-1",
+      homeBayOf: async (account_id) => {
+        lookups.push(account_id);
+        return home;
+      },
+      getToken,
+      publicKeys: async () => [],
+    });
+    await handler.mint(REQ, BAY_A);
+    expect(getToken).toHaveBeenCalledTimes(1);
+    expect(lookups).toEqual([REQ.account_id, REQ.account_id, REQ.account_id]);
+  });
+
   it("refuses the exact valid request from another bay, with no broker call", async () => {
     const { handler, getToken } = setup("bay-a");
     await expect(

@@ -462,6 +462,30 @@ async function getDirectoryAccountById(
   return rows[0] ? canonicalDirectoryEntry(rows[0]) : null;
 }
 
+/**
+ * The account's home bay from the directory table itself (the routing
+ * source of truth), and no other field: for the federated token broker's
+ * home-bay binding (G3b design v3.3.2), which must never read a bay-local
+ * row, a merged entry or a cache.
+ */
+export async function getDirectoryHomeBayId(
+  account_id: string,
+): Promise<string | undefined> {
+  if (!isValidUUID(account_id)) return;
+  await ensureClusterAccountDirectorySchema();
+  const { rows } = await getPool().query(
+    `SELECT home_bay_id
+       FROM ${TABLE}
+      WHERE account_id=$1
+        AND provisioned=TRUE
+        AND ${withCurrentBayParam(activeDirectoryAccountSql(), "$2")}
+      LIMIT 1`,
+    [account_id, getConfiguredBayId()],
+  );
+  const home = `${rows[0]?.home_bay_id ?? ""}`.trim();
+  return home || undefined;
+}
+
 async function getDirectoryAccountByEmail(
   email_address: string,
 ): Promise<AccountDirectoryEntry | null> {

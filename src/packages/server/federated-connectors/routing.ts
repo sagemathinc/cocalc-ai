@@ -32,7 +32,12 @@ import {
 import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
-import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterSeedBayId,
+  isMultiBayCluster,
+} from "@cocalc/server/cluster-config";
+import { getDirectoryHomeBayId } from "@cocalc/server/accounts/cluster-directory";
+import getPool from "@cocalc/database/pool";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import {
@@ -281,6 +286,24 @@ export const federatedConnectorAtThisBay: InterBayFederatedConnectorApi = {
   setProtectedSetting: setFederatedProtectedSettingOnSeed,
 };
 
+/**
+ * An account's home bay for the broker (v3.3.2), from the authority only: the
+ * cluster directory table in a multi-bay cluster; in a single-bay site, this
+ * bay, if the account exists here. Only the bay id leaves this function.
+ */
+export async function authoritativeHomeBayId(
+  account_id: string,
+): Promise<string | undefined> {
+  if (isMultiBayCluster()) return await getDirectoryHomeBayId(account_id);
+  const { rows } = await getPool().query(
+    `SELECT 1 FROM accounts
+      WHERE account_id=$1 AND (deleted IS NULL OR deleted = FALSE)
+      LIMIT 1`,
+    [account_id],
+  );
+  return rows.length === 1 ? getConfiguredBayId() : undefined;
+}
+
 /** The broker signer's unique id from the signer record now, if any. */
 export async function currentFederatedBrokerSignerId(): Promise<
   string | undefined
@@ -302,9 +325,7 @@ export const federatedBrokerLookupsAtThisBay = createBrokerLookupHandler({
     await verifyFederatedLiveTurn(request, federatedTurnDeps()),
   isAllowlisted,
   isSeedBay: () => getConfiguredBayId() === getConfiguredClusterSeedBayId(),
-  // Only the home bay id leaves this function (v3.3).
-  homeBayOf: async (account_id) =>
-    (await resolveAccountHomeBay({ account_id })).home_bay_id,
+  homeBayOf: authoritativeHomeBayId,
 });
 
 function apiAt(bay_id: string): InterBayFederatedConnectorApi {
