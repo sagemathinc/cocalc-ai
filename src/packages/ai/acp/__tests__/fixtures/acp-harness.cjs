@@ -107,8 +107,21 @@ const update = (text, sessionId = "fixture-session") =>
       },
     },
   });
-readline.createInterface({ input: process.stdin }).on("line", (line) => {
+const lineReader = readline.createInterface({ input: process.stdin });
+// --load-delay-ms=N: answer session/load only after N ms, like an agent that
+// replays a long saved history before it can respond.
+const loadDelayMs = Number(
+  (process.argv.find((arg) => arg.startsWith("--load-delay-ms=")) ?? "=0").split("=")[1],
+);
+lineReader.on("line", (line) => {
   const message = JSON.parse(line);
+  if (message.method === "session/load" && loadDelayMs > 0 && !message.delayedLoad) {
+    setTimeout(
+      () => lineReader.emit("line", JSON.stringify({ ...message, delayedLoad: true })),
+      loadDelayMs,
+    );
+    return;
+  }
   if (message.id === "question") {
     if (questionPrompt == null) return;
     update(JSON.stringify(message.result ?? { rejected: true }));
