@@ -1954,3 +1954,34 @@ describe("connected browser sessions count as used", () => {
     expect(socket.listenerCount("disconnect")).toBe(0);
   });
 });
+
+describe("federated connector inter-bay subjects", () => {
+  // The project snapshot, the broker's recheck and gate replication are
+  // reachable only by bay principals with an active credential.
+  const subjects = [
+    "bay.bay-1.rpc.federated-connector.v1",
+    "bay.bay-1.rpc.federated-gate-replica.v1",
+  ];
+
+  it("refuses accounts, projects, hosts and hubs without a bay credential", async () => {
+    const previous = process.env.COCALC_CLUSTER_ROLE;
+    process.env.COCALC_CLUSTER_ROLE = "seed";
+    try {
+      for (const subject of subjects) {
+        for (const type of PUBSUB) {
+          for (const user of [
+            { account_id },
+            { project_id },
+            { host_id },
+            { hub_id: "hub" },
+          ]) {
+            expect(await isAllowed({ user, subject, type })).toBe(false);
+          }
+        }
+      }
+    } finally {
+      if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;
+      else process.env.COCALC_CLUSTER_ROLE = previous;
+    }
+  });
+});

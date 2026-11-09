@@ -117,7 +117,8 @@ async function gateOpen(): Promise<boolean> {
   );
 }
 
-function turnDeps(): FederatedTurnDeps {
+/** The turn's real dependencies on this bay. */
+export function federatedTurnDeps(): FederatedTurnDeps {
   return {
     assertTrustedSource,
     verifyActiveAgentRun,
@@ -161,10 +162,11 @@ export async function reconcileFederatedLeasesAtThisBay() {
 
 /** This bay's side of every federated connector call. */
 export const federatedConnectorAtThisBay: InterBayFederatedConnectorApi = {
-  beginTurn: async (opts) => await beginFederatedTurn(opts, turnDeps()),
-  endTurn: async (opts) => await endFederatedTurn(opts, turnDeps()),
+  beginTurn: async (opts) =>
+    await beginFederatedTurn(opts, federatedTurnDeps()),
+  endTurn: async (opts) => await endFederatedTurn(opts, federatedTurnDeps()),
   verifyLiveTurn: async (opts: FederatedMintRequest) =>
-    await verifyFederatedLiveTurn(opts, turnDeps()),
+    await verifyFederatedLiveTurn(opts, federatedTurnDeps()),
   listAssignments: listAssignmentsAtHome,
   saveAssignment: saveAssignmentAtHome,
   removeAssignment: removeAssignmentAtHome,
