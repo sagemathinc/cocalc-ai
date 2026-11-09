@@ -11,9 +11,9 @@ The token broker's transport (G3b design v3 §3).
   by every bay process.
 
 The token broker's lookups on a bay:
-bay.<id>.rpc.federated-broker.v1, with exactly loadGrant, verifyLiveTurn and
-isAllowlisted. The broker asks the account's home bay for the first two and
-the seed bay for the allowlist. The handler gets the caller from the conat
+bay.<id>.rpc.federated-broker.v1, with exactly loadGrant, verifyLiveTurn,
+isAllowlisted and homeBay. The broker asks the account's home bay for the
+first two and the seed bay for the allowlist and the home bay. The handler gets the caller from the conat
 server (never from the request); the bay checks it is the broker, for the
 signer recorded now.
 */
@@ -34,6 +34,7 @@ export interface InterBayFederatedBrokerApi {
     permission_profile: string;
     target_project: string;
   }): Promise<{ allowlisted: boolean }>;
+  homeBay(opts: { account_id: string }): Promise<unknown>;
 }
 
 const SERVICE = "inter-bay-federated-broker";

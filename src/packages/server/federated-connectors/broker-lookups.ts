@@ -4,12 +4,14 @@
  */
 
 /*
-A bay's answers to the token broker (G3b design v3 §3): exactly three
+A bay's answers to the token broker (G3b design v3 §3, v3.3): exactly four
 lookups on bay.<id>.rpc.federated-broker.v1.
 
 - loadGrant: the grant and its connection (on the account's home bay);
 - verifyLiveTurn: the turn recheck before every mint (G4b);
-- isAllowlisted: the site allowlist (only the seed answers).
+- isAllowlisted: the site allowlist (only the seed answers);
+- homeBay: an account's home bay and nothing else (only the seed answers),
+  for the broker's home-bay binding of each mint.
 
 Only the broker may ask: the caller must carry exactly the broker stamp the
 conat server sets for a verified broker connection, equal to the signer
@@ -31,6 +33,7 @@ export const BROKER_LOOKUP_METHODS = [
   "loadGrant",
   "verifyLiveTurn",
   "isAllowlisted",
+  "homeBay",
 ] as const;
 export type BrokerLookupMethod = (typeof BROKER_LOOKUP_METHODS)[number];
 
@@ -47,6 +50,19 @@ function exactKeys(value: unknown, keys: readonly string[]): value is object {
   }
   const own = Object.keys(value);
   return own.length === keys.length && keys.every((k) => own.includes(k));
+}
+
+const BAY_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+function isBayId(value: unknown): value is string {
+  return typeof value === "string" && BAY_ID_RE.test(value);
+}
+
+/** The broker's strict reading of a homeBay reply. */
+export function parseHomeBayReply(value: unknown): string | undefined {
+  if (!exactKeys(value, ["home_bay_id"])) return;
+  const { home_bay_id } = value as { home_bay_id: unknown };
+  return isBayId(home_bay_id) ? home_bay_id : undefined;
 }
 
 /** Requires exactly the broker's stamp, for the signer recorded now. */
@@ -74,12 +90,15 @@ export function createBrokerLookupHandler({
   verifyLiveTurn,
   isAllowlisted,
   isSeedBay,
+  homeBayOf,
 }: {
   currentSignerId: () => Promise<string | undefined>;
   loadGrant: BrokerDeps["loadGrant"];
   verifyLiveTurn: (request: MintRequest) => Promise<void>;
   isAllowlisted: BrokerDeps["isAllowlisted"];
   isSeedBay: () => boolean;
+  /** The account's home bay id, or undefined if unknown. */
+  homeBayOf: (account_id: string) => Promise<string | undefined>;
 }) {
   return async function handle(
     method: unknown,
@@ -130,6 +149,25 @@ export function createBrokerLookupHandler({
       }
       if (!isSeedBay()) throw new BrokerLookupRefusal("not_seed_bay");
       return { allowlisted: await isAllowlisted(v as any) };
+    }
+    if (method === "homeBay") {
+      if (
+        !exactKeys(input, ["account_id"]) ||
+        !isUuid((input as any).account_id)
+      ) {
+        throw new BrokerLookupRefusal("request_refused");
+      }
+      if (!isSeedBay()) throw new BrokerLookupRefusal("not_seed_bay");
+      let home_bay_id: string | undefined;
+      try {
+        home_bay_id = await homeBayOf((input as any).account_id);
+      } catch {
+        home_bay_id = undefined;
+      }
+      if (!isBayId(home_bay_id)) {
+        throw new BrokerLookupRefusal("account_unknown");
+      }
+      return { home_bay_id };
     }
     throw new BrokerLookupRefusal("unknown_method");
   };

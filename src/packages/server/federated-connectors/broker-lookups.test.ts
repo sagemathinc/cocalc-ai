@@ -5,7 +5,7 @@
 
 // Synthetic values only.
 
-import { createBrokerLookupHandler } from "./broker-lookups";
+import { createBrokerLookupHandler, parseHomeBayReply } from "./broker-lookups";
 
 const ID = "109876543210987654321";
 const OTHER = "109876543210987654322";
@@ -35,18 +35,23 @@ function setup(current: string | null = ID, live = true, seed = true) {
     if (!live) throw Error(`turn ${U(8)} not live: secret detail`);
   });
   const isAllowlisted = jest.fn(async () => true);
+  const homeBayOf = jest.fn(
+    async (account_id: string): Promise<string | undefined> =>
+      account_id === U(2) ? "bay-0" : undefined,
+  );
   const handle = createBrokerLookupHandler({
     currentSignerId: async () => current ?? undefined,
     loadGrant,
     verifyLiveTurn,
     isAllowlisted,
     isSeedBay: () => seed,
+    homeBayOf,
   });
-  return { handle, loadGrant, verifyLiveTurn, isAllowlisted };
+  return { handle, loadGrant, verifyLiveTurn, isAllowlisted, homeBayOf };
 }
 
 describe("broker lookups on a bay", () => {
-  it("answers the broker's three lookups", async () => {
+  it("answers loadGrant, verifyLiveTurn and isAllowlisted", async () => {
     const t = setup();
     await expect(
       t.handle("loadGrant", [{ account_id: U(2), grant_id: U(7) }], BROKER),
@@ -80,6 +85,7 @@ describe("broker lookups on a bay", () => {
     expect(t.loadGrant).not.toHaveBeenCalled();
     expect(t.verifyLiveTurn).not.toHaveBeenCalled();
     expect(t.isAllowlisted).not.toHaveBeenCalled();
+    expect(t.homeBayOf).not.toHaveBeenCalled();
   });
 
   it("refuses the broker after a signer rotation, or with no signer recorded", async () => {
@@ -99,6 +105,9 @@ describe("broker lookups on a bay", () => {
     ["isAllowlisted", [{ ...ENTRY, extra: 1 }]],
     ["loadGrant", []],
     ["loadGrant", "x"],
+    ["homeBay", [{}]],
+    ["homeBay", [{ account_id: "x" }]],
+    ["homeBay", [{ account_id: U(2), email: "a" }]],
   ])("refuses a malformed %s request", async (method, args) => {
     const t = setup();
     await expect(t.handle(method, args, BROKER)).rejects.toThrow(
@@ -123,5 +132,47 @@ describe("broker lookups on a bay", () => {
       .handle("verifyLiveTurn", [MINT], BROKER)
       .catch((e) => e);
     expect(err.message).toBe("turn_not_live");
+  });
+
+  it("answers homeBay on the seed with the home bay id alone", async () => {
+    const t = setup();
+    await expect(
+      t.handle("homeBay", [{ account_id: U(2) }], BROKER),
+    ).resolves.toEqual({ home_bay_id: "bay-0" });
+  });
+
+  it("refuses homeBay off the seed, for an unknown account, or on a lookup failure", async () => {
+    const off = setup(ID, true, false);
+    await expect(
+      off.handle("homeBay", [{ account_id: U(2) }], BROKER),
+    ).rejects.toThrow("not_seed_bay");
+    expect(off.homeBayOf).not.toHaveBeenCalled();
+    const t = setup();
+    await expect(
+      t.handle("homeBay", [{ account_id: U(3) }], BROKER),
+    ).rejects.toThrow("account_unknown");
+    t.homeBayOf.mockRejectedValueOnce(Error("directory down: detail"));
+    const err = await t
+      .handle("homeBay", [{ account_id: U(2) }], BROKER)
+      .catch((e) => e);
+    expect(err.message).toBe("account_unknown");
+    t.homeBayOf.mockResolvedValueOnce("bad bay id");
+    await expect(
+      t.handle("homeBay", [{ account_id: U(2) }], BROKER),
+    ).rejects.toThrow("account_unknown");
+  });
+
+  it("parses a homeBay reply strictly", () => {
+    expect(parseHomeBayReply({ home_bay_id: "bay-0" })).toBe("bay-0");
+    for (const bad of [
+      null,
+      "bay-0",
+      {},
+      { home_bay_id: "" },
+      { home_bay_id: "a.b" },
+      { home_bay_id: "bay-0", email: "x" },
+    ]) {
+      expect(parseHomeBayReply(bad)).toBeUndefined();
+    }
   });
 });

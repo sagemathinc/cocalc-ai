@@ -291,9 +291,9 @@ export async function currentFederatedBrokerSignerId(): Promise<
 }
 
 /**
- * This bay's answers to the broker's lookups (G3b design v3 §3): the grant
- * and the turn recheck from this bay's database (the broker asks the
- * account's home bay), the allowlist only on the seed.
+ * This bay's answers to the broker's lookups (G3b design v3 §3, v3.3): the
+ * grant and the turn recheck from this bay's database (the broker asks the
+ * account's home bay), the allowlist and the home bay only on the seed.
  */
 export const federatedBrokerLookupsAtThisBay = createBrokerLookupHandler({
   currentSignerId: currentFederatedBrokerSignerId,
@@ -302,6 +302,9 @@ export const federatedBrokerLookupsAtThisBay = createBrokerLookupHandler({
     await verifyFederatedLiveTurn(request, federatedTurnDeps()),
   isAllowlisted,
   isSeedBay: () => getConfiguredBayId() === getConfiguredClusterSeedBayId(),
+  // Only the home bay id leaves this function (v3.3).
+  homeBayOf: async (account_id) =>
+    (await resolveAccountHomeBay({ account_id })).home_bay_id,
 });
 
 function apiAt(bay_id: string): InterBayFederatedConnectorApi {
