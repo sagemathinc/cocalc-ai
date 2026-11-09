@@ -68,6 +68,10 @@ import {
   ensureProjectMembershipAuditSchema,
   projectMembershipAuditSchemaNeedsSync,
 } from "./project-membership-audit";
+import {
+  ensureFederatedMintLogSchema,
+  federatedMintLogSchemaNeedsSync,
+} from "./federated-connector-mint-log";
 
 const log = getLogger("db:schema:sync");
 
@@ -503,6 +507,9 @@ export async function syncSchema(
     ) {
       await ensureProjectMembershipAuditSchema(db);
     }
+    if (dbSchema.federated_connector_mint_log != null) {
+      await ensureFederatedMintLogSchema(db);
+    }
     if (dbSchema.purchases != null) {
       await ensurePurchaseCostCentsSchema(db);
     }
@@ -640,6 +647,13 @@ export async function schemaNeedsSync(
       (await projectMembershipAuditSchemaNeedsSync(db))
     ) {
       dbg("detected missing project membership audit trigger");
+      return true;
+    }
+    if (
+      dbSchema.federated_connector_mint_log != null &&
+      (await federatedMintLogSchemaNeedsSync(db))
+    ) {
+      dbg("detected missing federated connector mint log guard");
       return true;
     }
     if (
