@@ -43,6 +43,7 @@ import {
   createBrokerStore,
   createKmsClient,
   createPinnedAgent,
+  createPreSignReference,
   parseFabricUrl,
   ReferenceClock,
   referenceDateFrom,
@@ -61,7 +62,8 @@ import {
 import { isKmsKeyVersion, KmsFederationSigner } from "./signer";
 
 export const HEARTBEAT_INTERVAL_MS = 10_000;
-export const READINESS_INTERVAL_MS = 60_000;
+// Under the 60 s reference validity, so readiness doesn't flap.
+export const READINESS_INTERVAL_MS = 30_000;
 export const PURGE_INTERVAL_MS = 24 * 60 * 60_000;
 
 export interface BrokerConfig {
@@ -229,7 +231,12 @@ export async function startBroker(
     loadGrant: lookups.loadGrant,
     verifyLiveTurn: lookups.verifyLiveTurn,
     isAllowlisted: lookups.isAllowlisted,
-    referenceNow: () => clock.referenceNow(),
+    // Before every sign: its own key-version GET and strict Date (§4).
+    referenceNow: createPreSignReference({
+      kms,
+      keyVersion: config.keyVersion,
+      monotonicNow: deps.monotonicNow,
+    }),
     now: deps.now,
     monotonicNow: deps.monotonicNow,
     withLeaseLock: store.withLeaseLock,

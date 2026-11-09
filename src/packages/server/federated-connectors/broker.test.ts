@@ -100,6 +100,8 @@ function setup(
   } = {},
 ) {
   let now = NOW;
+  // The true time Google's Date reports: wall-clock steps don't move it.
+  let trueNow = NOW;
   let mono = 1_000;
   const rows: MintLogRow[] = [];
   const calls: { url: string; body?: string; auth?: string }[] = [];
@@ -143,7 +145,7 @@ function setup(
     },
     async referenceNow() {
       referenceCalls += 1;
-      return opts.reference ?? now;
+      return opts.reference ?? trueNow;
     },
     now: () => now,
     monotonicNow: () => mono,
@@ -174,6 +176,7 @@ function setup(
     calls,
     advance: (ms: number) => {
       now += ms;
+      trueNow += ms;
       mono += ms;
     },
     /** Steps only the wall clock (the monotonic clock doesn't move). */
@@ -487,14 +490,29 @@ describe("broker: limits, clock and the provider", () => {
     expect(t.calls).toHaveLength(0);
   });
 
-  it("checks the clock against a fresh reference at most every 5 minutes", async () => {
+  it("asks for a fresh reference before every sign, with nothing cached", async () => {
     const t = setup();
     await t.broker.getToken(request());
     await t.broker.getToken(request({ lease_id: UUID(11) }));
-    expect(t.referenceCalls()).toBe(1);
-    t.advance(6 * 60_000);
+    expect(t.referenceCalls()).toBe(2); // two signs < 60 s apart, two asks
+    t.advance(1_000);
     await t.broker.getToken(request({ lease_id: UUID(12) }));
-    expect(t.referenceCalls()).toBe(2);
+    expect(t.referenceCalls()).toBe(3);
+    // A cached token needs no sign, so no reference.
+    await t.broker.getToken(request({ lease_id: UUID(12) }));
+    expect(t.referenceCalls()).toBe(3);
+  });
+
+  it("refuses to sign when the reference can't be had", async () => {
+    const t = setup();
+    (t.broker as any).deps.referenceNow = async () => {
+      throw Error("no fresh reference");
+    };
+    expect(await t.broker.getToken(request())).toEqual({
+      status: "error",
+      reason: "clock_unverified",
+    });
+    expect(t.calls).toHaveLength(0);
   });
 
   it("denies when the provider refuses, and keeps nothing cached", async () => {

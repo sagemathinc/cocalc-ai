@@ -60,6 +60,54 @@ export const REFERENCE_ORIGINS = [
   "https://oauth2.googleapis.com",
 ] as const;
 
+const IMF_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const IMF_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+const IMF_RE =
+  /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat), (\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/;
+
+/**
+ * An RFC 7231 IMF-fixdate ("Sun, 06 Nov 1994 08:49:37 GMT"), strictly: that
+ * exact form, real calendar fields (no rollover) and the matching weekday.
+ * Anything else (RFC 850, asctime, other zones) is undefined.
+ */
+export function parseImfFixdate(value: unknown): number | undefined {
+  if (typeof value !== "string") return;
+  const m = IMF_RE.exec(value);
+  if (m == null) return;
+  const [, day, dd, mon, yyyy, hh, mi, ss] = m;
+  const year = Number(yyyy);
+  const month = IMF_MONTHS.indexOf(mon);
+  const date = Number(dd);
+  const hour = Number(hh);
+  const minute = Number(mi);
+  const second = Number(ss);
+  if (hour > 23 || minute > 59 || second > 60) return;
+  const t = Date.UTC(year, month, date, hour, minute, Math.min(second, 59));
+  const d = new Date(t);
+  if (
+    d.getUTCFullYear() !== year ||
+    d.getUTCMonth() !== month ||
+    d.getUTCDate() !== date ||
+    IMF_DAYS[d.getUTCDay()] !== day
+  ) {
+    return;
+  }
+  return t;
+}
+
 /** A reference time from a successful response of one of the four origins. */
 export function referenceDateFrom(
   url: string,
@@ -74,18 +122,20 @@ export function referenceDateFrom(
   }
   if (!(REFERENCE_ORIGINS as readonly string[]).includes(origin)) return;
   if (status < 200 || status > 299 || !date) return;
-  const t = Date.parse(date);
-  return Number.isFinite(t) ? t : undefined;
+  return parseImfFixdate(date);
 }
 
-/** referenceNow from the latest reference, probing when it's stale. */
+/** A reference is valid for this long, by the monotonic clock (§7). */
+export const REFERENCE_VALID_MS = 60_000;
+
+/** The latest reference for readiness (never the pre-sign source). */
 export class ReferenceClock {
   private last?: { reference: number; monotonic: number };
 
   constructor(
     private monotonicNow: () => number,
     private probe: () => Promise<void>,
-    private maxAgeMs = 5 * 60_000,
+    private maxAgeMs = REFERENCE_VALID_MS,
   ) {}
 
   record(reference: number): void {
@@ -172,53 +222,109 @@ export function createKmsClient({
   fetchImpl: JsonFetch;
   session: Pick<SignerSession, "token">;
   onReference: (reference: number) => void;
-}): KmsHttpClient {
+}): KmsHttpClient & {
+  /** A request and its own response's reference (strict Date), if any. */
+  requestWithReference<T>(opts: {
+    url: string;
+    method: "GET" | "POST";
+    data?: unknown;
+    timeout: number;
+  }): Promise<{ data: T; reference: number | undefined }>;
+} {
+  const send = async <T>({
+    url,
+    method,
+    data,
+    timeout,
+  }: {
+    url: string;
+    method: "GET" | "POST";
+    data?: unknown;
+    timeout: number;
+  }): Promise<{ data: T; reference: number | undefined }> => {
+    if (!url.startsWith("https://cloudkms.googleapis.com/v1/")) {
+      throw Error("refused: not a KMS URL");
+    }
+    const token = await session.token();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const res = await fetchImpl(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(data === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: data === undefined ? undefined : JSON.stringify(data),
+        signal: controller.signal,
+        redirect: "error",
+      });
+      const reference = referenceDateFrom(
+        url,
+        res.status,
+        res.headers.get("date"),
+      );
+      if (reference !== undefined) onReference(reference);
+      if (res.status < 200 || res.status > 299) {
+        // No body or token in the error: only the status.
+        throw Error(`KMS request failed (${res.status})`);
+      }
+      return { data: (await res.json()) as T, reference };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   return {
-    async request<T>({
-      url,
-      method,
-      data,
-      timeout,
-    }: {
+    async request<T>(opts: {
       url: string;
       method: "GET" | "POST";
       data?: unknown;
       timeout: number;
     }): Promise<{ data: T }> {
-      if (!url.startsWith("https://cloudkms.googleapis.com/v1/")) {
-        throw Error("refused: not a KMS URL");
-      }
-      const token = await session.token();
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
-      try {
-        const res = await fetchImpl(url, {
-          method,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            ...(data === undefined
-              ? {}
-              : { "Content-Type": "application/json" }),
-          },
-          body: data === undefined ? undefined : JSON.stringify(data),
-          signal: controller.signal,
-          redirect: "error",
-        });
-        const reference = referenceDateFrom(
-          url,
-          res.status,
-          res.headers.get("date"),
-        );
-        if (reference !== undefined) onReference(reference);
-        if (res.status < 200 || res.status > 299) {
-          // No body or token in the error: only the status.
-          throw Error(`KMS request failed (${res.status})`);
-        }
-        return { data: (await res.json()) as T };
-      } finally {
-        clearTimeout(timer);
-      }
+      const { data } = await send<T>(opts);
+      return { data };
     },
+    requestWithReference: send,
+  };
+}
+
+/**
+ * The pre-sign reference (design v3.4.2 §4): each call makes its own GET of
+ * the signing key version (ENABLED, RSA_SIGN_PKCS1_2048_SHA256) and returns
+ * that response's strict Date, advanced by the monotonic time since, valid
+ * for 60 s. Nothing cached: two signs, two GETs.
+ */
+export function createPreSignReference({
+  kms,
+  keyVersion,
+  monotonicNow,
+}: {
+  kms: Pick<ReturnType<typeof createKmsClient>, "requestWithReference">;
+  keyVersion: string;
+  monotonicNow: () => number;
+}): () => Promise<number> {
+  return async () => {
+    const { data, reference } = await kms.requestWithReference<{
+      state?: string;
+      algorithm?: string;
+    }>({
+      url: `https://cloudkms.googleapis.com/v1/${keyVersion}`,
+      method: "GET",
+      timeout: 10_000,
+    });
+    const at = monotonicNow();
+    if (
+      data?.state !== "ENABLED" ||
+      data?.algorithm !== "RSA_SIGN_PKCS1_2048_SHA256"
+    ) {
+      throw Error("signing key version not usable");
+    }
+    if (reference === undefined) throw Error("no reference time");
+    const age = monotonicNow() - at;
+    if (!(age >= 0) || age > REFERENCE_VALID_MS) {
+      throw Error("reference time too old");
+    }
+    return reference + age;
   };
 }
 

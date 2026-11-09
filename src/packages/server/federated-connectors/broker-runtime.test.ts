@@ -17,6 +17,8 @@ import {
   createBrokerStore,
   createKmsClient,
   createPinnedAgent,
+  createPreSignReference,
+  parseImfFixdate,
   parseFabricUrl,
   parseLoadGrantReply,
   ReferenceClock,
@@ -534,5 +536,120 @@ describe("the fabric connection's TLS pin", () => {
     expect(() => parseFabricUrl("wss://10.0.0.2")).toThrow("https");
     expect(() => parseFabricUrl("https://u:p@10.0.0.2")).toThrow("https");
     expect(parseFabricUrl("https://10.0.0.2:8443").port).toBe("8443");
+  });
+});
+
+describe("the pre-sign reference (design v3.4.2 §4)", () => {
+  it("parses only a strict IMF-fixdate", () => {
+    expect(parseImfFixdate("Sun, 06 Nov 1994 08:49:37 GMT")).toBe(
+      Date.UTC(1994, 10, 6, 8, 49, 37),
+    );
+    expect(parseImfFixdate(DATE)).toBe(DATE_MS);
+    for (const bad of [
+      "Sunday, 06-Nov-94 08:49:37 GMT", // RFC 850
+      "Sun Nov  6 08:49:37 1994", // asctime
+      "Sun, 06 Nov 1994 08:49:37 UTC",
+      "Sun, 06 Nov 1994 08:49:37 +0000",
+      "Sun, 06 Nov 1994 08:49:37",
+      "Mon, 06 Nov 1994 08:49:37 GMT", // wrong weekday
+      "Sun, 31 Nov 1994 08:49:37 GMT", // no such day
+      "Sun, 06 Nov 1994 24:00:00 GMT",
+      "Sun, 06 Nov 1994 08:60:00 GMT",
+      "Sun, 6 Nov 1994 08:49:37 GMT",
+      "sun, 06 nov 1994 08:49:37 GMT",
+      " Sun, 06 Nov 1994 08:49:37 GMT",
+      "2026-11-09T07:00:00Z",
+      "",
+      null,
+    ]) {
+      expect(parseImfFixdate(bad)).toBeUndefined();
+    }
+  });
+
+  function kmsWith(
+    over: { state?: string; date?: string | null; jump?: number } = {},
+  ) {
+    let mono = 0;
+    const gets: string[] = [];
+    const kms = createKmsClient({
+      fetchImpl: async (url, init) => {
+        gets.push(`${init.method} ${url}`);
+        return {
+          status: 200,
+          headers: {
+            get: (n: string) =>
+              n === "date"
+                ? over.date === undefined
+                  ? DATE
+                  : over.date
+                : null,
+          },
+          json: async () => {
+            mono += over.jump ?? 0;
+            return {
+              state: over.state ?? "ENABLED",
+              algorithm: "RSA_SIGN_PKCS1_2048_SHA256",
+            };
+          },
+        };
+      },
+      session: { token: async () => "ya29.fake" },
+      onReference: () => {},
+    });
+    const ref = createPreSignReference({
+      kms,
+      keyVersion:
+        "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+      monotonicNow: () => mono,
+    });
+    return { ref, gets, advance: (ms: number) => (mono += ms) };
+  }
+
+  it("does its own key-version GET on every call: two signs, two GETs", async () => {
+    const k = kmsWith();
+    expect(await k.ref()).toBe(DATE_MS);
+    k.advance(1_000);
+    expect(await k.ref()).toBe(DATE_MS);
+    expect(k.gets).toEqual([
+      "GET https://cloudkms.googleapis.com/v1/projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+      "GET https://cloudkms.googleapis.com/v1/projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+    ]);
+  });
+
+  it("refuses a disabled key version, a missing or non-IMF Date", async () => {
+    await expect(kmsWith({ state: "DISABLED" }).ref()).rejects.toThrow(
+      "not usable",
+    );
+    await expect(kmsWith({ date: null }).ref()).rejects.toThrow("no reference");
+    await expect(
+      kmsWith({ date: "Sunday, 06-Nov-94 08:49:37 GMT" }).ref(),
+    ).rejects.toThrow("no reference");
+  });
+
+  it("is valid for 60 s by the monotonic clock: 60,000 ms ok, 60,001 ms refused", async () => {
+    // The response is taken at monotonic 0; time passes before it's used.
+    const at = (jump: number) => {
+      let mono = 0;
+      const kms = {
+        requestWithReference: async () => {
+          const r = {
+            data: {
+              state: "ENABLED",
+              algorithm: "RSA_SIGN_PKCS1_2048_SHA256",
+            },
+            reference: DATE_MS,
+          };
+          return r as any;
+        },
+      };
+      let calls = 0;
+      return createPreSignReference({
+        kms,
+        keyVersion: "v",
+        monotonicNow: () => (calls++ === 0 ? mono : (mono += jump)),
+      });
+    };
+    expect(await at(60_000)()).toBe(DATE_MS + 60_000);
+    await expect(at(60_001)()).rejects.toThrow("too old");
   });
 });

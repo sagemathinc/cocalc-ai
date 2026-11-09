@@ -195,8 +195,8 @@ export const DEFAULT_RATE_LIMITS = {
 
 // ---------------------------------------------------------------------------
 
-/** A reference time is fresh for this long; then it is fetched again. */
-export const CLOCK_REFERENCE_MAX_AGE_MS = 5 * 60_000;
+/** A reference time is valid for this long (by the monotonic clock). */
+export const CLOCK_REFERENCE_MAX_AGE_MS = 60_000;
 
 /**
  * The caller's binding (design v3.3.2): scope is the fabric-authenticated
@@ -258,8 +258,6 @@ function requestKey(r: MintRequest, scope: string): string {
 export class FederatedTokenBroker {
   private cache = new Map<string, CachedToken>();
   private inflight = new Map<string, Promise<MintResult>>();
-  // A trusted reference time and the monotonic time it was taken at.
-  private clock?: { reference: number; monotonic: number };
   private invalidRequests = 0;
   private homeBayMoved = 0;
   private missingGuard = 0;
@@ -520,24 +518,14 @@ export class FederatedTokenBroker {
     ) {
       return await this.refuse(request, "error", "rate_limited", ids, 60_000);
     }
-    // Before EVERY sign: the wall clock must agree with the trusted
-    // reference advanced by the monotonic clock, so a wall-clock step in
-    // either direction is caught at once. The reference is refreshed when it
-    // is older than CLOCK_REFERENCE_MAX_AGE_MS of monotonic time.
+    // Before EVERY sign (design v3.4.2 §4): a fresh reference from the
+    // pre-sign source (its own key-version GET and strict Date; nothing
+    // cached here), and the wall clock must agree with it within the skew.
     try {
-      const mono = deps.monotonicNow ?? (() => performance.now());
-      const age = this.clock ? mono() - this.clock.monotonic : Infinity;
-      if (!this.clock || !(age >= 0) || age > CLOCK_REFERENCE_MAX_AGE_MS) {
-        const reference = await deps.referenceNow();
-        if (!Number.isFinite(reference)) throw Error("no reference");
-        this.clock = { reference, monotonic: mono() };
-      }
-      assertClockWithinSkew({
-        localNow: deps.now(),
-        referenceNow: this.clock.reference + (mono() - this.clock.monotonic),
-      });
+      const reference = await deps.referenceNow();
+      if (!Number.isFinite(reference)) throw Error("no reference");
+      assertClockWithinSkew({ localNow: deps.now(), referenceNow: reference });
     } catch {
-      this.clock = undefined;
       return await this.refuse(request, "error", "clock_unverified", ids);
     }
 
