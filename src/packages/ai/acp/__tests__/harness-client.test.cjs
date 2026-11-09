@@ -3783,10 +3783,10 @@ test("session/load has its own budget: default, configured and never below the r
   );
 });
 
-async function startDelayedLoad(t, timeoutMs, loadDelayMs) {
+async function startDelayedLoad(t, timeoutMs, loadDelayMs, extra = []) {
   const child = spawn(
     process.execPath,
-    [...profile.args, `--load-delay-ms=${loadDelayMs}`],
+    [...profile.args, `--load-delay-ms=${loadDelayMs}`, ...extra],
     { env: {}, stdio: "pipe" },
   );
   const closed = new Promise((resolve) => child.once("close", resolve));
@@ -3825,5 +3825,12 @@ test("session/load still times out at its own configured budget", async (t) => {
   // Request timeout 300 ms, load budget 500 ms, replay 3 s: the load must fail.
   const client = await startDelayedLoad(t, 300, 3000);
   await assert.rejects(client.open("fixture-session"));
+  await client.dispose();
+});
+
+test("only session/load gets the longer budget: a slow session/new still fails at the request timeout", async (t) => {
+  // Request timeout 300 ms; session/new answers after 1.2 s (no replay involved).
+  const client = await startDelayedLoad(t, 300, 0, ["--new-delay-ms=1200"]);
+  await assert.rejects(client.open());
   await client.dispose();
 });
