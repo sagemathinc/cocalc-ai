@@ -316,8 +316,14 @@ Table({
     run_id: required("uuid", "Agent run."),
     turn_key: required(
       "string",
-      "Hex sha256 of the canonical turn reference (util federatedTurnKey).",
+      "Hex sha256 of the canonical JSON of account, agent, project, run and turn reference.",
     ),
+    turn_ref: {
+      type: "map",
+      pg_type: "JSONB",
+      not_null: true,
+      desc: "The verified turn reference (chat path, message date and ids), so the turn can be checked again before every mint.",
+    },
     host_id: required(
       "uuid",
       "Host that began the turn, from its authenticated principal.",

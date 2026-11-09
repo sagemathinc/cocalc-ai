@@ -54,6 +54,7 @@ const LEASE_BINDING = [
   "source_project_id",
   "run_id",
   "turn_key",
+  "turn_ref",
   "host_id",
   "assignment_id",
   "assignment_revision",
@@ -117,7 +118,7 @@ export const FEDERATED_CONNECTOR_GUARDS: Guard[] = [
   {
     table: LEASE_TABLE,
     fn: "federated_connector_turn_leases_guard",
-    contract: "federated-turn-leases-end-once-v1",
+    contract: "federated-turn-leases-end-once-v2",
     triggers: [
       {
         name: "federated_connector_turn_leases_row_guard",

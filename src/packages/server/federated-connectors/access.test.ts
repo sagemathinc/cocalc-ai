@@ -91,8 +91,9 @@ async function openLease(assignment_id: string, revision: number) {
   await q(
     `INSERT INTO federated_connector_turn_leases
        (lease_id, account_id, agent_id, source_project_id, run_id, turn_key,
-        host_id, assignment_id, assignment_revision, grant_id, grant_revision)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1)`,
+        turn_ref, host_id, assignment_id, assignment_revision, grant_id,
+        grant_revision)
+     VALUES ($1,$2,$3,$4,$5,$6,'{}',$7,$8,$9,$10,1)`,
     [
       lease_id,
       ACCOUNT,

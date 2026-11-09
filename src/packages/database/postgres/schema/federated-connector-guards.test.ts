@@ -71,6 +71,12 @@ async function insertLease(
     source_project_id: uuid(),
     run_id: uuid(),
     turn_key: "a".repeat(64),
+    turn_ref: {
+      chat_path: "a.chat",
+      message_date: "d",
+      message_id: "m",
+      thread_id: "t",
+    },
     host_id: uuid(),
     assignment_id: uuid(),
     assignment_revision: 1,
@@ -283,6 +289,7 @@ describe("turn leases", () => {
     ["assignment_revision", "assignment_revision + 1"],
     ["approval_id", "gen_random_uuid()"],
     ["turn_key", "'c'"],
+    ["turn_ref", "'{}'::jsonb"],
     ["created_at", "NOW() - INTERVAL '1 day'"],
   ])(
     "refuses a change of %s, also together with ending",
