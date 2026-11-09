@@ -168,8 +168,15 @@ lineReader.on("line", (line) => {
         },
         agentCapabilities: {
           loadSession: !process.argv.includes("--no-resume"),
-          ...(process.argv.includes("--fork")
-            ? { sessionCapabilities: { fork: {} } }
+          ...(process.argv.includes("--fork") ||
+          process.argv.includes("--resume-cap")
+            ? {
+                sessionCapabilities: {
+                  ...(process.argv.includes("--fork") ? { fork: {} } : {}),
+                  // --resume-cap: offers session/resume (no history replay).
+                  ...(process.argv.includes("--resume-cap") ? { resume: {} } : {}),
+                },
+              }
             : {}),
         },
         ...(process.argv.includes("--steering")
@@ -195,6 +202,7 @@ lineReader.on("line", (line) => {
       });
     case "session/new":
     case "session/load":
+    case "session/resume":
       if (
         process.argv.includes("--reject-auth") ||
         process.argv.includes("--reject-params")
