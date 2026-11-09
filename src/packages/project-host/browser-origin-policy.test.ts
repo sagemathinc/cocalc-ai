@@ -296,6 +296,117 @@ describe("project-host browser origin policy", () => {
     });
   });
 
+  // The exam webapp is served on the host's exam hostname and signs the
+  // student in with the host session cookie set at admission; its websocket
+  // was refused ("origin not allowed"), so admitted students saw "Sign in to
+  // request project access".
+  describe("on the host's own exam hostname", () => {
+    const exam = "exam-1.cocalc.example";
+    const examReq = (headers: Record<string, string> = {}, method = "GET") =>
+      req({ host: exam, ...headers }, method);
+    afterEach(() => {
+      delete process.env.COCALC_PROJECT_CONTENT_DOMAIN;
+      delete process.env.PROJECT_HOST_ID;
+    });
+
+    it("approves the exam page's own origin on every route, websockets included", () => {
+      for (const route of [
+        "conat",
+        "file",
+        "app",
+        "upload",
+        "bootstrap",
+      ] as const) {
+        expect(
+          ambientCookieRejection(examReq({ origin: `https://${exam}` }), route),
+        ).toBeUndefined();
+      }
+      expect(
+        ambientCookieRejection(
+          examReq({ origin: `https://${exam}` }, "POST"),
+          "upload",
+        ),
+      ).toBeUndefined();
+      expect(
+        checkAmbientCookieRequest(
+          examReq({ origin: `https://${exam}` }),
+          "conat",
+        ),
+      ).toBe(true);
+    });
+
+    it("still refuses other origins there", () => {
+      for (const origin of [
+        "https://evil.example",
+        "https://exam-2.cocalc.example", // another host's exam pages
+        "https://host-1.cocalc.example",
+        `http://${exam}`,
+        `https://${exam}:8443`,
+      ]) {
+        expect(ambientCookieRejection(examReq({ origin }), "conat")).toBe(
+          "origin not allowed",
+        );
+      }
+    });
+
+    it("gives the exam origin nothing on the canonical host or another hostname", () => {
+      expect(
+        ambientCookieRejection(req({ origin: `https://${exam}` }), "conat"),
+      ).toBe("origin not allowed");
+      expect(
+        ambientCookieRejection(
+          req({
+            host: "exam-2.cocalc.example",
+            origin: "https://exam-2.cocalc.example",
+          }),
+          "conat",
+        ),
+      ).toBe("origin not allowed");
+    });
+
+    it("works with app origins too: exam pages are on the exam hostname", () => {
+      process.env.COCALC_PROJECT_CONTENT_DOMAIN = "usercontent.example";
+      expect(
+        ambientCookieRejection(examReq({ origin: `https://${exam}` }), "conat"),
+      ).toBeUndefined();
+    });
+
+    it("without Origin: same-origin fetches only", () => {
+      expect(
+        ambientCookieRejection(
+          examReq({
+            "sec-fetch-site": "same-origin",
+            "sec-fetch-dest": "empty",
+          }),
+          "file",
+        ),
+      ).toBeUndefined();
+      expect(
+        ambientCookieRejection(
+          examReq({
+            "sec-fetch-site": "cross-site",
+            "sec-fetch-dest": "empty",
+          }),
+          "file",
+        ),
+      ).toBe("not from an approved page");
+    });
+
+    it("derives the exam hostname from PROJECT_HOST_ID when the public name has no host- prefix", () => {
+      process.env.PROJECT_HOST_PUBLIC_URL = "https://hosts.cocalc.example";
+      process.env.PROJECT_HOST_ID = "AbC";
+      const r = (origin: string, host: string) =>
+        ambientCookieRejection(req({ host, origin }), "conat");
+      expect(
+        r("https://exam-abc.cocalc.example", "exam-abc.cocalc.example"),
+      ).toBeUndefined();
+      delete process.env.PROJECT_HOST_ID;
+      expect(
+        r("https://exam-abc.cocalc.example", "exam-abc.cocalc.example"),
+      ).toBe("origin not allowed");
+    });
+  });
+
   describe("with app origins (a content domain)", () => {
     afterEach(() => {
       delete process.env.COCALC_PROJECT_CONTENT_DOMAIN;
