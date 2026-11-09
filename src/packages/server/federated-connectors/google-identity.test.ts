@@ -14,6 +14,7 @@ import {
   parseTokenInfo,
   signerAccessToken,
   TOKENINFO_URL,
+  verifyGoogleIdToken,
   type TextFetch,
 } from "./google-identity";
 
@@ -219,5 +220,86 @@ describe("signerAccessToken", () => {
     await expect(
       signerAccessToken({ fetchImpl, record: RECORD, env: {} }),
     ).rejects.toThrow("metadata_unavailable");
+  });
+});
+
+describe("verifyGoogleIdToken", () => {
+  const { generateKeyPairSync, sign } = require("node:crypto");
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  const other = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const KID = "fake-kid-1";
+  const AUD = "fake-cluster-1";
+  const NOW_S = 1_800_000_000;
+  const certs = async () =>
+    new Map([[KID, publicKey.export({ format: "jwk" })]]);
+
+  function idToken(
+    payload: Record<string, unknown>,
+    { kid = KID, key = privateKey, alg = "RS256" } = {},
+  ) {
+    const enc = (o: unknown) =>
+      Buffer.from(JSON.stringify(o)).toString("base64url");
+    const head = enc({ alg, kid, typ: "JWT" });
+    const body = enc({
+      iss: "https://accounts.google.com",
+      aud: AUD,
+      sub: SIGNER_ID,
+      iat: NOW_S - 10,
+      exp: NOW_S + 3000,
+      ...payload,
+    });
+    const sig = sign(
+      "RSA-SHA256",
+      Buffer.from(`${head}.${body}`),
+      key,
+    ).toString("base64url");
+    return `${head}.${body}.${sig}`;
+  }
+
+  const verifyT = (token: string) =>
+    verifyGoogleIdToken({
+      token,
+      audience: AUD,
+      signer: RECORD,
+      certs,
+      nowS: NOW_S,
+    });
+
+  it("accepts a Google-signed token for exactly the signer", async () => {
+    await expect(verifyT(idToken({ email: SIGNER }))).resolves.toEqual({
+      sub: SIGNER_ID,
+      exp: NOW_S + 3000,
+    });
+  });
+
+  it.each([
+    ["an expired token", { exp: NOW_S - 61 }, "id_token_expired"],
+    ["the wrong audience", { aud: "other-cluster" }, "id_token_audience"],
+    ["the wrong issuer", { iss: "https://evil.example" }, "id_token_issuer"],
+    ["another sub", { sub: OTHER_ID }, "identity_mismatch"],
+    ["a numeric sub", { sub: 109876543210987650000 }, "identity_mismatch"],
+    [
+      "another email",
+      { email: "other-sa1@example-project-1.iam.gserviceaccount.com" },
+      "identity_mismatch",
+    ],
+    ["a future iat", { iat: NOW_S + 3600 }, "id_token_invalid"],
+  ])("refuses %s", async (_name, payload, code) => {
+    await expect(verifyT(idToken(payload))).rejects.toThrow(code);
+  });
+
+  it("refuses a token signed by another key, an unknown kid, or another alg", async () => {
+    await expect(
+      verifyT(idToken({}, { key: other.privateKey })),
+    ).rejects.toThrow("id_token_signature");
+    await expect(verifyT(idToken({}, { kid: "nope" }))).rejects.toThrow(
+      "id_token_unknown_key",
+    );
+    await expect(verifyT(idToken({}, { alg: "none" }))).rejects.toThrow(
+      "id_token_invalid",
+    );
+    await expect(verifyT("a.b")).rejects.toThrow("id_token_invalid");
   });
 });

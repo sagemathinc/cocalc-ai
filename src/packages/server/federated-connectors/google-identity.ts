@@ -260,3 +260,138 @@ export async function signerAccessToken({
   }
   return { accessToken: token.access_token, expiresInS: token.expires_in };
 }
+
+// ---------------------------------------------------------------------------
+// Google ID tokens: how the broker proves itself to the fabric (§3), with no
+// stored secret. The broker gets one from its metadata server (audience = the
+// cluster id); the fabric verifies it against Google's published keys.
+
+export const GOOGLE_ID_TOKEN_ISSUERS = [
+  "https://accounts.google.com",
+  "accounts.google.com",
+];
+export const GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs";
+const ID_TOKEN_SKEW_S = 60;
+const MAX_ID_TOKEN_LENGTH = 4096;
+
+/** Google's public signing keys, by key id (JWK). */
+export type GoogleCerts = Map<string, import("node:crypto").JsonWebKey>;
+
+function b64urlJson(part: string): any {
+  if (!/^[A-Za-z0-9_-]+$/.test(part))
+    throw new GoogleIdentityError("id_token_invalid");
+  try {
+    return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+  } catch {
+    throw new GoogleIdentityError("id_token_invalid");
+  }
+}
+
+/**
+ * Verifies a Google-signed ID token for exactly the expected signer: RS256
+ * with a current Google key, a Google issuer, the expected audience, not
+ * expired (60 s skew), `sub` equal to the signer's unique id (string
+ * compare) and, when present, `email` equal to the signer's email.
+ */
+export async function verifyGoogleIdToken({
+  token,
+  audience,
+  signer,
+  certs,
+  nowS = Math.floor(Date.now() / 1000),
+}: {
+  token: string;
+  audience: string;
+  signer: SignerRecord;
+  certs: () => Promise<GoogleCerts>;
+  nowS?: number;
+}): Promise<{ sub: string; exp: number }> {
+  if (typeof token !== "string" || token.length > MAX_ID_TOKEN_LENGTH) {
+    throw new GoogleIdentityError("id_token_invalid");
+  }
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new GoogleIdentityError("id_token_invalid");
+  const header = b64urlJson(parts[0]);
+  const payload = b64urlJson(parts[1]);
+  if (header?.alg !== "RS256" || typeof header?.kid !== "string") {
+    throw new GoogleIdentityError("id_token_invalid");
+  }
+  const jwk = (await certs()).get(header.kid);
+  if (jwk == null) throw new GoogleIdentityError("id_token_unknown_key");
+  const { createPublicKey, verify } = await import("node:crypto");
+  let ok = false;
+  try {
+    ok = verify(
+      "RSA-SHA256",
+      Buffer.from(`${parts[0]}.${parts[1]}`),
+      createPublicKey({ key: jwk, format: "jwk" }),
+      Buffer.from(parts[2], "base64url"),
+    );
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new GoogleIdentityError("id_token_signature");
+  if (!GOOGLE_ID_TOKEN_ISSUERS.includes(payload?.iss)) {
+    throw new GoogleIdentityError("id_token_issuer");
+  }
+  if (payload?.aud !== audience)
+    throw new GoogleIdentityError("id_token_audience");
+  if (
+    !Number.isSafeInteger(payload?.exp) ||
+    payload.exp + ID_TOKEN_SKEW_S <= nowS
+  ) {
+    throw new GoogleIdentityError("id_token_expired");
+  }
+  if (
+    Number.isSafeInteger(payload?.iat) &&
+    payload.iat - ID_TOKEN_SKEW_S > nowS
+  ) {
+    throw new GoogleIdentityError("id_token_invalid");
+  }
+  if (!isGoogleUniqueId(payload?.sub) || payload.sub !== signer.uniqueId) {
+    throw new GoogleIdentityError("identity_mismatch");
+  }
+  if (payload.email !== undefined && payload.email !== signer.email) {
+    throw new GoogleIdentityError("identity_mismatch");
+  }
+  return { sub: payload.sub, exp: payload.exp };
+}
+
+/** Google's certificates, cached for at most 1 h (keyed by kid). */
+export function googleCertsSource(
+  fetchImpl: TextFetch,
+  now: () => number = Date.now,
+): () => Promise<GoogleCerts> {
+  let cached: { certs: GoogleCerts; until: number } | undefined;
+  return async () => {
+    if (cached != null && now() < cached.until) return cached.certs;
+    const { status, text } = await boundedText(
+      fetchImpl,
+      GOOGLE_CERTS_URL,
+      { method: "GET", headers: {} },
+      TOKENINFO_TIMEOUT_MS,
+      "certs_unavailable",
+    );
+    if (status !== 200) throw new GoogleIdentityError("certs_unavailable");
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new GoogleIdentityError("certs_unavailable");
+    }
+    const certs: GoogleCerts = new Map();
+    for (const key of Array.isArray(json?.keys) ? json.keys : []) {
+      if (
+        key?.kty === "RSA" &&
+        typeof key.kid === "string" &&
+        typeof key.n === "string" &&
+        typeof key.e === "string"
+      ) {
+        certs.set(key.kid, { kty: "RSA", n: key.n, e: key.e });
+      }
+    }
+    if (certs.size === 0) throw new GoogleIdentityError("certs_unavailable");
+    cached = { certs, until: now() + 60 * 60 * 1000 };
+    return certs;
+  };
+}
