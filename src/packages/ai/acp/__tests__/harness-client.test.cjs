@@ -3842,3 +3842,21 @@ test("only session/load gets the longer budget: a slow session/new still fails a
   await assert.rejects(client.open());
   await client.dispose();
 });
+
+test("an agent that offers session/resume is resumed without the history replay", async (t) => {
+  // session/load would take 5 s (a long replay); session/resume answers at once.
+  const client = await startDelayedLoad(t, 300, 5000, ["--resume-cap"]);
+  const started = Date.now();
+  await client.open("fixture-session");
+  assert.ok(Date.now() - started < 1000, `resume took ${Date.now() - started} ms`);
+  await client.dispose();
+});
+
+test("without session/resume the client still falls back to session/load", async (t) => {
+  // No --resume-cap: the 1.2 s load is used (within its own budget).
+  const client = await startDelayedLoad(t, 300, 1200);
+  const started = Date.now();
+  await client.open("fixture-session");
+  assert.ok(Date.now() - started >= 1000, "expected the slow session/load path");
+  await client.dispose();
+});

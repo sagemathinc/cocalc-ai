@@ -187,6 +187,7 @@ const REQUEST_ACTIONS = {
   initialize: "start the agent runtime",
   "session/new": "open a session to load models and settings",
   "session/load": "resume this conversation",
+  "session/resume": "resume this conversation",
   "session/fork": "copy this conversation",
   "session/set_mode": "apply the selected mode",
   "session/set_config_option": "apply the selected model or thinking level",
@@ -872,12 +873,17 @@ export class AcpHarnessClient {
       recovery = subscription
         ? "Sign-in is required. Open agent settings and reconnect your Claude subscription."
         : "Authentication is required. Open agent settings and check the selected connection.";
-    } else if (method === "session/load" && code === -32002) {
+    } else if (
+      (method === "session/load" || method === "session/resume") &&
+      code === -32002
+    ) {
       recovery =
         "The saved session could not be opened. Reconnecting will not recreate a missing session. Contact the site administrator to check session storage and include the diagnostic code below; your chat history has been kept.";
     } else if (
       code === -32602 &&
-      (method === "session/new" || method === "session/load") &&
+      (method === "session/new" ||
+        method === "session/load" ||
+        method === "session/resume") &&
       typeof data?.cwd === "string"
     ) {
       recovery = subscription
@@ -956,17 +962,26 @@ export class AcpHarnessClient {
               : {}),
       };
       if (sessionId) {
-        if (!this.info.agentCapabilities?.loadSession)
+        // session/load replays the whole saved history as updates before it
+        // answers, and onUpdate ignores that phase. session/resume restores the
+        // same session without the replay, so prefer it whenever the agent
+        // offers it: a long conversation then resumes in constant time.
+        const resume = !!this.info.agentCapabilities?.sessionCapabilities?.resume;
+        if (!resume && !this.info.agentCapabilities?.loadSession)
           throw new HarnessError(
             "unsupported",
             "Harness cannot resume sessions",
           );
-        // Loading replays history, not a new response. onUpdate ignores this phase.
         try {
-          const loaded = await this.request(
-            this.connection.loadSession({ ...params, sessionId }),
-            "session/load",
-          );
+          const loaded = resume
+            ? await this.request(
+                this.connection.resumeSession({ ...params, sessionId }),
+                "session/resume",
+              )
+            : await this.request(
+                this.connection.loadSession({ ...params, sessionId }),
+                "session/load",
+              );
           this.session = { ...loaded, sessionId };
         } catch (error) {
           if (
