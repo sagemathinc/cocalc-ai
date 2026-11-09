@@ -82,11 +82,14 @@ valid_bind() {
   [[ "$BIND" != 127.* || -n "${COCALC_BAY_BROKER_TLS_KEY_TEST:-}" ]]
 }
 
+valid_port() {
+  [[ "$PORT" =~ ^[0-9]{1,5}$ ]] && ((10#$PORT >= 1024 && 10#$PORT <= 65535))
+}
+
 require_bind() {
   valid_bind ||
     die "set COCALC_BAY_BROKER_TLS_BIND_HOST (the bay's internal IPv4 address) in ${COCALC_BAY_CONFIG_DIR}/bay-local.env"
-  [[ "$PORT" =~ ^[0-9]{1,5}$ ]] && ((10#$PORT >= 1024 && 10#$PORT <= 65535)) ||
-    die "invalid COCALC_BAY_BROKER_TLS_PORT (1024-65535)"
+  valid_port || die "invalid COCALC_BAY_BROKER_TLS_PORT (1024-65535)"
 }
 
 # A reason goes into a single record line: one line of printable ASCII, at
@@ -173,29 +176,45 @@ make_pair() {
   sync_dir
 }
 
+# A state systemctl reports (is-active, is-enabled), or "unreadable" if the
+# query printed nothing usable. A failed query is never read as a state.
+unit_state() {
+  local state
+  state="$("$SYSTEMCTL" "$1" "$UNIT" 2>/dev/null | head -1)" || true
+  [[ "$state" =~ ^[a-z-]{1,32}$ ]] || state=unreadable
+  printf '%s' "$state"
+}
+
 # Stops the listener and proves it: the stop succeeds, systemd reports the
-# unit inactive, and no TLS handshake reaches the listener's address. Sets
-# WHY to what failed (empty if none).
+# unit "inactive" or "failed" (any other answer, or none, is not proof), and
+# no TLS handshake reaches the listener's address. Sets WHY to what failed
+# (empty if none).
 WHY=""
 stop_verified() {
+  local state
   WHY=""
   "$SYSTEMCTL" stop "$UNIT" || WHY="systemctl stop failed"
-  if "$SYSTEMCTL" is-active --quiet "$UNIT"; then
-    WHY="${WHY:+${WHY}; }${UNIT} is still active"
+  state="$(unit_state is-active)"
+  if [[ "$state" != inactive && "$state" != failed ]]; then
+    WHY="${WHY:+${WHY}; }systemd reports ${UNIT} as ${state}"
   fi
-  if valid_bind && [[ -n "$(served_pin)" ]]; then
+  if ! valid_bind || ! valid_port; then
+    WHY="${WHY:+${WHY}; }cannot check for a TLS handshake (no valid bind address or port)"
+  elif [[ -n "$(served_pin)" ]]; then
     WHY="${WHY:+${WHY}; }a TLS handshake still reaches ${BIND}:${PORT}"
   fi
   [[ -z "$WHY" ]]
 }
 
-# Disables the listener and proves it: the disable succeeds and systemd no
-# longer reports the unit enabled.
+# Disables the listener and proves it: the disable succeeds and systemd
+# reports the unit "disabled" (any other answer, or none, is not proof).
 disable_verified() {
+  local state
   WHY=""
   "$SYSTEMCTL" disable "$UNIT" >/dev/null 2>&1 || WHY="systemctl disable failed"
-  if "$SYSTEMCTL" is-enabled --quiet "$UNIT" 2>/dev/null; then
-    WHY="${WHY:+${WHY}; }${UNIT} is still enabled"
+  state="$(unit_state is-enabled)"
+  if [[ "$state" != disabled ]]; then
+    WHY="${WHY:+${WHY}; }systemd reports ${UNIT} as ${state}"
   fi
   [[ -z "$WHY" ]]
 }
@@ -328,7 +347,7 @@ EOF
     echo "time=$(record_time)"
     echo "served_pin=${served}"
     echo "ok"
-    echo "record: broker fabric pin ${old} -> ${expect}; reason: ${reason}; at $(record_time); check: served_pin=${served} tls=TLSv1.3 ok"
+    echo "record: broker fabric pin ${old} -> ${expect}; at $(record_time); check: served_pin=${served} tls=TLSv1.3 ok; reason: ${reason}"
     ;;
   revoke)
     require_root
@@ -345,6 +364,9 @@ EOF
     require_reason "$reason"
     old=""
     [[ -e "$CRT" ]] && old="$(pin_of_cert "$CRT" 2>/dev/null || true)"
+    # Proving the stop needs the listener's address: without one, stop nothing.
+    valid_bind && valid_port ||
+      failed 1 "broker fabric key NOT revoked (pin ${old:-none}); no valid bind address or port to prove the listener stopped; nothing was stopped or deleted"
     # The keys go only once the listener is proven stopped and disabled: a
     # running listener keeps the key it loaded, so deleting the files alone
     # would revoke nothing, and would destroy what recovery needs.
@@ -354,7 +376,7 @@ EOF
       failed 1 "broker fabric key NOT revoked (pin ${old:-none}); the listener is stopped but could not be confirmed disabled (${WHY}); nothing was deleted"
     rm -f "$KEY" "$CRT" "$NEXT_KEY" "$NEXT_CRT" "$OLD_KEY" "$OLD_CRT"
     sync_dir
-    echo "record: broker fabric key revoked (pin ${old:-none}); reason: ${reason}; at $(record_time); ${UNIT} stopped (inactive, no handshake) and disabled (verified)"
+    echo "record: broker fabric key revoked (pin ${old:-none}); at $(record_time); ${UNIT} stopped (inactive, no handshake) and disabled (verified); reason: ${reason}"
     ;;
   -h|--help|"")
     usage

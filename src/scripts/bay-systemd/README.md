@@ -655,7 +655,8 @@ Every pin change is a record line, run and kept by the operator:
 
 - **The reason** must be one line of printable ASCII, at most 200 characters,
   so it cannot forge a second record line. Anything else is refused before
-  anything changes.
+  anything changes. It is the last field of the record line, so it cannot
+  imitate the fields the tool writes.
 - **A step that fails** prints a `FAILED:` line instead of a record line. It
   says what is still true, for example that the listener may still be
   running.
@@ -677,8 +678,9 @@ Every pin change is a record line, run and kept by the operator:
    - It removes the old key only after a TLS 1.3 handshake shows the new pin
      being served.
    - If that check fails, the tool stops the listener and proves it: the
-     stop must succeed, systemd must report the unit inactive, and no TLS
-     handshake may reach its address.
+     stop must succeed, `systemctl is-active` must answer exactly `inactive`
+     or `failed`, and no TLS handshake may reach its address. Any other
+     answer, or none (a failed query), is not proof.
      - Proven stopped: both keys stay on disk and the tool prints how to go
        back (exit 1).
      - Not proven: a distinct hard failure (exit 2). The listener may still
@@ -696,9 +698,11 @@ This stops and disables the listener, then deletes every key file, and
 prints a record line.
 
 - The keys are deleted only once the stop and the disable are proven:
-  - the stop succeeds, systemd reports the unit inactive, and no TLS
-    handshake reaches its address;
-  - the disable succeeds, and systemd no longer reports the unit enabled.
+  - the stop succeeds, `systemctl is-active` answers exactly `inactive` or
+    `failed`, and no TLS handshake reaches its address;
+  - the disable succeeds, and `systemctl is-enabled` answers exactly
+    `disabled`.
+  - Any other answer, or none (a failed query), is not proof.
 - A running listener keeps the key it loaded, so deleting the files alone
   would revoke nothing. If either proof fails, nothing is deleted and the
   tool prints a `FAILED:` line: stop or disable the unit by hand, then run
