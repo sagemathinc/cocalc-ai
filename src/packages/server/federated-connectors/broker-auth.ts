@@ -45,6 +45,9 @@ export function brokerServiceSubject(cluster_id: string): string {
 export function brokerHeartbeatSubject(cluster_id: string): string {
   return `broker.${cluster_id}.heartbeat.v1`;
 }
+export function brokerTransportLostSubject(cluster_id: string): string {
+  return `broker.${cluster_id}.transport-lost.v1`;
+}
 export function brokerInboxPrefix(signer_id: string): string {
   return `_INBOX.broker-${signer_id}`;
 }
@@ -202,6 +205,59 @@ export function isReservedForFederatedBroker({
   }
   return (
     patternsIntersect(subject, "bay.*.rpc.federated-broker.v1") ||
-    patternsIntersect(subject, brokerHeartbeatSubject(clusterId))
+    patternsIntersect(subject, brokerHeartbeatSubject(clusterId)) ||
+    patternsIntersect(subject, brokerTransportLostSubject(clusterId))
+  );
+}
+
+/**
+ * Whether a subscription can receive the broker's transport ids (its
+ * heartbeats or the loss events): only bay principals may (v3.4.2 §2a).
+ */
+export function isBayOnlyBrokerSubscription({
+  clusterId,
+  subject,
+  type,
+}: {
+  clusterId: string;
+  subject: string;
+  type: "pub" | "sub";
+}): boolean {
+  return (
+    type === "sub" &&
+    typeof subject === "string" &&
+    (patternsIntersect(subject, brokerHeartbeatSubject(clusterId)) ||
+      patternsIntersect(subject, brokerTransportLostSubject(clusterId)))
+  );
+}
+
+const CONNECTION_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+
+/** A forwarded stamp that is exactly the broker's (signer + connection). */
+export function isExactBrokerStamp(caller: unknown): boolean {
+  if (caller == null || typeof caller !== "object") return false;
+  const keys = Object.keys(caller).sort();
+  const c = caller as Record<string, unknown>;
+  return (
+    keys.length === 2 &&
+    keys[0] === "federated_broker_connection_id" &&
+    keys[1] === "federated_broker_signer_id" &&
+    typeof c.federated_broker_connection_id === "string" &&
+    CONNECTION_ID_RE.test(c.federated_broker_connection_id) &&
+    isGoogleUniqueId(c.federated_broker_signer_id)
+  );
+}
+
+/** A forwarded stamp that is exactly a transport-loss event's. */
+export function isExactLossStamp(caller: unknown): boolean {
+  if (caller == null || typeof caller !== "object") return false;
+  const keys = Object.keys(caller);
+  const id = (caller as Record<string, unknown>)
+    .federated_broker_transport_lost;
+  return (
+    keys.length === 1 &&
+    keys[0] === "federated_broker_transport_lost" &&
+    typeof id === "string" &&
+    CONNECTION_ID_RE.test(id)
   );
 }

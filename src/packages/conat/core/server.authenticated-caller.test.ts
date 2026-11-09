@@ -3,15 +3,21 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-jest.mock("@cocalc/conat/logger", () => ({
-  getLogger: () => ({
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    silly: jest.fn(),
-  }),
-}));
+const logged: unknown[][] = [];
+jest.mock("@cocalc/conat/logger", () => {
+  const log = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  return {
+    getLogger: () => ({
+      debug: log,
+      info: log,
+      warn: log,
+      error: log,
+      silly: log,
+    }),
+  };
+});
 
 import { delay } from "awaiting";
 import { Client, connect } from "./client";
@@ -23,6 +29,7 @@ import {
 import {
   ConatServer,
   init,
+  isFederatedBrokerLossPrincipal,
   type AllowFunction,
   type UserFunction,
 } from "./server";
@@ -96,7 +103,11 @@ describe("authenticated Conat caller metadata", () => {
     [
       "a verified broker",
       { hub_id: "federated-broker", federated_broker_signer_id: BROKER_ID },
-      { federated_broker_signer_id: BROKER_ID },
+      {
+        federated_broker_signer_id: BROKER_ID,
+        federated_broker_connection_id:
+          expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      },
     ],
     [
       "a broker id mixed with a bay identity",
@@ -150,19 +161,21 @@ describe("authenticated Conat caller metadata", () => {
       await receiver.waitUntilSignedIn({ timeout: 5_000 });
       await sender.waitUntilSignedIn({ timeout: 5_000 });
       const subscription = await receiver.subscribe("broker.test.subject");
-      const response = await sender.conn
-        .timeout(5_000)
-        .emitWithAck("publish", [
-          "broker.test.subject",
-          "broker-stamp-test",
-          0,
-          1,
-          DataEncoding.JsonCodec,
-          Buffer.from("null"),
-          undefined,
-          undefined,
-          { federated_broker_signer_id: "999999999999999999999" },
-        ]);
+      const response = await sender.conn.timeout(5_000).emitWithAck("publish", [
+        "broker.test.subject",
+        "broker-stamp-test",
+        0,
+        1,
+        DataEncoding.JsonCodec,
+        Buffer.from("null"),
+        undefined,
+        undefined,
+        {
+          federated_broker_signer_id: "999999999999999999999",
+          federated_broker_connection_id: "AAAAAAAAAAAAAAAAAAAAAA",
+          federated_broker_transport_lost: "AAAAAAAAAAAAAAAAAAAAAA",
+        },
+      ]);
       expect(response?.error).toBeUndefined();
       expect((await subscription.next()).value?.caller ?? undefined).toEqual(
         expected,
@@ -667,4 +680,136 @@ describe("authenticated Conat caller metadata", () => {
     await sourceServer.close();
     await targetServer.close();
   }, 15_000);
+
+  describe("the broker's connection id and transport loss (G3b design v3.4.2)", () => {
+    const LOSS = "broker.cluster-1.transport-lost.v1";
+
+    async function setup(isAllowed: AllowFunction = async () => true) {
+      const brokers: any[] = [];
+      const server = init({
+        port: 0,
+        getUser: async (socket) => {
+          if (!socket.handshake.auth.key) return { hub_id: "receiver" };
+          const user = {
+            hub_id: "federated-broker",
+            federated_broker_signer_id: BROKER_ID,
+            auth_lease_exp_s: Math.floor(Date.now() / 1000) + 3600,
+          };
+          brokers.push(user);
+          return user;
+        },
+        isAllowed,
+        federatedBrokerLossSubject: LOSS,
+      });
+      const receiver = connect({ address: server.address(), noCache: true });
+      await receiver.waitUntilSignedIn({ timeout: 5_000 });
+      const broker = () =>
+        connect({
+          address: server.address(),
+          noCache: true,
+          auth: { key: true },
+          reconnection: false,
+        });
+      return { server, receiver, broker, brokers };
+    }
+
+    async function stampOf(receiver: Client, sender: Client) {
+      const sub = await receiver.subscribe("broker.test.stamp");
+      await sender.publish("broker.test.stamp", null);
+      const caller = (await sub.next()).value?.caller;
+      sub.close();
+      return caller;
+    }
+
+    it("mints a different id per socket, kept off the user object", async () => {
+      const t = await setup();
+      const a = t.broker();
+      const b = t.broker();
+      await a.waitUntilSignedIn({ timeout: 5_000 });
+      await b.waitUntilSignedIn({ timeout: 5_000 });
+      const ca = await stampOf(t.receiver, a);
+      const cb = await stampOf(t.receiver, b);
+      expect(ca.federated_broker_connection_id).not.toBe(
+        cb.federated_broker_connection_id,
+      );
+      for (const user of t.brokers) {
+        expect(Object.keys(user).sort()).toEqual([
+          "auth_lease_exp_s",
+          "federated_broker_signer_id",
+          "hub_id",
+        ]);
+      }
+      const ids = [
+        ca.federated_broker_connection_id,
+        cb.federated_broker_connection_id,
+      ];
+      const surfaces = JSON.stringify([
+        t.brokers,
+        (t.server as any).stats,
+        t.server.getStatsSnapshot(),
+        t.server.getUsage(),
+        logged,
+      ]);
+      for (const id of ids) expect(surfaces).not.toContain(id);
+    });
+
+    it("keeps the id out of a permission-denied error", async () => {
+      const t = await setup(async ({ subject }) => subject !== "broker.denied");
+      const a = t.broker();
+      await a.waitUntilSignedIn({ timeout: 5_000 });
+      const { federated_broker_connection_id: id } = await stampOf(
+        t.receiver,
+        a,
+      );
+      const err = await a
+        .publish("broker.denied", null)
+        .then(() => undefined)
+        .catch((e) => e);
+      expect(`${err?.message ?? ""}`).toContain("permission denied");
+      expect(`${err?.message ?? ""}`).not.toContain(id);
+      expect(JSON.stringify(logged)).not.toContain(id);
+    });
+
+    it("publishes exactly one loss event, stamped with that connection's id only, when the broker socket closes", async () => {
+      const seen: any[] = [];
+      const t = await setup(async ({ user, subject, type }) => {
+        if (isFederatedBrokerLossPrincipal(user)) {
+          seen.push({ json: JSON.stringify(user), subject, type });
+        }
+        return true;
+      });
+      const a = t.broker();
+      await a.waitUntilSignedIn({ timeout: 5_000 });
+      const { federated_broker_connection_id: id } = await stampOf(
+        t.receiver,
+        a,
+      );
+      const loss = await t.receiver.subscribe(LOSS);
+      a.close();
+      const msg = (await loss.next()).value;
+      expect(msg.caller).toEqual({ federated_broker_transport_lost: id });
+      expect(msg.data).toBeNull();
+      expect(seen).toEqual([{ json: "{}", subject: LOSS, type: "pub" }]);
+      // Only one.
+      const second = await Promise.race([
+        loss.next().then(() => "more"),
+        delay(300).then(() => "none"),
+      ]);
+      expect(second).toBe("none");
+      expect(JSON.stringify(logged)).not.toContain(id);
+    });
+
+    it("publishes nothing for a non-broker socket", async () => {
+      const t = await setup();
+      const loss = await t.receiver.subscribe(LOSS);
+      const other = connect({ address: t.server.address(), noCache: true });
+      await other.waitUntilSignedIn({ timeout: 5_000 });
+      other.close();
+      const got = await Promise.race([
+        loss.next().then(() => "loss"),
+        delay(500).then(() => "none"),
+      ]);
+      expect(got).toBe("none");
+    });
+  });
 });

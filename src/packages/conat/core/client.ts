@@ -3465,6 +3465,12 @@ export interface AuthenticatedCaller {
   // (a decimal string), as verified at authentication. Never set together
   // with any other identity.
   federated_broker_signer_id?: string;
+  // With it, the broker connection's id, minted by the server per accepted
+  // socket and never part of the user object (G3b design v3.4.2 §1).
+  federated_broker_connection_id?: string;
+  // Only on the server-derived transport-loss event of a broker connection
+  // (§2): that connection's id. No client can produce this stamp.
+  federated_broker_transport_lost?: string;
 }
 
 export class MessageData<T = any> {

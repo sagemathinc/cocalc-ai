@@ -63,6 +63,7 @@ import {
   MAX_SUBSCRIPTIONS_PER_HUB,
 } from "./constants";
 import { matchesPattern, Patterns } from "./patterns";
+import { DataEncoding, encode } from "./codec";
 import { is_array } from "@cocalc/util/misc";
 import { UsageMonitor } from "@cocalc/conat/monitor/usage";
 import { until } from "@cocalc/util/async-utils";
@@ -307,6 +308,47 @@ export type UserFunction = (
   options?: { revalidation?: boolean },
 ) => Promise<any>;
 
+// The federated token broker's transport identifiers (G3b design v3.4.2
+// §§1-2). Module-private: no property of any user object carries them, so
+// stats, admin views, permission errors and logs that serialize a user can't
+// contain them. Only the stamp code reads them.
+const brokerConnectionIds = new WeakMap<object, string>();
+const brokerLossPrincipals = new WeakMap<object, string>();
+const BROKER_SIGNER_ID_RE = /^[1-9][0-9]{5,31}$/;
+export const BROKER_CONNECTION_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+
+function newBrokerConnectionId(): string {
+  const bytes = new Uint8Array(16); // 128 bits
+  globalThis.crypto.getRandomValues(bytes);
+  return Buffer.from(bytes).toString("base64url");
+}
+
+function isBareBrokerUser(user: any): boolean {
+  return (
+    user != null &&
+    typeof user === "object" &&
+    user.federated_broker_signer_id !== undefined &&
+    typeof user.federated_broker_signer_id === "string" &&
+    BROKER_SIGNER_ID_RE.test(user.federated_broker_signer_id) &&
+    user.cluster_id == null &&
+    user.bay_id == null &&
+    user.bay_credential_id == null &&
+    user.account_id == null &&
+    user.project_id == null &&
+    user.host_id == null
+  );
+}
+
+/**
+ * Whether `user` is the synthetic principal of a broker transport-loss event
+ * (created only by this module's disconnect path; never by authentication).
+ */
+export function isFederatedBrokerLossPrincipal(user: unknown): boolean {
+  return (
+    user != null && typeof user === "object" && brokerLossPrincipals.has(user)
+  );
+}
+
 export type AllowFunction = (opts: {
   type: "pub" | "sub";
   user: any;
@@ -326,6 +368,13 @@ const HOST_BOUND_SUBJECTS = new Set([
 export interface Options {
   /** Called once when an authenticated socket goes away (with its user). */
   onDisconnect?: (user: any) => void;
+  /**
+   * The federated token broker's transport-loss subject (G3b design v3.4.2
+   * §2). When set, the server publishes one empty message there, as a
+   * synthetic principal stamped with the connection id, whenever a broker
+   * socket it holds disconnects.
+   */
+  federatedBrokerLossSubject?: string;
   /** How often a connected computer is rechecked (default 15 s). */
   computerRevalidationMs?: number;
   id?: string;
@@ -561,6 +610,7 @@ export class ConatServer extends EventEmitter {
       inboundEventWindowMs,
       inboundEventBlockMs,
       onDisconnect: options.onDisconnect,
+      federatedBrokerLossSubject: options.federatedBrokerLossSubject,
       computerRevalidationMs: options.computerRevalidationMs,
     };
     this.log("client address mode", {
@@ -1574,6 +1624,40 @@ export class ConatServer extends EventEmitter {
     }
   };
 
+  // The broker's transport loss (§2): one empty message, published by this
+  // server as a fresh synthetic principal whose only stamp is the closing
+  // connection's id. Best effort; the bays' 30 s registration lease covers a
+  // lost event.
+  private publishBrokerTransportLoss = async (user: any): Promise<void> => {
+    const subject = this.options.federatedBrokerLossSubject;
+    const connection =
+      user != null && typeof user === "object"
+        ? brokerConnectionIds.get(user)
+        : undefined;
+    if (!subject || connection === undefined) return;
+    brokerConnectionIds.delete(user);
+    const principal = {};
+    brokerLossPrincipals.set(principal, connection);
+    try {
+      const encoding = DataEncoding.MsgPack;
+      await this.publish({
+        subject,
+        data: [
+          `broker-loss-${newBrokerConnectionId()}`,
+          0,
+          true,
+          encoding,
+          encode({ encoding, mesg: null }),
+        ],
+        from: principal,
+      });
+    } catch {
+      this.log("federated broker transport loss not published");
+    } finally {
+      brokerLossPrincipals.delete(principal);
+    }
+  };
+
   private authenticatedCaller = (
     user: any,
     subject: string,
@@ -1581,19 +1665,19 @@ export class ConatServer extends EventEmitter {
     // The federated token broker: only its verified signer id (set by the
     // hub's authentication, never from a request). A user that mixes it with
     // any other identity gets no stamp at all.
+    // The server-derived transport-loss event of a broker connection: only
+    // that connection's id.
+    if (user != null && typeof user === "object") {
+      const lost = brokerLossPrincipals.get(user);
+      if (lost !== undefined) return { federated_broker_transport_lost: lost };
+    }
     if (user?.federated_broker_signer_id !== undefined) {
-      const id = user.federated_broker_signer_id;
-      if (
-        typeof id === "string" &&
-        /^[1-9][0-9]{5,31}$/.test(id) &&
-        user.cluster_id == null &&
-        user.bay_id == null &&
-        user.bay_credential_id == null &&
-        user.account_id == null &&
-        user.project_id == null &&
-        user.host_id == null
-      ) {
-        return { federated_broker_signer_id: id };
+      const connection = brokerConnectionIds.get(user);
+      if (isBareBrokerUser(user) && connection !== undefined) {
+        return {
+          federated_broker_signer_id: user.federated_broker_signer_id,
+          federated_broker_connection_id: connection,
+        };
       }
       return undefined;
     }
@@ -2012,6 +2096,10 @@ export class ConatServer extends EventEmitter {
         throw err;
       }
       this.clearAuthFailures(address);
+      // A broker socket gets its own connection id, kept off the user object.
+      if (isBareBrokerUser(user)) {
+        brokerConnectionIds.set(user, newBrokerConnectionId());
+      }
       this.usage.add(user);
       added = true;
     } catch (err) {
@@ -2202,6 +2290,7 @@ export class ConatServer extends EventEmitter {
           this.log("onDisconnect failed", err);
         }
       }
+      void this.publishBrokerTransportLoss(user);
       apiKeyPublicationSubjects.clear();
       this.log("disconnecting", { id, user });
       this.unregisterClusterInterestPeer(socket.id);

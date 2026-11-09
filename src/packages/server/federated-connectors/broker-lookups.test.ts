@@ -10,7 +10,11 @@ import { createBrokerLookupHandler, parseHomeBayReply } from "./broker-lookups";
 const ID = "109876543210987654321";
 const OTHER = "109876543210987654322";
 const U = (n: number) => `00000000-0000-4000-8000-${`${n}`.padStart(12, "0")}`;
-const BROKER = { federated_broker_signer_id: ID };
+const CONN = "AAAAAAAAAAAAAAAAAAAAAA";
+const BROKER = {
+  federated_broker_signer_id: ID,
+  federated_broker_connection_id: CONN,
+};
 const MINT = {
   site_id: U(1),
   account_id: U(2),
@@ -69,8 +73,15 @@ describe("broker lookups on a bay", () => {
     ["a bay", { cluster_id: "c", bay_id: "b", bay_credential_id: "k" }],
     ["an account", { account_id: U(2), auth_session_hash: null }],
     ["the broker mixed with a bay", { ...BROKER, bay_id: "b" }],
-    ["another signer", { federated_broker_signer_id: OTHER }],
-    ["a numeric signer", { federated_broker_signer_id: Number(ID) }],
+    ["another signer", { ...BROKER, federated_broker_signer_id: OTHER }],
+    ["a numeric signer", { ...BROKER, federated_broker_signer_id: Number(ID) }],
+    ["the old one-key stamp", { federated_broker_signer_id: ID }],
+    ["no connection id", { ...BROKER, federated_broker_connection_id: "" }],
+    ["a loss stamp", { federated_broker_transport_lost: CONN }],
+    [
+      "the broker mixed with a loss stamp",
+      { ...BROKER, federated_broker_transport_lost: CONN },
+    ],
   ])("refuses %s, doing nothing", async (_n, caller) => {
     const t = setup();
     for (const [method, args] of [

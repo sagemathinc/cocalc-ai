@@ -176,6 +176,8 @@ describe("isReservedForFederatedBroker", () => {
     ["pub", "bay.*.rpc.federated-broker.v1", true],
     ["pub", "bay.bay-a.rpc.>", true],
     ["pub", `broker.${CLUSTER}.heartbeat.v1`, true],
+    ["pub", `broker.${CLUSTER}.transport-lost.v1`, true],
+    ["pub", "broker.*.transport-lost.v1", true],
     ["sub", `broker.${CLUSTER}.rpc.mint.v1`, true],
     ["sub", "broker.*.rpc.*.v1", true],
     ["sub", "broker.>", true],

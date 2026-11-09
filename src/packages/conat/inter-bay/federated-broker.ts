@@ -92,6 +92,13 @@ export function federatedBrokerHeartbeatSubject(cluster_id: string): string {
   return brokerSubject(cluster_id, "heartbeat.v1");
 }
 
+/** The server-derived transport loss of a broker connection (v3.4.2 §2). */
+export function federatedBrokerTransportLostSubject(
+  cluster_id: string,
+): string {
+  return brokerSubject(cluster_id, "transport-lost.v1");
+}
+
 const MINT_SERVICE = "federated-broker-mint";
 
 export interface FederatedBrokerMintApi {
@@ -158,6 +165,31 @@ export async function publishFederatedBrokerHeartbeat(
   await client.publish(federatedBrokerHeartbeatSubject(cluster_id), beat);
 }
 
+async function onStamped(
+  client: Client,
+  subject: string,
+  handle: (data: unknown, caller: AuthenticatedCaller | undefined) => void,
+  onEnd: () => void,
+): Promise<() => void> {
+  const sub = await client.subscribe(subject);
+  (async () => {
+    try {
+      for await (const mesg of sub) {
+        try {
+          handle(mesg.data, mesg.caller);
+        } catch {
+          // A malformed message is the handler's business; keep listening.
+        }
+      }
+    } catch {
+      // The subscription failed: the same as it ending.
+    } finally {
+      onEnd();
+    }
+  })();
+  return () => sub.close();
+}
+
 /**
  * For a bay: every heartbeat with the caller the conat server stamped (never
  * from the message). `onEnd` runs when the subscription ends for any
@@ -169,23 +201,25 @@ export async function onFederatedBrokerHeartbeat(
   handle: (beat: unknown, caller: AuthenticatedCaller | undefined) => void,
   onEnd: () => void,
 ): Promise<() => void> {
-  const sub = await client.subscribe(
+  return await onStamped(
+    client,
     federatedBrokerHeartbeatSubject(cluster_id),
+    handle,
+    onEnd,
   );
-  (async () => {
-    try {
-      for await (const mesg of sub) {
-        try {
-          handle(mesg.data, mesg.caller);
-        } catch {
-          // A malformed heartbeat is the handler's business; keep listening.
-        }
-      }
-    } catch {
-      // The subscription failed: the same as it ending.
-    } finally {
-      onEnd();
-    }
-  })();
-  return () => sub.close();
+}
+
+/** For a bay: every transport-loss event, with its server-set stamp. */
+export async function onFederatedBrokerTransportLost(
+  client: Client,
+  cluster_id: string,
+  handle: (caller: AuthenticatedCaller | undefined) => void,
+  onEnd: () => void,
+): Promise<() => void> {
+  return await onStamped(
+    client,
+    federatedBrokerTransportLostSubject(cluster_id),
+    (_data, caller) => handle(caller),
+    onEnd,
+  );
 }

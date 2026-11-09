@@ -15,9 +15,14 @@ import type { Client } from "@cocalc/conat/core/client";
 import {
   createFederatedBrokerMintCall,
   onFederatedBrokerHeartbeat,
+  onFederatedBrokerTransportLost,
 } from "@cocalc/conat/inter-bay/federated-broker";
 import type { BrokerRegistration } from "./broker-registration";
-import { BrokerLookupRefusal, requireBrokerCaller } from "./broker-lookups";
+import {
+  BrokerLookupRefusal,
+  lostBrokerConnection,
+  requireBrokerCaller,
+} from "./broker-lookups";
 import { createBrokerMintClient } from "./broker-service";
 
 /** Feeds one heartbeat to the registration; false if it doesn't count. */
@@ -32,8 +37,9 @@ export function acceptBrokerHeartbeat({
   currentSignerId: string | undefined;
   registration: Pick<BrokerRegistration, "heartbeat" | "clear">;
 }): boolean {
+  let connection: string;
   try {
-    requireBrokerCaller(caller, currentSignerId);
+    connection = requireBrokerCaller(caller, currentSignerId);
   } catch (err) {
     if (!(err instanceof BrokerLookupRefusal)) throw err;
     // Not exactly the broker for the signer recorded now. If it claims to be
@@ -48,11 +54,21 @@ export function acceptBrokerHeartbeat({
     }
     return false;
   }
-  return registration.heartbeat(
-    beat,
-    (caller as { federated_broker_signer_id: string })
-      .federated_broker_signer_id,
-  );
+  return registration.heartbeat(beat, connection);
+}
+
+/** A loss event: only the exact server-derived stamp removes an entry. */
+export function acceptBrokerTransportLoss({
+  caller,
+  registration,
+}: {
+  caller: unknown;
+  registration: Pick<BrokerRegistration, "transportLost">;
+}): boolean {
+  const id = lostBrokerConnection(caller);
+  if (id === undefined) return false;
+  registration.transportLost(id);
+  return true;
 }
 
 export async function startFederatedBrokerTransport({
@@ -73,7 +89,18 @@ export async function startFederatedBrokerTransport({
   setMintClient(
     createBrokerMintClient(createFederatedBrokerMintCall(client, clusterId)),
   );
-  return await onFederatedBrokerHeartbeat(
+  const lost = () => {
+    registration.clear("transport_lost");
+    setMintClient(undefined);
+  };
+  const stopLoss = await onFederatedBrokerTransportLost(
+    client,
+    clusterId,
+    (caller) => acceptBrokerTransportLoss({ caller, registration }),
+    // Without loss events, no registration can be trusted to be current.
+    lost,
+  );
+  const stopBeats = await onFederatedBrokerHeartbeat(
     client,
     clusterId,
     (beat, caller) => {
@@ -88,9 +115,10 @@ export async function startFederatedBrokerTransport({
           }),
         );
     },
-    () => {
-      registration.clear("transport_lost");
-      setMintClient(undefined);
-    },
+    lost,
   );
+  return () => {
+    stopBeats();
+    stopLoss();
+  };
 }

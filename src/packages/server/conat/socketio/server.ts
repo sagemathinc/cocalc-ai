@@ -65,7 +65,11 @@ import {
   ensureLocalSeedBayCredential,
   isBayCredentialUserActive,
 } from "@cocalc/server/inter-bay/bay-credentials";
-import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterId,
+  getConfiguredClusterRole,
+} from "@cocalc/server/cluster-config";
+import { brokerTransportLostSubject } from "@cocalc/server/federated-connectors/broker-auth";
 import { sweepBayCredentialConnections } from "./bay-credential-sweep";
 import {
   liveRememberMeHashes,
@@ -235,6 +239,10 @@ export async function init(
     path: join(basePath, "conat"),
     port,
     clusterName,
+    // The broker's server-derived transport loss (G3b design v3.4.2 §2).
+    federatedBrokerLossSubject: brokerTransportLostSubject(
+      getConfiguredClusterId(),
+    ),
     ...options,
   };
 

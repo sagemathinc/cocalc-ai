@@ -31,6 +31,15 @@ jest.mock("@cocalc/server/agents/store", () => ({
   }),
 }));
 
+// The synthetic loss principal is created only inside conat/core; here a
+// test stands in for it.
+const lossPrincipals = new WeakSet<object>();
+jest.mock("@cocalc/conat/core/server", () => ({
+  ...jest.requireActual("@cocalc/conat/core/server"),
+  isFederatedBrokerLossPrincipal: (u: unknown) =>
+    u != null && typeof u === "object" && lossPrincipals.has(u as object),
+}));
+
 const verifyProjectHostTokenMock = jest.fn();
 const verifyProjectHostAuthTokenMock = jest.fn();
 const ensureAccountSecurityStateReadyMock = jest.fn();
@@ -2070,7 +2079,10 @@ describe("federated token broker principal", () => {
 
   it("keeps its exact access through a cluster link, and only for its stamp", async () => {
     const link = { hub_id: "cluster-link" };
-    const stamp = { federated_broker_signer_id: ID };
+    const stamp = {
+      federated_broker_signer_id: ID,
+      federated_broker_connection_id: "AAAAAAAAAAAAAAAAAAAAAA",
+    };
     const ok = (subject: string, forwardedCaller: any) =>
       isAllowed({ user: link as any, subject, type: "pub", forwardedCaller });
     expect(await ok("bay.bay-a.rpc.federated-broker.v1", stamp)).toBe(true);
@@ -2079,7 +2091,10 @@ describe("federated token broker principal", () => {
     for (const forwarded of [
       { ...stamp, bay_id: "bay-a" },
       { ...stamp, socket_return: "x" },
-      { federated_broker_signer_id: "109876543210987654322" },
+      { ...stamp, federated_broker_signer_id: "109876543210987654322" },
+      { federated_broker_signer_id: ID }, // the old one-key stamp
+      { ...stamp, federated_broker_connection_id: "short" },
+      { ...stamp, federated_broker_transport_lost: "AAAAAAAAAAAAAAAAAAAAAA" },
       {
         cluster_id: "cluster-1",
         bay_id: "bay-a",
@@ -2091,6 +2106,128 @@ describe("federated token broker principal", () => {
         false,
       );
       expect(await ok("broker.cluster-1.heartbeat.v1", forwarded)).toBe(false);
+    }
+  });
+
+  it("the transport-loss event: only the server's synthetic principal, only its subject, publish only", async () => {
+    const LOSS = "broker.cluster-1.transport-lost.v1";
+    const principal = {};
+    lossPrincipals.add(principal);
+    expect(
+      await isAllowed({ user: principal as any, subject: LOSS, type: "pub" }),
+    ).toBe(true);
+    for (const [type, subject] of [
+      ["sub", LOSS],
+      ["pub", "broker.cluster-1.heartbeat.v1"],
+      ["pub", "broker.cluster-2.transport-lost.v1"],
+      ["pub", "hub.x"],
+    ] as const) {
+      expect(await isAllowed({ user: principal as any, subject, type })).toBe(
+        false,
+      );
+    }
+    // Everyone else is refused publishing there: hubs, bays, accounts and
+    // the broker itself; an empty object isn't the principal.
+    for (const user of [
+      {},
+      { hub_id: "hub" },
+      {
+        hub_id: "bay:bay-a",
+        cluster_id: "cluster-1",
+        bay_id: "bay-a",
+        bay_credential_id: "credential-1",
+      },
+      { account_id: "00000000-0000-4000-8000-000000000001" },
+      broker,
+    ]) {
+      expect(
+        await isAllowed({ user: user as any, subject: LOSS, type: "pub" }),
+      ).toBe(false);
+    }
+    // Forwarded through a cluster link: only the exact loss stamp.
+    const link = { hub_id: "cluster-link" };
+    const fwd = (forwardedCaller: any, subject = LOSS) =>
+      isAllowed({ user: link as any, subject, type: "pub", forwardedCaller });
+    const lost = { federated_broker_transport_lost: "AAAAAAAAAAAAAAAAAAAAAA" };
+    expect(await fwd(lost)).toBe(true);
+    expect(await fwd(lost, "broker.cluster-1.heartbeat.v1")).toBe(false);
+    for (const bad of [
+      { ...lost, bay_id: "b" },
+      { federated_broker_transport_lost: "x" },
+      {
+        cluster_id: "cluster-1",
+        bay_id: "bay-a",
+        bay_credential_id: "credential-1",
+      },
+      undefined,
+    ]) {
+      expect(await fwd(bad)).toBe(false);
+    }
+  });
+
+  it("only bay principals may subscribe to the heartbeats and loss events", async () => {
+    const previous = process.env.COCALC_CLUSTER_ROLE;
+    const bay = {
+      hub_id: "bay:bay-a",
+      cluster_id: "cluster-1",
+      bay_id: "bay-a",
+      bay_credential_id: "credential-1",
+    };
+    try {
+      for (const subject of [
+        "broker.cluster-1.heartbeat.v1",
+        "broker.cluster-1.transport-lost.v1",
+        "broker.*.transport-lost.v1",
+      ]) {
+        process.env.COCALC_CLUSTER_ROLE = "seed";
+        isBayCredentialUserActiveMock.mockResolvedValue(true);
+        expect(
+          await isAllowed({ user: bay as any, subject, type: "sub" }),
+        ).toBe(true);
+        isBayCredentialUserActiveMock.mockResolvedValue(false);
+        expect(
+          await isAllowed({ user: bay as any, subject, type: "sub" }),
+        ).toBe(false);
+        isBayCredentialUserActiveMock.mockResolvedValue(true);
+        expect(
+          await isAllowed({
+            user: { ...bay, cluster_id: "cluster-2" } as any,
+            subject,
+            type: "sub",
+          }),
+        ).toBe(false);
+        // An ordinary hub without a bay credential, in a multi-bay cluster.
+        expect(
+          await isAllowed({
+            user: { hub_id: "hub" } as any,
+            subject,
+            type: "sub",
+          }),
+        ).toBe(false);
+        for (const user of [
+          { account_id: "00000000-0000-4000-8000-000000000001" },
+          { project_id: "00000000-0000-4000-8000-000000000002" },
+          { hub_id: "cluster-link" },
+          broker,
+        ]) {
+          expect(
+            await isAllowed({ user: user as any, subject, type: "sub" }),
+          ).toBe(false);
+        }
+        // A standalone site: its local hub principal is the one bay.
+        process.env.COCALC_CLUSTER_ROLE = "standalone";
+        expect(
+          await isAllowed({
+            user: { hub_id: "hub" } as any,
+            subject,
+            type: "sub",
+          }),
+        ).toBe(true);
+      }
+    } finally {
+      if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;
+      else process.env.COCALC_CLUSTER_ROLE = previous;
+      isBayCredentialUserActiveMock.mockReset();
     }
   });
 

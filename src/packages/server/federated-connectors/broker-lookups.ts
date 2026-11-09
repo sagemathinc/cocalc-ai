@@ -66,22 +66,43 @@ export function parseHomeBayReply(value: unknown): string | undefined {
 }
 
 /** Requires exactly the broker's stamp, for the signer recorded now. */
+const CONNECTION_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+
+/**
+ * Requires exactly the broker's stamp (v3.4.2 §1: its signer id and its
+ * server-minted connection id), for the signer recorded now. Returns the
+ * connection id.
+ */
 export function requireBrokerCaller(
   caller: unknown,
   currentSignerId: string | undefined,
-): void {
+): string {
+  const c = caller as {
+    federated_broker_signer_id: unknown;
+    federated_broker_connection_id: unknown;
+  };
   if (
-    !exactKeys(caller, ["federated_broker_signer_id"]) ||
-    !isGoogleUniqueId(
-      (caller as { federated_broker_signer_id: unknown })
-        .federated_broker_signer_id,
-    ) ||
+    !exactKeys(caller, [
+      "federated_broker_signer_id",
+      "federated_broker_connection_id",
+    ]) ||
+    !isGoogleUniqueId(c.federated_broker_signer_id) ||
+    typeof c.federated_broker_connection_id !== "string" ||
+    !CONNECTION_ID_RE.test(c.federated_broker_connection_id) ||
     currentSignerId == null ||
-    (caller as { federated_broker_signer_id: string })
-      .federated_broker_signer_id !== currentSignerId
+    c.federated_broker_signer_id !== currentSignerId
   ) {
     throw new BrokerLookupRefusal("caller_refused");
   }
+  return c.federated_broker_connection_id;
+}
+
+/** The server-derived transport-loss stamp (§2), exactly; else undefined. */
+export function lostBrokerConnection(caller: unknown): string | undefined {
+  if (!exactKeys(caller, ["federated_broker_transport_lost"])) return;
+  const id = (caller as { federated_broker_transport_lost: unknown })
+    .federated_broker_transport_lost;
+  return typeof id === "string" && CONNECTION_ID_RE.test(id) ? id : undefined;
 }
 
 export function createBrokerLookupHandler({
