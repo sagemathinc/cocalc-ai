@@ -376,8 +376,12 @@ export function resolveSessionLoadTimeoutMs(
     Number.isFinite(configured) && configured > 0
       ? Math.floor(configured)
       : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
-  return Math.max(value, requestTimeoutMs);
+  // setTimeout fires at once for delays above 2^31 - 1 ms, so a huge value
+  // meant as "wait forever" would fail every resume immediately.
+  return Math.min(Math.max(value, requestTimeoutMs), MAX_TIMER_MS);
 }
+
+const MAX_TIMER_MS = 2_147_483_647;
 
 export class AcpHarnessClient {
   private connection: ClientSideConnection;
