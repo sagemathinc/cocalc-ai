@@ -461,3 +461,22 @@ export function canonicalJson(value: unknown): string {
       throw Error(`canonicalJson: ${typeof value}`);
   }
 }
+
+/** Which grant an agent uses in a source project (account home). */
+export interface FederatedConnectorAssignment {
+  assignment_id: string;
+  account_id: string;
+  agent_id: string;
+  source_project_id: string;
+  grant_id: string;
+  enabled: boolean;
+  revision: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/** The hub's answer to a federated turn call (contract v7). */
+export interface FederatedConnectorTurnAnswer {
+  entries: GcloudTurnToken[];
+  revoked: GcloudLeaseEnded[];
+}

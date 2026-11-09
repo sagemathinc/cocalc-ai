@@ -32,6 +32,8 @@ import { personalUrlAliasHomeControl } from "@cocalc/server/personal-url-aliases
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
 import { createInterBayFederatedGateHandler } from "@cocalc/conat/inter-bay/federated-gate";
+import { createInterBayFederatedConnectorHandler } from "@cocalc/conat/inter-bay/federated-connector";
+import { federatedConnectorAtThisBay } from "@cocalc/server/federated-connectors/routing";
 import { applyFederatedGateReplica } from "@cocalc/server/federated-connectors/site-gate";
 import { applyServerSettingFromBay } from "@cocalc/server/inter-bay/server-setting-replica";
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
@@ -626,6 +628,11 @@ export async function initInterBayServices(): Promise<void> {
         getConfiguredBayId(),
         applyFederatedGateReplica,
         { client: getInterBayFabricServiceClient() },
+      ),
+      createInterBayFederatedConnectorHandler(
+        getConfiguredBayId(),
+        federatedConnectorAtThisBay,
+        { client: getInterBayFabricServiceClient(), parallel: true },
       ),
       createInterBayAgentConnectorHandler(
         getConfiguredBayId(),

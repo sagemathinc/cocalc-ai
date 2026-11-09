@@ -4,7 +4,9 @@
  */
 
 export type DangerousRpcFreshAuthDecision =
-  "fresh-auth-required" | "fresh-auth-not-required" | "internal-auth-only";
+  | "fresh-auth-required"
+  | "fresh-auth-not-required"
+  | "internal-auth-only";
 
 export type DangerousRpcDecision = {
   decision: DangerousRpcFreshAuthDecision;
@@ -75,6 +77,36 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "agent.disconnectCliConnection": {
     decision: "fresh-auth-not-required",
     reason: "revokes the caller's own stored credential and its grants",
+  },
+  "agent.beginFederatedConnectorTurn": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.endFederatedConnectorTurn": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.saveFederatedConnectorAssignment": {
+    decision: "fresh-auth-required",
+    reason:
+      "gives an agent a cloud service account through a federated grant; every change, including turning off, is audited with the session",
+  },
+  "agent.removeFederatedConnectorAssignment": {
+    decision: "fresh-auth-required",
+    reason: "audited with the session, like every assignment change",
+  },
+  "agent.approveFederatedSharedProject": {
+    decision: "fresh-auth-required",
+    reason:
+      "a project owner lets an account's cloud credentials be used where other members can read them",
+  },
+  "agent.revokeFederatedSharedProject": {
+    decision: "fresh-auth-required",
+    reason: "audited with the session, like the approval",
+  },
+  "agent.setFederatedConnectorGate": {
+    decision: "fresh-auth-required",
+    reason: "turns federated cloud credentials on or off for the whole site",
   },
   "agent.beginCliConnectorTurn": {
     decision: "internal-auth-only",

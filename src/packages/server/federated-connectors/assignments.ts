@@ -27,6 +27,7 @@ import {
 } from "@cocalc/server/agents/cocalc-connector-config";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import send from "@cocalc/server/messages/send";
+import type { FederatedConnectorAssignment } from "@cocalc/util/ai/federated-connectors";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   recordFederatedAccessAudit,
@@ -38,17 +39,7 @@ const logger = getLogger("server:federated-connectors:assignments");
 const TABLE = "federated_connector_agent_grants";
 const LEASES = "federated_connector_turn_leases";
 
-export interface FederatedConnectorAssignment {
-  assignment_id: string;
-  account_id: string;
-  agent_id: string;
-  source_project_id: string;
-  grant_id: string;
-  enabled: boolean;
-  revision: number;
-  created_at: Date;
-  updated_at: Date;
-}
+export type { FederatedConnectorAssignment };
 
 const COLUMNS =
   "assignment_id,account_id,agent_id,source_project_id,grant_id,enabled,revision,created_at,updated_at";
