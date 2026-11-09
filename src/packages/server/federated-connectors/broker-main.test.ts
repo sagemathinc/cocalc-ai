@@ -113,7 +113,10 @@ function fakes(over: { azp?: string; storeOk?: boolean } = {}) {
           rows: [
             {
               owned_tables: 2,
+              owned_schema: 1,
               owned_purge: 1,
+              owned_guard: 1,
+              app_grants_exact: true,
               app_can_change: false,
               app_privileged: false,
               app_is_owner: false,

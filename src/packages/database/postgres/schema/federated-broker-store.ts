@@ -164,7 +164,10 @@ export async function migrateBrokerStore(db: BrokerStoreDb): Promise<void> {
 export interface BrokerStoreStatus {
   /**
    * ok: each of the six guards exists by name on its table, enabled ALWAYS
-   * and current; both tables and the purge are owned by broker_migrate;
+   * and current; the schema, both tables, the guard function and the
+   * SECURITY DEFINER purge are owned by broker_migrate, both functions with
+   * search_path=pg_catalog; broker_app has exactly INSERT+SELECT on the mint
+   * log, SELECT on the purge log and EXECUTE on the purge;
    * broker_app can't UPDATE, DELETE or TRUNCATE either table, and isn't a
    * superuser, bypassrls or a member of broker_migrate. "privileges" is any
    * failure of the ownership or role checks.
@@ -213,12 +216,35 @@ export async function getBrokerStoreStatus(
          WHERE n.nspname = $1 AND c.relname = ANY($2::text[])
            AND pg_get_userbyid(c.relowner) = '${BROKER_MIGRATE_ROLE}')
          AS owned_tables,
+       (SELECT count(*) FROM pg_namespace n
+         WHERE n.nspname = $1
+           AND pg_get_userbyid(n.nspowner) = '${BROKER_MIGRATE_ROLE}')
+         AS owned_schema,
        (SELECT count(*) FROM pg_proc p
           JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = $1 AND p.proname = 'broker_purge_mint_log'
            AND p.prosecdef
-           AND pg_get_userbyid(p.proowner) = '${BROKER_MIGRATE_ROLE}')
+           AND pg_get_userbyid(p.proowner) = '${BROKER_MIGRATE_ROLE}'
+           AND p.proconfig = ARRAY['search_path=pg_catalog'])
          AS owned_purge,
+       (SELECT count(*) FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = $1 AND p.proname = 'broker_append_only_guard'
+           AND NOT p.prosecdef
+           AND pg_get_userbyid(p.proowner) = '${BROKER_MIGRATE_ROLE}'
+           AND p.proconfig = ARRAY['search_path=pg_catalog'])
+         AS owned_guard,
+       (has_table_privilege('${BROKER_APP_ROLE}',
+          format('%I.federated_connector_mint_log', $1::text), 'INSERT')
+        AND has_table_privilege('${BROKER_APP_ROLE}',
+          format('%I.federated_connector_mint_log', $1::text), 'SELECT')
+        AND has_table_privilege('${BROKER_APP_ROLE}',
+          format('%I.broker_purge_log', $1::text), 'SELECT')
+        AND NOT has_table_privilege('${BROKER_APP_ROLE}',
+          format('%I.broker_purge_log', $1::text), 'INSERT')
+        AND has_function_privilege('${BROKER_APP_ROLE}',
+          format('%I.broker_purge_mint_log()', $1::text), 'EXECUTE'))
+         AS app_grants_exact,
        (SELECT bool_or(has_table_privilege('${BROKER_APP_ROLE}',
                          format('%I.%I', $1::text, t), priv))
           FROM unnest($2::text[]) AS t,
@@ -233,7 +259,10 @@ export async function getBrokerStoreStatus(
   const r = roles.rows[0] ?? {};
   if (
     Number(r.owned_tables) !== STORE_TABLES.length ||
+    Number(r.owned_schema) !== 1 ||
     Number(r.owned_purge) !== 1 ||
+    Number(r.owned_guard) !== 1 ||
+    r.app_grants_exact !== true ||
     r.app_can_change !== false ||
     r.app_privileged !== false ||
     r.app_is_owner !== false

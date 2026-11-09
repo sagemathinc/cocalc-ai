@@ -214,7 +214,7 @@ describe("the broker store", () => {
     expect(await getBrokerStoreStatus(db)).toEqual({ state: "ok" });
   });
 
-  it("reports privileges when broker_app gains a change right, membership, or the tables change owner", async () => {
+  it("reports privileges on any drift of grants, membership, ownership, SECURITY DEFINER or search_path", async () => {
     expect(await getBrokerStoreStatus(db)).toEqual({ state: "ok" });
     for (const [grant, revoke] of [
       [
@@ -236,7 +236,41 @@ describe("the broker store", () => {
       ["ALTER ROLE broker_app BYPASSRLS", "ALTER ROLE broker_app NOBYPASSRLS"],
       [
         "ALTER TABLE broker.broker_purge_log OWNER TO broker_app",
-        "ALTER TABLE broker.broker_purge_log OWNER TO broker_migrate",
+        // Ownership moves the table's grants: restore broker_app's SELECT.
+        "ALTER TABLE broker.broker_purge_log OWNER TO broker_migrate; GRANT SELECT ON broker.broker_purge_log TO broker_app",
+      ],
+      [
+        "ALTER SCHEMA broker OWNER TO broker_app",
+        // Ownership moves the schema's grants: restore broker_app's usage.
+        "ALTER SCHEMA broker OWNER TO broker_migrate; GRANT USAGE ON SCHEMA broker TO broker_app",
+      ],
+      [
+        "ALTER FUNCTION broker.broker_purge_mint_log() RESET search_path",
+        "ALTER FUNCTION broker.broker_purge_mint_log() SET search_path = pg_catalog",
+      ],
+      [
+        "ALTER FUNCTION broker.broker_purge_mint_log() SECURITY INVOKER",
+        "ALTER FUNCTION broker.broker_purge_mint_log() SECURITY DEFINER",
+      ],
+      [
+        "ALTER FUNCTION broker.broker_append_only_guard() SET search_path = public",
+        "ALTER FUNCTION broker.broker_append_only_guard() SET search_path = pg_catalog",
+      ],
+      [
+        "ALTER FUNCTION broker.broker_append_only_guard() OWNER TO broker_app",
+        "ALTER FUNCTION broker.broker_append_only_guard() OWNER TO broker_migrate",
+      ],
+      [
+        "GRANT INSERT ON broker.broker_purge_log TO broker_app",
+        "REVOKE INSERT ON broker.broker_purge_log FROM broker_app",
+      ],
+      [
+        "REVOKE EXECUTE ON FUNCTION broker.broker_purge_mint_log() FROM broker_app",
+        "GRANT EXECUTE ON FUNCTION broker.broker_purge_mint_log() TO broker_app",
+      ],
+      [
+        "REVOKE INSERT ON broker.federated_connector_mint_log FROM broker_app",
+        "GRANT INSERT ON broker.federated_connector_mint_log TO broker_app",
       ],
     ]) {
       await as(null);
