@@ -38,7 +38,7 @@ const ISSUED: MintResult = {
   sa_label: "ops-reader",
 };
 const VERSION =
-  "projects/fake-project-1/locations/us/keyRings/cocalc-connectors/cryptoKeys/connector-issuer/cryptoKeyVersions/1";
+  "projects/fake-project-1/locations/us/keyRings/example-ring/cryptoKeys/example-key/cryptoKeyVersions/1";
 const BAY_A = {
   cluster_id: "cluster-1",
   bay_id: "bay-a",
