@@ -10,8 +10,9 @@ row younger than the retention period, so no code path (and no ordinary SQL
 session) can rewrite or drop a mint record before it expires. Only rows older
 than FEDERATED_MINT_LOG_RETENTION may be deleted, by the retention job.
 
-A row's time is always the database's own clock at insert: a supplied time
-is overwritten, so a record can't be backdated to make it deletable at once.
+A row's time is always the database's own clock at the moment of insert
+(clock_timestamp(), not the transaction start): a supplied time is
+overwritten, so a record can't be backdated to make it deletable at once.
 The triggers are enabled ALWAYS, so they also fire for sessions in replica
 mode.
 */
@@ -32,7 +33,7 @@ const FEDERATED_MINT_LOG_TRIGGERS = [
 ];
 const FEDERATED_MINT_LOG_FUNCTION = "federated_connector_mint_log_guard";
 // Bump when the function changes, so schema sync replaces it.
-const FEDERATED_MINT_LOG_CONTRACT = "federated-mint-log-append-only-v2";
+const FEDERATED_MINT_LOG_CONTRACT = "federated-mint-log-append-only-v3";
 // At least 13 months (audit evidence).
 export const FEDERATED_MINT_LOG_RETENTION = "13 months";
 
@@ -41,7 +42,7 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${FEDERATED_M
    -- ${FEDERATED_MINT_LOG_CONTRACT}
    BEGIN
      IF TG_OP = 'INSERT' THEN
-       NEW.time := NOW();
+       NEW.time := clock_timestamp();
        RETURN NEW;
      END IF;
      IF TG_OP = 'DELETE'

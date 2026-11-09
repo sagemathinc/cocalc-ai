@@ -192,8 +192,9 @@ export async function generateAccessToken({
   if (!validToken(data?.accessToken) || !Number.isFinite(expiresAt)) {
     throw new GoogleCallError("transient", "iam_malformed");
   }
-  // Never trust a lifetime longer than the one requested.
-  if (expiresAt > now + lifetimeSeconds * 1000 + 60_000) {
+  // Never trust a lifetime longer than the one requested, and never hand
+  // out a token that is already expired.
+  if (expiresAt > now + lifetimeSeconds * 1000 + 60_000 || expiresAt <= now) {
     throw new GoogleCallError("transient", "iam_unexpected_expiry");
   }
   return { accessToken: data.accessToken, expiresAt };

@@ -122,28 +122,48 @@ export async function recordMint(row: MintLogRow): Promise<void> {
   );
 }
 
+const LEASE_LOCK_WAIT_MS = 45_000;
+const LEASE_LOCK_POLL_MS = 200;
+
 /**
- * Runs fn holding a transaction-scoped advisory lock for the lease, so one
- * exchange per lease is in flight across broker processes.
+ * Runs fn holding a session-level advisory lock for the lease, so one
+ * exchange per lease is in flight across broker processes. No transaction
+ * stays open across the provider calls; the lock is tried (not blocked on)
+ * for at most LEASE_LOCK_WAIT_MS and always released explicitly.
  */
 export async function withLeaseLock<T>(
   lease_id: string,
   fn: () => Promise<T>,
 ): Promise<T> {
+  const key = `federated-lease:${lease_id}`;
   const client = await getPool().connect();
+  let locked = false;
   try {
-    await client.query("BEGIN");
-    await client.query(
-      "SELECT pg_advisory_xact_lock(hashtextextended($1, 7172))",
-      [`federated-lease:${lease_id}`],
-    );
-    const result = await fn();
-    await client.query("COMMIT");
-    return result;
-  } catch (err) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    throw err;
+    const deadline = Date.now() + LEASE_LOCK_WAIT_MS;
+    while (!locked) {
+      const { rows } = await client.query(
+        "SELECT pg_try_advisory_lock(hashtextextended($1, 7172)) AS locked",
+        [key],
+      );
+      locked = rows[0]?.locked === true;
+      if (locked) break;
+      if (Date.now() >= deadline) throw Error("lease lock wait timed out");
+      await new Promise((r) => setTimeout(r, LEASE_LOCK_POLL_MS));
+    }
+    return await fn();
   } finally {
-    client.release();
+    let unlockFailed = false;
+    if (locked) {
+      try {
+        await client.query(
+          "SELECT pg_advisory_unlock(hashtextextended($1, 7172))",
+          [key],
+        );
+      } catch {
+        unlockFailed = true;
+      }
+    }
+    // A connection that may still hold the lock is discarded, not reused.
+    client.release(unlockFailed ? true : undefined);
   }
 }

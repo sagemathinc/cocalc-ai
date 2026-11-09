@@ -111,6 +111,11 @@ export interface BrokerDeps {
   /** A trusted reference time (e.g. a Google response's Date header). */
   referenceNow(): Promise<number>;
   now(): number;
+  /**
+   * A monotonic clock in milliseconds (never jumps with the wall clock);
+   * defaults to performance.now().
+   */
+  monotonicNow?: () => number;
   /** Runs fn holding a lock for this lease (one exchange in flight). */
   withLeaseLock<T>(lease_id: string, fn: () => Promise<T>): Promise<T>;
   /** Appends a mint log row (the database sets its time). */
@@ -188,6 +193,7 @@ export const DEFAULT_RATE_LIMITS = {
 export const CLOCK_REFERENCE_MAX_AGE_MS = 5 * 60_000;
 
 interface CachedToken {
+  lease_id: string;
   token: string;
   expires_at: number;
   renew_at: number;
@@ -211,33 +217,89 @@ function validRequest(r: MintRequest): boolean {
   );
 }
 
+/**
+ * The identity of one request. The cache and the in-flight dedupe are keyed
+ * by all of it, so a request never receives a token (or an answer) obtained
+ * for another account, agent, project, host, run, grant or revision, even
+ * with the same lease id.
+ */
+function requestKey(r: MintRequest): string {
+  return JSON.stringify([
+    r.site_id,
+    r.account_id,
+    r.agent_id,
+    r.project_id,
+    r.host_id,
+    r.run_id,
+    r.grant_id,
+    r.lease_id,
+    r.grant_revision,
+  ]);
+}
+
 export class FederatedTokenBroker {
   private cache = new Map<string, CachedToken>();
   private inflight = new Map<string, Promise<MintResult>>();
-  private clock?: { checkedAt: number };
+  // A trusted reference time and the monotonic time it was taken at.
+  private clock?: { reference: number; monotonic: number };
+  private invalidRequests = 0;
+
+  /** Counters for health reporting (no ids, nothing secret). */
+  stats(): { invalid_requests: number; cached_tokens: number } {
+    return {
+      invalid_requests: this.invalidRequests,
+      cached_tokens: this.cache.size,
+    };
+  }
 
   constructor(private deps: BrokerDeps) {}
 
-  /** Drops a lease's cached token (revoke, end of turn). */
+  /** Drops every cached token of a lease (revoke, end of turn). */
   forget(lease_id: string): void {
-    this.cache.delete(lease_id);
+    for (const [key, entry] of this.cache) {
+      if (entry.lease_id === lease_id) this.cache.delete(key);
+    }
   }
 
-  /** One token request; concurrent requests for a lease share one answer. */
+  /**
+   * One token request. Concurrent identical requests (same lease, account,
+   * grant, turn and revision) share one answer; any other request runs its
+   * own checks.
+   */
   async getToken(request: MintRequest): Promise<MintResult> {
     if (!validRequest(request)) {
+      // Can't be logged as a row (its ids aren't valid); counted instead.
+      this.invalidRequests += 1;
       return { status: "denied", reason: "invalid_request" };
     }
-    const running = this.inflight.get(request.lease_id);
+    const key = requestKey(request);
+    const running = this.inflight.get(key);
     if (running) return await running;
     const p = this.deps
-      .withLeaseLock(request.lease_id, () => this.serve(request))
-      .catch((): MintResult => ({ status: "error", reason: "broker_failure" }));
-    this.inflight.set(request.lease_id, p);
+      .withLeaseLock(request.lease_id, () => this.serve(request, key))
+      .catch(async (): Promise<MintResult> => {
+        await this.recordBestEffort({
+          ...this.base(request),
+          outcome: "error",
+          reason: "broker_failure",
+        });
+        return { status: "error", reason: "broker_failure" };
+      });
+    this.inflight.set(key, p);
     try {
       return await p;
     } finally {
-      this.inflight.delete(request.lease_id);
+      this.inflight.delete(key);
+    }
+  }
+
+  // A refusal is recorded best effort: a failed log write never turns a
+  // refusal into anything else.
+  private async recordBestEffort(row: MintLogRow): Promise<void> {
+    try {
+      await this.deps.recordMint(row);
+    } catch {
+      // nothing more to do; the request is refused either way
     }
   }
 
@@ -268,8 +330,8 @@ export class FederatedTokenBroker {
     extra: Partial<MintLogRow> = {},
     retry_after_ms?: number,
   ): Promise<MintResult> {
-    if (outcome === "denied") this.cache.delete(request.lease_id);
-    await this.deps.recordMint({
+    if (outcome === "denied") this.cache.delete(requestKey(request));
+    await this.recordBestEffort({
       ...this.base(request),
       ...extra,
       outcome,
@@ -280,7 +342,7 @@ export class FederatedTokenBroker {
       : { status: "error", reason, retry_after_ms };
   }
 
-  private async serve(request: MintRequest): Promise<MintResult> {
+  private async serve(request: MintRequest, key: string): Promise<MintResult> {
     const deps = this.deps;
     // 1. The grant at the lease's exact revision.
     let loaded: Awaited<ReturnType<BrokerDeps["loadGrant"]>>;
@@ -367,7 +429,7 @@ export class FederatedTokenBroker {
 
     // A cached token past every check, before its renewal time.
     const now = deps.now();
-    const cached = this.cache.get(request.lease_id);
+    const cached = this.cache.get(key);
     if (
       cached &&
       cached.grant_revision === grant.revision &&
@@ -391,17 +453,22 @@ export class FederatedTokenBroker {
     ) {
       return await this.refuse(request, "error", "rate_limited", ids, 60_000);
     }
+    // Before EVERY sign: the wall clock must agree with the trusted
+    // reference advanced by the monotonic clock, so a wall-clock step in
+    // either direction is caught at once. The reference is refreshed when it
+    // is older than CLOCK_REFERENCE_MAX_AGE_MS of monotonic time.
     try {
-      if (
-        !this.clock ||
-        now - this.clock.checkedAt > CLOCK_REFERENCE_MAX_AGE_MS
-      ) {
-        assertClockWithinSkew({
-          localNow: deps.now(),
-          referenceNow: await deps.referenceNow(),
-        });
-        this.clock = { checkedAt: now };
+      const mono = deps.monotonicNow ?? (() => performance.now());
+      const age = this.clock ? mono() - this.clock.monotonic : Infinity;
+      if (!this.clock || !(age >= 0) || age > CLOCK_REFERENCE_MAX_AGE_MS) {
+        const reference = await deps.referenceNow();
+        if (!Number.isFinite(reference)) throw Error("no reference");
+        this.clock = { reference, monotonic: mono() };
       }
+      assertClockWithinSkew({
+        localNow: deps.now(),
+        referenceNow: this.clock.reference + (mono() - this.clock.monotonic),
+      });
     } catch {
       this.clock = undefined;
       return await this.refuse(request, "error", "clock_unverified", ids);
@@ -445,21 +512,28 @@ export class FederatedTokenBroker {
         serviceAccount: grant.service_account,
         now,
       });
+      // Record the mint first: a token without its mint log row is never
+      // cached or returned.
+      try {
+        await deps.recordMint({
+          ...this.base(request),
+          ...signedIds,
+          outcome: "issued",
+          reason: null,
+          issued_at: now,
+          expires_at: expiresAt,
+        });
+      } catch {
+        return { status: "error", reason: "audit_write_failed" };
+      }
       const lifetime = Math.max(0, expiresAt - now);
       const jitter = (deps.random ?? Math.random)() * 0.2 - 0.1;
-      this.cache.set(request.lease_id, {
+      this.cache.set(key, {
+        lease_id: request.lease_id,
         token: accessToken,
         expires_at: expiresAt,
         renew_at: now + lifetime * (0.5 + jitter),
         grant_revision: grant.revision,
-      });
-      await deps.recordMint({
-        ...this.base(request),
-        ...signedIds,
-        outcome: "issued",
-        reason: null,
-        issued_at: now,
-        expires_at: expiresAt,
       });
       return issued(accessToken, expiresAt);
     } catch (err) {

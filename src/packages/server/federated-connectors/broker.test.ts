@@ -86,15 +86,18 @@ function setup(
   opts: {
     grant?: any;
     loadGrant?: BrokerDeps["loadGrant"];
+    recordMint?: BrokerDeps["recordMint"];
+    withLeaseLock?: BrokerDeps["withLeaseLock"];
     turnLive?: boolean;
     allowlisted?: boolean;
     reference?: number;
     sts?: { status: number; retryAfter?: string };
-    iam?: { status: number };
+    iam?: { status: number; expireInMs?: number };
     limiter?: BrokerDeps["limiter"];
   } = {},
 ) {
   let now = NOW;
+  let mono = 1_000;
   const rows: MintLogRow[] = [];
   const calls: { url: string; body?: string; auth?: string }[] = [];
   let referenceCalls = 0;
@@ -116,8 +119,12 @@ function setup(
           return sts
             ? { access_token: FEDERATED_TOKEN, token_type: "Bearer" }
             : {
-                accessToken: ACCESS_TOKEN,
-                expireTime: new Date(now + 900_000).toISOString(),
+                accessToken: url.includes("other-sa")
+                  ? `${ACCESS_TOKEN}-OTHER`
+                  : ACCESS_TOKEN,
+                expireTime: new Date(
+                  now + ((opts.iam as any)?.expireInMs ?? 900_000),
+                ).toISOString(),
               };
         },
       };
@@ -136,10 +143,13 @@ function setup(
       return opts.reference ?? now;
     },
     now: () => now,
-    withLeaseLock: async (_lease, fn) => await fn(),
-    async recordMint(row) {
-      rows.push(row);
-    },
+    monotonicNow: () => mono,
+    withLeaseLock: opts.withLeaseLock ?? (async (_lease, fn) => await fn()),
+    recordMint:
+      opts.recordMint ??
+      (async (row) => {
+        rows.push(row);
+      }),
     limiter: opts.limiter ?? new TokenBucketLimiter(DEFAULT_RATE_LIMITS),
     random: () => 0.5,
   };
@@ -147,7 +157,12 @@ function setup(
     broker: new FederatedTokenBroker(deps),
     rows,
     calls,
-    advance: (ms: number) => (now += ms),
+    advance: (ms: number) => {
+      now += ms;
+      mono += ms;
+    },
+    /** Steps only the wall clock (the monotonic clock doesn't move). */
+    stepWall: (ms: number) => (now += ms),
     referenceCalls: () => referenceCalls,
     setOpts: (o: typeof opts) => Object.assign(opts, o),
   };
@@ -321,6 +336,120 @@ describe("broker: each check refuses on its own", () => {
   });
 });
 
+describe("broker: a lease id alone never shares a token or an answer", () => {
+  it("runs separate checks for the same lease id under another account", async () => {
+    const t = setup({
+      loadGrant: async ({ account_id }) =>
+        account_id === UUID(2) ? grantRecord() : null,
+    });
+    const [mine, theirs] = await Promise.all([
+      t.broker.getToken(request()),
+      t.broker.getToken(request({ account_id: UUID(50) })),
+    ]);
+    expect(mine.status).toBe("issued");
+    expect(theirs).toEqual({ status: "denied", reason: "grant_missing" });
+    // and with the first token cached, still no sharing
+    expect(await t.broker.getToken(request({ account_id: UUID(50) }))).toEqual({
+      status: "denied",
+      reason: "grant_missing",
+    });
+  });
+
+  it("never serves another grant's cached token, even at an equal revision", async () => {
+    const t = setup({
+      loadGrant: async ({ grant_id }) =>
+        grant_id === UUID(7)
+          ? grantRecord()
+          : grantRecord({
+              grant: {
+                grant_id: UUID(51),
+                service_account:
+                  "other-sa@example-project-1.iam.gserviceaccount.com",
+              },
+            }),
+    });
+    const first = await t.broker.getToken(request());
+    const second = await t.broker.getToken(request({ grant_id: UUID(51) }));
+    expect(first).toMatchObject({ status: "issued", token: ACCESS_TOKEN });
+    expect(second).toMatchObject({
+      status: "issued",
+      token: `${ACCESS_TOKEN}-OTHER`,
+    });
+    expect(t.calls).toHaveLength(4); // two separate exchanges
+  });
+
+  it.each([
+    ["agent", { agent_id: UUID(60) }],
+    ["project", { project_id: UUID(61) }],
+    ["host", { host_id: UUID(62) }],
+    ["run", { run_id: UUID(63) }],
+  ])("mints anew for the same lease id with another %s", async (_n, over) => {
+    const t = setup();
+    await t.broker.getToken(request());
+    await t.broker.getToken(request(over as Partial<MintRequest>));
+    expect(t.calls).toHaveLength(4);
+    expect(t.rows.filter((r) => r.outcome === "issued")).toHaveLength(2);
+  });
+});
+
+describe("broker: no mint log row, no token", () => {
+  it("never caches or returns a token whose issued row failed to write", async () => {
+    let fail = true;
+    const rows: MintLogRow[] = [];
+    const t = setup({
+      recordMint: async (row) => {
+        if (row.outcome === "issued" && fail) throw Error("db down");
+        rows.push(row);
+      },
+    });
+    expect(await t.broker.getToken(request())).toEqual({
+      status: "error",
+      reason: "audit_write_failed",
+    });
+    expect(t.broker.stats().cached_tokens).toBe(0);
+    fail = false;
+    expect((await t.broker.getToken(request())).status).toBe("issued");
+    expect(t.calls).toHaveLength(4); // a fresh exchange, nothing reused
+    expect(rows.filter((r) => r.outcome === "issued")).toHaveLength(1);
+  });
+
+  it("still refuses when a refusal can't be logged", async () => {
+    const t = setup({
+      allowlisted: false,
+      recordMint: async () => {
+        throw Error("db down");
+      },
+    });
+    expect(await t.broker.getToken(request())).toEqual({
+      status: "denied",
+      reason: "not_allowlisted",
+    });
+  });
+
+  it("records an unexpected failure as broker_failure, best effort", async () => {
+    const t = setup({
+      withLeaseLock: async () => {
+        throw Error("lock unavailable");
+      },
+    });
+    expect(await t.broker.getToken(request())).toEqual({
+      status: "error",
+      reason: "broker_failure",
+    });
+    expect(t.rows).toEqual([
+      expect.objectContaining({ outcome: "error", reason: "broker_failure" }),
+    ]);
+  });
+
+  it("counts invalid requests it can't log", async () => {
+    const t = setup();
+    await t.broker.getToken(request({ host_id: "x" }));
+    await t.broker.getToken(request({ grant_revision: 0 }));
+    expect(t.broker.stats().invalid_requests).toBe(2);
+    expect(t.rows).toHaveLength(0);
+  });
+});
+
 describe("broker: limits, clock and the provider", () => {
   it("refuses when a rate limit is exhausted", async () => {
     const t = setup({
@@ -373,6 +502,43 @@ describe("broker: limits, clock and the provider", () => {
       reason: "sts_unavailable",
       retry_after_ms: 7000,
     });
+  });
+
+  it("refuses an access token that is already expired", async () => {
+    const t = setup({ iam: { status: 200, expireInMs: 0 } });
+    expect(await t.broker.getToken(request())).toMatchObject({
+      status: "error",
+      reason: "iam_unexpected_expiry",
+    });
+    expect(t.broker.stats().cached_tokens).toBe(0);
+  });
+
+  it.each([
+    ["forward", 60_000],
+    ["backward", -60_000],
+  ])(
+    "refuses to sign after a %s wall-clock step inside the reference window",
+    async (_dir, step) => {
+      const t = setup();
+      expect((await t.broker.getToken(request())).status).toBe("issued");
+      t.advance(1_000);
+      t.stepWall(step as number);
+      const before = t.calls.length;
+      expect(
+        await t.broker.getToken(request({ lease_id: UUID(70) })),
+      ).toMatchObject({ status: "error", reason: "clock_unverified" });
+      expect(t.calls).toHaveLength(before); // no provider call
+    },
+  );
+
+  it("signs after a small wall-clock drift within the allowed skew", async () => {
+    const t = setup();
+    await t.broker.getToken(request());
+    t.advance(1_000);
+    t.stepWall(5_000);
+    expect(
+      (await t.broker.getToken(request({ lease_id: UUID(71) }))).status,
+    ).toBe("issued");
   });
 
   it("denies when the service account call is refused", async () => {
