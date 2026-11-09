@@ -281,17 +281,22 @@ export const federatedConnectorAtThisBay: InterBayFederatedConnectorApi = {
   setProtectedSetting: setFederatedProtectedSettingOnSeed,
 };
 
+/** The broker signer's unique id from the signer record now, if any. */
+export async function currentFederatedBrokerSignerId(): Promise<
+  string | undefined
+> {
+  const settings = (await getServerSettings()) as Record<string, unknown>;
+  return signerRecordFromSetting(settings[FEDERATED_BROKER_SIGNER_SETTING])
+    ?.uniqueId;
+}
+
 /**
  * This bay's answers to the broker's lookups (G3b design v3 §3): the grant
  * and the turn recheck from this bay's database (the broker asks the
  * account's home bay), the allowlist only on the seed.
  */
 export const federatedBrokerLookupsAtThisBay = createBrokerLookupHandler({
-  currentSignerId: async () => {
-    const settings = (await getServerSettings()) as Record<string, unknown>;
-    return signerRecordFromSetting(settings[FEDERATED_BROKER_SIGNER_SETTING])
-      ?.uniqueId;
-  },
+  currentSignerId: currentFederatedBrokerSignerId,
   loadGrant,
   verifyLiveTurn: async (request) =>
     await verifyFederatedLiveTurn(request, federatedTurnDeps()),

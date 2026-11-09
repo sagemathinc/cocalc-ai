@@ -35,9 +35,13 @@ import { createInterBayFederatedGateHandler } from "@cocalc/conat/inter-bay/fede
 import { createInterBayFederatedConnectorHandler } from "@cocalc/conat/inter-bay/federated-connector";
 import { createInterBayFederatedBrokerHandler } from "@cocalc/conat/inter-bay/federated-broker";
 import {
+  currentFederatedBrokerSignerId,
   federatedBrokerLookupsAtThisBay,
+  federatedBrokerRegistration,
   federatedConnectorAtThisBay,
+  setFederatedBrokerMintClient,
 } from "@cocalc/server/federated-connectors/routing";
+import { startFederatedBrokerTransport } from "@cocalc/server/federated-connectors/broker-transport";
 import { applyFederatedGateReplica } from "@cocalc/server/federated-connectors/site-gate";
 import { applyServerSettingFromBay } from "@cocalc/server/inter-bay/server-setting-replica";
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
@@ -183,6 +187,7 @@ import {
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
+  getConfiguredClusterId,
   getConfiguredClusterRole,
   getConfiguredClusterSeedBayId,
 } from "@cocalc/server/cluster-config";
@@ -627,6 +632,17 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectDetailsService();
+    // The broker's heartbeats and the mint client (G3b). A failure here
+    // leaves the federated gate closed; nothing else depends on it.
+    await startFederatedBrokerTransport({
+      client: getInterBayFabricServiceClient(),
+      clusterId: getConfiguredClusterId(),
+      currentSignerId: currentFederatedBrokerSignerId,
+      registration: federatedBrokerRegistration,
+      setMintClient: setFederatedBrokerMintClient,
+    }).catch((err) =>
+      logger.warn("federated broker transport unavailable", `${err}`),
+    );
     services.push(
       createInterBayFederatedGateHandler(
         getConfiguredBayId(),

@@ -4,7 +4,13 @@
  */
 
 /*
-The token broker's lookups on a bay (G3b design v3 §3):
+The token broker's transport (G3b design v3 §3).
+
+- broker.<cluster>.rpc.mint.v1: the broker's mint and publicKeys, for bays.
+- broker.<cluster>.heartbeat.v1: the broker's registration heartbeats, heard
+  by every bay process.
+
+The token broker's lookups on a bay:
 bay.<id>.rpc.federated-broker.v1, with exactly loadGrant, verifyLiveTurn and
 isAllowlisted. The broker asks the account's home bay for the first two and
 the seed bay for the allowlist. The handler gets the caller from the conat
@@ -68,4 +74,117 @@ export function createInterBayFederatedBrokerHandler(
     handler: async (mesg, context) =>
       await handle(mesg?.name, mesg?.args, context?.caller),
   });
+}
+
+function brokerSubject(cluster_id: string, rest: string): string {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(cluster_id)) {
+    throw Error("invalid cluster_id");
+  }
+  return `broker.${cluster_id}.${rest}`;
+}
+
+export function federatedBrokerMintSubject(cluster_id: string): string {
+  return brokerSubject(cluster_id, "rpc.mint.v1");
+}
+
+export function federatedBrokerHeartbeatSubject(cluster_id: string): string {
+  return brokerSubject(cluster_id, "heartbeat.v1");
+}
+
+const MINT_SERVICE = "federated-broker-mint";
+
+export interface FederatedBrokerMintApi {
+  mint(request: unknown): Promise<unknown>;
+  publicKeys(): Promise<unknown>;
+}
+
+/** For a bay: the raw call; replies are checked by the caller (strictly). */
+export function createFederatedBrokerMintCall(
+  client: Client,
+  cluster_id: string,
+): (method: "mint" | "publicKeys", args: unknown[]) => Promise<unknown> {
+  const api = createServiceClient<FederatedBrokerMintApi>({
+    client,
+    service: MINT_SERVICE,
+    subject: federatedBrokerMintSubject(cluster_id),
+    timeout: 15_000,
+    noRetry: true,
+    transport: "request",
+  });
+  return async (method, args) =>
+    method === "mint" ? await api.mint(args[0]) : await api.publicKeys();
+}
+
+/** For the broker process. */
+export function createFederatedBrokerMintService(
+  cluster_id: string,
+  handler: {
+    mint(
+      input: unknown,
+      caller: AuthenticatedCaller | undefined,
+    ): Promise<unknown>;
+    publicKeys(caller: AuthenticatedCaller | undefined): Promise<unknown>;
+  },
+  options: Omit<Options, "handler" | "service" | "subject">,
+) {
+  return createConatService({
+    ...options,
+    service: MINT_SERVICE,
+    subject: federatedBrokerMintSubject(cluster_id),
+    handler: async (mesg, context) => {
+      const args = mesg?.args;
+      if (mesg?.name === "mint" && Array.isArray(args) && args.length === 1) {
+        return await handler.mint(args[0], context?.caller);
+      }
+      if (
+        mesg?.name === "publicKeys" &&
+        Array.isArray(args) &&
+        args.length === 0
+      ) {
+        return await handler.publicKeys(context?.caller);
+      }
+      throw Error("request_refused");
+    },
+  });
+}
+
+/** For the broker process: one heartbeat. */
+export async function publishFederatedBrokerHeartbeat(
+  client: Client,
+  cluster_id: string,
+  beat: unknown,
+): Promise<void> {
+  await client.publish(federatedBrokerHeartbeatSubject(cluster_id), beat);
+}
+
+/**
+ * For a bay: every heartbeat with the caller the conat server stamped (never
+ * from the message). `onEnd` runs when the subscription ends for any
+ * reason. Returns a function that stops listening.
+ */
+export async function onFederatedBrokerHeartbeat(
+  client: Client,
+  cluster_id: string,
+  handle: (beat: unknown, caller: AuthenticatedCaller | undefined) => void,
+  onEnd: () => void,
+): Promise<() => void> {
+  const sub = await client.subscribe(
+    federatedBrokerHeartbeatSubject(cluster_id),
+  );
+  (async () => {
+    try {
+      for await (const mesg of sub) {
+        try {
+          handle(mesg.data, mesg.caller);
+        } catch {
+          // A malformed heartbeat is the handler's business; keep listening.
+        }
+      }
+    } catch {
+      // The subscription failed: the same as it ending.
+    } finally {
+      onEnd();
+    }
+  })();
+  return () => sub.close();
 }

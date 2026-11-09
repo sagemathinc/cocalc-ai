@@ -2068,6 +2068,32 @@ describe("federated token broker principal", () => {
     }
   });
 
+  it("keeps its exact access through a cluster link, and only for its stamp", async () => {
+    const link = { hub_id: "cluster-link" };
+    const stamp = { federated_broker_signer_id: ID };
+    const ok = (subject: string, forwardedCaller: any) =>
+      isAllowed({ user: link as any, subject, type: "pub", forwardedCaller });
+    expect(await ok("bay.bay-a.rpc.federated-broker.v1", stamp)).toBe(true);
+    expect(await ok("broker.cluster-1.heartbeat.v1", stamp)).toBe(true);
+    expect(await ok("bay.bay-a.rpc.federated-connector.v1", stamp)).toBe(false);
+    for (const forwarded of [
+      { ...stamp, bay_id: "bay-a" },
+      { ...stamp, socket_return: "x" },
+      { federated_broker_signer_id: "109876543210987654322" },
+      {
+        cluster_id: "cluster-1",
+        bay_id: "bay-a",
+        bay_credential_id: "credential-1",
+      },
+      undefined,
+    ]) {
+      expect(await ok("bay.bay-a.rpc.federated-broker.v1", forwarded)).toBe(
+        false,
+      );
+      expect(await ok("broker.cluster-1.heartbeat.v1", forwarded)).toBe(false);
+    }
+  });
+
   it("gets nothing once the signer record names someone else, or no one", async () => {
     serverSettingsMock = {
       federated_broker_signer: SIGNER.replace(ID, "109876543210987654322"),

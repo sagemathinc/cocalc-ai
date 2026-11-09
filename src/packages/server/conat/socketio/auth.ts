@@ -649,6 +649,25 @@ export async function isAllowed({
       type,
     });
   }
+  // A broker publication forwarded by a cluster link: the same exact access,
+  // for the stamp the first server set (only the stamp, nothing mixed in).
+  if (
+    (user as any).hub_id === "cluster-link" &&
+    type === "pub" &&
+    (forwardedCaller as any)?.federated_broker_signer_id !== undefined
+  ) {
+    if (Object.keys(forwardedCaller as object).length !== 1) return false;
+    const settings = (await getServerSettings()) as Record<string, unknown>;
+    return isFederatedBrokerAllowed({
+      signerId: (forwardedCaller as any).federated_broker_signer_id,
+      currentSignerId: signerRecordFromSetting(
+        settings[FEDERATED_BROKER_SIGNER_SETTING],
+      )?.uniqueId,
+      clusterId: getConfiguredClusterId(),
+      subject,
+      type,
+    });
+  }
   if (
     isReservedForFederatedBroker({
       clusterId: getConfiguredClusterId(),

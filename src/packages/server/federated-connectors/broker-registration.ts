@@ -43,6 +43,7 @@ export type BrokerRegistrationAlert =
   | "not_ready"
   | "duplicate_instance"
   | "transport_lost"
+  | "signer_changed"
   | "expired";
 
 const INSTANCE_ID_RE = /^[A-Za-z0-9_-]{16,64}$/;
