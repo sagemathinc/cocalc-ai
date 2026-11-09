@@ -86,23 +86,44 @@ function fakes(over: { azp?: string; storeOk?: boolean } = {}) {
           : { state: "ENABLED", algorithm: "RSA_SIGN_PKCS1_2048_SHA256" },
     };
   };
-  const guards = over.storeOk === false ? [] : new Array(6).fill(0);
+  const tables = ["federated_connector_mint_log", "broker_purge_log"];
+  const guards =
+    over.storeOk === false
+      ? []
+      : tables.flatMap((table) =>
+          ["insert_time", "append_only", "no_truncate"].map((g) => ({
+            table,
+            name: `${table}_${g}`,
+            enabled: "A",
+            current: true,
+          })),
+        );
+  const purges: string[] = [];
   const pool = {
-    query: async (sql: string) =>
-      sql.includes("pg_trigger")
-        ? {
-            rows: guards.map((_, i) => ({
-              tgname: `t${i}`,
-              enabled: "A",
-              current: true,
-            })),
-          }
-        : { rows: [] },
+    query: async (sql: string) => {
+      if (sql.includes("pg_trigger")) return { rows: guards };
+      if (sql.includes("owned_tables")) {
+        return {
+          rows: [
+            {
+              owned_tables: 2,
+              owned_purge: 1,
+              app_can_change: false,
+              app_privileged: false,
+              app_is_owner: false,
+            },
+          ],
+        };
+      }
+      if (sql.includes("broker_purge_mint_log")) purges.push(sql);
+      return { rows: [{ deleted: 0 }] };
+    },
     connect: async () => ({ query: async () => ({ rows: [] }), release() {} }),
   };
   const client = { close: jest.fn() };
   return {
     kmsCalls,
+    purges,
     timers,
     connectCalls,
     deps: {
@@ -233,5 +254,15 @@ describe("startBroker", () => {
     });
     expect(reply.keys).toHaveLength(1);
     expect(reply.keys[0].version).toBe(KEY);
+  });
+
+  it("purges once at start, then on the daily timer", async () => {
+    const f = fakes();
+    await startBroker(parseBrokerConfig(ENV), f.deps);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(f.purges).toHaveLength(1);
+    f.timers.find((t) => t.ms === 24 * 60 * 60_000)!.fn();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(f.purges).toHaveLength(2);
   });
 });

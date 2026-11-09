@@ -162,16 +162,33 @@ export async function migrateBrokerStore(db: BrokerStoreDb): Promise<void> {
 }
 
 export interface BrokerStoreStatus {
-  /** ok: every guard enabled ALWAYS and current, and broker_app unprivileged. */
-  state: "ok" | "missing" | "disabled" | "outdated";
+  /**
+   * ok: each of the six guards exists by name on its table, enabled ALWAYS
+   * and current; both tables and the purge are owned by broker_migrate;
+   * broker_app can't UPDATE, DELETE or TRUNCATE either table, and isn't a
+   * superuser, bypassrls or a member of broker_migrate. "privileges" is any
+   * failure of the ownership or role checks.
+   */
+  state: "ok" | "missing" | "disabled" | "outdated" | "privileges";
 }
 
-/** For the broker's health (OK/ALERT): the guards and the app role. */
+const STORE_TABLES = ["federated_connector_mint_log", "broker_purge_log"];
+const EXPECTED_GUARDS = STORE_TABLES.flatMap((t) =>
+  ["insert_time", "append_only", "no_truncate"].map((g) => ({
+    table: t,
+    name: `${t}_${g}`,
+  })),
+);
+
+/**
+ * For the broker's health (OK/ALERT) and readiness: the guards, matched by
+ * exact name and table, and the roles, checked now (not only at migration).
+ */
 export async function getBrokerStoreStatus(
   db: BrokerStoreDb,
 ): Promise<BrokerStoreStatus> {
   const { rows } = await db.query(
-    `SELECT t.tgname, t.tgenabled::text AS enabled,
+    `SELECT c.relname AS table, t.tgname AS name, t.tgenabled::text AS enabled,
             position($1 IN pg_get_functiondef(t.tgfoid)) > 0 AS current
        FROM pg_trigger t
        JOIN pg_class c ON c.oid = t.tgrelid
@@ -179,12 +196,49 @@ export async function getBrokerStoreStatus(
       WHERE n.nspname = $2 AND NOT t.tgisinternal`,
     [BROKER_STORE_CONTRACT, S],
   );
-  if (rows.length < 6) return { state: "missing" };
-  if (rows.some((r) => r.enabled === "D" || r.enabled === "R")) {
+  const guards = EXPECTED_GUARDS.map((g) =>
+    rows.find((r) => r.table === g.table && r.name === g.name),
+  );
+  if (guards.some((g) => g == null)) return { state: "missing" };
+  if (guards.some((g) => g!.enabled === "D" || g!.enabled === "R")) {
     return { state: "disabled" };
   }
-  if (rows.some((r) => r.enabled !== "A" || !r.current)) {
+  if (guards.some((g) => g!.enabled !== "A" || !g!.current)) {
     return { state: "outdated" };
+  }
+  const roles = await db.query(
+    `SELECT
+       (SELECT count(*) FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = ANY($2::text[])
+           AND pg_get_userbyid(c.relowner) = '${BROKER_MIGRATE_ROLE}')
+         AS owned_tables,
+       (SELECT count(*) FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = $1 AND p.proname = 'broker_purge_mint_log'
+           AND p.prosecdef
+           AND pg_get_userbyid(p.proowner) = '${BROKER_MIGRATE_ROLE}')
+         AS owned_purge,
+       (SELECT bool_or(has_table_privilege('${BROKER_APP_ROLE}',
+                         format('%I.%I', $1::text, t), priv))
+          FROM unnest($2::text[]) AS t,
+               unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE']) AS priv)
+         AS app_can_change,
+       (SELECT rolsuper OR rolbypassrls FROM pg_roles
+         WHERE rolname = '${BROKER_APP_ROLE}') AS app_privileged,
+       pg_has_role('${BROKER_APP_ROLE}', '${BROKER_MIGRATE_ROLE}', 'MEMBER')
+         AS app_is_owner`,
+    [S, STORE_TABLES],
+  );
+  const r = roles.rows[0] ?? {};
+  if (
+    Number(r.owned_tables) !== STORE_TABLES.length ||
+    Number(r.owned_purge) !== 1 ||
+    r.app_can_change !== false ||
+    r.app_privileged !== false ||
+    r.app_is_owner !== false
+  ) {
+    return { state: "privileges" };
   }
   return { state: "ok" };
 }

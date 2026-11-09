@@ -16,7 +16,7 @@ closed on every bay because no heartbeat arrives):
 2. the signer identity (metadata token + tokeninfo);
 3. the store (guards ok) and the signing key version (ENABLED, RS256);
 4. the fabric connection, the mint service, the readiness probe, the
-   heartbeat and the daily purge.
+   heartbeat and the purge (at start, then daily).
 */
 
 import { createPublicKey, randomBytes } from "node:crypto";
@@ -264,6 +264,9 @@ export async function startBroker(
     }),
     deps.every(PURGE_INTERVAL_MS, () => void store.purge().catch(() => {})),
   ];
+  // Also once at start, so a process restarted more often than daily still
+  // purges (G3b-2 health alerts on a stale purge log).
+  void store.purge().catch(() => {});
   return {
     readiness,
     stop() {
@@ -286,6 +289,8 @@ export async function main(): Promise<void> {
     user: "broker_app",
     database: "broker",
     max: 8,
+    // The store's times are TIMESTAMP: always read and written in UTC.
+    options: "-c timezone=UTC",
   });
   const textFetch: TextFetch = async (url, init) => {
     const res = await fetch(url, init);

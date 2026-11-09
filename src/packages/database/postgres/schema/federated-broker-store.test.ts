@@ -213,4 +213,78 @@ describe("the broker store", () => {
     }
     expect(await getBrokerStoreStatus(db)).toEqual({ state: "ok" });
   });
+
+  it("reports privileges when broker_app gains a change right, membership, or the tables change owner", async () => {
+    expect(await getBrokerStoreStatus(db)).toEqual({ state: "ok" });
+    for (const [grant, revoke] of [
+      [
+        "GRANT DELETE ON broker.federated_connector_mint_log TO broker_app",
+        "REVOKE DELETE ON broker.federated_connector_mint_log FROM broker_app",
+      ],
+      [
+        "GRANT UPDATE ON broker.broker_purge_log TO broker_app",
+        "REVOKE UPDATE ON broker.broker_purge_log FROM broker_app",
+      ],
+      [
+        "GRANT TRUNCATE ON broker.federated_connector_mint_log TO broker_app",
+        "REVOKE TRUNCATE ON broker.federated_connector_mint_log FROM broker_app",
+      ],
+      [
+        "GRANT broker_migrate TO broker_app",
+        "REVOKE broker_migrate FROM broker_app",
+      ],
+      ["ALTER ROLE broker_app BYPASSRLS", "ALTER ROLE broker_app NOBYPASSRLS"],
+      [
+        "ALTER TABLE broker.broker_purge_log OWNER TO broker_app",
+        "ALTER TABLE broker.broker_purge_log OWNER TO broker_migrate",
+      ],
+    ]) {
+      await as(null);
+      await pg.exec(grant);
+      try {
+        // As the broker reads it.
+        await as("broker_app");
+        expect(await getBrokerStoreStatus(db)).toEqual({ state: "privileges" });
+      } finally {
+        await as(null);
+        await pg.exec(revoke);
+      }
+    }
+    await as("broker_app");
+    expect(await getBrokerStoreStatus(db)).toEqual({ state: "ok" });
+  });
+
+  it("matches guards by exact name and table: an extra trigger doesn't stand in for a missing one", async () => {
+    await as(null);
+    await pg.exec(`
+      ALTER TABLE broker.broker_purge_log DISABLE TRIGGER broker_purge_log_insert_time;
+      ALTER TABLE broker.broker_purge_log RENAME TO broker_purge_log_tmp;
+    `);
+    try {
+      expect(await getBrokerStoreStatus(db)).toEqual({ state: "missing" });
+    } finally {
+      await pg.exec(`
+        ALTER TABLE broker.broker_purge_log_tmp RENAME TO broker_purge_log;
+        ALTER TABLE broker.broker_purge_log ENABLE ALWAYS TRIGGER broker_purge_log_insert_time;
+      `);
+    }
+    await pg.exec(`
+      CREATE FUNCTION broker.extra_guard() RETURNS TRIGGER AS 'BEGIN RETURN NEW; END' LANGUAGE plpgsql;
+      CREATE TRIGGER extra_one BEFORE INSERT ON broker.federated_connector_mint_log
+        FOR EACH ROW EXECUTE FUNCTION broker.extra_guard();
+      DROP TRIGGER broker_purge_log_no_truncate ON broker.broker_purge_log;
+    `);
+    try {
+      expect(await getBrokerStoreStatus(db)).toEqual({ state: "missing" });
+    } finally {
+      await pg.exec(`
+        DROP TRIGGER extra_one ON broker.federated_connector_mint_log;
+        DROP FUNCTION broker.extra_guard();
+        SET ROLE broker_migrate;
+      `);
+      await migrateBrokerStore(db);
+      await as(null);
+    }
+    expect(await getBrokerStoreStatus(db)).toEqual({ state: "ok" });
+  });
 });
