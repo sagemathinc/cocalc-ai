@@ -383,3 +383,69 @@ export function gcloudLeaseStatusFile(token: GcloudTurnToken): {
     grant_revision: lease.grant_revision,
   };
 }
+
+/** A federated turn answer (contract v7): at most one entry, never revoked. */
+export interface FederatedConnectorTurnResult {
+  entry?: GcloudTurnToken;
+  revoked: GcloudLeaseEnded[];
+}
+
+/**
+ * Checks a hub answer to beginFederatedConnectorTurn: exactly
+ * `{ entries, revoked }`, at most one valid entry, valid and unique revoked
+ * leases, and no lease both returned and revoked. Anything else is
+ * undefined (malformed): the project host then removes every gcloud file.
+ */
+export function parseFederatedConnectorTurnResult(
+  value: unknown,
+): FederatedConnectorTurnResult | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value))
+    return;
+  if (!exactKeys(value, ["entries", "revoked"])) return;
+  const { entries, revoked: rawRevoked } = value as Record<string, unknown>;
+  if (!Array.isArray(entries) || entries.length > 1) return;
+  const revoked = parseGcloudLeasesEnded(rawRevoked);
+  if (revoked == null) return;
+  const ids = new Set(revoked.map(({ lease_id }) => lease_id));
+  if (ids.size !== revoked.length) return;
+  if (entries.length === 0) return { revoked };
+  const entry = parseGcloudTurnToken(entries[0]);
+  if (entry == null || ids.has(entry.gcloud.lease_id)) return;
+  return { entry, revoked };
+}
+
+/**
+ * Canonical JSON: object keys sorted by code unit, no whitespace, only
+ * strings, finite numbers, booleans, null, arrays and plain objects (anything
+ * else throws). Equal values give equal text, and because every string is
+ * JSON-escaped, distinct values can't collide by embedding separators.
+ */
+export function canonicalJson(value: unknown): string {
+  if (value === null) return "null";
+  switch (typeof value) {
+    case "string":
+    case "boolean":
+      return JSON.stringify(value);
+    case "number":
+      if (!Number.isFinite(value)) throw Error("canonicalJson: number");
+      return JSON.stringify(value);
+    case "object": {
+      if (Array.isArray(value)) {
+        return `[${value.map(canonicalJson).join(",")}]`;
+      }
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null) {
+        throw Error("canonicalJson: not a plain object");
+      }
+      const keys = Object.keys(value).sort();
+      return `{${keys
+        .map(
+          (k) =>
+            `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`,
+        )
+        .join(",")}}`;
+    }
+    default:
+      throw Error(`canonicalJson: ${typeof value}`);
+  }
+}

@@ -4,12 +4,14 @@
  */
 
 import {
+  canonicalJson,
   federationIssuer,
   gcloudLeaseStatusFile,
   isFederatedCliConnector,
   isGcpProjectId,
   isGcpServiceAccount,
   isSaLabel,
+  parseFederatedConnectorTurnResult,
   parseGcloudLeasesEnded,
   parseGcloudTurnToken,
   validateFederationAttributes,
@@ -249,5 +251,135 @@ describe("turn delivery entries", () => {
       parseGcloudLeasesEnded([{ lease_id: UUID(1), reason: "deny", x: 1 }]),
     ).toBeUndefined();
     expect(parseGcloudLeasesEnded("revoke")).toBeUndefined();
+  });
+});
+
+describe("federated turn result", () => {
+  const LEASE = "11111111-1111-4111-8111-111111111111";
+  const OTHER = "22222222-2222-4222-8222-222222222222";
+  const entry = (lease_id = LEASE) => ({
+    connector: "gcloud",
+    token: "ya29.fake-token",
+    expires_at: 1_800_000_000_000,
+    description: "gcloud as ops-reader in fake-project-1",
+    gcloud: {
+      provider_expires_at: 1_800_000_000_000,
+      lease_max_expires_at: null,
+      status: "active",
+      project: "fake-project-1",
+      sa_label: "ops-reader",
+      lease_id,
+      connection_id: "33333333-3333-4333-8333-333333333333",
+      grant_revision: 1,
+    },
+  });
+
+  it("accepts the empty answer, a tombstone and one entry", () => {
+    expect(
+      parseFederatedConnectorTurnResult({ entries: [], revoked: [] }),
+    ).toEqual({
+      revoked: [],
+    });
+    expect(
+      parseFederatedConnectorTurnResult({
+        entries: [],
+        revoked: [{ lease_id: LEASE, reason: "revision" }],
+      }),
+    ).toEqual({ revoked: [{ lease_id: LEASE, reason: "revision" }] });
+    const ok = parseFederatedConnectorTurnResult({
+      entries: [entry()],
+      revoked: [{ lease_id: OTHER, reason: "deny" }],
+    });
+    expect(ok?.entry?.gcloud.lease_id).toBe(LEASE);
+    expect(ok?.revoked).toEqual([{ lease_id: OTHER, reason: "deny" }]);
+  });
+
+  it.each([
+    ["null", null],
+    ["an array", []],
+    ["a string", "x"],
+    ["no revoked", { entries: [] }],
+    ["no entries", { revoked: [] }],
+    ["an extra key", { entries: [], revoked: [], leases_ended: [] }],
+    ["entries not an array", { entries: {}, revoked: [] }],
+    ["revoked not an array", { entries: [], revoked: {} }],
+    ["two entries", { entries: [entry(), entry(OTHER)], revoked: [] }],
+    [
+      "a malformed entry",
+      { entries: [{ ...entry(), token: "a b" }], revoked: [] },
+    ],
+    [
+      "an entry with an extra key",
+      { entries: [{ ...entry(), extra: 1 }], revoked: [] },
+    ],
+    ["a null entry", { entries: [null], revoked: [] }],
+    [
+      "a revoked item with an extra key",
+      { entries: [], revoked: [{ lease_id: LEASE, reason: "deny", x: 1 }] },
+    ],
+    [
+      "an unknown reason",
+      { entries: [], revoked: [{ lease_id: LEASE, reason: "other" }] },
+    ],
+    [
+      "a revoked id that isn't a uuid",
+      { entries: [], revoked: [{ lease_id: "x", reason: "deny" }] },
+    ],
+    [
+      "a duplicate revoked lease",
+      {
+        entries: [],
+        revoked: [
+          { lease_id: LEASE, reason: "deny" },
+          { lease_id: LEASE, reason: "revision" },
+        ],
+      },
+    ],
+    [
+      "a lease both returned and revoked",
+      { entries: [entry()], revoked: [{ lease_id: LEASE, reason: "deny" }] },
+    ],
+  ])("refuses %s", (_name, value) => {
+    expect(parseFederatedConnectorTurnResult(value)).toBeUndefined();
+  });
+});
+
+describe("canonicalJson", () => {
+  it("sorts keys at every level and has no whitespace", () => {
+    expect(canonicalJson({ b: 1, a: [true, null, { d: "x", c: 2 }] })).toBe(
+      '{"a":[true,null,{"c":2,"d":"x"}],"b":1}',
+    );
+    expect(canonicalJson({ a: 1, b: 2 })).toBe(canonicalJson({ b: 2, a: 1 }));
+  });
+
+  it("is injective across embedded separators", () => {
+    const pairs: unknown[][] = [
+      [
+        ["a,b", "c"],
+        ["a", "b,c"],
+      ],
+      [
+        ['a"', "b"],
+        ["a", '"b'],
+      ],
+      [[{ a: "b", c: "d" }], [{ 'a":"b","c': "d" }]],
+      [["1"], [1]],
+      [[null], ["null"]],
+    ];
+    for (const [x, y] of pairs) {
+      expect(canonicalJson(x)).not.toBe(canonicalJson(y));
+    }
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["a function", () => 1],
+    ["NaN", NaN],
+    ["Infinity", Infinity],
+    ["a date", new Date(0)],
+    ["a nested undefined", { a: undefined }],
+    ["a bigint", BigInt(1)],
+  ])("refuses %s", (_name, value) => {
+    expect(() => canonicalJson(value)).toThrow();
   });
 });
