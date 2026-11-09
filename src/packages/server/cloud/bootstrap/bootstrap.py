@@ -46,7 +46,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261031-v61"
+HELPER_SCHEMA_VERSION = "20261109-v62"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -16608,9 +16608,54 @@ PY
   )
 }
 
+# A failed boot preparation (typically a disk too busy at boot for its Podman
+# calls) used to keep project-host down until someone restarted the prepare
+# unit by hand. The watchdog's ensure retries it here, at most once per
+# PODMAN_BOOT_PREPARE_RETRY_SECONDS. The caller already holds the daemon
+# control lock; take the bootstrap lifecycle lock too, in the same order as
+# the prepare unit itself, and release it afterwards.
+# Sets PODMAN_BOOT_PREPARE_RETRY_OK=1 on success. It reports through that
+# variable, not its status, because it must never run as a condition: bash
+# ignores errexit for everything inside one, even a subshell that sets -e, and
+# prepare_podman_boot relies on errexit to stop at its first failing step.
+retry_failed_podman_boot_preparation() {
+  local stamp="${PODMAN_BOOT_PREPARE_RETRY_STAMP:-/run/cocalc/podman-boot-prepare-retry}"
+  local interval="${PODMAN_BOOT_PREPARE_RETRY_SECONDS:-300}"
+  local now last status
+  PODMAN_BOOT_PREPARE_RETRY_OK=0
+  now="$(date +%s)"
+  last="$(cat "${stamp}" 2>/dev/null || true)"
+  case "${last}" in
+    ""|*[!0-9]*) last=0 ;;
+  esac
+  if [ $((now - last)) -lt "${interval}" ]; then
+    return 0
+  fi
+  install -d -m 0700 "$(dirname "${stamp}")"
+  echo "${now}" > "${stamp}"
+  echo "Podman boot preparation failed earlier; retrying it" >&2
+  acquire_bootstrap_lifecycle_lock
+  set +e
+  ( set -e; prepare_podman_boot )
+  status="$?"
+  set -e
+  exec 7>&-
+  if [ "${status}" -ne 0 ]; then
+    echo "Podman boot preparation retry failed (status ${status})" >&2
+    return 0
+  fi
+  systemctl reset-failed cocalc-project-host-prepare.service >/dev/null 2>&1 || true
+  echo "Podman boot preparation succeeded on retry" >&2
+  PODMAN_BOOT_PREPARE_RETRY_OK=1
+}
+
 require_podman_boot_preparation_not_failed() {
   if command -v systemctl >/dev/null 2>&1 && \
      systemctl is-failed --quiet cocalc-project-host-prepare.service; then
+    retry_failed_podman_boot_preparation
+    if [ "${PODMAN_BOOT_PREPARE_RETRY_OK}" = 1 ]; then
+      return 0
+    fi
     echo "Podman boot preparation failed; refusing to start project-host" >&2
     return 1
   fi
@@ -16675,7 +16720,9 @@ EOF
   if [ -z "${cgroup_manager}" ]; then
     cgroup_manager="cgroupfs"
   fi
-  run_podman_as_runtime 60s "${runtime_dir}" "${cgroup_manager}" system migrate
+  # A disk busy at boot (btrfs cleanup after a crash or mass delete) can make
+  # these first Podman calls slow; a timeout here keeps project-host down.
+  run_podman_as_runtime 120s "${runtime_dir}" "${cgroup_manager}" system migrate
   # `system migrate` tears down the rootless pause process, and on Ubuntu the
   # next Podman invocation is transitioned into the unprivileged_userns
   # AppArmor profile, where re-executing /proc/self/exe is denied.  The
@@ -16689,7 +16736,7 @@ EOF
   for _attempt in 1 2; do
     set +e
     reported_runroot="$(
-      run_podman_as_runtime 60s "${runtime_dir}" "${cgroup_manager}" \
+      run_podman_as_runtime 120s "${runtime_dir}" "${cgroup_manager}" \
         info --format '{{.Store.RunRoot}}' 2>"${probe_errors}"
     )"
     status="$?"
@@ -17535,7 +17582,8 @@ Group={cfg.ssh_user}
 WorkingDirectory=/
 ExecStart=/bin/bash -lc "{watchdog_command}"
 KillMode=process
-TimeoutStartSec=180
+# ensure may retry a failed boot preparation (see the rootctl).
+TimeoutStartSec=600
 """
     watchdog_timer = """[Unit]
 Description=Run CoCalc project-host watchdog every minute
@@ -17564,7 +17612,7 @@ User=root
 Group=root
 WorkingDirectory=/
 ExecStart={rootctl} prepare-podman-boot
-TimeoutStartSec=180
+TimeoutStartSec=600
 RemainAfterExit=yes
 
 [Install]

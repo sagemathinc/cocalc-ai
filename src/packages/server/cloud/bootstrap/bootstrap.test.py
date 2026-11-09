@@ -6289,7 +6289,7 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
                 rootctl_text,
             )
             self.assertIn(
-                'run_podman_as_runtime 60s "${runtime_dir}" "${cgroup_manager}" system migrate',
+                'run_podman_as_runtime 120s "${runtime_dir}" "${cgroup_manager}" system migrate',
                 rootctl_text,
             )
             self.assertIn(
@@ -8649,6 +8649,108 @@ class BootstrapModesTest(unittest.TestCase):
                     ),
                     ["node_binary"],
                 )
+
+    def _run_boot_preparation_guard(
+        self, *, failed: bool, prepare: str, last_retry: str | None = None
+    ) -> tuple[subprocess.CompletedProcess, str, Path]:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+
+        def function(name: str) -> str:
+            return (
+                f"{name}() {{"
+                + body.split(f"{name}() {{", 1)[1].split("\n}\n", 1)[0]
+                + "\n}\n"
+            )
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(tmp)]))
+        stamp = tmp / "run" / "retry-stamp"
+        calls = tmp / "calls"
+        if last_retry is not None:
+            stamp.parent.mkdir(parents=True)
+            stamp.write_text(last_retry)
+        script = (
+            "set -euo pipefail\n"
+            f"PODMAN_BOOT_PREPARE_RETRY_STAMP='{stamp}'\n"
+            f"CALLS='{calls}'\n"
+            "systemctl() { echo \"systemctl $*\" >> \"$CALLS\"; "
+            + ("[ \"$1\" = is-failed ] && return 0; " if failed else "[ \"$1\" = is-failed ] && return 1; ")
+            + "return 0; }\n"
+            "acquire_bootstrap_lifecycle_lock() { echo lock >> \"$CALLS\"; exec 7>/dev/null; }\n"
+            f"prepare_podman_boot() {{ echo prepare >> \"$CALLS\"; {prepare} }}\n"
+            + function("retry_failed_podman_boot_preparation")
+            + function("require_podman_boot_preparation_not_failed")
+            + "require_podman_boot_preparation_not_failed\necho started\n"
+        )
+        result = subprocess.run(
+            ["bash", "-c", script], text=True, capture_output=True
+        )
+        logged = calls.read_text() if calls.exists() else ""
+        return result, logged, stamp
+
+    def test_ensure_starts_when_boot_preparation_did_not_fail(self) -> None:
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=False, prepare="return 0;"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "started\n")
+        self.assertNotIn("prepare", calls.splitlines())
+        self.assertFalse(stamp.exists())
+
+    def test_ensure_retries_a_failed_boot_preparation(self) -> None:
+        # One slow boot used to keep project-host down until a person
+        # restarted the prepare unit (alpha, Nov 9 2026).
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=True, prepare="return 0;"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "started\n")
+        self.assertEqual(
+            calls.splitlines(),
+            [
+                "systemctl is-failed --quiet cocalc-project-host-prepare.service",
+                "lock",
+                "prepare",
+                "systemctl reset-failed cocalc-project-host-prepare.service",
+            ],
+        )
+        self.assertIn("succeeded on retry", result.stderr)
+        self.assertTrue(stamp.read_text().strip().isdigit())
+
+    def test_a_failing_retry_still_refuses_and_stops_at_the_failure(self) -> None:
+        result, calls, _ = self._run_boot_preparation_guard(
+            failed=True, prepare="false; echo after-failure >> \"$CALLS\";"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("started", result.stdout)
+        self.assertIn(
+            "Podman boot preparation failed; refusing to start project-host",
+            result.stderr,
+        )
+        # errexit holds inside the retried preparation.
+        self.assertNotIn("after-failure", calls)
+        self.assertNotIn("reset-failed", calls)
+
+    def test_failed_boot_preparation_is_retried_at_most_every_interval(
+        self,
+    ) -> None:
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=True,
+            prepare="return 0;",
+            last_retry=str(int(__import__("time").time()) - 60),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("prepare", calls.splitlines())
+        self.assertIn("refusing to start project-host", result.stderr)
+
+    def test_boot_preparation_has_room_for_a_busy_disk(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        prepare = body.split("prepare_podman_boot() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertNotIn("run_podman_as_runtime 60s", prepare)
+        self.assertIn("run_podman_as_runtime 120s", prepare)
+        self.assertIn(
+            "ExecStart={rootctl} prepare-podman-boot\nTimeoutStartSec=600", body
+        )
 
     def test_podman_boot_preparation_restores_project_io_policy(self) -> None:
         # io.max does not survive a reboot; without restoring it first, the
