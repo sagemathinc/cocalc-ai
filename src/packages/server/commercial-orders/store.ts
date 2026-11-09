@@ -4,6 +4,7 @@
  */
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -171,6 +172,105 @@ const INVOICE_LOCKED_COLUMNS = new Set([
   "customer_account_id",
   "stripe_customer_id",
 ]);
+
+// Once an order's service is provisioned, a revision may still change what is
+// billed, but never what was provisioned: amounts, payment terms, PO and
+// customer references, the invoice memo and recipient, and line amounts.
+const PROVISIONED_BILLING_REVISION_COLUMNS = new Set([
+  "agreed_subtotal",
+  "agreed_total",
+  "payment_terms_days",
+  "po_number",
+  "customer_reference",
+  "terms_snapshot",
+  "next_action",
+  "next_action_due_at",
+]);
+
+// terms_snapshot keys that only describe billing; every other key (the site
+// license, fulfillment_required, ...) is fulfillment and stays frozen.
+const BILLING_ONLY_TERMS_KEYS = new Set(["invoice", "agreement"]);
+
+function withoutBillingTerms(
+  terms: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(terms ?? {}).filter(
+      ([key]) => !BILLING_ONLY_TERMS_KEYS.has(key),
+    ),
+  );
+}
+
+function itemFulfillmentIdentity(item: {
+  product_kind?: unknown;
+  product_reference?: unknown;
+  service_start?: unknown;
+  service_end?: unknown;
+}): string {
+  const date = (value: unknown) =>
+    value == null ? null : new Date(value as string).toISOString();
+  return JSON.stringify([
+    item.product_kind ?? null,
+    item.product_reference ?? null,
+    date(item.service_start),
+    date(item.service_end),
+  ]);
+}
+
+// A provisioned (or ended) order can be re-billed, e.g. split to match a
+// customer's purchase orders, only before money has moved: every invoice is
+// void or failed and nothing has been collected. Fulfillment terms stay frozen.
+function assertProvisionedBillingRevision(
+  before: CommercialOrder,
+  opts: CommercialOrderUpdateRequest,
+): void {
+  for (const column of Object.keys(opts.changes ?? {})) {
+    if (!PROVISIONED_BILLING_REVISION_COLUMNS.has(column)) {
+      throw Error(
+        `fulfilled commercial terms cannot be revised (${column} affects provisioned service)`,
+      );
+    }
+  }
+  const terms = opts.changes?.terms_snapshot as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  if (
+    terms != null &&
+    !isDeepStrictEqual(
+      withoutBillingTerms(terms),
+      withoutBillingTerms(before.terms_snapshot),
+    )
+  ) {
+    throw Error(
+      "fulfilled commercial terms cannot be revised (only the invoice and agreement terms may change)",
+    );
+  }
+  if (opts.items != null) {
+    const identities = (items: readonly any[]) =>
+      items.map(itemFulfillmentIdentity).sort();
+    if (!isDeepStrictEqual(identities(opts.items), identities(before.items))) {
+      throw Error(
+        "fulfilled commercial terms cannot be revised (line items must keep their products and service periods)",
+      );
+    }
+  }
+  if (
+    before.invoices.some(({ status }) => !["void", "failed"].includes(status))
+  ) {
+    throw Error(
+      "void the active invoice before revising the billing terms of a provisioned order",
+    );
+  }
+  if (
+    before.payments.some(({ status }) => status === "succeeded") ||
+    ["paid", "partially_paid"].includes(before.collection_state)
+  ) {
+    throw Error(
+      "a provisioned order with collected funds cannot be revised; resolve them with a documented refund, credit, or write-off",
+    );
+  }
+}
 
 function assertSeedAuthority(): void {
   const current = getConfiguredBayId();
@@ -1113,7 +1213,7 @@ async function applyCommercialOrderUpdate(
         revision ? "revision" : "update",
       );
       if (revision && before.fulfillment_state !== "not_provisioned") {
-        throw Error("fulfilled commercial terms cannot be revised");
+        assertProvisionedBillingRevision(before, opts);
       }
       const changes: Record<string, unknown> = {};
       for (const [column, raw] of Object.entries(opts.changes ?? {})) {
