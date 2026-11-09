@@ -11,15 +11,22 @@ the audit row can't be written, the setting doesn't change. The generic site
 settings path refuses this setting (server/conat/api/system.ts).
 
 After commit the new value goes to the other bays through the usual site
-settings propagation; a bay that misses it is fixed by the next settings
-sync from the seed. Bays never change the gate locally.
+settings propagation, which sends the gate (and only the gate) through its
+own replication service (conat/inter-bay/federated-gate.ts): a bay accepts it
+only from the seed bay, as authenticated by the transport. The generic
+inter-bay setServerSetting refuses the gate on every bay. A bay that misses
+an update is fixed by the next settings sync from the seed.
 */
 
+import type { AuthenticatedCaller } from "@cocalc/conat/core/client";
 import getPool from "@cocalc/database/pool";
 import { resetServerSettingsCache } from "@cocalc/database/settings/server-settings";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterId,
+  getConfiguredClusterSeedBayId,
+} from "@cocalc/server/cluster-config";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import {
   FEDERATED_CLI_CONNECTORS,
@@ -113,4 +120,39 @@ export async function setFederatedConnectorGateOnSeed({
     version,
   });
   return { connectors: after };
+}
+
+/**
+ * A bay's side of gate replication: accepts a value only from the seed bay
+ * of this cluster, as authenticated by the transport (the caller comes from
+ * the conat server, never from the request), and only a well-formed one.
+ */
+export async function applyFederatedGateReplica(
+  opts: { value: string },
+  caller: AuthenticatedCaller | undefined,
+): Promise<void> {
+  const seed = getConfiguredClusterSeedBayId();
+  if (
+    !caller?.bay_id ||
+    !caller.bay_credential_id ||
+    caller.cluster_id !== getConfiguredClusterId() ||
+    caller.bay_id !== seed
+  ) {
+    throw Error(
+      "federated connector gate replication must come from the seed bay",
+    );
+  }
+  if (getConfiguredBayId() === seed) {
+    throw Error("the seed bay doesn't accept gate replication");
+  }
+  const value = typeof opts?.value === "string" ? opts.value : undefined;
+  if (value == null || parseFederatedGate(value).join(",") !== value) {
+    throw Error("invalid federated connector gate value");
+  }
+  await getPool().query(
+    `INSERT INTO server_settings (name, value) VALUES ($1, $2)
+     ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value`,
+    [FEDERATED_GATE_SETTING, value],
+  );
+  resetServerSettingsCache();
 }

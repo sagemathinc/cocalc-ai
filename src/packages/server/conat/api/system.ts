@@ -1,5 +1,6 @@
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import { FEDERATED_GATE_SETTING } from "@cocalc/util/ai/federated-connectors";
+import { createInterBayFederatedGateClient } from "@cocalc/conat/inter-bay/federated-gate";
 import {
   aiSubscriptionStatus,
   type AiSubscriptionStatus,
@@ -1286,8 +1287,11 @@ export async function propagateSiteSettingsToBays(
   ]
     .filter((bay_id) => bay_id !== local_bay_id)
     .sort();
+  // The federated connector gate has its own seed-authenticated replication.
+  const gate = settings.find(({ name }) => name === FEDERATED_GATE_SETTING);
   const remoteSettings = settings.filter(
-    ({ name }) => !isSeedOnlySiteSetting(name),
+    ({ name }) =>
+      !isSeedOnlySiteSetting(name) && name !== FEDERATED_GATE_SETTING,
   );
   const bays: SiteSettingsSyncResult["bays"] = [
     { bay_id: local_bay_id, status: "local", count: settings.length, version },
@@ -1308,6 +1312,12 @@ export async function propagateSiteSettingsToBays(
       const api = getInterBayBridge().bayOps(bay_id, { timeout_ms: 15_000 });
       for (const setting of remoteSettings) {
         await api.setServerSetting(setting);
+      }
+      if (gate != null) {
+        await createInterBayFederatedGateClient(
+          getInterBayFabricClient(),
+          bay_id,
+        ).apply({ value: gate.value });
       }
       return bay_id;
     }),

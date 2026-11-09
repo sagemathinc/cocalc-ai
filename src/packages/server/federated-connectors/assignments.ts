@@ -225,6 +225,11 @@ export async function saveFederatedConnectorAssignment({
     if (!grants[0] || (enabled && grants[0].state !== "enabled")) {
       throw Error("gcloud grant is unavailable");
     }
+    // Turning off (which skips the membership and agent checks) can only
+    // turn off: it never moves the assignment to another grant.
+    if (!enabled && before != null && before.grant_id !== grant_id) {
+      throw Error("a disabled assignment can't change its grant");
+    }
     let action: FederatedAccessAuditAction;
     if (before == null) {
       if (!enabled) throw Error("a new assignment must be enabled");

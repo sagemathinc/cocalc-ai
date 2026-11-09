@@ -192,10 +192,15 @@ export async function revokeFederatedSharedProjectOnOwningBay({
       approver_account_id: string;
     }>(
       `UPDATE ${SHARED_PROJECT_APPROVALS_TABLE}
-          SET revoked_at=clock_timestamp(), revoked_by=$3, revoke_reason='owner'
+          SET revoked_at=clock_timestamp(), revoked_by=$3, revoke_reason=$4
         WHERE project_id=$1 AND account_id=$2 AND revoked_at IS NULL
         RETURNING approval_id, approver_account_id`,
-      [project_id, approved_account_id, who],
+      [
+        project_id,
+        approved_account_id,
+        who,
+        who === approved_account_id ? "self" : "owner",
+      ],
     );
     if (!rows[0]) throw Error("no active approval");
     await recordFederatedAccessAudit(client, {
@@ -206,7 +211,7 @@ export async function revokeFederatedSharedProjectOnOwningBay({
       source_project_id: project_id,
       approval_id: rows[0].approval_id,
       before: { approver_account_id: rows[0].approver_account_id },
-      after: null,
+      after: { reason: who === approved_account_id ? "self" : "owner" },
     });
   });
 }

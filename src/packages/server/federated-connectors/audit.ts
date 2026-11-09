@@ -44,10 +44,14 @@ export type FederatedAccessAuditAction =
 let sessionKey: Buffer | undefined;
 
 async function getSessionKey(): Promise<Buffer> {
-  sessionKey ??= deriveSiteMasterKeyring(
-    await getSiteMasterKeyring({ secretsDir: secrets }),
-    "federated-audit-session:v1",
-  )[0].key;
+  if (sessionKey == null) {
+    const active = deriveSiteMasterKeyring(
+      await getSiteMasterKeyring({ secretsDir: secrets }),
+      "federated-audit-session:v1",
+    ).find(({ role }) => role === "active");
+    if (active == null) throw Error("no active site master key");
+    sessionKey = active.key;
+  }
   return sessionKey;
 }
 

@@ -348,7 +348,7 @@ Table({
         name: "federated_connector_shared_project_approvals_revoke_check",
         type: "check",
         expression:
-          "(revoked_at IS NULL AND revoked_by IS NULL AND revoke_reason IS NULL) OR (revoked_at IS NOT NULL AND ((revoke_reason = 'owner' AND revoked_by IS NOT NULL) OR (revoke_reason = 'rehome' AND revoked_by IS NULL)))",
+          "(revoked_at IS NULL AND revoked_by IS NULL AND revoke_reason IS NULL) OR (revoked_at IS NOT NULL AND ((revoke_reason IN ('owner','self') AND revoked_by IS NOT NULL) OR (revoke_reason IN ('rehome','approver-demoted') AND revoked_by IS NULL)))",
       },
     ],
     pg_custom_indexes: [
@@ -375,10 +375,10 @@ Table({
     revoked_at: timestamp("When the approval was revoked (set once)."),
     revoked_by: {
       type: "uuid",
-      desc: "Owner who revoked the approval; null when a rehome ended it.",
+      desc: "Account that revoked the approval; null when the system ended it.",
     },
     revoke_reason: text(
-      "owner (an owner revoked it) or rehome (the project left this bay).",
+      "owner (an owner revoked it), self (the approved account withdrew it), rehome (the project left this bay) or approver-demoted (its approver stopped being an owner).",
     ),
   },
 });
@@ -398,6 +398,13 @@ Table({
         expression:
           "action IN ('assign','change','disable','enable','remove','shared-approve','shared-revoke','site-gate-change')",
       },
+      {
+        // Only the system's own approval revocations have no actor.
+        name: "federated_connector_assignment_audit_actor_check",
+        type: "check",
+        expression:
+          "actor_account_id IS NOT NULL OR (action = 'shared-revoke' AND after->>'reason' IN ('rehome','approver-demoted'))",
+      },
     ],
     pg_custom_indexes: [
       {
@@ -414,7 +421,10 @@ Table({
     id: required("uuid", "Audit row ID."),
     time: created("When the change was recorded (database clock)."),
     action: required("string", "What changed."),
-    actor_account_id: required("uuid", "Account that made the change."),
+    actor_account_id: {
+      type: "uuid",
+      desc: "Account that made the change; null only when the system ended an approval (rehome, approver demoted).",
+    },
     session_hash: text(
       "Keyed hash of the actor's session id; never of a token or cookie.",
     ),

@@ -18,6 +18,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 jest.mock("@cocalc/server/cluster-config", () => ({
   getConfiguredClusterSeedBayId: () => "seed",
+  getConfiguredClusterId: () => "cluster-1",
 }));
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -40,7 +41,10 @@ jest.mock("@cocalc/server/conat/api/system", () => ({
 }));
 
 import { setFederatedAuditSessionKeyForTesting } from "./audit";
-import { setFederatedConnectorGateOnSeed } from "./site-gate";
+import {
+  applyFederatedGateReplica,
+  setFederatedConnectorGateOnSeed,
+} from "./site-gate";
 
 const q = (sql: string, params: any[] = []) => getPool().query(sql, params);
 
@@ -190,5 +194,49 @@ describe("federated connector gate", () => {
         `UPDATE server_settings SET readonly=false WHERE name='federated_cli_connectors'`,
       );
     }
+  });
+});
+
+describe("gate replication to another bay", () => {
+  const seedCaller = {
+    cluster_id: "cluster-1",
+    bay_id: "seed",
+    bay_credential_id: "cred-1",
+  };
+
+  it("accepts the value only from the seed bay of this cluster", async () => {
+    bay = "attached-a";
+    const refused = [
+      undefined,
+      {},
+      { ...seedCaller, bay_id: "attached-b" },
+      { ...seedCaller, cluster_id: "cluster-2" },
+      { ...seedCaller, bay_credential_id: "" },
+      { account_id: ADMIN },
+    ];
+    for (const caller of refused) {
+      await expect(
+        applyFederatedGateReplica({ value: "gcloud" }, caller as any),
+      ).rejects.toThrow(/must come from the seed bay/);
+    }
+    expect(await gateValue()).toBe("");
+
+    await applyFederatedGateReplica({ value: "gcloud" }, seedCaller);
+    expect(await gateValue()).toBe("gcloud");
+    await applyFederatedGateReplica({ value: "" }, seedCaller);
+    expect(await gateValue()).toBe("");
+  });
+
+  it("refuses malformed values, and replication into the seed itself", async () => {
+    bay = "attached-a";
+    for (const value of ["aws", "gcloud,aws", " gcloud", 1 as any]) {
+      await expect(
+        applyFederatedGateReplica({ value }, seedCaller),
+      ).rejects.toThrow(/invalid federated connector gate value/);
+    }
+    bay = "seed";
+    await expect(
+      applyFederatedGateReplica({ value: "gcloud" }, seedCaller),
+    ).rejects.toThrow(/doesn't accept gate replication/);
   });
 });

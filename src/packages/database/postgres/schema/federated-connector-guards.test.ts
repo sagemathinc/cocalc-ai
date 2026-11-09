@@ -191,6 +191,24 @@ describe("assignment audit", () => {
     await expect(q(`TRUNCATE ${AUDIT}`)).rejects.toThrow(/append-only/);
   });
 
+  it("allows no actor only for the system's own approval revocations", async () => {
+    await expect(
+      q(`INSERT INTO ${AUDIT} (id, action) VALUES ($1, 'assign')`, [uuid()]),
+    ).rejects.toThrow();
+    await expect(
+      q(
+        `INSERT INTO ${AUDIT} (id, action, after) VALUES ($1, 'shared-revoke', '{"reason":"owner"}')`,
+        [uuid()],
+      ),
+    ).rejects.toThrow();
+    for (const reason of ["rehome", "approver-demoted"]) {
+      await q(
+        `INSERT INTO ${AUDIT} (id, action, after) VALUES ($1, 'shared-revoke', $2)`,
+        [uuid(), { reason }],
+      );
+    }
+  });
+
   it("refuses an unknown action", async () => {
     await expect(
       q(
@@ -395,6 +413,27 @@ describe("shared-project approvals", () => {
       ),
     ).rejects.toThrow();
     expect((await approval(id)).revoked_at).toBeNull();
+  });
+
+  it("allows exactly the four revocation reasons", async () => {
+    for (const [reason, by] of [
+      ["self", uuid()],
+      ["approver-demoted", null],
+    ] as const) {
+      const id = await insertApproval();
+      await q(
+        `UPDATE ${APPROVALS} SET revoked_at=NOW(), revoked_by=$2, revoke_reason=$3 WHERE approval_id=$1`,
+        [id, by, reason],
+      );
+      expect((await approval(id)).revoke_reason).toBe(reason);
+    }
+    const id = await insertApproval();
+    await expect(
+      q(
+        `UPDATE ${APPROVALS} SET revoked_at=NOW(), revoke_reason='other' WHERE approval_id=$1`,
+        [id],
+      ),
+    ).rejects.toThrow();
   });
 
   it.each(["project_id", "account_id", "approver_account_id"])(

@@ -33,6 +33,8 @@ type Db = Pick<Client, "query">;
 
 interface Guard {
   table: string;
+  // Installed only when these tables exist too.
+  requires?: string[];
   fn: string;
   // Bump when the function changes, so schema sync replaces it.
   contract: string;
@@ -43,6 +45,7 @@ interface Guard {
 const AUDIT_TABLE = "federated_connector_assignment_audit";
 const LEASE_TABLE = "federated_connector_turn_leases";
 const APPROVAL_TABLE = "federated_connector_shared_project_approvals";
+const PROJECTS_TABLE = "projects";
 
 const LEASE_BINDING = [
   "lease_id",
@@ -187,7 +190,52 @@ export const FEDERATED_CONNECTOR_GUARDS: Guard[] = [
      NEW.revoked_at := clock_timestamp();
      RETURN NEW;`,
   },
+  {
+    table: PROJECTS_TABLE,
+    requires: [APPROVAL_TABLE, AUDIT_TABLE],
+    fn: "federated_connector_approver_demotion",
+    contract: "federated-approver-demotion-revokes-v1",
+    triggers: [
+      {
+        name: "federated_connector_approver_demotion",
+        timing: "AFTER UPDATE OF users",
+        level: "ROW",
+      },
+    ],
+    body: `
+     IF NEW.users IS NOT DISTINCT FROM OLD.users THEN
+       RETURN NULL;
+     END IF;
+     WITH revoked AS (
+       UPDATE ${APPROVAL_TABLE} a
+          SET revoked_at = clock_timestamp(), revoke_reason = 'approver-demoted'
+        WHERE a.project_id = NEW.project_id
+          AND a.revoked_at IS NULL
+          AND COALESCE(
+                CASE jsonb_typeof(NEW.users -> a.approver_account_id::text)
+                  WHEN 'string' THEN NEW.users ->> a.approver_account_id::text
+                  ELSE NEW.users -> a.approver_account_id::text ->> 'group'
+                END, '') <> 'owner'
+        RETURNING a.approval_id, a.project_id, a.account_id, a.approver_account_id
+     )
+     INSERT INTO ${AUDIT_TABLE}
+       (id, action, actor_account_id, account_id, source_project_id,
+        approval_id, before, after)
+     SELECT gen_random_uuid(), 'shared-revoke', NULL, account_id, project_id,
+            approval_id,
+            jsonb_build_object('approver_account_id', approver_account_id),
+            jsonb_build_object('reason', 'approver-demoted')
+       FROM revoked;
+     RETURN NULL;`,
+  },
 ];
+
+function installed(guard: Guard, tables: ReadonlySet<string>): boolean {
+  return (
+    tables.has(guard.table) &&
+    (guard.requires ?? []).every((t) => tables.has(t))
+  );
+}
 
 function functionSql(guard: Guard): string {
   return `CREATE OR REPLACE FUNCTION ${guard.fn}()
@@ -241,7 +289,7 @@ export async function ensureFederatedConnectorGuards(
   tables: ReadonlySet<string>,
 ): Promise<void> {
   for (const guard of FEDERATED_CONNECTOR_GUARDS) {
-    if (tables.has(guard.table)) {
+    if (installed(guard, tables)) {
       await ensureGuard(db, guard);
     }
   }
@@ -258,6 +306,7 @@ export async function getFederatedConnectorGuardStatus(
   table: string,
 ): Promise<FederatedConnectorGuardState> {
   const guard = FEDERATED_CONNECTOR_GUARDS.find((g) => g.table === table);
+  // (Each table has at most one guard.)
   if (guard == null) {
     throw Error(`no federated connector guard for ${table}`);
   }
@@ -288,7 +337,7 @@ export async function federatedConnectorGuardsNeedSync(
   tables: ReadonlySet<string>,
 ): Promise<boolean> {
   for (const guard of FEDERATED_CONNECTOR_GUARDS) {
-    if (!tables.has(guard.table)) continue;
+    if (!installed(guard, tables)) continue;
     const state = await getFederatedConnectorGuardStatus(db, guard.table);
     if (state === "missing" || state === "outdated") return true;
   }

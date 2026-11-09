@@ -134,6 +134,7 @@ beforeAll(async () => {
         "federated_connector_assignment_audit",
         "federated_connector_turn_leases",
         "federated_connector_shared_project_approvals",
+        "projects",
       ]),
     );
   } finally {
@@ -260,6 +261,19 @@ describe("assignments", () => {
       before: { grant_id: GRANT, revision: 1 },
       after: { grant_id: GRANT2, revision: 2 },
     });
+  });
+
+  it("turning off can't also move the assignment to another grant", async () => {
+    await expect(
+      saveFederatedConnectorAssignment({
+        account_id: ACCOUNT,
+        agent_id: AGENT,
+        source_project_id: PROJECT,
+        grant_id: GRANT,
+        enabled: false,
+        expected_revision: revision,
+      }),
+    ).rejects.toThrow(/can't change its grant/);
   });
 
   it("disabling needs fresh auth but not membership, and ends leases", async () => {
@@ -418,7 +432,7 @@ describe("shared-project approvals and the snapshot", () => {
     ).rejects.toThrow(/not owned by this bay/);
   });
 
-  it("an owner's approval counts while the approver stays an owner", async () => {
+  it("an owner's approval counts; demoting the approver revokes it for good", async () => {
     const { approval_id } = await approveFederatedSharedProjectOnOwningBay({
       account_id: OWNER,
       project_id: PROJECT,
@@ -435,21 +449,77 @@ describe("shared-project approvals and the snapshot", () => {
       approval_id,
     });
 
-    // The approver is demoted: the approval no longer counts.
+    // The approver is demoted, by any writer of users: revoked and audited
+    // in the same statement.
     await q(`UPDATE projects SET users = users || $2 WHERE project_id=$1`, [
       PROJECT,
       { [OWNER]: { group: "collaborator" }, [OTHER]: { group: "owner" } },
+    ]);
+    const { rows } = await q(
+      `SELECT revoke_reason, revoked_by FROM federated_connector_shared_project_approvals WHERE approval_id=$1`,
+      [approval_id],
+    );
+    expect(rows[0]).toEqual({
+      revoke_reason: "approver-demoted",
+      revoked_by: null,
+    });
+    expect((await audits()).at(-1)).toMatchObject({
+      action: "shared-revoke",
+      actor_account_id: null,
+      approval_id,
+      after: { reason: "approver-demoted" },
+    });
+
+    // Restoring the owner role doesn't restore the approval.
+    await q(`UPDATE projects SET users = users || $2 WHERE project_id=$1`, [
+      PROJECT,
+      { [OWNER]: { group: "owner" }, [OTHER]: { group: "collaborator" } },
     ]);
     snap = await federationSnapshotOnOwningBay({
       project_id: PROJECT,
       account_id: ACCOUNT,
     });
     expect(snap.approval_id).toBeNull();
+    expect(isSharedProject(snap)).toBe(true);
+  });
+
+  it("removing the approver from the project also revokes", async () => {
+    const { approval_id } = await approveFederatedSharedProjectOnOwningBay({
+      account_id: OWNER,
+      project_id: PROJECT,
+      approved_account_id: ACCOUNT,
+    });
     await q(`UPDATE projects SET users = users || $2 WHERE project_id=$1`, [
       PROJECT,
-      { [OWNER]: { group: "owner" } },
+      { [OTHER]: { group: "owner" } },
     ]);
-    snap = await federationSnapshotOnOwningBay({
+    await q(`UPDATE projects SET users = users - $2 WHERE project_id=$1`, [
+      PROJECT,
+      OWNER,
+    ]);
+    const { rows } = await q(
+      `SELECT revoke_reason FROM federated_connector_shared_project_approvals WHERE approval_id=$1`,
+      [approval_id],
+    );
+    expect(rows[0].revoke_reason).toBe("approver-demoted");
+    // Put the owner back for the next tests (a new approval is needed).
+    await q(`UPDATE projects SET users = users || $2 WHERE project_id=$1`, [
+      PROJECT,
+      { [OWNER]: { group: "owner" }, [OTHER]: { group: "collaborator" } },
+    ]);
+  });
+
+  it("an unrelated change to users keeps the approval", async () => {
+    const { approval_id } = await approveFederatedSharedProjectOnOwningBay({
+      account_id: OWNER,
+      project_id: PROJECT,
+      approved_account_id: ACCOUNT,
+    });
+    await q(`UPDATE projects SET users = users || $2 WHERE project_id=$1`, [
+      PROJECT,
+      { [OWNER]: { group: "owner", hide: true } },
+    ]);
+    const snap = await federationSnapshotOnOwningBay({
       project_id: PROJECT,
       account_id: ACCOUNT,
     });
@@ -481,7 +551,14 @@ describe("shared-project approvals and the snapshot", () => {
     expect((await audits()).at(-1)).toMatchObject({
       action: "shared-revoke",
       actor_account_id: ACCOUNT,
+      after: { reason: "self" },
     });
+    const { rows } = await q(
+      `SELECT revoke_reason, revoked_by FROM federated_connector_shared_project_approvals
+        WHERE project_id=$1 AND account_id=$2 ORDER BY revoked_at DESC LIMIT 1`,
+      [PROJECT, ACCOUNT],
+    );
+    expect(rows[0]).toEqual({ revoke_reason: "self", revoked_by: ACCOUNT });
   });
 
   it("a rehome away and back (A to B to A) needs a new approval", async () => {
@@ -499,9 +576,20 @@ describe("shared-project approvals and the snapshot", () => {
         `UPDATE projects SET owning_bay_id='bay-b' WHERE project_id=$1`,
         [PROJECT],
       );
+      const before = (await audits()).length;
       expect(
         await revokeFederatedSharedProjectApprovalsForRehome(client, PROJECT),
       ).toBe(1);
+      const { rows: rehomeAudits } = await client.query(
+        `SELECT * FROM federated_connector_assignment_audit ORDER BY time`,
+      );
+      expect(rehomeAudits.length).toBe(before + 1);
+      expect(rehomeAudits.at(-1)).toMatchObject({
+        action: "shared-revoke",
+        actor_account_id: null,
+        approval_id,
+        after: { reason: "rehome" },
+      });
       await client.query("COMMIT");
     } finally {
       client.release();
