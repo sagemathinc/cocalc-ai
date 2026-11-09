@@ -176,6 +176,20 @@ export interface BrokerStoreStatus {
 }
 
 const STORE_TABLES = ["federated_connector_mint_log", "broker_purge_log"];
+
+// Every grant to anyone but the owner, exactly (PUBLIC included): the
+// schema's USAGE, the mint log's INSERT and SELECT, the purge log's SELECT
+// and the purge's EXECUTE, all to broker_app; nothing else, and nothing on
+// the guard function.
+const EXPECTED_ACL = [
+  `broker_purge_log:${BROKER_APP_ROLE}:SELECT`,
+  `broker_purge_mint_log:${BROKER_APP_ROLE}:EXECUTE`,
+  `federated_connector_mint_log:${BROKER_APP_ROLE}:INSERT`,
+  `federated_connector_mint_log:${BROKER_APP_ROLE}:SELECT`,
+  `schema:${BROKER_APP_ROLE}:USAGE`,
+]
+  .sort()
+  .join(",");
 const EXPECTED_GUARDS = STORE_TABLES.flatMap((t) =>
   ["insert_time", "append_only", "no_truncate"].map((g) => ({
     table: t,
@@ -250,8 +264,58 @@ export async function getBrokerStoreStatus(
           FROM unnest($2::text[]) AS t,
                unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE']) AS priv)
          AS app_can_change,
-       (SELECT rolsuper OR rolbypassrls FROM pg_roles
-         WHERE rolname = '${BROKER_APP_ROLE}') AS app_privileged,
+       (SELECT rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb
+          FROM pg_roles WHERE rolname = '${BROKER_APP_ROLE}')
+         AS app_privileged,
+       (has_schema_privilege('${BROKER_APP_ROLE}', $1::text, 'CREATE')
+        OR has_table_privilege('${BROKER_APP_ROLE}',
+             format('%I.federated_connector_mint_log', $1::text), 'TRIGGER')
+        OR has_table_privilege('${BROKER_APP_ROLE}',
+             format('%I.broker_purge_log', $1::text), 'TRIGGER'))
+         AS app_can_hook,
+       (SELECT string_agg(entry, ',' ORDER BY entry) FROM (
+          SELECT 'schema:' || g.grantee_name || ':' || g.privilege_type AS entry
+            FROM pg_namespace n,
+                 LATERAL (
+                   SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+                               ELSE pg_get_userbyid(a.grantee) END
+                            AS grantee_name,
+                          a.privilege_type, a.grantee
+                     FROM aclexplode(coalesce(n.nspacl,
+                            acldefault('n', n.nspowner))) a
+                 ) g
+           WHERE n.nspname = $1 AND g.grantee <> n.nspowner
+          UNION ALL
+          SELECT c.relname || ':' || g.grantee_name || ':' || g.privilege_type
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace,
+                 LATERAL (
+                   SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+                               ELSE pg_get_userbyid(a.grantee) END
+                            AS grantee_name,
+                          a.privilege_type, a.grantee
+                     FROM aclexplode(coalesce(c.relacl,
+                            acldefault('r', c.relowner))) a
+                 ) g
+           WHERE n.nspname = $1 AND c.relname = ANY($2::text[])
+             AND g.grantee <> c.relowner
+          UNION ALL
+          SELECT p.proname || ':' || g.grantee_name || ':' || g.privilege_type
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace,
+                 LATERAL (
+                   SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+                               ELSE pg_get_userbyid(a.grantee) END
+                            AS grantee_name,
+                          a.privilege_type, a.grantee
+                     FROM aclexplode(coalesce(p.proacl,
+                            acldefault('f', p.proowner))) a
+                 ) g
+           WHERE n.nspname = $1
+             AND p.proname IN ('broker_purge_mint_log',
+                               'broker_append_only_guard')
+             AND g.grantee <> p.proowner
+        ) acl) AS acl,
        pg_has_role('${BROKER_APP_ROLE}', '${BROKER_MIGRATE_ROLE}', 'MEMBER')
          AS app_is_owner`,
     [S, STORE_TABLES],
@@ -265,6 +329,8 @@ export async function getBrokerStoreStatus(
     r.app_grants_exact !== true ||
     r.app_can_change !== false ||
     r.app_privileged !== false ||
+    r.app_can_hook !== false ||
+    r.acl !== EXPECTED_ACL ||
     r.app_is_owner !== false
   ) {
     return { state: "privileges" };

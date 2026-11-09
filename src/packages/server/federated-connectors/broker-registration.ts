@@ -65,7 +65,9 @@ function isReady(ready: unknown): ready is BrokerReadyState {
 interface Entry {
   instance_id: string;
   site_id: string;
-  firstSeen: number;
+  /** Arrival order (a strict total order, even within one clock tick). */
+  order: number;
+  /** Monotonic time of the last heartbeat (for the TTL only). */
   lastBeat: number;
 }
 
@@ -82,6 +84,7 @@ export class BrokerRegistration {
   private lastAlert: BrokerRegistrationAlert | undefined;
   private inIncident = false;
   private duplicateIncidents = 0;
+  private arrivals = 0;
 
   constructor(
     private monotonicNow: () => number = () => performance.now(),
@@ -124,7 +127,7 @@ export class BrokerRegistration {
     if (existing != null) {
       // Overlap: this connection keeps beating after a later one appeared.
       for (const [id, e] of this.entries) {
-        if (id !== connection_id && e.firstSeen > existing.firstSeen) {
+        if (id !== connection_id && e.order > existing.order) {
           if (!this.inIncident) {
             this.inIncident = true;
             this.duplicateIncidents += 1;
@@ -139,7 +142,7 @@ export class BrokerRegistration {
       this.entries.set(connection_id, {
         instance_id: b.instance_id,
         site_id: b.site_id,
-        firstSeen: now,
+        order: ++this.arrivals,
         lastBeat: now,
       });
     }

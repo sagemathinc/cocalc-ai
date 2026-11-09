@@ -715,7 +715,15 @@ export async function isAllowed({
     }
     const bayCredential =
       "bay_credential_id" in user && !!(user as any).bay_credential_id;
-    if (!bayCredential) return getConfiguredClusterRole() === "standalone";
+    if (!bayCredential) {
+      // Standalone: only the local fabric hub principal (the hub-password
+      // user, exactly {hub_id: "hub"}), not any other hub-type user.
+      return (
+        getConfiguredClusterRole() === "standalone" &&
+        Object.keys(user).length === 1 &&
+        (user as any).hub_id === "hub"
+      );
+    }
     try {
       return (
         (user as any).cluster_id === getConfiguredClusterId() &&

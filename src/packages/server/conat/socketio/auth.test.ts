@@ -2214,7 +2214,7 @@ describe("federated token broker principal", () => {
             await isAllowed({ user: user as any, subject, type: "sub" }),
           ).toBe(false);
         }
-        // A standalone site: its local hub principal is the one bay.
+        // A standalone site: only its local fabric hub principal, exactly.
         process.env.COCALC_CLUSTER_ROLE = "standalone";
         expect(
           await isAllowed({
@@ -2223,6 +2223,15 @@ describe("federated token broker principal", () => {
             type: "sub",
           }),
         ).toBe(true);
+        for (const user of [
+          { hub_id: "service" },
+          { hub_id: "hub", extra: 1 },
+          { hub_id: "receiver" },
+        ]) {
+          expect(
+            await isAllowed({ user: user as any, subject, type: "sub" }),
+          ).toBe(false);
+        }
       }
     } finally {
       if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;

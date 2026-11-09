@@ -242,4 +242,25 @@ describe("broker registration: several connections (v3.4.2 §3)", () => {
     const text = JSON.stringify(t.reg.health());
     for (const id of [A, B]) expect(text).not.toContain(id);
   });
+
+  it("orders arrivals strictly, even within one clock tick", () => {
+    const t = setup(); // the clock never moves in this test
+    t.reg.heartbeat(beat(), A);
+    t.reg.heartbeat(beat(), B);
+    expect(t.reg.health()).toMatchObject({ alert: "contested" });
+    t.reg.heartbeat(beat(), A); // A beats after B appeared: overlap
+    expect(t.reg.health()).toMatchObject({
+      alert: "duplicate_instance",
+      duplicate_incidents: 1,
+    });
+    // B beating again is not proof (it is the newer one).
+    const t2 = setup();
+    t2.reg.heartbeat(beat(), A);
+    t2.reg.heartbeat(beat(), B);
+    t2.reg.heartbeat(beat(), B);
+    expect(t2.reg.health()).toMatchObject({
+      alert: "contested",
+      duplicate_incidents: 0,
+    });
+  });
 });

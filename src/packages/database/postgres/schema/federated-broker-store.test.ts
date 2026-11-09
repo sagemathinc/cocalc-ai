@@ -272,6 +272,48 @@ describe("the broker store", () => {
         "REVOKE INSERT ON broker.federated_connector_mint_log FROM broker_app",
         "GRANT INSERT ON broker.federated_connector_mint_log TO broker_app",
       ],
+      // @review R6: the exact boundary.
+      [
+        "GRANT CREATE ON SCHEMA broker TO broker_app",
+        "REVOKE CREATE ON SCHEMA broker FROM broker_app",
+      ],
+      [
+        "GRANT TRIGGER ON broker.federated_connector_mint_log TO broker_app",
+        "REVOKE TRIGGER ON broker.federated_connector_mint_log FROM broker_app",
+      ],
+      [
+        "GRANT TRIGGER ON broker.broker_purge_log TO broker_app",
+        "REVOKE TRIGGER ON broker.broker_purge_log FROM broker_app",
+      ],
+      [
+        "ALTER ROLE broker_app CREATEROLE",
+        "ALTER ROLE broker_app NOCREATEROLE",
+      ],
+      ["ALTER ROLE broker_app CREATEDB", "ALTER ROLE broker_app NOCREATEDB"],
+      [
+        "GRANT INSERT ON broker.federated_connector_mint_log TO PUBLIC",
+        "REVOKE INSERT ON broker.federated_connector_mint_log FROM PUBLIC",
+      ],
+      [
+        "GRANT SELECT ON broker.broker_purge_log TO PUBLIC",
+        "REVOKE SELECT ON broker.broker_purge_log FROM PUBLIC",
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION broker.broker_purge_mint_log() TO PUBLIC",
+        "REVOKE EXECUTE ON FUNCTION broker.broker_purge_mint_log() FROM PUBLIC",
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION broker.broker_append_only_guard() TO broker_app",
+        "REVOKE EXECUTE ON FUNCTION broker.broker_append_only_guard() FROM broker_app",
+      ],
+      [
+        "GRANT USAGE ON SCHEMA broker TO PUBLIC",
+        "REVOKE USAGE ON SCHEMA broker FROM PUBLIC",
+      ],
+      [
+        "CREATE ROLE other_role; GRANT SELECT ON broker.federated_connector_mint_log TO other_role",
+        "REVOKE SELECT ON broker.federated_connector_mint_log FROM other_role; DROP ROLE other_role",
+      ],
     ]) {
       await as(null);
       await pg.exec(grant);
