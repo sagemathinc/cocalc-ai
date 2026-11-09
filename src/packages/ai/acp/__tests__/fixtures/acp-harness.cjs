@@ -117,6 +117,11 @@ const loadDelayMs = Number(
 const newDelayMs = Number(
   (process.argv.find((arg) => arg.startsWith("--new-delay-ms=")) ?? "=0").split("=")[1],
 );
+// --resume-delay-ms=N: the same for session/resume (reading the saved session
+// on slow storage, without a replay).
+const resumeDelayMs = Number(
+  (process.argv.find((arg) => arg.startsWith("--resume-delay-ms=")) ?? "=0").split("=")[1],
+);
 lineReader.on("line", (line) => {
   const message = JSON.parse(line);
   const delayMs =
@@ -124,7 +129,9 @@ lineReader.on("line", (line) => {
       ? loadDelayMs
       : message.method === "session/new"
         ? newDelayMs
-        : 0;
+        : message.method === "session/resume"
+          ? resumeDelayMs
+          : 0;
   if (delayMs > 0 && !message.delayedLoad) {
     setTimeout(
       () => lineReader.emit("line", JSON.stringify({ ...message, delayedLoad: true })),

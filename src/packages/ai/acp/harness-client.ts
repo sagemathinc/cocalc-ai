@@ -406,7 +406,11 @@ export class AcpHarnessClient {
   private questionAbort?: AbortController;
   private readonly binding: HarnessBinding;
   private readonly timeoutMs: number;
-  /** session/load replays the saved history, so it gets its own, longer budget. */
+  /**
+   * session/load replays the saved history, so it gets its own, longer budget.
+   * session/resume shares it: it skips the replay, but still reads the saved
+   * session and starts the agent, which slow storage can stretch past 30 s.
+   */
   private readonly sessionLoadTimeoutMs: number;
   private authStatus?: unknown;
   /** Newer session instructions for a resumed session's next turn. */
@@ -786,7 +790,7 @@ export class AcpHarnessClient {
       if (!prompt)
         timer = setTimeout(
           () => reject(Error("ACP request timed out")),
-          method === "session/load"
+          method === "session/load" || method === "session/resume"
             ? this.sessionLoadTimeoutMs
             : this.timeoutMs,
         );
@@ -804,8 +808,8 @@ export class AcpHarnessClient {
       ]);
       // How long resumes take, so the session/load budget can be judged from
       // real replays (failures are already recorded as diagnostics).
-      if (method === "session/load")
-        logger.info("ACP session/load completed", {
+      if (method === "session/load" || method === "session/resume")
+        logger.info(`ACP ${method} completed`, {
           elapsed_ms: Date.now() - startedAt,
           timeout_ms: this.sessionLoadTimeoutMs,
         });
