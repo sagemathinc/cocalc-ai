@@ -233,6 +233,13 @@ export interface FederationProjectSnapshot {
   approval_id: string | null;
 }
 
+// The snapshot reports owner, collaborator, viewer or null; any other group
+// is reported as viewer, which never counts as a full collaborator.
+function snapshotRole(role: string | null): string | null {
+  if (role == null) return null;
+  return role === "owner" || role === "collaborator" ? role : "viewer";
+}
+
 export function isSharedProject(snapshot: FederationProjectSnapshot): boolean {
   return snapshot.other_members > 0 || snapshot.pending_invites > 0;
 }
@@ -281,7 +288,7 @@ export async function federationSnapshotOnOwningBay({
     return {
       owning_bay_id: project.owning_bay_id,
       users_revision: Number(project.users_revision ?? 0),
-      account_role: roleOf(users, account_id),
+      account_role: snapshotRole(roleOf(users, account_id)),
       other_members: Object.keys(users).filter((id) => id !== account_id)
         .length,
       pending_invites: Number(invites[0]?.count ?? 0),

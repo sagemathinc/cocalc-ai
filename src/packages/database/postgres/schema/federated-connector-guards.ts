@@ -195,7 +195,7 @@ export const FEDERATED_CONNECTOR_GUARDS: Guard[] = [
     table: PROJECTS_TABLE,
     requires: [APPROVAL_TABLE, AUDIT_TABLE],
     fn: "federated_connector_approver_demotion",
-    contract: "federated-approver-demotion-revokes-v1",
+    contract: "federated-approver-demotion-revokes-v2",
     triggers: [
       {
         name: "federated_connector_approver_demotion",
@@ -226,6 +226,26 @@ export const FEDERATED_CONNECTOR_GUARDS: Guard[] = [
             approval_id,
             jsonb_build_object('approver_account_id', approver_account_id),
             jsonb_build_object('reason', 'approver-demoted')
+       FROM revoked;
+     WITH revoked AS (
+       UPDATE ${APPROVAL_TABLE} a
+          SET revoked_at = clock_timestamp(), revoke_reason = 'approved-account-left'
+        WHERE a.project_id = NEW.project_id
+          AND a.revoked_at IS NULL
+          AND COALESCE(
+                CASE jsonb_typeof(NEW.users -> a.account_id::text)
+                  WHEN 'string' THEN NEW.users ->> a.account_id::text
+                  ELSE NEW.users -> a.account_id::text ->> 'group'
+                END, '') NOT IN ('owner','collaborator')
+        RETURNING a.approval_id, a.project_id, a.account_id, a.approver_account_id
+     )
+     INSERT INTO ${AUDIT_TABLE}
+       (id, action, actor_account_id, account_id, source_project_id,
+        approval_id, before, after)
+     SELECT gen_random_uuid(), 'shared-revoke', NULL, account_id, project_id,
+            approval_id,
+            jsonb_build_object('approver_account_id', approver_account_id),
+            jsonb_build_object('reason', 'approved-account-left')
        FROM revoked;
      RETURN NULL;`,
   },

@@ -1963,6 +1963,20 @@ describe("federated connector inter-bay subjects", () => {
     "bay.bay-1.rpc.federated-gate-replica.v1",
   ];
 
+  it("allows a bay principal with an active credential (positive control)", async () => {
+    const user = {
+      hub_id: "bay:bay-1",
+      cluster_id: "test-cluster",
+      bay_id: "bay-1",
+      bay_credential_id: "credential-1",
+    };
+    for (const subject of subjects) {
+      for (const type of PUBSUB) {
+        expect(await isAllowed({ user, subject, type })).toBe(true);
+      }
+    }
+  });
+
   it("refuses accounts, projects, hosts and hubs without a bay credential", async () => {
     const previous = process.env.COCALC_CLUSTER_ROLE;
     process.env.COCALC_CLUSTER_ROLE = "seed";

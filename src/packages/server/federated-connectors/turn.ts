@@ -203,12 +203,21 @@ async function checkAuthority(
 
 /**
  * The approval the turn may rely on: null for a single-user project, the
- * approval id for an approved shared one, or undefined when the project is
- * shared without a valid approval (denied).
+ * approval id for an approved shared one, or undefined (denied) when the
+ * account is no longer a full collaborator or the project is shared without
+ * a valid approval.
  */
 function effectiveApproval(
   snapshot: FederationProjectSnapshot,
 ): string | null | undefined {
+  // The account must still be a full collaborator, on the owning bay's own
+  // record (it may have been removed or demoted since the authority check).
+  if (
+    snapshot.account_role !== "owner" &&
+    snapshot.account_role !== "collaborator"
+  ) {
+    return undefined;
+  }
   const shared = snapshot.other_members > 0 || snapshot.pending_invites > 0;
   if (!shared) return null;
   return snapshot.approval_id ?? undefined;
@@ -619,15 +628,24 @@ export async function verifyFederatedLiveTurn(
 /** Whether a lease's run is still active, from the authoritative record. */
 export type FederatedRunActivity = "active" | "ended" | "unknown";
 
+/** Where the next reconciliation pass continues (keyset order). */
+export interface FederatedLeaseCursor {
+  created_at: Date;
+  lease_id: string;
+}
+
 /**
  * Ends (reason expired) open leases whose run the authority reports ended.
  * Age only picks candidates; an unknown answer (unreachable, timeout, any
- * error) leaves the lease open for the next pass.
+ * error) leaves the lease open for the next pass. Candidates are taken in
+ * (created_at, lease_id) order after `after`; `next` is where the following
+ * pass continues, or undefined to start over from the oldest.
  */
 export async function reconcileFederatedLeases({
   runActivity,
   olderThanMs = 60 * 60 * 1000,
   limit = 500,
+  after,
 }: {
   runActivity(lease: {
     account_id: string;
@@ -637,21 +655,28 @@ export async function reconcileFederatedLeases({
   }): Promise<FederatedRunActivity>;
   olderThanMs?: number;
   limit?: number;
-}): Promise<{ checked: number; ended: number }> {
+  after?: FederatedLeaseCursor;
+}): Promise<{
+  checked: number;
+  ended: number;
+  next?: FederatedLeaseCursor;
+}> {
   const { rows } = await getPool().query<{
     lease_id: string;
     account_id: string;
     agent_id: string;
     source_project_id: string;
     run_id: string;
+    created_at: Date;
   }>(
-    `SELECT lease_id, account_id, agent_id, source_project_id, run_id
+    `SELECT lease_id, account_id, agent_id, source_project_id, run_id, created_at
        FROM ${LEASES}
       WHERE ended_at IS NULL
         AND created_at < NOW() - ($1::double precision * INTERVAL '1 millisecond')
-      ORDER BY created_at
+        AND ($3::timestamptz IS NULL OR (created_at, lease_id) > ($3, $4::uuid))
+      ORDER BY created_at, lease_id
       LIMIT $2`,
-    [olderThanMs, limit],
+    [olderThanMs, limit, after?.created_at ?? null, after?.lease_id ?? null],
   );
   let ended = 0;
   for (const lease of rows) {
@@ -671,5 +696,30 @@ export async function reconcileFederatedLeases({
       ended += 1;
     }
   }
-  return { checked: rows.length, ended };
+  const last = rows.at(-1);
+  return {
+    checked: rows.length,
+    ended,
+    next:
+      rows.length < limit || last == null
+        ? undefined
+        : { created_at: last.created_at, lease_id: last.lease_id },
+  };
+}
+
+/**
+ * Health (count only): open leases older than this many days. Non-zero means
+ * reconciliation isn't ending them (an authority that never answers), and
+ * they would never reach the retention purge.
+ */
+export async function countStaleOpenFederatedLeases(
+  olderThanDays = 7,
+): Promise<number> {
+  const { rows } = await getPool().query<{ count: string }>(
+    `SELECT count(*) FROM ${LEASES}
+      WHERE ended_at IS NULL
+        AND created_at < NOW() - ($1::double precision * INTERVAL '1 day')`,
+    [olderThanDays],
+  );
+  return Number(rows[0]?.count ?? 0);
 }

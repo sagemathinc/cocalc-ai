@@ -10,10 +10,12 @@ let projectBay: string | undefined = LOCAL;
 let settings: Record<string, unknown> = {};
 const localSnapshot = jest.fn();
 const remoteSnapshot = jest.fn();
+const remoteBegin = jest.fn(async (_opts: any): Promise<any> => "remote-begin");
 const remoteClient = jest.fn(
   (_client: any, _bay: string, _timeout?: number) => ({
     snapshot: remoteSnapshot,
-    beginTurn: jest.fn(async () => "remote-begin"),
+    beginTurn: remoteBegin,
+    endTurn: remoteBegin,
   }),
 );
 const activeRun = jest.fn();
@@ -27,8 +29,11 @@ jest.mock("@cocalc/server/cluster-config", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveProjectBay: async () => (projectBay ? { bay_id: projectBay } : null),
 }));
+let homeBay: () => Promise<{ home_bay_id?: string }> = async () => ({
+  home_bay_id: "bay-home",
+});
 jest.mock("@cocalc/server/bay-directory", () => ({
-  resolveAccountHomeBay: async () => ({ home_bay_id: "bay-home" }),
+  resolveAccountHomeBay: () => homeBay(),
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({}),
@@ -44,6 +49,9 @@ jest.mock("@cocalc/server/agents/cocalc-connector-turn", () => ({
   assertLiveTurn: jest.fn(),
   assertTrustedSource: jest.fn(),
 }));
+jest.mock("@cocalc/server/agents/store", () => ({
+  AGENT_RUN_NOT_ACTIVE: "agent credential is expired, revoked, or invalid",
+}));
 jest.mock("@cocalc/server/agents/identity-routing", () => ({
   verifyActiveAgentRun: (opts: any) => activeRun(opts),
 }));
@@ -57,12 +65,18 @@ jest.mock("./site-gate", () => ({}));
 
 import {
   beginFederatedConnectorTurn,
+  endFederatedConnectorTurn,
   federatedRunActivity,
   federatedTurnDeps,
+  parseFederationSnapshot,
   owningBaySnapshot,
   registerFederatedBroker,
 } from "./routing";
-import { FEDERATED_TURN_REFUSED } from "./turn";
+import {
+  FEDERATED_CONNECTOR_UNAVAILABLE,
+  FEDERATED_CONNECTORS_DISABLED,
+  FEDERATED_TURN_REFUSED,
+} from "./turn";
 
 const PROJECT = "00000000-0000-4000-8000-000000000003";
 const ACCOUNT = "00000000-0000-4000-8000-000000000001";
@@ -78,6 +92,8 @@ const snap = (owning_bay_id: string) => ({
 
 beforeEach(() => {
   projectBay = LOCAL;
+  homeBay = async () => ({ home_bay_id: "bay-home" });
+  remoteBegin.mockReset().mockResolvedValue("remote-begin");
   localSnapshot.mockReset();
   remoteSnapshot.mockReset();
   remoteClient.mockClear();
@@ -102,6 +118,24 @@ describe("owningBaySnapshot", () => {
     await expect(
       owningBaySnapshot({ project_id: PROJECT, account_id: ACCOUNT }),
     ).rejects.toThrow(/owner changed/);
+  });
+
+  it("fails closed on a malformed snapshot, local or remote", async () => {
+    localSnapshot.mockResolvedValue({
+      ...snap(LOCAL),
+      other_members: undefined,
+    });
+    await expect(
+      owningBaySnapshot({ project_id: PROJECT, account_id: ACCOUNT }),
+    ).rejects.toThrow(/malformed/);
+    projectBay = "bay-b";
+    remoteSnapshot.mockResolvedValue({
+      ...snap("bay-b"),
+      account_role: "admin",
+    });
+    await expect(
+      owningBaySnapshot({ project_id: PROJECT, account_id: ACCOUNT }),
+    ).rejects.toThrow(/malformed/);
   });
 
   it("fails closed without an owner, on an error and on a timeout", async () => {
@@ -142,7 +176,19 @@ describe("federatedRunActivity", () => {
       Error("agent credential is expired, revoked, or invalid"),
     );
     expect(await federatedRunActivity(lease)).toBe("ended");
-    for (const err of [Error("timeout"), Error("bay unreachable"), "x"]) {
+    activeRun.mockRejectedValue(
+      Error("Error: agent credential is expired, revoked, or invalid"),
+    );
+    expect(await federatedRunActivity(lease)).toBe("ended");
+    for (const err of [
+      Error("timeout"),
+      Error("bay unreachable"),
+      "x",
+      "agent credential is expired, revoked, or invalid",
+      Error("provider: agent credential is expired, revoked, or invalid"),
+      Error("agent credential is expired, revoked, or invalid (retry)"),
+      Error("Agent credential is expired, revoked, or invalid"),
+    ]) {
       activeRun.mockRejectedValue(err);
       expect(await federatedRunActivity(lease)).toBe("unknown");
     }
@@ -183,5 +229,101 @@ describe("gate", () => {
     settings = { federated_cli_connectors: "" };
     expect(await deps.gateOpen()).toBe(false);
     registerFederatedBroker(undefined);
+  });
+});
+
+describe("parseFederationSnapshot", () => {
+  const good = snap(LOCAL);
+
+  it("accepts exactly the owning bay's shape", () => {
+    expect(parseFederationSnapshot(good, LOCAL)).toEqual(good);
+    expect(
+      parseFederationSnapshot(
+        { ...good, account_role: null, approval_id: PROJECT },
+        LOCAL,
+      ),
+    ).toBeDefined();
+  });
+
+  it.each([
+    ["null", null],
+    ["an array", []],
+    ["an extra key", { ...good, extra: 1 }],
+    ["a missing key", { ...good, approval_id: undefined }],
+    ["a negative count", { ...good, other_members: -1 }],
+    ["a fractional count", { ...good, pending_invites: 0.5 }],
+    ["a string count", { ...good, other_members: "0" }],
+    ["a NaN revision", { ...good, users_revision: NaN }],
+    ["an unknown role", { ...good, account_role: "admin" }],
+    ["a bad approval id", { ...good, approval_id: "x" }],
+    ["another bay", { ...good, owning_bay_id: "bay-z" }],
+  ])("refuses %s", (_name, value) => {
+    expect(() => parseFederationSnapshot(value, LOCAL)).toThrow();
+  });
+});
+
+describe("host-visible errors are fixed codes only", () => {
+  const input = { account_id: ACCOUNT, host_id: HOST };
+  const PLANTED = "planted-00000000-0000-4000-8000-000000000999 ya29.token";
+
+  it("maps a failed home lookup and transport failures to unavailable", async () => {
+    homeBay = async () => {
+      throw Error(PLANTED);
+    };
+    for (const call of [
+      beginFederatedConnectorTurn,
+      endFederatedConnectorTurn,
+    ]) {
+      const err = await call(input).catch((e) => e);
+      expect(err.message).toBe(FEDERATED_CONNECTOR_UNAVAILABLE);
+    }
+    homeBay = async () => ({});
+    expect(
+      (await beginFederatedConnectorTurn(input).catch((e) => e)).message,
+    ).toBe(FEDERATED_CONNECTOR_UNAVAILABLE);
+    homeBay = async () => ({ home_bay_id: "bay-home" });
+    for (const failure of [Error(PLANTED), Error("timeout"), "raw string"]) {
+      remoteBegin.mockRejectedValueOnce(failure);
+      const err = await beginFederatedConnectorTurn(input).catch((e) => e);
+      expect(err.message).toBe(FEDERATED_CONNECTOR_UNAVAILABLE);
+    }
+  });
+
+  it("keeps the home bay's fixed codes exactly, also as inter-bay errors", async () => {
+    for (const code of [
+      `Error: ${FEDERATED_TURN_REFUSED}`,
+      `Error: ${FEDERATED_CONNECTORS_DISABLED}`,
+    ]) {
+      remoteBegin.mockRejectedValueOnce(Error(code));
+      expect(
+        (await beginFederatedConnectorTurn(input).catch((e) => e)).message,
+      ).toBe(code.slice("Error: ".length));
+    }
+    for (const near of [
+      `Error: Error: ${FEDERATED_TURN_REFUSED}`,
+      `error: ${FEDERATED_TURN_REFUSED}`,
+      ` ${FEDERATED_TURN_REFUSED}`,
+    ]) {
+      remoteBegin.mockRejectedValueOnce(Error(near));
+      expect(
+        (await beginFederatedConnectorTurn(input).catch((e) => e)).message,
+      ).toBe(FEDERATED_CONNECTOR_UNAVAILABLE);
+    }
+    for (const code of [
+      FEDERATED_TURN_REFUSED,
+      FEDERATED_CONNECTORS_DISABLED,
+      FEDERATED_CONNECTOR_UNAVAILABLE,
+    ]) {
+      remoteBegin.mockRejectedValueOnce(Error(code));
+      expect(
+        (await beginFederatedConnectorTurn(input).catch((e) => e)).message,
+      ).toBe(code);
+    }
+    remoteBegin.mockRejectedValueOnce(
+      Error(`${FEDERATED_TURN_REFUSED} ${PLANTED}`),
+    );
+    expect(
+      (await beginFederatedConnectorTurn(input).catch((e) => e)).message,
+    ).toBe(FEDERATED_CONNECTOR_UNAVAILABLE);
   });
 });

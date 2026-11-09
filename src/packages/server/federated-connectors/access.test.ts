@@ -562,6 +562,58 @@ describe("shared-project approvals and the snapshot", () => {
     expect(rows[0]).toEqual({ revoke_reason: "self", revoked_by: ACCOUNT });
   });
 
+  it.each([
+    ["removed and re-added", "remove"],
+    ["demoted to viewer", "viewer"],
+  ])(
+    "the approved account %s: revoked (approved-account-left) and audited",
+    async (_name, how) => {
+      const { approval_id } = await approveFederatedSharedProjectOnOwningBay({
+        account_id: OWNER,
+        project_id: PROJECT,
+        approved_account_id: ACCOUNT,
+      });
+      if (how === "remove") {
+        await q(`UPDATE projects SET users = users - $2 WHERE project_id=$1`, [
+          PROJECT,
+          ACCOUNT,
+        ]);
+      } else {
+        await q(`UPDATE projects SET users = users || $2 WHERE project_id=$1`, [
+          PROJECT,
+          { [ACCOUNT]: { group: "viewer" } },
+        ]);
+      }
+      const { rows } = await q(
+        `SELECT revoke_reason, revoked_by FROM federated_connector_shared_project_approvals WHERE approval_id=$1`,
+        [approval_id],
+      );
+      expect(rows[0]).toEqual({
+        revoke_reason: "approved-account-left",
+        revoked_by: null,
+      });
+      expect((await audits()).at(-1)).toMatchObject({
+        action: "shared-revoke",
+        actor_account_id: null,
+        account_id: ACCOUNT,
+        approval_id,
+        before: { approver_account_id: OWNER },
+        after: { reason: "approved-account-left" },
+      });
+      // Back as a collaborator: still no approval until an owner approves.
+      await q(`UPDATE projects SET users = users || $2 WHERE project_id=$1`, [
+        PROJECT,
+        { [ACCOUNT]: { group: "collaborator" } },
+      ]);
+      const snap = await federationSnapshotOnOwningBay({
+        project_id: PROJECT,
+        account_id: ACCOUNT,
+      });
+      expect(snap.approval_id).toBeNull();
+      expect(isSharedProject(snap)).toBe(true);
+    },
+  );
+
   it("a rehome away and back (A to B to A) needs a new approval", async () => {
     const { approval_id } = await approveFederatedSharedProjectOnOwningBay({
       account_id: OWNER,

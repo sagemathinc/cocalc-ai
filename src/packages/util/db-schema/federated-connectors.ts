@@ -354,7 +354,7 @@ Table({
         name: "federated_connector_shared_project_approvals_revoke_check",
         type: "check",
         expression:
-          "(revoked_at IS NULL AND revoked_by IS NULL AND revoke_reason IS NULL) OR (revoked_at IS NOT NULL AND ((revoke_reason IN ('owner','self') AND revoked_by IS NOT NULL) OR (revoke_reason IN ('rehome','approver-demoted') AND revoked_by IS NULL)))",
+          "(revoked_at IS NULL AND revoked_by IS NULL AND revoke_reason IS NULL) OR (revoked_at IS NOT NULL AND ((revoke_reason IN ('owner','self') AND revoked_by IS NOT NULL) OR (revoke_reason IN ('rehome','approver-demoted','approved-account-left') AND revoked_by IS NULL)))",
       },
     ],
     pg_custom_indexes: [
@@ -384,7 +384,7 @@ Table({
       desc: "Account that revoked the approval; null when the system ended it.",
     },
     revoke_reason: text(
-      "owner (an owner revoked it), self (the approved account withdrew it), rehome (the project left this bay) or approver-demoted (its approver stopped being an owner).",
+      "owner (an owner revoked it), self (the approved account withdrew it), rehome (the project left this bay), approver-demoted (its approver stopped being an owner) or approved-account-left (the approved account stopped being a full collaborator).",
     ),
   },
 });
@@ -409,7 +409,7 @@ Table({
         name: "federated_connector_assignment_audit_actor_check",
         type: "check",
         expression:
-          "actor_account_id IS NOT NULL OR (action = 'shared-revoke' AND after->>'reason' IN ('rehome','approver-demoted'))",
+          "actor_account_id IS NOT NULL OR (action = 'shared-revoke' AND after->>'reason' IN ('rehome','approver-demoted','approved-account-left'))",
       },
     ],
     pg_custom_indexes: [

@@ -207,7 +207,11 @@ describe("assignment audit", () => {
         [uuid()],
       ),
     ).rejects.toThrow();
-    for (const reason of ["rehome", "approver-demoted"]) {
+    for (const reason of [
+      "rehome",
+      "approver-demoted",
+      "approved-account-left",
+    ]) {
       await q(
         `INSERT INTO ${AUDIT} (id, action, after) VALUES ($1, 'shared-revoke', $2)`,
         [uuid(), { reason }],
@@ -422,10 +426,11 @@ describe("shared-project approvals", () => {
     expect((await approval(id)).revoked_at).toBeNull();
   });
 
-  it("allows exactly the four revocation reasons", async () => {
+  it("allows exactly the five revocation reasons", async () => {
     for (const [reason, by] of [
       ["self", uuid()],
       ["approver-demoted", null],
+      ["approved-account-left", null],
     ] as const) {
       const id = await insertApproval();
       await q(

@@ -19,6 +19,7 @@ import {
   FEDERATED_TURN_REFUSED,
   federatedTurnKey,
   parseFederatedTurnRequest,
+  countStaleOpenFederatedLeases,
   reconcileFederatedLeases,
   verifyFederatedLiveTurn,
   type FederatedTurnDeps,
@@ -419,6 +420,28 @@ describe("beginFederatedTurn", () => {
     ]);
   });
 
+  it.each([
+    ["removed", null],
+    ["demoted to viewer", "viewer"],
+  ])(
+    "the connector account %s after the authority check: deny, or empty without a lease",
+    async (_name, role) => {
+      const req = request();
+      const first = await beginFederatedTurn(req, deps);
+      snapshot = { ...SOLO, account_role: role as any };
+      expect((await beginFederatedTurn(req, deps)).revoked).toEqual([
+        { lease_id: first.entries[0].gcloud.lease_id, reason: "deny" },
+      ]);
+      runSeq += 1;
+      const before = (await leaseRows()).length;
+      expect(await beginFederatedTurn(request(), deps)).toEqual({
+        entries: [],
+        revoked: [],
+      });
+      expect((await leaseRows()).length).toBe(before);
+    },
+  );
+
   it("a pending invite counts as shared; no lease is created", async () => {
     snapshot = { ...SOLO, pending_invites: 1 };
     const before = (await leaseRows()).length;
@@ -524,6 +547,17 @@ describe("verifyFederatedLiveTurn (broker recheck)", () => {
     );
   });
 
+  it.each([null, "viewer"])(
+    "refuses when the connector account's role becomes %s between begin and mint",
+    async (role) => {
+      const r = await mintedRequest();
+      snapshot = { ...SOLO, account_role: role as any };
+      await expect(verifyFederatedLiveTurn(r, deps)).rejects.toThrow(
+        "turn_not_live",
+      );
+    },
+  );
+
   it("refuses a closed gate, a lost authority, an assignment change and an ended lease", async () => {
     let r = await mintedRequest();
     gate = false;
@@ -619,5 +653,46 @@ describe("reconcileFederatedLeases", () => {
     expect(reason(ids[0])).toBeNull();
     expect(reason(ids[1])).toBe("expired");
     expect(reason(ids[2])).toBeNull();
+  });
+});
+
+describe("reconciliation order and health", () => {
+  it("continues after the last checked lease, so active ones can't starve the rest", async () => {
+    await q(
+      `UPDATE federated_connector_turn_leases SET ended_at=NOW(), end_reason='expired' WHERE ended_at IS NULL`,
+    );
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      runSeq += 1;
+      ids.push(
+        (await beginFederatedTurn(request(), deps)).entries[0].gcloud.lease_id,
+      );
+    }
+    const seen: string[] = [];
+    const runActivity = async ({ run_id }: { run_id: string }) => {
+      seen.push(run_id);
+      return "active" as const;
+    };
+    const first = await reconcileFederatedLeases({
+      runActivity,
+      olderThanMs: -60_000,
+      limit: 2,
+    });
+    expect(first.checked).toBe(2);
+    expect(first.next).toBeDefined();
+    const second = await reconcileFederatedLeases({
+      runActivity,
+      olderThanMs: -60_000,
+      limit: 2,
+      after: first.next,
+    });
+    expect(second.checked).toBe(1);
+    expect(second.next).toBeUndefined();
+    expect(new Set(seen).size).toBe(3);
+  });
+
+  it("counts stale open leases (count only)", async () => {
+    expect(await countStaleOpenFederatedLeases(7)).toBe(0);
+    expect(await countStaleOpenFederatedLeases(-1)).toBeGreaterThan(0);
   });
 });

@@ -11,6 +11,9 @@ import {
 // busy agent starts thousands of turns a day and must not be locked out by
 // its past.
 export const MAX_LIVE_RUNS_PER_AGENT = 10_000;
+/** activeRun's answer when the run is not active (expired, ended or revoked). */
+export const AGENT_RUN_NOT_ACTIVE =
+  "agent credential is expired, revoked, or invalid";
 // Run history kept for an agent (maintenance removes runs 30 days after they
 // end). This bounds rows from issuing and ending runs in a loop, far above
 // the ~60k a month of the busiest real agent.
@@ -265,8 +268,7 @@ export class AgentStore {
         AND a.disabled_at IS NULL AND ($3::text IS NULL OR r.token_hash=$3)`,
       [agentId, runId, tokenHash ?? null],
     );
-    if (!rows[0])
-      throw new Error("agent credential is expired, revoked, or invalid");
+    if (!rows[0]) throw new Error(AGENT_RUN_NOT_ACTIVE);
     return rows[0];
   }
 

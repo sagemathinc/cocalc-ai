@@ -37,6 +37,7 @@ import {
   assertTrustedSource,
 } from "@cocalc/server/agents/cocalc-connector-turn";
 import { verifyActiveAgentRun } from "@cocalc/server/agents/identity-routing";
+import { AGENT_RUN_NOT_ACTIVE } from "@cocalc/server/agents/store";
 import {
   approveFederatedSharedProjectOnOwningBay,
   federationSnapshotOnOwningBay,
@@ -53,10 +54,13 @@ import { setFederatedConnectorGateOnSeed } from "./site-gate";
 import {
   beginFederatedTurn,
   endFederatedTurn,
+  FEDERATED_CONNECTOR_UNAVAILABLE,
+  FEDERATED_CONNECTORS_DISABLED,
   FEDERATED_TURN_REFUSED,
   FederatedTurnError,
   reconcileFederatedLeases,
   verifyFederatedLiveTurn,
+  type FederatedLeaseCursor,
   type FederatedRunActivity,
   type FederatedTurnDeps,
 } from "./turn";
@@ -103,10 +107,48 @@ export async function owningBaySnapshot(opts: {
         ).snapshot(opts),
     SNAPSHOT_TIMEOUT_MS,
   );
-  if (snapshot?.owning_bay_id !== bay_id) {
+  return parseFederationSnapshot(snapshot, bay_id);
+}
+
+const SNAPSHOT_KEYS = [
+  "owning_bay_id",
+  "users_revision",
+  "account_role",
+  "other_members",
+  "pending_invites",
+  "approval_id",
+];
+const ROLES = new Set(["owner", "collaborator", "viewer"]);
+const count = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0;
+
+/**
+ * A snapshot exactly as the owning bay produces it, from the bay that owns
+ * the project; anything else throws (and the caller fails closed).
+ */
+export function parseFederationSnapshot(
+  value: unknown,
+  bay_id: string,
+): FederationProjectSnapshot {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw Error("malformed project snapshot");
+  }
+  const keys = Object.keys(value);
+  const s = value as Record<string, unknown>;
+  if (
+    keys.length !== SNAPSHOT_KEYS.length ||
+    !SNAPSHOT_KEYS.every((k) => keys.includes(k)) ||
+    !count(s.users_revision) ||
+    !count(s.other_members) ||
+    !count(s.pending_invites) ||
+    !(s.account_role === null || ROLES.has(s.account_role as string)) ||
+    !(s.approval_id === null || isValidUUID(s.approval_id))
+  ) {
+    throw Error("malformed project snapshot");
+  }
+  if (s.owning_bay_id !== bay_id) {
     throw Error("project owner changed during the snapshot");
   }
-  return snapshot;
+  return s as unknown as FederationProjectSnapshot;
 }
 
 async function gateOpen(): Promise<boolean> {
@@ -135,9 +177,8 @@ export function federatedTurnDeps(): FederatedTurnDeps {
   };
 }
 
-// The authoritative "run is not active" answer (agents/store.ts activeRun);
-// any other failure is unknown and leaves the lease for the next pass.
-const RUN_NOT_ACTIVE = "agent credential is expired, revoked, or invalid";
+// The authoritative "run is not active" answer is agents/store.ts activeRun's
+// error; any other failure is unknown and leaves the lease for the next pass.
 
 export async function federatedRunActivity(lease: {
   account_id: string;
@@ -149,15 +190,30 @@ export async function federatedRunActivity(lease: {
     await verifyActiveAgentRun(lease);
     return "active";
   } catch (err) {
-    return `${(err as Error)?.message ?? ""}`.includes(RUN_NOT_ACTIVE)
+    // Exactly the store's answer, locally or as an inter-bay service error
+    // (which arrives stringified, "Error: <message>"); never a near match.
+    const message = (err as Error)?.message;
+    return message === AGENT_RUN_NOT_ACTIVE ||
+      message === `Error: ${AGENT_RUN_NOT_ACTIVE}`
       ? "ended"
       : "unknown";
   }
 }
 
-/** Scheduled (G3b): ends this bay's leases whose runs have ended. */
+let reconcileCursor: FederatedLeaseCursor | undefined;
+
+/**
+ * Scheduled (G3b): ends this bay's leases whose runs have ended. Each pass
+ * continues after the last lease the previous pass checked, so leases that
+ * stay active can't keep newer candidates from being reached.
+ */
 export async function reconcileFederatedLeasesAtThisBay() {
-  return await reconcileFederatedLeases({ runActivity: federatedRunActivity });
+  const result = await reconcileFederatedLeases({
+    runActivity: federatedRunActivity,
+    after: reconcileCursor,
+  });
+  reconcileCursor = result.next;
+  return result;
 }
 
 /** This bay's side of every federated connector call. */
@@ -200,8 +256,17 @@ async function owningBay(project_id: unknown) {
   return apiAt(ownership.bay_id);
 }
 
+const FIXED_CODES = new Set([
+  FEDERATED_TURN_REFUSED,
+  FEDERATED_CONNECTORS_DISABLED,
+  FEDERATED_CONNECTOR_UNAVAILABLE,
+]);
+
 // Host calls: the request goes to the home bay exactly as received (with
 // host_id from the authenticated principal); the turn refuses unknown keys.
+// The host only ever sees a fixed code: one that came back from the home bay
+// (matched exactly; an inter-bay error isn't an instance) or, for any other
+// failure on the way (home lookup, transport, timeout), unavailable.
 async function hostCall<T>(
   input: any,
   fn: (api: InterBayFederatedConnectorApi) => Promise<T>,
@@ -209,7 +274,22 @@ async function hostCall<T>(
   if (!isValidUUID(input?.account_id) || !isValidUUID(input?.host_id)) {
     throw new FederatedTurnError(FEDERATED_TURN_REFUSED);
   }
-  return await fn(await accountHome(input.account_id));
+  try {
+    return await fn(await accountHome(input.account_id));
+  } catch (err) {
+    // A code from the home bay arrives as itself (local) or stringified by
+    // the inter-bay service ("Error: <code>"); nothing else is kept.
+    const message = (err as Error)?.message;
+    const code =
+      typeof message === "string" && message.startsWith("Error: ")
+        ? message.slice("Error: ".length)
+        : message;
+    throw new FederatedTurnError(
+      typeof code === "string" && FIXED_CODES.has(code)
+        ? code
+        : FEDERATED_CONNECTOR_UNAVAILABLE,
+    );
+  }
 }
 
 export const beginFederatedConnectorTurn = async (input: any) =>
