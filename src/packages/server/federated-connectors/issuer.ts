@@ -8,7 +8,12 @@
 // An assertion is valid for at most MAX_ASSERTION_LIFETIME_S, names one
 // provider exactly, and carries opaque ids only.
 
-import { createHash, createPublicKey, randomUUID } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  randomUUID,
+  verify as verifySignature,
+} from "node:crypto";
 import {
   FEDERATION_ATTRIBUTE_CLAIMS,
   FEDERATION_ISSUER_PATH,
@@ -24,12 +29,40 @@ import { federationKeyId, type FederationSigner } from "./signer";
 /** Refuse to sign when the local clock is off by more than this. */
 export const MAX_CLOCK_SKEW_MS = 30_000;
 
-const ISSUER_RE = new RegExp(
-  `^https://[a-z0-9.-]+(:[0-9]{1,5})?${FEDERATION_ISSUER_PATH.replace(/\//g, "\\/")}$`,
-);
+const HOST_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
+/**
+ * True only for the canonical issuer URL of a bare https origin: a valid DNS
+ * host name (no empty or malformed labels), an optional valid non-default
+ * port, and exactly the issuer path. Anything a URL parser would normalize
+ * differently is refused, since the issuer is a provider trust binding.
+ */
 export function isFederationIssuer(value: unknown): value is string {
-  return typeof value === "string" && ISSUER_RE.test(value);
+  if (typeof value !== "string" || value.length > 300) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    return false;
+  }
+  const labels = url.hostname.split(".");
+  if (
+    labels.length < 2 ||
+    !labels.every((label) => HOST_LABEL_RE.test(label)) ||
+    /^[0-9]+$/.test(labels[labels.length - 1])
+  ) {
+    return false;
+  }
+  return value === `${url.origin}${FEDERATION_ISSUER_PATH}`;
 }
 
 function base64url(data: Buffer | string): string {
@@ -50,6 +83,9 @@ export function assertClockWithinSkew({
   referenceNow: number;
   maxSkewMs?: number;
 }): void {
+  if (!Number.isFinite(maxSkewMs) || maxSkewMs < 0) {
+    throw Error("clock check failed: invalid skew limit");
+  }
   if (!Number.isFinite(localNow) || !Number.isFinite(referenceNow)) {
     throw Error("clock check failed: no usable time");
   }
@@ -128,6 +164,18 @@ export async function signAssertion(
   )}`;
   const digest = createHash("sha256").update(signingInput).digest();
   const signature = await signer.signDigest(digest);
+  // Verify locally with the version's public key before anything leaves:
+  // catches a wrong key, a mixed-up version or a corrupted response.
+  if (
+    !verifySignature(
+      "sha256",
+      Buffer.from(signingInput),
+      publicKeyFromPem(await signer.publicKeyPem()),
+      signature,
+    )
+  ) {
+    throw Error("the signature does not verify with the signing key");
+  }
   return {
     assertion: `${signingInput}.${base64url(signature)}`,
     jti,
@@ -149,9 +197,32 @@ export interface JsonWebKeySet {
   }[];
 }
 
+const PUBLIC_KEY_PEM_RE =
+  /^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PUBLIC KEY-----\r?\n?$/;
+
 /**
- * The JWKS of the given enabled key versions. Only RSA 2048 public keys are
- * accepted; a duplicate key id is refused.
+ * An RSA 2048 public key from an SPKI PEM. Private key material is refused
+ * outright (never derived from), so it can't cross this boundary.
+ */
+function publicKeyFromPem(pem: string) {
+  if (typeof pem !== "string" || !PUBLIC_KEY_PEM_RE.test(pem)) {
+    throw Error("issuer keys must be PEM public keys");
+  }
+  const key = createPublicKey({ key: pem, format: "pem" });
+  if (
+    key.type !== "public" ||
+    key.asymmetricKeyType !== "rsa" ||
+    key.asymmetricKeyDetails?.modulusLength !== 2048
+  ) {
+    throw Error("issuer keys must be RSA 2048 public keys");
+  }
+  return key;
+}
+
+/**
+ * The JWKS of the given enabled key versions. Only RSA 2048 public keys (as
+ * SPKI PEM) are accepted; private key material is refused, and a duplicate
+ * key id is refused.
  */
 export function buildJwks(
   versions: { keyVersion: string; publicKeyPem: string }[],
@@ -159,14 +230,7 @@ export function buildJwks(
   const keys: JsonWebKeySet["keys"] = [];
   const seen = new Set<string>();
   for (const { keyVersion, publicKeyPem } of versions) {
-    const key = createPublicKey(publicKeyPem);
-    if (
-      key.type !== "public" ||
-      key.asymmetricKeyType !== "rsa" ||
-      key.asymmetricKeyDetails?.modulusLength !== 2048
-    ) {
-      throw Error("issuer keys must be RSA 2048 public keys");
-    }
+    const key = publicKeyFromPem(publicKeyPem);
     const jwk = key.export({ format: "jwk" }) as { n?: string; e?: string };
     if (!jwk.n || !jwk.e) throw Error("invalid public key");
     const kid = federationKeyId(keyVersion);

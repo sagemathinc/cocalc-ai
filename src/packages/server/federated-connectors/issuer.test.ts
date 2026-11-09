@@ -150,6 +150,16 @@ describe("signed assertions", () => {
     "https://staging.example.com/_cocalc/oidc/connectors/",
     "https://staging.example.com/other",
     "https://user@staging.example.com/_cocalc/oidc/connectors",
+    "https://staging..example.com/_cocalc/oidc/connectors",
+    "https://.staging.example.com/_cocalc/oidc/connectors",
+    "https://-staging.example.com/_cocalc/oidc/connectors",
+    "https://staging.example.com:99999/_cocalc/oidc/connectors",
+    "https://staging.example.com:443/_cocalc/oidc/connectors",
+    "https://STAGING.example.com/_cocalc/oidc/connectors",
+    "https://localhost/_cocalc/oidc/connectors",
+    "https://10.0.0.1/_cocalc/oidc/connectors",
+    "https://staging.example.com/_cocalc/oidc/connectors?x=1",
+    "https://staging.example.com/_cocalc/oidc/connectors#x",
   ])("refuses the issuer %s", (issuer) => {
     expect(() =>
       assertionClaims({
@@ -189,6 +199,41 @@ describe("signed assertions", () => {
   });
 });
 
+describe("local signature verification", () => {
+  it("refuses a signature that doesn't verify with the version's key", async () => {
+    const other = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const signer = testSigner();
+    signer.publicKeyPem = async () =>
+      `${other.publicKey.export({ type: "spki", format: "pem" })}`;
+    await expect(
+      signAssertion(signer, {
+        issuer: ISSUER,
+        provider: PROVIDER,
+        attributes: attributes(),
+        now: NOW,
+      }),
+    ).rejects.toThrow("does not verify");
+  });
+
+  it("refuses a corrupted signature", async () => {
+    const signer = testSigner();
+    const sign = signer.signDigest.bind(signer);
+    signer.signDigest = async (d: Buffer) => {
+      const sig = await sign(d);
+      sig[10] ^= 0xff;
+      return sig;
+    };
+    await expect(
+      signAssertion(signer, {
+        issuer: ISSUER,
+        provider: PROVIDER,
+        attributes: attributes(),
+        now: NOW,
+      }),
+    ).rejects.toThrow("does not verify");
+  });
+});
+
 describe("clock check", () => {
   it("accepts a small skew and refuses a large or unusable one", () => {
     expect(() =>
@@ -200,6 +245,11 @@ describe("clock check", () => {
     expect(() =>
       assertClockWithinSkew({ localNow: NOW, referenceNow: NaN }),
     ).toThrow("no usable time");
+    for (const maxSkewMs of [NaN, -1, Infinity]) {
+      expect(() =>
+        assertClockWithinSkew({ localNow: NOW, referenceNow: NOW, maxSkewMs }),
+      ).toThrow("invalid skew limit");
+    }
   });
 });
 
@@ -220,6 +270,14 @@ describe("JWKS and discovery", () => {
     );
   });
 
+  it("accepts a non-default port", () => {
+    expect(
+      discoveryDocument(
+        "https://staging.example.com:8443/_cocalc/oidc/connectors",
+      ).issuer,
+    ).toBe("https://staging.example.com:8443/_cocalc/oidc/connectors");
+  });
+
   it("refuses other key types and sizes, private keys and duplicates", () => {
     const small = generateKeyPairSync("rsa", { modulusLength: 1024 });
     const ec = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -231,14 +289,24 @@ describe("JWKS and discovery", () => {
         buildJwks([{ keyVersion: KEY_VERSION, publicKeyPem: `${pem}` }]),
       ).toThrow("RSA 2048");
     }
-    // A private key yields a public key object, but never its private parts.
-    const jwks = buildJwks([
-      {
-        keyVersion: KEY_VERSION,
-        publicKeyPem: `${keys.privateKey.export({ type: "pkcs8", format: "pem" })}`,
-      },
-    ]);
-    expect(Object.keys(jwks.keys[0])).not.toContain("d");
+    // Private key material is refused, never used to derive a public key.
+    for (const privatePem of [
+      keys.privateKey.export({ type: "pkcs8", format: "pem" }),
+      keys.privateKey.export({ type: "pkcs1", format: "pem" }),
+    ]) {
+      expect(() =>
+        buildJwks([{ keyVersion: KEY_VERSION, publicKeyPem: `${privatePem}` }]),
+      ).toThrow("PEM public keys");
+    }
+    // An RSA public key in PKCS#1 form isn't the SPKI form KMS returns.
+    expect(() =>
+      buildJwks([
+        {
+          keyVersion: KEY_VERSION,
+          publicKeyPem: `${keys.publicKey.export({ type: "pkcs1", format: "pem" })}`,
+        },
+      ]),
+    ).toThrow("PEM public keys");
     expect(() =>
       buildJwks([
         { keyVersion: KEY_VERSION, publicKeyPem: `${publicPem}` },
