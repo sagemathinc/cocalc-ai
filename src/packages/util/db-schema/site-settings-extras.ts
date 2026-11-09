@@ -364,6 +364,8 @@ export type SiteSettingsExtrasKeys =
   | "cloudflare_connector_client_id"
   | "cloudflare_connector_client_secret"
   | "federated_cli_connectors"
+  | "federated_broker_signer"
+  | "federated_issuer_key_pins"
   | "sagebrush_heading"
   | "sagebrush_client_secret"
   | "sagebrush_redirect_uris"
@@ -1047,6 +1049,12 @@ export const EXTRAS: SettingsExtras = {
   ),
   federated_cli_connectors: connectorSetting("Federated Cloud Connectors", {
     desc: "Cloud CLI connectors that use workload identity federation (gcloud). Changed only through the federated connector gate, which needs fresh authentication and is audited; this form can't change it.",
+  }),
+  federated_broker_signer: connectorSetting("Federated Broker Signer", {
+    desc: "The token broker's signer service account and its unique id, from the GCP setup record. Changed only through the audited federated connector path; this form can't change it.",
+  }),
+  federated_issuer_key_pins: connectorSetting("Federated Issuer Key Pins", {
+    desc: "SPKI sha256 of the issuer keys the public JWKS may serve. Changed only through the audited federated connector path; this form can't change it.",
   }),
   sagebrush_heading: sagebrushSetting("Sagebrush", {
     desc: "Sign in to sagebrush.space with CoCalc, its upload limits and purging its data when an account is deleted. See docs/sagebrush.md.",

@@ -31,6 +31,18 @@ describe("server settings from the environment", () => {
     expect(db.set_server_setting).not.toHaveBeenCalled();
   });
 
+  it.each(["FEDERATED_BROKER_SIGNER", "FEDERATED_ISSUER_KEY_PINS"])(
+    "refuses COCALC_SETTING_%s too",
+    async (name) => {
+      process.env[`COCALC_SETTING_${name}`] = "x";
+      const db = fakeDb();
+      await expect(load_server_settings_from_env(db as any)).rejects.toThrow(
+        /is not allowed/,
+      );
+      expect(db.async_query).not.toHaveBeenCalled();
+    },
+  );
+
   it("still loads other settings", async () => {
     process.env.COCALC_SETTING_SITE_NAME = "Fake";
     const db = fakeDb();

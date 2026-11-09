@@ -401,8 +401,8 @@ Table({
   },
 });
 
-// Append-only record of every assignment, shared-project approval and site
-// gate change, with the actor and fresh-auth facts. Rows stay on the bay
+// Append-only record of every assignment, shared-project approval, site
+// gate, broker signer and issuer key pin change, with the actor and fresh-auth facts. Rows stay on the bay
 // where they were written (an account or project rehome doesn't move them),
 // so an access review must read this table on every bay.
 Table({
@@ -414,7 +414,7 @@ Table({
         name: "federated_connector_assignment_audit_action_check",
         type: "check",
         expression:
-          "action IN ('assign','change','disable','enable','remove','shared-approve','shared-revoke','site-gate-change')",
+          "action IN ('assign','change','disable','enable','remove','shared-approve','shared-revoke','site-gate-change','broker-signer-change','issuer-pin-change')",
       },
       {
         // Only the system's own approval revocations have no actor.

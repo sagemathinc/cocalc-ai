@@ -44,6 +44,7 @@ import { setFederatedAuditSessionKeyForTesting } from "./audit";
 import {
   applyFederatedGateReplica,
   setFederatedConnectorGateOnSeed,
+  setFederatedProtectedSettingOnSeed,
 } from "./site-gate";
 
 const q = (sql: string, params: any[] = []) => getPool().query(sql, params);
@@ -238,5 +239,99 @@ describe("gate replication to another bay", () => {
     await expect(
       applyFederatedGateReplica({ value: "gcloud" }, seedCaller),
     ).rejects.toThrow(/doesn't accept gate replication/);
+  });
+});
+
+describe("the trust-root settings", () => {
+  const SIGNER =
+    "fake-broker@example-project-1.iam.gserviceaccount.com 109876543210987654321";
+  const PIN = "c".repeat(64);
+  const seedCaller = {
+    cluster_id: "cluster-1",
+    bay_id: "seed",
+    bay_credential_id: "cred-1",
+  };
+  const audits = async (action: string) =>
+    (
+      await q(
+        `SELECT * FROM federated_connector_assignment_audit WHERE action=$1 ORDER BY time`,
+        [action],
+      )
+    ).rows;
+
+  it("sets the signer and pins through the audited path, each with its own action", async () => {
+    await setFederatedProtectedSettingOnSeed({
+      account_id: ADMIN,
+      name: "federated_broker_signer",
+      value: SIGNER,
+    });
+    await setFederatedProtectedSettingOnSeed({
+      account_id: ADMIN,
+      name: "federated_issuer_key_pins",
+      value: PIN,
+    });
+    expect((await audits("broker-signer-change")).at(-1)).toMatchObject({
+      actor_account_id: ADMIN,
+      before: { signer: null, signer_unique_id: null },
+      after: {
+        signer: "fake-broker@example-project-1.iam.gserviceaccount.com",
+        signer_unique_id: "109876543210987654321",
+      },
+    });
+    expect((await audits("issuer-pin-change")).at(-1)).toMatchObject({
+      before: { pins: [] },
+      after: { pins: [PIN] },
+    });
+    expect(propagate).toHaveBeenCalledWith(
+      [{ name: "federated_issuer_key_pins", value: PIN }],
+      expect.anything(),
+    );
+  });
+
+  it("refuses an invalid value, an unknown name and a non-admin", async () => {
+    await expect(
+      setFederatedProtectedSettingOnSeed({
+        account_id: ADMIN,
+        name: "federated_issuer_key_pins",
+        value: "nothex",
+      }),
+    ).rejects.toThrow(/invalid value/);
+    await expect(
+      setFederatedProtectedSettingOnSeed({
+        account_id: ADMIN,
+        name: "site_name",
+        value: "x",
+      }),
+    ).rejects.toThrow(/not a protected/);
+    await expect(
+      setFederatedProtectedSettingOnSeed({
+        account_id: USER,
+        name: "federated_broker_signer",
+        value: SIGNER,
+      }),
+    ).rejects.toThrow(/only an admin/);
+  });
+
+  it("replicates only canonical values of protected settings from the seed", async () => {
+    bay = "attached-a";
+    await applyFederatedGateReplica(
+      { name: "federated_issuer_key_pins", value: PIN },
+      seedCaller,
+    );
+    for (const [name, value] of [
+      ["federated_issuer_key_pins", PIN.toUpperCase()],
+      ["federated_broker_signer", "x 1"],
+      ["site_name", "x"],
+    ]) {
+      await expect(
+        applyFederatedGateReplica({ name, value }, seedCaller),
+      ).rejects.toThrow();
+    }
+    await expect(
+      applyFederatedGateReplica(
+        { name: "federated_issuer_key_pins", value: PIN },
+        { ...seedCaller, bay_id: "attached-b" },
+      ),
+    ).rejects.toThrow(/must come from the seed bay/);
   });
 });

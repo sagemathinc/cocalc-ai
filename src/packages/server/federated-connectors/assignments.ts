@@ -122,6 +122,8 @@ const NOTICE_TEXT: Record<FederatedAccessAuditAction, string> = {
   "shared-approve": "",
   "shared-revoke": "",
   "site-gate-change": "",
+  "broker-signer-change": "",
+  "issuer-pin-change": "",
 };
 
 async function notifyOwner(

@@ -45,6 +45,8 @@ export const approveFederatedSharedProject =
 export const revokeFederatedSharedProject =
   federated.revokeFederatedSharedProject;
 export const setFederatedConnectorGate = federated.setFederatedConnectorGate;
+export const setFederatedBrokerSigner = federated.setFederatedBrokerSigner;
+export const setFederatedIssuerKeyPins = federated.setFederatedIssuerKeyPins;
 import {
   createAgentNetwork as createAgentNetworkImpl,
   resolveAgentNetworkProposal as resolveAgentNetworkProposalImpl,

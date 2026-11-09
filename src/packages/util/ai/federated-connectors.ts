@@ -18,6 +18,66 @@ export type FederatedCliConnector = (typeof FEDERATED_CLI_CONNECTORS)[number];
 
 /** Site setting that turns federated connectors on (the gate). */
 export const FEDERATED_GATE_SETTING = "federated_cli_connectors";
+/** The broker's signer, as recorded by setup: "<sa email> <unique id>". */
+export const FEDERATED_BROKER_SIGNER_SETTING = "federated_broker_signer";
+/** SPKI sha256 (hex) of the issuer keys the JWKS may serve, comma-separated. */
+export const FEDERATED_ISSUER_PINS_SETTING = "federated_issuer_key_pins";
+/**
+ * Settings that change only through the audited admin path on the seed and
+ * replicate only from the seed: the gate and the two trust roots.
+ */
+export const FEDERATED_PROTECTED_SETTINGS = [
+  FEDERATED_GATE_SETTING,
+  FEDERATED_BROKER_SIGNER_SETTING,
+  FEDERATED_ISSUER_PINS_SETTING,
+] as const;
+export type FederatedProtectedSetting =
+  (typeof FEDERATED_PROTECTED_SETTINGS)[number];
+export function isFederatedProtectedSetting(
+  name: unknown,
+): name is FederatedProtectedSetting {
+  return (FEDERATED_PROTECTED_SETTINGS as readonly unknown[]).includes(name);
+}
+
+const UNIQUE_ID_RE = /^[1-9][0-9]{5,31}$/;
+const SPKI_SHA256_RE = /^[0-9a-f]{64}$/;
+const MAX_ISSUER_PINS = 8;
+
+/**
+ * The canonical stored form of a protected setting, or undefined if the
+ * value isn't valid. Replication accepts only values already canonical.
+ */
+export function canonicalFederatedSetting(
+  name: FederatedProtectedSetting,
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string" || value.length > 4096) return;
+  if (name === FEDERATED_GATE_SETTING) {
+    return parseFederatedGate(value).join(",");
+  }
+  if (name === FEDERATED_BROKER_SIGNER_SETTING) {
+    if (value === "") return "";
+    const parts = value.split(" ");
+    if (
+      parts.length !== 2 ||
+      !GCP_SERVICE_ACCOUNT_RE.test(parts[0]) ||
+      !UNIQUE_ID_RE.test(parts[1])
+    ) {
+      return;
+    }
+    return `${parts[0]} ${parts[1]}`;
+  }
+  // Issuer pins: unique, sorted, lowercase hex.
+  if (value === "") return "";
+  const pins = value.split(",");
+  if (
+    pins.length > MAX_ISSUER_PINS ||
+    pins.some((p) => !SPKI_SHA256_RE.test(p))
+  ) {
+    return;
+  }
+  return [...new Set(pins)].sort().join(",");
+}
 
 /**
  * The federated connectors the site gate lists: known names only, unique and

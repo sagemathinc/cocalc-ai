@@ -39,7 +39,9 @@ export type FederatedAccessAuditAction =
   | "remove"
   | "shared-approve"
   | "shared-revoke"
-  | "site-gate-change";
+  | "site-gate-change"
+  | "broker-signer-change"
+  | "issuer-pin-change";
 
 let sessionKey: Buffer | undefined;
 

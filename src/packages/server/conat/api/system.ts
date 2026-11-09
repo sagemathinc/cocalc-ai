@@ -1,5 +1,5 @@
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
-import { FEDERATED_GATE_SETTING } from "@cocalc/util/ai/federated-connectors";
+import { isFederatedProtectedSetting } from "@cocalc/util/ai/federated-connectors";
 import { createInterBayFederatedGateClient } from "@cocalc/conat/inter-bay/federated-gate";
 import {
   aiSubscriptionStatus,
@@ -1067,7 +1067,7 @@ async function assertSiteSettingWritable(name: string): Promise<void> {
 // The federated connector gate changes only through
 // server/federated-connectors/site-gate.ts, atomically with its audit row.
 function assertNotFederatedGate(name: string): void {
-  if (name === FEDERATED_GATE_SETTING) {
+  if (isFederatedProtectedSetting(name)) {
     throw Error(
       `setting '${name}' is changed only through the federated connector gate`,
     );
@@ -1288,10 +1288,14 @@ export async function propagateSiteSettingsToBays(
     .filter((bay_id) => bay_id !== local_bay_id)
     .sort();
   // The federated connector gate has its own seed-authenticated replication.
-  const gate = settings.find(({ name }) => name === FEDERATED_GATE_SETTING);
+  // The protected federated settings have their own seed-authenticated
+  // replication.
+  const protectedSettings = settings.filter(({ name }) =>
+    isFederatedProtectedSetting(name),
+  );
   const remoteSettings = settings.filter(
     ({ name }) =>
-      !isSeedOnlySiteSetting(name) && name !== FEDERATED_GATE_SETTING,
+      !isSeedOnlySiteSetting(name) && !isFederatedProtectedSetting(name),
   );
   const bays: SiteSettingsSyncResult["bays"] = [
     { bay_id: local_bay_id, status: "local", count: settings.length, version },
@@ -1313,11 +1317,14 @@ export async function propagateSiteSettingsToBays(
       for (const setting of remoteSettings) {
         await api.setServerSetting(setting);
       }
-      if (gate != null) {
-        await createInterBayFederatedGateClient(
+      if (protectedSettings.length > 0) {
+        const replica = createInterBayFederatedGateClient(
           getInterBayFabricClient(),
           bay_id,
-        ).apply({ value: gate.value });
+        );
+        for (const { name, value } of protectedSettings) {
+          await replica.apply({ name, value });
+        }
       }
       return bay_id;
     }),

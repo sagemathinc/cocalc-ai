@@ -24,7 +24,9 @@ import {
   type InterBayFederatedConnectorApi,
 } from "@cocalc/conat/inter-bay/federated-connector";
 import {
+  FEDERATED_BROKER_SIGNER_SETTING,
   FEDERATED_GATE_SETTING,
+  FEDERATED_ISSUER_PINS_SETTING,
   parseFederatedGate,
 } from "@cocalc/util/ai/federated-connectors";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -53,7 +55,10 @@ import {
 import type { MintRequest, MintResult } from "./broker";
 import { introspectAccessToken, type TextFetch } from "./google-identity";
 import { BrokerRegistration } from "./broker-registration";
-import { setFederatedConnectorGateOnSeed } from "./site-gate";
+import {
+  setFederatedConnectorGateOnSeed,
+  setFederatedProtectedSettingOnSeed,
+} from "./site-gate";
 import { checkIssuedToken, TokenClaimsCache } from "./token-check";
 import {
   beginFederatedTurn,
@@ -270,6 +275,7 @@ export const federatedConnectorAtThisBay: InterBayFederatedConnectorApi = {
   approve: approveFederatedSharedProjectOnOwningBay,
   revoke: revokeFederatedSharedProjectOnOwningBay,
   setGate: setFederatedConnectorGateOnSeed,
+  setProtectedSetting: setFederatedProtectedSettingOnSeed,
 };
 
 function apiAt(bay_id: string): InterBayFederatedConnectorApi {
@@ -357,6 +363,29 @@ export const revokeFederatedSharedProject = async (input: any) =>
 
 export const setFederatedConnectorGate = async (input: any) =>
   await apiAt(getConfiguredClusterSeedBayId()).setGate(input);
+
+export const setFederatedBrokerSigner = async (input: any) =>
+  await apiAt(getConfiguredClusterSeedBayId()).setProtectedSetting({
+    account_id: input?.account_id,
+    session_hash: input?.session_hash,
+    name: FEDERATED_BROKER_SIGNER_SETTING,
+    value: typeof input?.signer === "string" ? input.signer : "",
+  });
+
+export const setFederatedIssuerKeyPins = async (input: any) => {
+  if (
+    !Array.isArray(input?.pins) ||
+    input.pins.some((p: unknown) => typeof p !== "string")
+  ) {
+    throw Error("invalid issuer key pins");
+  }
+  return await apiAt(getConfiguredClusterSeedBayId()).setProtectedSetting({
+    account_id: input?.account_id,
+    session_hash: input?.session_hash,
+    name: FEDERATED_ISSUER_PINS_SETTING,
+    value: input.pins.join(","),
+  });
+};
 
 /** For the broker transport (G3b): the recheck, on the account's home bay. */
 export async function verifyFederatedLiveTurnRouted(

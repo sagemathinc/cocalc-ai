@@ -18,19 +18,17 @@ const seedOnly = (name: string) => name === "stripe_secret_key";
 beforeEach(() => setServerSetting.mockClear());
 
 describe("generic BayOps setServerSetting", () => {
-  it.each(["attached-a", "seed"])(
-    "refuses the federated connector gate on %s",
-    async (bay) => {
-      await expect(
-        applyServerSettingFromBay(
-          bay,
-          { name: "federated_cli_connectors", value: "gcloud" },
-          seedOnly,
-        ),
-      ).rejects.toThrow(/replicated only from the seed/);
-      expect(setServerSetting).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    ["attached-a", "federated_cli_connectors"],
+    ["seed", "federated_cli_connectors"],
+    ["attached-a", "federated_broker_signer"],
+    ["attached-a", "federated_issuer_key_pins"],
+  ])("refuses a protected federated setting on %s (%s)", async (bay, name) => {
+    await expect(
+      applyServerSettingFromBay(bay, { name, value: "x" }, seedOnly),
+    ).rejects.toThrow(/replicated only from the seed/);
+    expect(setServerSetting).not.toHaveBeenCalled();
+  });
 
   it("still applies ordinary settings and refuses seed-only ones off the seed", async () => {
     await applyServerSettingFromBay(

@@ -126,6 +126,8 @@ export const agent = {
   approveFederatedSharedProject: authFirstRequireAccountWithBoundSession,
   revokeFederatedSharedProject: authFirstRequireAccountWithBoundSession,
   setFederatedConnectorGate: authFirstRequireAccountWithBoundSession,
+  setFederatedBrokerSigner: authFirstRequireAccountWithBoundSession,
+  setFederatedIssuerKeyPins: authFirstRequireAccountWithBoundSession,
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
@@ -476,6 +478,14 @@ export interface AgentApi {
   setFederatedConnectorGate(
     opts: AgentHumanAuth & { connectors: string[] },
   ): Promise<{ connectors: string[] }>;
+  /** The broker's signer record, "<sa email> <unique id>" (admin, fresh auth). */
+  setFederatedBrokerSigner(
+    opts: AgentHumanAuth & { signer: string },
+  ): Promise<{ value: string }>;
+  /** The issuer keys the JWKS may serve, by SPKI sha256 (admin, fresh auth). */
+  setFederatedIssuerKeyPins(
+    opts: AgentHumanAuth & { pins: string[] },
+  ): Promise<{ value: string }>;
   getCocalcConnectorConfig(opts: {
     account_id?: string;
     agent_id: string;

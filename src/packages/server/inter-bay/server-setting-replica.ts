@@ -10,7 +10,7 @@
 
 import { db } from "@cocalc/database";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
-import { FEDERATED_GATE_SETTING } from "@cocalc/util/ai/federated-connectors";
+import { isFederatedProtectedSetting } from "@cocalc/util/ai/federated-connectors";
 import { callback2 } from "@cocalc/util/async-utils";
 
 export async function applyServerSettingFromBay(
@@ -18,7 +18,7 @@ export async function applyServerSettingFromBay(
   opts: { name: string; value: string },
   isSeedOnlySiteSetting: (name: string) => boolean,
 ): Promise<void> {
-  if (opts?.name === FEDERATED_GATE_SETTING) {
+  if (isFederatedProtectedSetting(opts?.name)) {
     throw Error(`setting '${opts.name}' is replicated only from the seed`);
   }
   if (

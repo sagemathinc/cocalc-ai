@@ -104,6 +104,16 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "audited with the session, like the approval",
   },
+  "agent.setFederatedBrokerSigner": {
+    decision: "fresh-auth-required",
+    reason:
+      "sets which Google identity the bay network accepts as the token broker",
+  },
+  "agent.setFederatedIssuerKeyPins": {
+    decision: "fresh-auth-required",
+    reason:
+      "sets which issuer keys Google trusts through the public JWKS (the federation trust root)",
+  },
   "agent.setFederatedConnectorGate": {
     decision: "fresh-auth-required",
     reason: "turns federated cloud credentials on or off for the whole site",

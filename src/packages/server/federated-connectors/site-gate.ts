@@ -4,8 +4,10 @@
  */
 
 /*
-The site gate for federated connectors (the federated_cli_connectors
-setting). It changes only here, on the seed bay, by an admin with fresh
+The protected federated connector settings: the site gate
+(federated_cli_connectors) and the two trust roots, the broker signer record
+(federated_broker_signer) and the issuer key pins (federated_issuer_key_pins).
+Each changes only here, on the seed bay, by an admin with fresh
 authentication, and in one transaction with its append-only audit row: if
 the audit row can't be written, the setting doesn't change. The generic site
 settings path refuses this setting (server/conat/api/system.ts).
@@ -29,37 +31,55 @@ import {
 } from "@cocalc/server/cluster-config";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import {
+  canonicalFederatedSetting,
+  FEDERATED_BROKER_SIGNER_SETTING,
   FEDERATED_CLI_CONNECTORS,
   FEDERATED_GATE_SETTING,
+  FEDERATED_ISSUER_PINS_SETTING,
+  isFederatedProtectedSetting,
   parseFederatedGate,
   type FederatedCliConnector,
+  type FederatedProtectedSetting,
 } from "@cocalc/util/ai/federated-connectors";
 import { recordFederatedAccessAudit } from "./audit";
 
-export async function setFederatedConnectorGateOnSeed({
+const AUDIT_ACTION: Record<
+  FederatedProtectedSetting,
+  "site-gate-change" | "broker-signer-change" | "issuer-pin-change"
+> = {
+  [FEDERATED_GATE_SETTING]: "site-gate-change",
+  [FEDERATED_BROKER_SIGNER_SETTING]: "broker-signer-change",
+  [FEDERATED_ISSUER_PINS_SETTING]: "issuer-pin-change",
+};
+
+/**
+ * Changes one protected setting (the gate, the broker signer record or the
+ * issuer key pins) on the seed: an admin with fresh authentication, in one
+ * transaction with its audit row (own action per setting), then replicated
+ * to the other bays through the seed-only replica service.
+ */
+export async function setFederatedProtectedSettingOnSeed({
   account_id,
   session_hash,
-  connectors,
+  name,
+  value,
 }: {
   account_id?: string;
   session_hash?: string;
-  connectors: string[];
-}): Promise<{ connectors: FederatedCliConnector[] }> {
+  name: string;
+  value: string;
+}): Promise<{ value: string }> {
   if (!account_id || !(await isAdmin(account_id))) {
-    throw Error("only an admin can change the federated connector gate");
+    throw Error("only an admin can change this federated connector setting");
   }
   if (getConfiguredBayId() !== getConfiguredClusterSeedBayId()) {
-    throw Error("the federated connector gate is changed on the seed bay");
+    throw Error("federated connector settings are changed on the seed bay");
   }
-  if (
-    !Array.isArray(connectors) ||
-    connectors.some(
-      (c) => !(FEDERATED_CLI_CONNECTORS as readonly string[]).includes(c),
-    )
-  ) {
-    throw Error("unknown federated connector");
+  if (!isFederatedProtectedSetting(name)) {
+    throw Error("not a protected federated connector setting");
   }
-  const after = parseFederatedGate(connectors.join(","));
+  const after = canonicalFederatedSetting(name, value);
+  if (after == null) throw Error("invalid value");
   const session = await requireDangerousSessionAuth({
     account_id,
     session_hash,
@@ -74,26 +94,24 @@ export async function setFederatedConnectorGateOnSeed({
       value: string | null;
       readonly: boolean | null;
     }>(`SELECT value, readonly FROM server_settings WHERE name=$1 FOR UPDATE`, [
-      FEDERATED_GATE_SETTING,
+      name,
     ]);
     if (rows[0]?.readonly) {
-      throw Error("the federated connector gate is set by configuration");
+      throw Error("this setting is set by configuration");
     }
-    const before = parseFederatedGate(rows[0]?.value);
-    if (before.join(",") === after.join(",")) {
-      throw Error("nothing to change");
-    }
+    const before = canonicalFederatedSetting(name, rows[0]?.value ?? "") ?? "";
+    if (before === after) throw Error("nothing to change");
     await client.query(
       `INSERT INTO server_settings (name, value) VALUES ($1, $2)
        ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value`,
-      [FEDERATED_GATE_SETTING, after.join(",")],
+      [name, after],
     );
     await recordFederatedAccessAudit(client, {
-      action: "site-gate-change",
+      action: AUDIT_ACTION[name],
       actor_account_id: account_id,
       session,
-      before: { connectors: before },
-      after: { connectors: after },
+      before: auditValue(name, before),
+      after: auditValue(name, after),
     });
     await client.query("COMMIT");
   } catch (err) {
@@ -109,26 +127,64 @@ export async function setFederatedConnectorGateOnSeed({
     recordGlobalConfigEventOnSeed,
     SERVER_SETTINGS_CONFIG_SCOPE,
   } = await import("@cocalc/server/conat/api/system");
-  const update = { name: FEDERATED_GATE_SETTING, value: after.join(",") };
   const version = await recordGlobalConfigEventOnSeed({
     scope: SERVER_SETTINGS_CONFIG_SCOPE,
     account_id,
-    changes: { settings: [FEDERATED_GATE_SETTING] },
+    changes: { settings: [name] },
   });
-  await propagateSiteSettingsToBays([update], {
+  await propagateSiteSettingsToBays([{ name, value: after }], {
     scope: SERVER_SETTINGS_CONFIG_SCOPE,
     version,
   });
-  return { connectors: after };
+  return { value: after };
+}
+
+function auditValue(name: FederatedProtectedSetting, value: string) {
+  if (name === FEDERATED_GATE_SETTING) {
+    return { connectors: value === "" ? [] : value.split(",") };
+  }
+  if (name === FEDERATED_ISSUER_PINS_SETTING) {
+    return { pins: value === "" ? [] : value.split(",") };
+  }
+  const [email, unique_id] = value === "" ? [null, null] : value.split(" ");
+  return { signer: email, signer_unique_id: unique_id };
+}
+
+/** The gate (G4a API): a protected setting with a list value. */
+export async function setFederatedConnectorGateOnSeed({
+  account_id,
+  session_hash,
+  connectors,
+}: {
+  account_id?: string;
+  session_hash?: string;
+  connectors: string[];
+}): Promise<{ connectors: FederatedCliConnector[] }> {
+  if (
+    !Array.isArray(connectors) ||
+    connectors.some(
+      (c) => !(FEDERATED_CLI_CONNECTORS as readonly string[]).includes(c),
+    )
+  ) {
+    throw Error("unknown federated connector");
+  }
+  const { value } = await setFederatedProtectedSettingOnSeed({
+    account_id,
+    session_hash,
+    name: FEDERATED_GATE_SETTING,
+    value: connectors.join(","),
+  });
+  return { connectors: parseFederatedGate(value) };
 }
 
 /**
- * A bay's side of gate replication: accepts a value only from the seed bay
- * of this cluster, as authenticated by the transport (the caller comes from
- * the conat server, never from the request), and only a well-formed one.
+ * A bay's side of protected-setting replication: accepts a value only from
+ * the seed bay of this cluster, as authenticated by the transport (the
+ * caller comes from the conat server, never from the request), only for a
+ * protected setting and only in canonical form.
  */
 export async function applyFederatedGateReplica(
-  opts: { value: string },
+  opts: { name?: string; value: string },
   caller: AuthenticatedCaller | undefined,
 ): Promise<void> {
   const seed = getConfiguredClusterSeedBayId();
@@ -145,14 +201,19 @@ export async function applyFederatedGateReplica(
   if (getConfiguredBayId() === seed) {
     throw Error("the seed bay doesn't accept gate replication");
   }
+  // Older seeds send only the gate's value.
+  const name = opts?.name ?? FEDERATED_GATE_SETTING;
+  if (!isFederatedProtectedSetting(name)) {
+    throw Error("invalid federated connector gate value");
+  }
   const value = typeof opts?.value === "string" ? opts.value : undefined;
-  if (value == null || parseFederatedGate(value).join(",") !== value) {
+  if (value == null || canonicalFederatedSetting(name, value) !== value) {
     throw Error("invalid federated connector gate value");
   }
   await getPool().query(
     `INSERT INTO server_settings (name, value) VALUES ($1, $2)
      ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value`,
-    [FEDERATED_GATE_SETTING, value],
+    [name, value],
   );
   resetServerSettingsCache();
 }

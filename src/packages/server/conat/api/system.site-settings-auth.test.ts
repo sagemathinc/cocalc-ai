@@ -793,7 +793,10 @@ describe("site settings dangerous-session auth", () => {
       expect.anything(),
       "attached-a",
     );
-    expect(gateApply).toHaveBeenCalledWith({ value: "gcloud" });
+    expect(gateApply).toHaveBeenCalledWith({
+      name: "federated_cli_connectors",
+      value: "gcloud",
+    });
   });
 
   it("refuses the federated connector gate before applying anything", async () => {

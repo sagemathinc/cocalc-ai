@@ -21,8 +21,8 @@ import {
 } from "@cocalc/conat/service/service";
 
 export interface InterBayFederatedGateApi {
-  /** Sets this bay's copy of the gate (seed bay callers only). */
-  apply(opts: { value: string }): Promise<void>;
+  /** Sets this bay's copy of a protected setting (seed bay callers only). */
+  apply(opts: { name: string; value: string }): Promise<void>;
 }
 
 const SERVICE = "inter-bay-federated-gate";
@@ -49,7 +49,7 @@ export function createInterBayFederatedGateClient(
 export function createInterBayFederatedGateHandler(
   bay_id: string,
   apply: (
-    opts: { value: string },
+    opts: { name: string; value: string },
     caller: AuthenticatedCaller | undefined,
   ) => Promise<void>,
   options: Omit<Options, "handler" | "service" | "subject">,

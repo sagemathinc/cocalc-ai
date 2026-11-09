@@ -92,6 +92,12 @@ export interface InterBayFederatedConnectorApi {
     session_hash?: string;
     connectors: string[];
   }): Promise<{ connectors: string[] }>;
+  setProtectedSetting(opts: {
+    account_id: string;
+    session_hash?: string;
+    name: string;
+    value: string;
+  }): Promise<{ value: string }>;
 }
 
 function subject(bay_id: string): string {

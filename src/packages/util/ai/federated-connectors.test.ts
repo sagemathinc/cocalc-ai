@@ -4,7 +4,10 @@
  */
 
 import {
+  canonicalFederatedSetting,
   canonicalJson,
+  FEDERATED_PROTECTED_SETTINGS,
+  isFederatedProtectedSetting,
   federationIssuer,
   gcloudLeaseStatusFile,
   isFederatedCliConnector,
@@ -392,5 +395,57 @@ describe("federated gate setting", () => {
     expect(parseFederatedGate("gcloud")).toEqual(["gcloud"]);
     expect(parseFederatedGate(" aws, gcloud gcloud ")).toEqual(["gcloud"]);
     expect(parseFederatedGate("gcloudx")).toEqual([]);
+  });
+});
+
+describe("protected federated settings", () => {
+  const SA = "fake-broker@example-project-1.iam.gserviceaccount.com";
+  const PIN_A = "a".repeat(64);
+  const PIN_B = "b".repeat(64);
+
+  it("knows exactly the three protected names", () => {
+    expect([...FEDERATED_PROTECTED_SETTINGS].sort()).toEqual([
+      "federated_broker_signer",
+      "federated_cli_connectors",
+      "federated_issuer_key_pins",
+    ]);
+    expect(isFederatedProtectedSetting("site_name")).toBe(false);
+  });
+
+  it("canonicalizes the signer record", () => {
+    const sig = "federated_broker_signer";
+    expect(canonicalFederatedSetting(sig, `${SA} 109876543210987654321`)).toBe(
+      `${SA} 109876543210987654321`,
+    );
+    expect(canonicalFederatedSetting(sig, "")).toBe("");
+    for (const bad of [
+      `${SA} 0123456`,
+      `${SA}  109876543210987654321`,
+      `${SA} 1e21`,
+      "someone@gmail.com 109876543210987654321",
+      SA,
+      123 as any,
+    ]) {
+      expect(canonicalFederatedSetting(sig, bad)).toBeUndefined();
+    }
+  });
+
+  it("canonicalizes issuer pins: unique, sorted, at most 8 lowercase hex", () => {
+    const pins = "federated_issuer_key_pins";
+    expect(canonicalFederatedSetting(pins, `${PIN_B},${PIN_A},${PIN_B}`)).toBe(
+      `${PIN_A},${PIN_B}`,
+    );
+    expect(canonicalFederatedSetting(pins, "")).toBe("");
+    for (const bad of [
+      PIN_A.toUpperCase(),
+      PIN_A.slice(1),
+      `${PIN_A}, ${PIN_B}`,
+      Array(9)
+        .fill(PIN_A)
+        .map((p, i) => p.slice(0, 63) + i)
+        .join(","),
+    ]) {
+      expect(canonicalFederatedSetting(pins, bad)).toBeUndefined();
+    }
   });
 });
