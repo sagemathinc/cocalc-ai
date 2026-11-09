@@ -19,7 +19,7 @@ import {
   type ProjectLogRow,
 } from "@cocalc/conat/hub/api/projects";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { revokeFederatedSharedProjectApprovalsForRehome } from "@cocalc/server/federated-connectors/approvals";
+import { revokeFederatedSharedProjectApprovalsForRehome } from "@cocalc/server/federated-connectors/approvals-rehome";
 import { assertBayAcceptsProjectOwnership } from "@cocalc/server/bay-registry";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";

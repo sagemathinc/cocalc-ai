@@ -16,6 +16,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
+import type { AccountAuthSessionRow } from "@cocalc/server/auth/auth-sessions";
 import { deleteClusterAccountApiKeyDirectoryEntry } from "@cocalc/server/inter-bay/accounts";
 import {
   assertProjectFullCollaborator,
@@ -237,9 +238,9 @@ export async function authorizeConfigChange(opts: {
   session_hash?: string;
   agent_id: string;
   source_project_id: string;
-}) {
+}): Promise<AccountAuthSessionRow> {
   await assertAccountHome(opts.account_id);
-  await requireDangerousSessionAuth({
+  const session = await requireDangerousSessionAuth({
     account_id: opts.account_id,
     session_hash: opts.session_hash,
     require_second_factor: true,
@@ -250,6 +251,7 @@ export async function authorizeConfigChange(opts: {
     project_id: opts.source_project_id,
   });
   await assertNativeAgent(opts);
+  return session;
 }
 
 export const removeCocalcConnectorConfig: AgentApi["removeCocalcConnectorConfig"] =

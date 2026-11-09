@@ -45,6 +45,8 @@ export type SiteMasterKeyPurpose =
   | "secret-settings:v1"
   | "project-backup-repo-secrets:v1"
   | "project-secrets:v1"
+  // Keyed hashes of session ids in the federated connector access audit.
+  | "federated-audit-session:v1"
   // Sealed bay configuration in R2; derived identically by
   // src/scripts/bay-systemd/libexec/bay-config-escrow.mjs, which must run with
   // no dependencies on a fresh machine during a restore.
