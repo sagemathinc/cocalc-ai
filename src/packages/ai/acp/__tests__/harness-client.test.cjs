@@ -11,6 +11,8 @@ const { pathToFileURL } = require("node:url");
 const {
   AcpHarnessClient,
   isClaudeSubscriptionStatus,
+  DEFAULT_SESSION_LOAD_TIMEOUT_MS,
+  resolveSessionLoadTimeoutMs,
 } = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
@@ -3758,4 +3760,70 @@ test("a site-funded Claude turn near its allowance shows the usage warning", asy
     [{ type: "usage_warning", window: "5h", threshold: 80 }],
   );
   assert.equal(events.at(-1).type, "summary");
+});
+
+test("session/load has its own budget: default, configured and never below the request timeout", () => {
+  assert.equal(DEFAULT_SESSION_LOAD_TIMEOUT_MS, 180_000);
+  assert.equal(resolveSessionLoadTimeoutMs(30_000, {}), 180_000);
+  assert.equal(
+    resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: "600000" }),
+    600_000,
+  );
+  for (const bad of ["", "abc", "0", "-5"]) {
+    assert.equal(
+      resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: bad }),
+      180_000,
+      bad,
+    );
+  }
+  // A configured value below the general request timeout never shortens it.
+  assert.equal(
+    resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: "1000" }),
+    30_000,
+  );
+});
+
+async function startDelayedLoad(t, timeoutMs, loadDelayMs) {
+  const child = spawn(
+    process.execPath,
+    [...profile.args, `--load-delay-ms=${loadDelayMs}`],
+    { env: {}, stdio: "pipe" },
+  );
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  const client = await AcpHarnessClient.start(
+    { projectId: "project-a", accountId: "account-a", profile },
+    async () => ({
+      stdin: child.stdin,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      closed,
+      stop: async () => {
+        child.kill("SIGKILL");
+        await closed;
+      },
+    }),
+    timeoutMs,
+  );
+  t.after(() => client.dispose());
+  return client;
+}
+
+test("resuming a session whose replay outlasts the request timeout still succeeds", async (t) => {
+  // The general bound is 300 ms; replaying the saved history takes 1.2 s.
+  const client = await startDelayedLoad(t, 300, 1200);
+  await client.open("fixture-session");
+  await client.dispose();
+});
+
+test("session/load still times out at its own configured budget", async (t) => {
+  const previous = process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS;
+  process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS = "500";
+  t.after(() => {
+    if (previous === undefined) delete process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS;
+    else process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS = previous;
+  });
+  // Request timeout 300 ms, load budget 500 ms, replay 3 s: the load must fail.
+  const client = await startDelayedLoad(t, 300, 3000);
+  await assert.rejects(client.open("fixture-session"));
+  await client.dispose();
 });

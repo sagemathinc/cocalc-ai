@@ -359,6 +359,23 @@ function promptBlocks(text: string, images: readonly AcpImageAttachment[]) {
   ];
 }
 
+// Resuming a session replays its whole history before the agent can answer,
+// so a long conversation can take far longer than an ordinary request. With
+// the general 30 s bound, such a session failed every turn at session/load.
+export const DEFAULT_SESSION_LOAD_TIMEOUT_MS = 180_000;
+
+export function resolveSessionLoadTimeoutMs(
+  requestTimeoutMs: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const configured = Number(env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS);
+  const value =
+    Number.isFinite(configured) && configured > 0
+      ? Math.floor(configured)
+      : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
+  return Math.max(value, requestTimeoutMs);
+}
+
 export class AcpHarnessClient {
   private connection: ClientSideConnection;
   private session?: NewSessionResponse;
@@ -381,6 +398,8 @@ export class AcpHarnessClient {
   private questionAbort?: AbortController;
   private readonly binding: HarnessBinding;
   private readonly timeoutMs: number;
+  /** session/load replays the saved history, so it gets its own, longer budget. */
+  private readonly sessionLoadTimeoutMs: number;
   private authStatus?: unknown;
   /** Newer session instructions for a resumed session's next turn. */
   private instructionsUpdate?: { text: string; version: string };
@@ -402,6 +421,7 @@ export class AcpHarnessClient {
       ),
     };
     this.timeoutMs = timeoutMs;
+    this.sessionLoadTimeoutMs = resolveSessionLoadTimeoutMs(timeoutMs);
     process.stderr.on("data", (chunk) => this.stderrDiagnostics.append(chunk));
     process.stderr.on("error", () => this.fail(Error("ACP stderr failed")));
     process.stdin.on("error", () => this.fail(Error("ACP stdin closed")));
@@ -758,7 +778,9 @@ export class AcpHarnessClient {
       if (!prompt)
         timer = setTimeout(
           () => reject(Error("ACP request timed out")),
-          this.timeoutMs,
+          method === "session/load"
+            ? this.sessionLoadTimeoutMs
+            : this.timeoutMs,
         );
     });
     try {
