@@ -3852,6 +3852,13 @@ test("an agent that offers session/resume is resumed without the history replay"
   await client.dispose();
 });
 
+test("a slow session/resume gets the session/load budget, not the request timeout", async (t) => {
+  // Request timeout 300 ms; session/resume answers after 1.2 s (slow storage).
+  const client = await startDelayedLoad(t, 300, 0, ["--resume-cap", "--resume-delay-ms=1200"]);
+  await client.open("fixture-session");
+  await client.dispose();
+});
+
 test("without session/resume the client still falls back to session/load", async (t) => {
   // No --resume-cap: the 1.2 s load is used (within its own budget).
   const client = await startDelayedLoad(t, 300, 1200);
