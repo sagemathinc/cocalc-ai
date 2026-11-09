@@ -279,24 +279,26 @@ function ownAppOriginAllowed(req: Req): boolean {
 // derived from PROJECT_HOST_PUBLIC_URL and PROJECT_HOST_ID as the hub assigns
 // it).  Only the host's own exam pages are served there: the admission page
 // and the exam webapp, which signs the student in with the host session
-// cookie that admission sets.
+// cookie that admission sets.  The port must be the public URL's too: cookies
+// are not port-scoped, so a page on another port of that hostname is not ours.
 function isOwnExamHost(req: Req): boolean {
   const host = header(req, "host").toLowerCase();
   const publicUrl = `${process.env.PROJECT_HOST_PUBLIC_URL ?? ""}`.trim();
   if (!host || !publicUrl) return false;
-  let publicHostname: string;
-  let requestHostname: string;
+  let expected: URL;
+  let requestHost: string;
   try {
-    publicHostname = new URL(publicUrl).hostname.toLowerCase();
-    requestHostname = new URL(`https://${host}`).hostname;
+    expected = new URL(publicUrl);
+    // Canonicalize so "host:443" matches "https://host".
+    requestHost = new URL(`${expected.protocol}//${host}`).host;
   } catch {
     return false;
   }
+  const publicHostname = expected.hostname.toLowerCase();
   const host_id = `${process.env.PROJECT_HOST_ID ?? ""}`.trim().toLowerCase();
   if (!publicHostname.startsWith("host-") && !host_id) return false;
-  return (
-    requestHostname === examHostnameFromPublicHostname(publicHostname, host_id)
-  );
+  expected.hostname = examHostnameFromPublicHostname(publicHostname, host_id);
+  return requestHost === expected.host;
 }
 
 function isCanonicalHost(req: Req): boolean {

@@ -349,6 +349,35 @@ describe("project-host browser origin policy", () => {
       }
     });
 
+    it("is bound to the public URL's port", () => {
+      // Another port of the exam hostname is not the exam webapp.
+      expect(
+        ambientCookieRejection(
+          req({ host: `${exam}:8443`, origin: `https://${exam}:8443` }),
+          "conat",
+        ),
+      ).toBe("origin not allowed");
+      // The default port, spelled out, is the same origin.
+      expect(
+        ambientCookieRejection(
+          req({ host: `${exam}:443`, origin: `https://${exam}` }),
+          "conat",
+        ),
+      ).toBeUndefined();
+      // A public URL with an explicit port keeps that port for exam pages.
+      process.env.PROJECT_HOST_PUBLIC_URL =
+        "https://host-1.cocalc.example:8443";
+      expect(
+        ambientCookieRejection(
+          req({ host: `${exam}:8443`, origin: `https://${exam}:8443` }),
+          "conat",
+        ),
+      ).toBeUndefined();
+      expect(
+        ambientCookieRejection(examReq({ origin: `https://${exam}` }), "conat"),
+      ).toBe("origin not allowed");
+    });
+
     it("gives the exam origin nothing on the canonical host or another hostname", () => {
       expect(
         ambientCookieRejection(req({ origin: `https://${exam}` }), "conat"),
