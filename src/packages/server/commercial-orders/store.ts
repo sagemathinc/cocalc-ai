@@ -236,6 +236,15 @@ function assertProvisionedBillingRevision(
     | null
     | undefined;
   if (
+    opts.changes != null &&
+    "terms_snapshot" in opts.changes &&
+    terms == null
+  ) {
+    throw Error(
+      "fulfilled commercial terms cannot be revised (terms_snapshot is required)",
+    );
+  }
+  if (
     terms != null &&
     !isDeepStrictEqual(
       withoutBillingTerms(terms),

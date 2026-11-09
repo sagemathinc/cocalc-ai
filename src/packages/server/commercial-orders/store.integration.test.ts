@@ -877,6 +877,120 @@ describePglite("commercial order store", () => {
         items: revisedItems("3500", "membership_package"),
       }),
     ).rejects.toThrow("line items must keep their products");
+    await expect(
+      store.reviseCommercialOrder({
+        ...base,
+        changes: { terms_snapshot: null as any },
+      }),
+    ).rejects.toThrow("terms_snapshot is required");
+  });
+
+  it("lets an ended, unpaid order revise what is billed", async () => {
+    const provisioned = await provisionedOrder();
+    const ended = await store.setCommercialFulfillment({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "service period over",
+      fulfillment_state: "ended",
+    });
+    const revised = await store.reviseCommercialOrder({
+      account_id: actor,
+      id: ended.id,
+      expected_version: ended.version,
+      reason: "match the customer's purchase order",
+      changes: { agreed_subtotal: "3500", agreed_total: "3500" },
+      items: revisedItems("3500"),
+    });
+    expect(revised.agreed_total).toBe("3500.0000000000");
+    expect(revised.fulfillment_state).toBe("ended");
+  });
+
+  it("matches line items by product and service period, not order or date format", async () => {
+    const item = (description: string, start: string, end: string) => ({
+      description,
+      quantity: "1",
+      unit_amount: "1950",
+      subtotal: "1950",
+      product_kind: "site_license" as const,
+      service_start: start,
+      service_end: end,
+    });
+    const provisioned = await provisionedOrder({
+      items: [
+        item(
+          "First term",
+          "2026-09-01T00:00:00.000Z",
+          "2027-01-01T00:00:00.000Z",
+        ),
+        item(
+          "Second term",
+          "2027-01-01T00:00:00.000Z",
+          "2027-06-01T00:00:00.000Z",
+        ),
+      ],
+    });
+    const revised = await store.reviseCommercialOrder({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "list the terms as the purchase order does",
+      items: [
+        item(
+          "Spring term",
+          "2027-01-01T00:00:00Z",
+          "2027-06-01T00:00:00+00:00",
+        ),
+        item(
+          "Autumn term",
+          "2026-09-01T00:00:00Z",
+          "2027-01-01T00:00:00+00:00",
+        ),
+      ],
+    });
+    expect(revised.items.map(({ description }) => description).sort()).toEqual([
+      "Autumn term",
+      "Spring term",
+    ]);
+    await expect(
+      store.reviseCommercialOrder({
+        account_id: actor,
+        id: revised.id,
+        expected_version: revised.version,
+        reason: "attempt to move a service period",
+        items: [
+          item("Spring term", "2027-01-01T00:00:00Z", "2027-07-01T00:00:00Z"),
+          item("Autumn term", "2026-09-01T00:00:00Z", "2027-01-01T00:00:00Z"),
+        ],
+      }),
+    ).rejects.toThrow(
+      "line items must keep their products and service periods",
+    );
+  });
+
+  it("refuses to re-bill a provisioned order that has collected funds", async () => {
+    const provisioned = await provisionedOrder();
+    const paid = await store.recordManualCommercialPayment({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "record independently verified partial payment",
+      amount: "1000",
+      currency: "usd",
+      method: "wire",
+      evidence_reference: `TEST-WIRE-${randomUUID()}`,
+    });
+    expect(paid.workflow_state).not.toBe("complete");
+    await expect(
+      store.reviseCommercialOrder({
+        account_id: actor,
+        id: paid.id,
+        expected_version: paid.version,
+        reason: "attempt to re-bill a paid order",
+        changes: { agreed_subtotal: "3500", agreed_total: "3500" },
+        items: revisedItems("3500"),
+      }),
+    ).rejects.toThrow("collected funds cannot be revised");
   });
 
   it("refuses to re-bill a provisioned order with a live invoice", async () => {
