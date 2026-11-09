@@ -118,6 +118,7 @@ function fakes(over: { azp?: string; storeOk?: boolean } = {}) {
               owned_guard: 1,
               app_grants_exact: true,
               app_can_hook: false,
+              column_grants: 0,
               acl: [
                 "broker_purge_log:broker_app:SELECT",
                 "broker_purge_mint_log:broker_app:EXECUTE",

@@ -172,7 +172,13 @@ export interface BrokerStoreStatus {
    * superuser, bypassrls or a member of broker_migrate. "privileges" is any
    * failure of the ownership or role checks.
    */
-  state: "ok" | "missing" | "disabled" | "outdated" | "privileges";
+  state:
+    | "ok"
+    | "missing"
+    | "disabled"
+    | "outdated"
+    | "unexpected_trigger"
+    | "privileges";
 }
 
 const STORE_TABLES = ["federated_connector_mint_log", "broker_purge_log"];
@@ -217,6 +223,11 @@ export async function getBrokerStoreStatus(
     rows.find((r) => r.table === g.table && r.name === g.name),
   );
   if (guards.some((g) => g == null)) return { state: "missing" };
+  // Exactly the six: any other trigger in the schema (e.g. one rewriting
+  // rows on insert) is refused, whoever created it.
+  if (rows.length !== EXPECTED_GUARDS.length) {
+    return { state: "unexpected_trigger" };
+  }
   if (guards.some((g) => g!.enabled === "D" || g!.enabled === "R")) {
     return { state: "disabled" };
   }
@@ -265,8 +276,15 @@ export async function getBrokerStoreStatus(
                unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE']) AS priv)
          AS app_can_change,
        (SELECT rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb
+               OR rolreplication
           FROM pg_roles WHERE rolname = '${BROKER_APP_ROLE}')
          AS app_privileged,
+       (SELECT count(*) FROM pg_attribute a
+          JOIN pg_class c ON c.oid = a.attrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = ANY($2::text[])
+           AND a.attacl IS NOT NULL)
+         AS column_grants,
        (has_schema_privilege('${BROKER_APP_ROLE}', $1::text, 'CREATE')
         OR has_table_privilege('${BROKER_APP_ROLE}',
              format('%I.federated_connector_mint_log', $1::text), 'TRIGGER')
@@ -330,6 +348,7 @@ export async function getBrokerStoreStatus(
     r.app_can_change !== false ||
     r.app_privileged !== false ||
     r.app_can_hook !== false ||
+    Number(r.column_grants) !== 0 ||
     r.acl !== EXPECTED_ACL ||
     r.app_is_owner !== false
   ) {

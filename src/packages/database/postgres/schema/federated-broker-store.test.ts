@@ -291,6 +291,19 @@ describe("the broker store", () => {
       ],
       ["ALTER ROLE broker_app CREATEDB", "ALTER ROLE broker_app NOCREATEDB"],
       [
+        "ALTER ROLE broker_app REPLICATION",
+        "ALTER ROLE broker_app NOREPLICATION",
+      ],
+      // @vanta: a column-level grant isn't in the table ACL.
+      [
+        "GRANT UPDATE (reason) ON broker.federated_connector_mint_log TO broker_app",
+        "REVOKE UPDATE (reason) ON broker.federated_connector_mint_log FROM broker_app",
+      ],
+      [
+        "GRANT SELECT (deleted) ON broker.broker_purge_log TO PUBLIC",
+        "REVOKE SELECT (deleted) ON broker.broker_purge_log FROM PUBLIC",
+      ],
+      [
         "GRANT INSERT ON broker.federated_connector_mint_log TO PUBLIC",
         "REVOKE INSERT ON broker.federated_connector_mint_log FROM PUBLIC",
       ],
@@ -361,6 +374,42 @@ describe("the broker store", () => {
       await migrateBrokerStore(db);
       await as(null);
     }
+    expect(await getBrokerStoreStatus(db)).toEqual({ state: "ok" });
+  });
+
+  it("@review's combined exploit: a broker_app trigger rewriting rows is refused, even after the grants are revoked", async () => {
+    await as(null);
+    await pg.exec(`
+      GRANT CREATE ON SCHEMA broker TO broker_app;
+      GRANT TRIGGER ON broker.federated_connector_mint_log TO broker_app;
+    `);
+    await as("broker_app");
+    await pg.exec(`
+      CREATE FUNCTION broker.rewrite() RETURNS TRIGGER AS
+        'BEGIN NEW.reason := ''forged''; RETURN NEW; END' LANGUAGE plpgsql;
+      CREATE TRIGGER a_rewrite BEFORE INSERT ON broker.federated_connector_mint_log
+        FOR EACH ROW EXECUTE FUNCTION broker.rewrite();
+    `);
+    const id = await record();
+    const { rows } = await db.query(
+      "SELECT reason FROM broker.federated_connector_mint_log WHERE mint_id=$1",
+      [id],
+    );
+    expect(rows[0].reason).toBe("forged"); // the exploit works ...
+    expect((await getBrokerStoreStatus(db)).state).not.toBe("ok"); // ... and is seen
+    await as(null);
+    await pg.exec(`
+      REVOKE CREATE ON SCHEMA broker FROM broker_app;
+      REVOKE TRIGGER ON broker.federated_connector_mint_log FROM broker_app;
+    `);
+    // The grants are gone but the trigger stays: still not ok.
+    expect(await getBrokerStoreStatus(db)).toEqual({
+      state: "unexpected_trigger",
+    });
+    await pg.exec(`
+      DROP TRIGGER a_rewrite ON broker.federated_connector_mint_log;
+      DROP FUNCTION broker.rewrite();
+    `);
     expect(await getBrokerStoreStatus(db)).toEqual({ state: "ok" });
   });
 });
