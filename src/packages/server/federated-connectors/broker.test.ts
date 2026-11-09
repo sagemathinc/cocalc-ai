@@ -39,6 +39,8 @@ const signer: FederationSigner = {
   },
 };
 
+const HOME = { scope: "bay-a", confirmHome: async () => true };
+
 const request = (over: Partial<MintRequest> = {}): MintRequest => ({
   site_id: UUID(1),
   account_id: UUID(2),
@@ -151,12 +153,23 @@ function setup(
       (async (row) => {
         rows.push(row);
       }),
-    ...(opts.recordMints ? { recordMints: opts.recordMints } : {}),
+    // Test default: the rows through recordMint (so its fakes still apply).
+    recordMints:
+      opts.recordMints ??
+      (async (rs) => {
+        for (const r of rs) await deps.recordMint(r);
+      }),
     limiter: opts.limiter ?? new TokenBucketLimiter(DEFAULT_RATE_LIMITS),
     random: () => 0.5,
   };
+  // Every call is bound to a caller that is still home unless a test says
+  // otherwise.
+  const broker = new FederatedTokenBroker(deps);
+  const getToken = broker.getToken.bind(broker);
+  (broker as any).getToken = (r: MintRequest, guard = HOME) =>
+    getToken(r, guard);
   return {
-    broker: new FederatedTokenBroker(deps),
+    broker,
     rows,
     calls,
     advance: (ms: number) => {
@@ -719,5 +732,63 @@ describe("broker: the final home-bay check (design v3.3.2)", () => {
     const r = await t.broker.getToken(request(), d.guardFor("bay-a"));
     expect(r).toEqual({ status: "error", reason: "audit_write_failed" });
     expect(t.broker.stats().cached_tokens).toBe(0);
+  });
+});
+
+describe("broker: the caller binding and the atomic rows are required", () => {
+  it("refuses a missing or malformed guard before any lookup or Google call", async () => {
+    for (const guard of [
+      undefined,
+      null,
+      {},
+      { scope: "", confirmHome: async () => true },
+      { scope: "bay-a" },
+      { scope: 1, confirmHome: async () => true },
+    ]) {
+      const loadGrant = jest.fn(async () => grantRecord());
+      const t = setup({ loadGrant });
+      const raw = FederatedTokenBroker.prototype.getToken.bind(t.broker);
+      expect(await raw(request(), guard as any)).toEqual({
+        status: "denied",
+        reason: "not_home_bay",
+      });
+      expect(loadGrant).not.toHaveBeenCalled();
+      expect(t.calls).toHaveLength(0);
+      expect(t.rows).toHaveLength(0);
+    }
+  });
+
+  it("can't be built without recordMints (type), and never writes an issued row except through it", async () => {
+    // @ts-expect-error recordMints is required
+    const deps: BrokerDeps = { recordMint: async () => {} };
+    expect(deps).toBeDefined();
+    const single: MintLogRow[] = [];
+    const batches: MintLogRow[][] = [];
+    const t = setup({
+      recordMint: async (r) => {
+        single.push(r);
+      },
+      recordMints: async (rs) => {
+        batches.push(rs);
+      },
+    });
+    expect((await t.broker.getToken(request())).status).toBe("issued");
+    expect(batches.map((b) => b.map((r) => r.outcome))).toEqual([["issued"]]);
+    expect(single.filter((r) => r.outcome === "issued")).toEqual([]);
+  });
+});
+
+describe("broker: a denial drops the lease's cached tokens for every caller", () => {
+  it("drops the cache when the turn ends, with a caller binding", async () => {
+    const t = setup();
+    const guard = { scope: "bay-a", confirmHome: async () => true };
+    await t.broker.getToken(request(), guard);
+    expect(t.broker.stats().cached_tokens).toBe(1);
+    t.setOpts({ turnLive: false });
+    expect((await t.broker.getToken(request(), guard)).status).toBe("denied");
+    expect(t.broker.stats().cached_tokens).toBe(0);
+    t.setOpts({ turnLive: true });
+    await t.broker.getToken(request(), guard);
+    expect(t.calls).toHaveLength(4); // a fresh exchange, not the old token
   });
 });

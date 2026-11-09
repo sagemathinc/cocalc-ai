@@ -121,11 +121,11 @@ export interface BrokerDeps {
   /** Appends a mint log row (the database sets its time). */
   recordMint(row: MintLogRow): Promise<void>;
   /**
-   * Appends rows in one transaction (an issued token withheld after the
-   * final home-bay check: its issued row and its home_bay_moved row).
-   * Without it, the rows are appended one by one.
+   * Appends rows in one transaction, all or none: an issued row alone, or an
+   * issued token withheld after the final home-bay check (its issued row and
+   * its home_bay_moved row). Required: there is no row-by-row fallback.
    */
-  recordMints?(rows: MintLogRow[]): Promise<void>;
+  recordMints(rows: MintLogRow[]): Promise<void>;
   limiter: RateLimiter;
   /** Half-life jitter in [0, 1): defaults to Math.random. */
   random?: () => number;
@@ -240,9 +240,9 @@ function validRequest(r: MintRequest): boolean {
  * for another account, agent, project, host, run, grant or revision, even
  * with the same lease id.
  */
-function requestKey(r: MintRequest, scope?: string): string {
+function requestKey(r: MintRequest, scope: string): string {
   return JSON.stringify([
-    scope ?? null,
+    scope,
     r.site_id,
     r.account_id,
     r.agent_id,
@@ -262,17 +262,20 @@ export class FederatedTokenBroker {
   private clock?: { reference: number; monotonic: number };
   private invalidRequests = 0;
   private homeBayMoved = 0;
+  private missingGuard = 0;
 
   /** Counters for health reporting (no ids, nothing secret). */
   stats(): {
     invalid_requests: number;
     cached_tokens: number;
     home_bay_moved: number;
+    missing_guard: number;
   } {
     return {
       invalid_requests: this.invalidRequests,
       cached_tokens: this.cache.size,
       home_bay_moved: this.homeBayMoved,
+      missing_guard: this.missingGuard,
     };
   }
 
@@ -290,13 +293,23 @@ export class FederatedTokenBroker {
    * grant, turn and revision) share one answer; any other request runs its
    * own checks.
    */
-  async getToken(request: MintRequest, guard?: MintGuard): Promise<MintResult> {
+  async getToken(request: MintRequest, guard: MintGuard): Promise<MintResult> {
+    if (
+      guard == null ||
+      typeof guard.scope !== "string" ||
+      guard.scope.length === 0 ||
+      typeof guard.confirmHome !== "function"
+    ) {
+      // No caller binding, no mint: refused before any lookup or Google call.
+      this.missingGuard += 1;
+      return { status: "denied", reason: "not_home_bay" };
+    }
     if (!validRequest(request)) {
       // Can't be logged as a row (its ids aren't valid); counted instead.
       this.invalidRequests += 1;
       return { status: "denied", reason: "invalid_request" };
     }
-    const key = requestKey(request, guard?.scope);
+    const key = requestKey(request, guard.scope);
     const running = this.inflight.get(key);
     if (running) return await running;
     const p = this.deps
@@ -354,7 +367,8 @@ export class FederatedTokenBroker {
     extra: Partial<MintLogRow> = {},
     retry_after_ms?: number,
   ): Promise<MintResult> {
-    if (outcome === "denied") this.cache.delete(requestKey(request));
+    // A denial drops every cached token of the lease (any caller scope).
+    if (outcome === "denied") this.forget(request.lease_id);
     await this.recordBestEffort({
       ...this.base(request),
       ...extra,
@@ -367,21 +381,12 @@ export class FederatedTokenBroker {
   }
 
   // The final home-bay check: false on any doubt.
-  private async stillHome(guard?: MintGuard): Promise<boolean> {
-    if (guard == null) return true;
+  private async stillHome(guard: MintGuard): Promise<boolean> {
     try {
       return (await guard.confirmHome()) === true;
     } catch {
       return false;
     }
-  }
-
-  private async recordRows(rows: MintLogRow[]): Promise<void> {
-    if (this.deps.recordMints) {
-      await this.deps.recordMints(rows);
-      return;
-    }
-    for (const row of rows) await this.deps.recordMint(row);
   }
 
   // Withholds a token (or a cached one) the final check refused.
@@ -394,7 +399,7 @@ export class FederatedTokenBroker {
   private async serve(
     request: MintRequest,
     key: string,
-    guard?: MintGuard,
+    guard: MintGuard,
   ): Promise<MintResult> {
     const deps = this.deps;
     // 1. The grant at the lease's exact revision.
@@ -599,7 +604,7 @@ export class FederatedTokenBroker {
       // Record the mint first: a token without its mint log row is never
       // cached or returned.
       try {
-        await this.recordRows(rows);
+        await this.deps.recordMints(rows);
       } catch {
         if (!home) this.withhold(request);
         return { status: "error", reason: "audit_write_failed" };
