@@ -35,6 +35,7 @@ import {
 import { isValidUUID } from "@cocalc/util/misc";
 import type { FederationProjectSnapshot } from "./approvals";
 import type { MintRequest, MintResult } from "./broker";
+import type { GrantIdentity, IssuedClaimsToCheck } from "./token-check";
 
 export const FEDERATED_TURN_REFUSED = "federated_turn_refused";
 export const FEDERATED_CONNECTORS_DISABLED = "federated_connectors_disabled";
@@ -100,6 +101,14 @@ export interface FederatedTurnDeps {
     account_id: string;
   }): Promise<FederationProjectSnapshot>;
   getToken(request: MintRequest): Promise<MintResult>;
+  /**
+   * Checks an issued token against the hub's own grant (G3b §6); throws on
+   * any mismatch or when the check can't be made.
+   */
+  checkIssuedToken(
+    issued: IssuedClaimsToCheck,
+    grant: GrantIdentity,
+  ): Promise<void>;
   site_id: string;
 }
 
@@ -484,6 +493,29 @@ export async function beginFederatedTurn(
   if (result.status === "issued") {
     const entry = entryFor(result, lease);
     if (entry == null) {
+      throw new FederatedTurnError(FEDERATED_CONNECTOR_UNAVAILABLE);
+    }
+    // The broker isn't trusted for the token's identity: check it against
+    // the grant as the hub has it now, before any host sees it.
+    try {
+      const { rows } = await getPool().query<GrantIdentity>(
+        `SELECT service_account, service_account_unique_id, connection_id,
+                target_project
+           FROM federated_connector_grants
+          WHERE grant_id=$1 AND account_id=$2 AND state='enabled'`,
+        [lease.grant_id, req.account_id],
+      );
+      if (!rows[0]) throw Error("grant");
+      await deps.checkIssuedToken(
+        {
+          token: result.token,
+          expires_at: result.expires_at,
+          connection_id: result.connection_id,
+          project: result.project,
+        },
+        rows[0],
+      );
+    } catch {
       throw new FederatedTurnError(FEDERATED_CONNECTOR_UNAVAILABLE);
     }
     return { entries: [entry], revoked: [] };

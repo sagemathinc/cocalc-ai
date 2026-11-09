@@ -40,9 +40,10 @@ beforeAll(async () => {
   await getPool().query(
     `INSERT INTO federated_connector_grants
        (grant_id, connection_id, account_id, revision, service_account,
-        sa_label, target_project, permission_profile, state)
+        sa_label, target_project, permission_profile, state,
+        service_account_unique_id)
      VALUES ($1, $2, $3, 3, $4, 'read-only', 'example-project-1', 'read-only',
-             'enabled')`,
+             'enabled', '111111111111111111111')`,
     [GRANT, CONNECTION, ACCOUNT, SA],
   );
   await getPool().query(
@@ -238,5 +239,27 @@ describe("lease lock", () => {
       }),
     ).rejects.toThrow("boom");
     await expect(withLeaseLock(UUID(41), async () => "ok")).resolves.toBe("ok");
+  });
+});
+
+describe("grant unique id", () => {
+  const insertGrant = (state: string, uid: string | null) =>
+    getPool().query(
+      `INSERT INTO federated_connector_grants
+         (grant_id, connection_id, account_id, revision, service_account,
+          sa_label, target_project, permission_profile, state,
+          service_account_unique_id)
+       VALUES (gen_random_uuid(), $1, $2, 1, $3, 'read-only',
+               'example-project-1', 'read-only', $4, $5)`,
+      [CONNECTION, ACCOUNT, SA, state, uid],
+    );
+
+  it("is required to enable a grant, and must be a decimal string", async () => {
+    await expect(insertGrant("enabled", null)).rejects.toThrow();
+    for (const bad of ["0123456789", "12345", "1e21", "abc", "1".repeat(33)]) {
+      await expect(insertGrant("pending", bad)).rejects.toThrow();
+    }
+    await insertGrant("pending", null);
+    await insertGrant("enabled", "222222222222222222222");
   });
 });

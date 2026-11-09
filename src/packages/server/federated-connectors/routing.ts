@@ -50,7 +50,9 @@ import {
   saveFederatedConnectorAssignment as saveAssignmentAtHome,
 } from "./assignments";
 import type { MintRequest, MintResult } from "./broker";
+import { introspectAccessToken, type TextFetch } from "./google-identity";
 import { setFederatedConnectorGateOnSeed } from "./site-gate";
+import { checkIssuedToken, TokenClaimsCache } from "./token-check";
 import {
   beginFederatedTurn,
   endFederatedTurn,
@@ -66,6 +68,13 @@ import {
 } from "./turn";
 
 const SNAPSHOT_TIMEOUT_MS = 5_000;
+
+// Parsed tokeninfo claims of issued tokens (never a verdict; §6).
+const tokenClaimsCache = new TokenClaimsCache();
+const googleFetch: TextFetch = async (url, init) => {
+  const res = await fetch(url, init);
+  return { status: res.status, text: () => res.text() };
+};
 
 interface RegisteredBroker {
   site_id: string;
@@ -171,6 +180,13 @@ export function federatedTurnDeps(): FederatedTurnDeps {
       if (broker == null) throw Error("no broker");
       return await broker.getToken(request);
     },
+    checkIssuedToken: async (issued, grant) =>
+      await checkIssuedToken({
+        issued,
+        grant,
+        cache: tokenClaimsCache,
+        introspect: (token) => introspectAccessToken(googleFetch, token),
+      }),
     get site_id() {
       return broker?.site_id ?? "";
     },

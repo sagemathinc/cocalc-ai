@@ -71,9 +71,11 @@ async function insertGrant(
   await q(
     `INSERT INTO federated_connector_grants
        (grant_id, connection_id, account_id, revision, service_account,
-        sa_label, target_project, permission_profile, state)
+        sa_label, target_project, permission_profile, state,
+        service_account_unique_id)
      VALUES ($1, $2, $3, 1, 'reader-sa@example-project-1.iam.gserviceaccount.com',
-             'read-only', 'example-project-1', 'read-only', $4)`,
+             'read-only', 'example-project-1', 'read-only', $4,
+             '111111111111111111111')`,
     [grant_id, CONNECTION, account_id, state],
   );
 }

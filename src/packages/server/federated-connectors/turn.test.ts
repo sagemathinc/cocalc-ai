@@ -72,6 +72,10 @@ let gate: boolean | Error = true;
 let authority: Error | undefined;
 let mint: (req: MintRequest) => MintResult = (req) => issued(req);
 const getToken = jest.fn(async (req: MintRequest) => mint(req));
+let tokenCheck: Error | undefined;
+const checkIssued = jest.fn(async (_issued: any, _grant: any) => {
+  if (tokenCheck) throw tokenCheck;
+});
 
 function issued(req: MintRequest): MintResult {
   return {
@@ -104,6 +108,7 @@ const deps: FederatedTurnDeps = {
     return snapshot;
   },
   getToken: (req) => getToken(req),
+  checkIssuedToken: (issued, grant) => checkIssued(issued, grant),
   site_id: "fake-site",
 };
 
@@ -157,9 +162,11 @@ beforeAll(async () => {
     await q(
       `INSERT INTO federated_connector_grants
          (grant_id, connection_id, account_id, revision, service_account,
-          sa_label, target_project, permission_profile, state)
+          sa_label, target_project, permission_profile, state,
+        service_account_unique_id)
        VALUES ($1, $2, $3, 3, 'reader-sa@example-project-1.iam.gserviceaccount.com',
-               'ops-reader', 'fake-project-1', 'read-only', 'enabled')`,
+               'ops-reader', 'fake-project-1', 'read-only', 'enabled',
+               '111111111111111111111')`,
       [g, CONNECTION, ACCOUNT],
     );
   }
@@ -176,6 +183,8 @@ beforeEach(async () => {
   authority = undefined;
   mint = (req) => issued(req);
   getToken.mockClear();
+  checkIssued.mockClear();
+  tokenCheck = undefined;
   await setAssignment(GRANT, true);
 });
 
@@ -323,6 +332,31 @@ describe("beginFederatedTurn", () => {
     runSeq += 1;
     const other = await beginFederatedTurn(request(), deps);
     expect(other.entries[0].gcloud.lease_id).not.toBe(lease_id);
+  });
+
+  it("checks the issued token against the hub's grant row, not the broker's labels", async () => {
+    mint = (req) =>
+      ({ ...issued(req), project: "attacker-project-1" }) as MintResult;
+    await beginFederatedTurn(request(), deps).catch(() => undefined);
+    expect(checkIssued).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "attacker-project-1" }),
+      {
+        service_account: "reader-sa@example-project-1.iam.gserviceaccount.com",
+        service_account_unique_id: "111111111111111111111",
+        connection_id: CONNECTION,
+        target_project: "fake-project-1",
+      },
+    );
+  });
+
+  it("a token failing the check never reaches the host; the lease stays open", async () => {
+    const req = request();
+    tokenCheck = Error("token_identity ya29.fake-token-value");
+    const err = await beginFederatedTurn(req, deps).catch((e) => e);
+    expect(err.message).toBe(FEDERATED_CONNECTOR_UNAVAILABLE);
+    tokenCheck = undefined;
+    const again = await beginFederatedTurn(req, deps);
+    expect(again.entries).toHaveLength(1);
   });
 
   it("concurrent first calls converge on one lease", async () => {

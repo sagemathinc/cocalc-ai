@@ -102,6 +102,15 @@ Table({
         type: "check",
         expression: "revision >= 1",
       },
+      {
+        // The SA's immutable unique id, a decimal string (never a number):
+        // required before a grant can be enabled, and what every issued
+        // token is checked against (G3b).
+        name: "federated_connector_grants_unique_id_check",
+        type: "check",
+        expression:
+          "(service_account_unique_id IS NULL OR service_account_unique_id ~ '^[1-9][0-9]{5,31}$') AND (state <> 'enabled' OR service_account_unique_id IS NOT NULL)",
+      },
     ],
     pg_custom_indexes: [
       {
@@ -130,6 +139,9 @@ Table({
     service_account: required(
       "string",
       "Service account resource name (shown to admins only).",
+    ),
+    service_account_unique_id: text(
+      "The service account's immutable unique id (decimal string), from the setup record; required to enable the grant.",
     ),
     sa_label: required(
       "string",
