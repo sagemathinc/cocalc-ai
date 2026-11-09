@@ -34,7 +34,7 @@ import {
   verifyGoogleIdToken,
   type GoogleCerts,
   type SignerRecord,
-  type TextFetch,
+  nodeTextFetch,
 } from "./google-identity";
 
 export const FEDERATED_BROKER_HUB_ID = "federated-broker";
@@ -110,10 +110,7 @@ export async function authenticateFederatedBroker({
     throw new GoogleIdentityError("broker_not_configured");
   }
   if (certs == null) {
-    defaultCerts ??= googleCertsSource((async (url, init) => {
-      const res = await fetch(url, init);
-      return { status: res.status, text: () => res.text() };
-    }) as TextFetch);
+    defaultCerts ??= googleCertsSource(nodeTextFetch);
     certs = defaultCerts;
   }
   const { sub, exp } = await verifyGoogleIdToken({

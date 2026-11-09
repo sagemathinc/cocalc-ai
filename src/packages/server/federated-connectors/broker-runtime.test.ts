@@ -24,6 +24,12 @@ import {
   SignerSession,
 } from "./broker-runtime";
 
+// Test fakes answer text(); the production contract is a byte stream.
+const asStream = (f: any) => async (url: string, init: any) => {
+  const r = await f(url, init);
+  return { status: r.status, body: [Buffer.from(await r.text())] };
+};
+
 const U = (n: number) => `00000000-0000-4000-8000-${`${n}`.padStart(12, "0")}`;
 const DATE = "Mon, 09 Nov 2026 07:00:00 GMT";
 const DATE_MS = Date.parse(DATE);
@@ -115,7 +121,7 @@ describe("the signer session", () => {
           }),
       };
     };
-    return { calls, fetchImpl };
+    return { calls, fetchImpl: asStream(fetchImpl) };
   }
 
   it("verifies on every refresh and caches until a minute before expiry", async () => {

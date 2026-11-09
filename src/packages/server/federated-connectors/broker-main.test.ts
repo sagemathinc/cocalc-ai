@@ -23,6 +23,12 @@ jest.mock("@cocalc/conat/inter-bay/federated-broker", () => ({
 import { generateKeyPairSync } from "node:crypto";
 import { parseBrokerConfig, startBroker } from "./broker-main";
 
+// Test fakes answer text(); the production contract is a byte stream.
+const asStream = (f: any) => async (url: string, init: any) => {
+  const r = await f(url, init);
+  return { status: r.status, body: [Buffer.from(await r.text())] };
+};
+
 const ID = "109876543210987654321";
 const EMAIL = "fake-broker@example-project-1.iam.gserviceaccount.com";
 const KEY =
@@ -128,7 +134,7 @@ function fakes(over: { azp?: string; storeOk?: boolean } = {}) {
     connectCalls,
     deps: {
       env: {},
-      textFetch: textFetch as any,
+      textFetch: asStream(textFetch) as any,
       jsonFetch: jsonFetch as any,
       pool,
       connect: (opts: any) => {

@@ -54,6 +54,7 @@ import {
   credentialOverridesPresent,
   isGoogleUniqueId,
   metadataIdToken,
+  nodeTextFetch,
   type SignerRecord,
   type TextFetch,
 } from "./google-identity";
@@ -292,10 +293,7 @@ export async function main(): Promise<void> {
     // The store's times are TIMESTAMP: always read and written in UTC.
     options: "-c timezone=UTC",
   });
-  const textFetch: TextFetch = async (url, init) => {
-    const res = await fetch(url, init);
-    return { status: res.status, text: () => res.text() };
-  };
+  const textFetch: TextFetch = nodeTextFetch;
   const jsonFetch: JsonFetch = async (url, init) => await fetch(url, init);
   await startBroker(config, {
     env,

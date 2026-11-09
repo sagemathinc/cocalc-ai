@@ -64,7 +64,45 @@ export type TextFetch = (
     signal?: AbortSignal;
     redirect: "error";
   },
-) => Promise<{ status: number; text(): Promise<string> }>;
+) => Promise<{
+  status: number;
+  /** The response body as bytes; read with a byte bound, never whole. */
+  body: AsyncIterable<Uint8Array> | Iterable<Uint8Array> | null;
+}>;
+
+/** The production TextFetch: global fetch, its body streamed. */
+export const nodeTextFetch: TextFetch = async (url, init) => {
+  const res = await fetch(url, init);
+  return {
+    status: res.status,
+    body: (res.body as unknown as AsyncIterable<Uint8Array>) ?? null,
+  };
+};
+
+/**
+ * Reads at most `limit` bytes of UTF-8. Past the limit it aborts (stopping
+ * the transfer) and throws; invalid UTF-8 throws too.
+ */
+export async function readBoundedUtf8(
+  body: AsyncIterable<Uint8Array> | Iterable<Uint8Array> | null,
+  limit: number,
+  abort: () => void,
+): Promise<string> {
+  if (body == null) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of body as AsyncIterable<Uint8Array>) {
+    total += chunk.byteLength;
+    if (total > limit) {
+      abort();
+      throw Error("response too large");
+    }
+    chunks.push(chunk);
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(
+    Buffer.concat(chunks),
+  );
+}
 
 /** Names of credential overrides present (names only, never values). */
 export function credentialOverridesPresent(
@@ -88,8 +126,9 @@ async function boundedText(
       signal: controller.signal,
       redirect: "error",
     });
-    const text = await res.text();
-    if (text.length > MAX_RESPONSE_BYTES) throw new GoogleIdentityError(code);
+    const text = await readBoundedUtf8(res.body, MAX_RESPONSE_BYTES, () =>
+      controller.abort(),
+    );
     return { status: res.status, text };
   } catch (err) {
     if (err instanceof GoogleIdentityError) throw err;

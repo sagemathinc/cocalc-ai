@@ -58,7 +58,11 @@ import {
   saveFederatedConnectorAssignment as saveAssignmentAtHome,
 } from "./assignments";
 import type { MintRequest, MintResult } from "./broker";
-import { introspectAccessToken, type TextFetch } from "./google-identity";
+import {
+  introspectAccessToken,
+  nodeTextFetch,
+  type TextFetch,
+} from "./google-identity";
 import { BrokerRegistration } from "./broker-registration";
 import { signerRecordFromSetting } from "./broker-auth";
 import { createBrokerLookupHandler } from "./broker-lookups";
@@ -86,10 +90,7 @@ const SNAPSHOT_TIMEOUT_MS = 5_000;
 
 // Parsed tokeninfo claims of issued tokens (never a verdict; §6).
 const tokenClaimsCache = new TokenClaimsCache();
-const googleFetch: TextFetch = async (url, init) => {
-  const res = await fetch(url, init);
-  return { status: res.status, text: () => res.text() };
-};
+const googleFetch: TextFetch = nodeTextFetch;
 
 /**
  * The broker's registration (a lease, §3), fed by its heartbeats over the

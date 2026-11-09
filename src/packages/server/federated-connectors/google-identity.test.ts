@@ -11,6 +11,7 @@ import {
   introspectAccessToken,
   isGoogleUniqueId,
   metadataIdToken,
+  readBoundedUtf8,
   parseSignerRecord,
   parseTokenInfo,
   signerAccessToken,
@@ -33,10 +34,13 @@ function fakeFetch(routes: Record<string, { status?: number; body: unknown }>) {
     if (route == null) throw Error("no route");
     return {
       status: route.status ?? 200,
-      text: async () =>
-        typeof route.body === "string"
-          ? route.body
-          : JSON.stringify(route.body),
+      body: [
+        Buffer.from(
+          typeof route.body === "string"
+            ? route.body
+            : JSON.stringify(route.body),
+        ),
+      ],
     };
   };
   return { fetchImpl, calls };
@@ -313,7 +317,7 @@ describe("metadataIdToken", () => {
     const f = async (url: string, init: any) => {
       urls.push(url);
       headers.push(init.headers);
-      return { status, text: async () => text };
+      return { status, body: [Buffer.from(text)] };
     };
     return { f: f as any, urls, headers };
   }
@@ -357,5 +361,59 @@ describe("metadataIdToken", () => {
         }),
       ).rejects.toThrow();
     }
+  });
+});
+
+describe("the 64 KiB response bound (bytes, while streaming)", () => {
+  const LIMIT = 64 * 1024;
+  const ID = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln";
+  const meta = (body: any) => (async () => ({ status: 200, body })) as any;
+
+  it("refuses 65,537 ASCII bytes and accepts 65,536", async () => {
+    await expect(
+      readBoundedUtf8([Buffer.alloc(LIMIT + 1, 0x61)], LIMIT, () => {}),
+    ).rejects.toThrow("too large");
+    expect(
+      (await readBoundedUtf8([Buffer.alloc(LIMIT, 0x61)], LIMIT, () => {}))
+        .length,
+    ).toBe(LIMIT);
+    await expect(
+      metadataIdToken({
+        fetchImpl: meta([Buffer.from(ID), Buffer.alloc(LIMIT, 0x61)]),
+        audience: "cluster-1",
+        env: {},
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("counts bytes, not characters: multibyte text under 65,536 characters but over 65,536 bytes is refused", async () => {
+    const text = "\u00e9".repeat(40_000); // 40,000 characters, 80,000 bytes
+    expect(text.length).toBeLessThan(LIMIT);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(LIMIT);
+    await expect(
+      readBoundedUtf8([Buffer.from(text)], LIMIT, () => {}),
+    ).rejects.toThrow("too large");
+  });
+
+  it("stops reading an endless body at the limit and aborts the transfer", async () => {
+    let chunks = 0;
+    async function* endless() {
+      while (true) {
+        chunks += 1;
+        yield Buffer.alloc(4096, 0x61);
+      }
+    }
+    const abort = jest.fn();
+    await expect(readBoundedUtf8(endless(), LIMIT, abort)).rejects.toThrow(
+      "too large",
+    );
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(chunks).toBe(LIMIT / 4096 + 1);
+  });
+
+  it("refuses invalid UTF-8", async () => {
+    await expect(
+      readBoundedUtf8([Buffer.from([0xc3, 0x28])], LIMIT, () => {}),
+    ).rejects.toThrow();
   });
 });
