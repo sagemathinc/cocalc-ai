@@ -34,6 +34,7 @@ import type {
   AcpHarnessProfile,
 } from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
+import getLogger from "@cocalc/backend/logger";
 import {
   diagnosticError,
   HarnessStderrDiagnostics,
@@ -363,6 +364,8 @@ function promptBlocks(text: string, images: readonly AcpImageAttachment[]) {
 // so a long conversation can take far longer than an ordinary request. With
 // the general 30 s bound, such a session failed every turn at session/load.
 export const DEFAULT_SESSION_LOAD_TIMEOUT_MS = 180_000;
+
+const logger = getLogger("ai:acp:harness-client");
 
 export function resolveSessionLoadTimeoutMs(
   requestTimeoutMs: number,
@@ -786,7 +789,7 @@ export class AcpHarnessClient {
     try {
       // Observe every promise even when a prior output failure already closed
       // the runtime. Otherwise the close rejection can escape unhandled.
-      return await Promise.race([
+      const result = await Promise.race([
         operation,
         closed,
         deadline,
@@ -794,6 +797,14 @@ export class AcpHarnessClient {
           ? [Promise.reject(Error("ACP runtime unavailable"))]
           : []),
       ]);
+      // How long resumes take, so the session/load budget can be judged from
+      // real replays (failures are already recorded as diagnostics).
+      if (method === "session/load")
+        logger.info("ACP session/load completed", {
+          elapsed_ms: Date.now() - startedAt,
+          timeout_ms: this.sessionLoadTimeoutMs,
+        });
+      return result;
     } catch (error) {
       const protocolRejection =
         !this.failure &&

@@ -113,12 +113,22 @@ const lineReader = readline.createInterface({ input: process.stdin });
 const loadDelayMs = Number(
   (process.argv.find((arg) => arg.startsWith("--load-delay-ms=")) ?? "=0").split("=")[1],
 );
+// --new-delay-ms=N: the same for session/new (a slow agent that is not replaying).
+const newDelayMs = Number(
+  (process.argv.find((arg) => arg.startsWith("--new-delay-ms=")) ?? "=0").split("=")[1],
+);
 lineReader.on("line", (line) => {
   const message = JSON.parse(line);
-  if (message.method === "session/load" && loadDelayMs > 0 && !message.delayedLoad) {
+  const delayMs =
+    message.method === "session/load"
+      ? loadDelayMs
+      : message.method === "session/new"
+        ? newDelayMs
+        : 0;
+  if (delayMs > 0 && !message.delayedLoad) {
     setTimeout(
       () => lineReader.emit("line", JSON.stringify({ ...message, delayedLoad: true })),
-      loadDelayMs,
+      delayMs,
     );
     return;
   }
