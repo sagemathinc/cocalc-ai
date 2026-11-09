@@ -58,16 +58,22 @@ EOF
 # serving the key it started with ("stale"). ${TMP_ROOT}/stop-mode isolates
 # each proof of a stop: "fail" (stop fails, the listener runs on), "failquiet"
 # (stop fails, though the listener is gone), "lie" (stop succeeds and
-# is-active says inactive, but the listener runs on), "stuck" (stop succeeds
-# and the listener is gone, but is-active says active), "queryfail" (stop
-# succeeds and the listener is gone, but is-active prints nothing and fails),
-# "querystrange" (the same, but is-active answers "deactivating").
+# ActiveState says inactive, but the listener runs on), "stuck" (stop
+# succeeds and the listener is gone, but ActiveState says active), and, with
+# the stop done and the listener gone: "queryfail" (the query prints nothing
+# and fails), "querystrange" (it answers "deactivating"), "rcfail" (it prints
+# "inactive" but fails), "notfound" (LoadState not-found, as for a unit that
+# does not exist), "tcptimeout" (all good, but the TCP probe of the port
+# times out: see the timeout stand-in); "failedstate" is a good stop whose
+# ActiveState is "failed".
 # ${TMP_ROOT}/disable-mode likewise: "fail" (disable fails, still enabled),
 # "failquiet" (disable fails, though not enabled), "stuck" (disable succeeds,
-# still enabled), "queryfail" (disable succeeds, is-enabled prints nothing
-# and fails), "querystrange" (disable succeeds, is-enabled answers "static").
-# is-active reports the listener process as systemctl does (active/inactive,
-# printed), is-enabled the ${TMP_ROOT}/enabled flag (enabled/disabled).
+# still enabled), and, with the disable done: "queryfail" (nothing, fails),
+# "querystrange" ("static"), "rcfail" (prints "disabled" but fails),
+# "masked", "empty" (an empty answer with rc 0).
+# Only "show --property=... --value" answers state queries, as systemd does
+# (ActiveState from the listener process, UnitFileState from the
+# ${TMP_ROOT}/enabled flag); is-active and is-enabled are not supported.
 cat > "${TMP_ROOT}/bin/systemctl" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> "${TMP_ROOT}/systemctl.log"
@@ -103,17 +109,40 @@ case "\$1" in
     esac
     stop
     ;;
-  is-active)
-    case "\$stop_mode" in
-      lie) echo inactive; exit 3 ;;
-      stuck) echo active; exit 0 ;;
-      queryfail) exit 1 ;;
-      querystrange) echo deactivating; exit 3 ;;
+  show)
+    [[ "\$2" == cocalc-bay-broker-tls.service && "\$4" == --value ]] || exit 1
+    case "\$3" in
+      --property=LoadState)
+        [[ "\$stop_mode" == notfound ]] && { echo not-found; exit 0; }
+        echo loaded
+        exit 0
+        ;;
+      --property=ActiveState)
+        case "\$stop_mode" in
+          lie) echo inactive; exit 0 ;;
+          stuck) echo active; exit 0 ;;
+          queryfail) exit 1 ;;
+          querystrange) echo deactivating; exit 0 ;;
+          rcfail) echo inactive; exit 1 ;;
+        esac
+        if alive; then echo active; elif [[ "\$stop_mode" == failedstate ]]; then echo failed; else echo inactive; fi
+        exit 0
+        ;;
+      --property=UnitFileState)
+        case "\$disable_mode" in
+          queryfail) exit 1 ;;
+          querystrange) echo static; exit 0 ;;
+          rcfail) echo disabled; exit 1 ;;
+          masked) echo masked; exit 0 ;;
+          empty) echo; exit 0 ;;
+        esac
+        if [[ -f "${TMP_ROOT}/enabled" ]]; then echo enabled; else echo disabled; fi
+        exit 0
+        ;;
     esac
-    if alive; then echo active; exit 0; fi
-    echo inactive
-    exit 3
+    exit 1
     ;;
+  is-active|is-enabled) exit 99 ;;
   enable) touch "${TMP_ROOT}/enabled" ;;
   disable)
     case "\$disable_mode" in
@@ -123,19 +152,23 @@ case "\$1" in
     esac
     rm -f "${TMP_ROOT}/enabled"
     ;;
-  is-enabled)
-    case "\$disable_mode" in
-      queryfail) exit 1 ;;
-      querystrange) echo static; exit 0 ;;
-    esac
-    if [[ -f "${TMP_ROOT}/enabled" ]]; then echo enabled; exit 0; fi
-    echo disabled
-    exit 1
-    ;;
 esac
 exit 0
 EOF
 chmod 0755 "${TMP_ROOT}/bin/systemctl"
+
+# timeout: the real one, except that stop-mode "tcptimeout" makes the TCP
+# probe of the listener's port time out (neither refused nor connected).
+REAL_TIMEOUT="$(command -v timeout)"
+cat > "${TMP_ROOT}/bin/timeout" <<EOF
+#!/usr/bin/env bash
+if [[ "\$(cat "${TMP_ROOT}/stop-mode" 2>/dev/null)" == tcptimeout && "\$*" == *"/dev/tcp/"* ]]; then
+  exit 124
+fi
+exec "$REAL_TIMEOUT" "\$@"
+EOF
+chmod 0755 "${TMP_ROOT}/bin/timeout"
+export PATH="${TMP_ROOT}/bin:${PATH}"
 
 export COCALC_BAY_CONFIG_DIR="$etc"
 export COCALC_BAY_BROKER_TLS_KEY_TEST=1
@@ -317,7 +350,7 @@ echo good > "${TMP_ROOT}/mode"
 # A failed activation whose stop cannot be proven (stop fails, or reports
 # success while the listener keeps serving) is a distinct hard failure: exit
 # 2, a FAILED line, no claim that the listener is stopped, both keys kept.
-for stop_mode in fail failquiet lie stuck queryfail querystrange; do
+for stop_mode in fail failquiet lie stuck queryfail querystrange rcfail notfound tcptimeout; do
   pin_s="$(field next_pin < <(tool stage))"
   echo stale > "${TMP_ROOT}/mode"
   echo "$stop_mode" > "${TMP_ROOT}/stop-mode"
@@ -404,7 +437,7 @@ done
 
 # revoke whose stop or disable cannot be proven deletes nothing, prints a
 # FAILED line and no record, and claims nothing it did not prove.
-for stop_mode in fail failquiet lie stuck queryfail querystrange; do
+for stop_mode in fail failquiet lie stuck queryfail querystrange rcfail notfound tcptimeout; do
   [[ -f "${TMP_ROOT}/listener.pid" ]] || "$SYSTEMCTL" start cocalc-bay-broker-tls.service
   echo "$stop_mode" > "${TMP_ROOT}/stop-mode"
   rc=0
@@ -412,14 +445,15 @@ for stop_mode in fail failquiet lie stuck queryfail querystrange; do
   [[ "$rc" != 0 ]] || fail "revoke succeeded although the stop is unconfirmed ($stop_mode)"
   grep -q "^FAILED: broker fabric key NOT revoked (pin ${pin4}); the listener could not be confirmed stopped" <<<"$out" ||
     fail "no FAILED line for revoke with an unconfirmed stop ($stop_mode)"
-  grep -Eq "^record:|stopped \(inactive|disabled \(verified" <<<"$out" && fail "revoke claimed a stop it did not prove ($stop_mode)"
+  grep -Eq "^record:|ActiveState=|port closed" <<<"$out" && fail "revoke claimed a stop it did not prove ($stop_mode)"
+  [[ "$stop_mode" != lie ]] || grep -q "does not refuse connections" <<<"$out" || fail "the open port was not named ($stop_mode)"
   same_as_snapshot "revoke with an unconfirmed stop ($stop_mode)"
   if [[ "$stop_mode" == fail || "$stop_mode" == lie ]]; then
     [[ "$(field served_pin < <(tool check 2>/dev/null))" == "$pin4" ]] || fail "the listener should still be serving ($stop_mode)"
   fi
   echo good > "${TMP_ROOT}/stop-mode"
 done
-for disable_mode in fail failquiet stuck queryfail querystrange; do
+for disable_mode in fail failquiet stuck queryfail querystrange rcfail masked empty; do
   "$SYSTEMCTL" enable cocalc-bay-broker-tls.service
   echo "$disable_mode" > "${TMP_ROOT}/disable-mode"
   rc=0
@@ -427,15 +461,27 @@ for disable_mode in fail failquiet stuck queryfail querystrange; do
   [[ "$rc" != 0 ]] || fail "revoke succeeded although the disable is unconfirmed ($disable_mode)"
   grep -q "^FAILED: broker fabric key NOT revoked (pin ${pin4}); the listener is stopped but could not be confirmed disabled" <<<"$out" ||
     fail "no FAILED line for revoke with an unconfirmed disable ($disable_mode)"
-  grep -Eq "^record:|disabled \(verified" <<<"$out" && fail "revoke claimed a disable it did not prove ($disable_mode)"
+  grep -Eq "^record:|UnitFileState=" <<<"$out" && fail "revoke claimed a disable it did not prove ($disable_mode)"
   same_as_snapshot "revoke with an unconfirmed disable ($disable_mode)"
 done
 echo good > "${TMP_ROOT}/disable-mode"
 "$SYSTEMCTL" enable cocalc-bay-broker-tls.service
 
+# A good revoke: the record states what was observed. First with the unit
+# ending "failed" (also a stopped state), then, with a new key, "inactive".
+echo failedstate > "${TMP_ROOT}/stop-mode"
 out="$(tool revoke --yes --reason "test revoke")"
-grep -Eq "^record: broker fabric key revoked \(pin ${pin4}\); at [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z; cocalc-bay-broker-tls.service stopped \(inactive, no handshake\) and disabled \(verified\); reason: test revoke$" <<<"$out" ||
-  fail "revoke record"
+grep -Eq "^record: broker fabric key revoked \(pin ${pin4}\); at [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z; cocalc-bay-broker-tls.service ActiveState=failed, UnitFileState=disabled, port closed; reason: test revoke$" <<<"$out" ||
+  fail "revoke record (failed)"
+ls "$etc" | grep -q '^broker-fabric-tls' && fail "keys left after revoke"
+echo good > "${TMP_ROOT}/stop-mode"
+pin5="$(field pin < <(tool init))"
+"$SYSTEMCTL" start cocalc-bay-broker-tls.service
+"$SYSTEMCTL" enable cocalc-bay-broker-tls.service
+tool check --expect "$pin5" >/dev/null || fail "check before the second revoke"
+out="$(tool revoke --yes --reason "test revoke")"
+grep -Eq "^record: broker fabric key revoked \(pin ${pin5}\); at [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z; cocalc-bay-broker-tls.service ActiveState=inactive, UnitFileState=disabled, port closed; reason: test revoke$" <<<"$out" ||
+  fail "revoke record (inactive)"
 ls "$etc" | grep -q '^broker-fabric-tls' && fail "keys left after revoke"
 grep -qx "disable cocalc-bay-broker-tls.service" "${TMP_ROOT}/systemctl.log" || fail "revoke did not disable the unit"
 [[ ! -e "${TMP_ROOT}/enabled" ]] || fail "the unit is still enabled after revoke"
