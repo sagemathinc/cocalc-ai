@@ -2737,8 +2737,29 @@ export class SandboxedFilesystem {
     await move(srcPath, destPath, options);
   };
 
+  // Never remove a sandbox root itself (the home, /tmp, /scratch or the
+  // rootfs). A path that resolves to one ("", ".", "/", "a/..") has no
+  // openat2-relative form, so without this the recursive rm below would fall
+  // back to removing the whole base directory.
+  private assertNotSandboxRoot = async (path: string, syscall: string) => {
+    if (typeof path != "string") {
+      throw Error(`path must be a string but is of type ${typeof path}`);
+    }
+    const { pathInSandbox, sandboxBasePath } =
+      await this.resolvePathInSandbox(path);
+    if (nodePath.resolve(pathInSandbox) == nodePath.resolve(sandboxBasePath)) {
+      throw new SandboxError(
+        `EPERM: operation not permitted, cannot remove the root '${path}'`,
+        { errno: -1, code: "EPERM", syscall, path },
+      );
+    }
+  };
+
   rm = async (path: string | string[], options?: RemoveOptions) => {
     const paths = typeof path == "string" ? [path] : path;
+    for (const inputPath of paths) {
+      await this.assertNotSandboxRoot(inputPath, "rm");
+    }
     if (options?.sudo) {
       for (const inputPath of paths) {
         this.assertWritable(inputPath);
@@ -2860,6 +2881,7 @@ export class SandboxedFilesystem {
 
   rmdir = async (path: string, options?: RemoveDirOptions) => {
     this.assertWritable(path);
+    await this.assertNotSandboxRoot(path, "rmdir");
     if (options?.sudo) {
       const target = await this.getPrivilegedDeleteTarget(path);
       await runPrivilegedDelete(
