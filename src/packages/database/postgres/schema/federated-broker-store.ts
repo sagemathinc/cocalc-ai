@@ -183,7 +183,8 @@ export interface BrokerStoreStatus {
 
 const STORE_TABLES = ["federated_connector_mint_log", "broker_purge_log"];
 
-// Every grant to anyone but the owner, exactly (PUBLIC included): the
+// Every grant to anyone but the owner, exactly (PUBLIC included, and none
+// with the grant option, which would show as ":GRANTABLE"): the
 // schema's USAGE, the mint log's INSERT and SELECT, the purge log's SELECT
 // and the purge's EXECUTE, all to broker_app; nothing else, and nothing on
 // the guard function.
@@ -292,26 +293,29 @@ export async function getBrokerStoreStatus(
              format('%I.broker_purge_log', $1::text), 'TRIGGER'))
          AS app_can_hook,
        (SELECT string_agg(entry, ',' ORDER BY entry) FROM (
-          SELECT 'schema:' || g.grantee_name || ':' || g.privilege_type AS entry
+          SELECT 'schema:' || g.grantee_name || ':' || g.privilege_type
+                 || CASE WHEN g.is_grantable THEN ':GRANTABLE' ELSE '' END
+                 AS entry
             FROM pg_namespace n,
                  LATERAL (
                    SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC'
                                ELSE pg_get_userbyid(a.grantee) END
                             AS grantee_name,
-                          a.privilege_type, a.grantee
+                          a.privilege_type, a.grantee, a.is_grantable
                      FROM aclexplode(coalesce(n.nspacl,
                             acldefault('n', n.nspowner))) a
                  ) g
            WHERE n.nspname = $1 AND g.grantee <> n.nspowner
           UNION ALL
           SELECT c.relname || ':' || g.grantee_name || ':' || g.privilege_type
+                 || CASE WHEN g.is_grantable THEN ':GRANTABLE' ELSE '' END
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace,
                  LATERAL (
                    SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC'
                                ELSE pg_get_userbyid(a.grantee) END
                             AS grantee_name,
-                          a.privilege_type, a.grantee
+                          a.privilege_type, a.grantee, a.is_grantable
                      FROM aclexplode(coalesce(c.relacl,
                             acldefault('r', c.relowner))) a
                  ) g
@@ -319,13 +323,14 @@ export async function getBrokerStoreStatus(
              AND g.grantee <> c.relowner
           UNION ALL
           SELECT p.proname || ':' || g.grantee_name || ':' || g.privilege_type
+                 || CASE WHEN g.is_grantable THEN ':GRANTABLE' ELSE '' END
             FROM pg_proc p
             JOIN pg_namespace n ON n.oid = p.pronamespace,
                  LATERAL (
                    SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC'
                                ELSE pg_get_userbyid(a.grantee) END
                             AS grantee_name,
-                          a.privilege_type, a.grantee
+                          a.privilege_type, a.grantee, a.is_grantable
                      FROM aclexplode(coalesce(p.proacl,
                             acldefault('f', p.proowner))) a
                  ) g

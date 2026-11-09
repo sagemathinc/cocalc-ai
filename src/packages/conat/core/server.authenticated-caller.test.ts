@@ -790,7 +790,9 @@ describe("authenticated Conat caller metadata", () => {
       expect(msg.caller).toEqual({ federated_broker_transport_lost: id });
       expect(msg.data).toBeNull();
       expect(seen).toEqual([{ json: "{}", subject: LOSS, type: "pub" }]);
-      // Only one.
+      // Only one, and the id is forgotten: a second attempt for the same
+      // user object (@security-audit N14) publishes nothing.
+      await (t.server as any).publishBrokerTransportLoss(t.brokers[0]);
       const second = await Promise.race([
         loss.next().then(() => "more"),
         delay(300).then(() => "none"),

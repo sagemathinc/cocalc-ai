@@ -294,6 +294,25 @@ describe("the broker store", () => {
         "ALTER ROLE broker_app REPLICATION",
         "ALTER ROLE broker_app NOREPLICATION",
       ],
+      // @security-audit S1: a grant option is outside the allow-list.
+      [
+        "GRANT INSERT ON broker.federated_connector_mint_log TO broker_app WITH GRANT OPTION",
+        "REVOKE GRANT OPTION FOR INSERT ON broker.federated_connector_mint_log FROM broker_app",
+      ],
+      [
+        "GRANT USAGE ON SCHEMA broker TO broker_app WITH GRANT OPTION",
+        "REVOKE GRANT OPTION FOR USAGE ON SCHEMA broker FROM broker_app",
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION broker.broker_purge_mint_log() TO broker_app WITH GRANT OPTION",
+        "REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION broker.broker_purge_mint_log() FROM broker_app",
+      ],
+      // @security-audit S2: a membership that doesn't inherit still allows
+      // SET ROLE broker_migrate.
+      [
+        "GRANT broker_migrate TO broker_app WITH INHERIT FALSE",
+        "REVOKE broker_migrate FROM broker_app",
+      ],
       // @vanta: a column-level grant isn't in the table ACL.
       [
         "GRANT UPDATE (reason) ON broker.federated_connector_mint_log TO broker_app",
