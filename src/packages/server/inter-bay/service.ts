@@ -33,7 +33,11 @@ import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc"
 import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
 import { createInterBayFederatedGateHandler } from "@cocalc/conat/inter-bay/federated-gate";
 import { createInterBayFederatedConnectorHandler } from "@cocalc/conat/inter-bay/federated-connector";
-import { federatedConnectorAtThisBay } from "@cocalc/server/federated-connectors/routing";
+import { createInterBayFederatedBrokerHandler } from "@cocalc/conat/inter-bay/federated-broker";
+import {
+  federatedBrokerLookupsAtThisBay,
+  federatedConnectorAtThisBay,
+} from "@cocalc/server/federated-connectors/routing";
 import { applyFederatedGateReplica } from "@cocalc/server/federated-connectors/site-gate";
 import { applyServerSettingFromBay } from "@cocalc/server/inter-bay/server-setting-replica";
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
@@ -632,6 +636,11 @@ export async function initInterBayServices(): Promise<void> {
       createInterBayFederatedConnectorHandler(
         getConfiguredBayId(),
         federatedConnectorAtThisBay,
+        { client: getInterBayFabricServiceClient(), parallel: true },
+      ),
+      createInterBayFederatedBrokerHandler(
+        getConfiguredBayId(),
+        federatedBrokerLookupsAtThisBay,
         { client: getInterBayFabricServiceClient(), parallel: true },
       ),
       createInterBayAgentConnectorHandler(

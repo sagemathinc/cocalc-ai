@@ -9,6 +9,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import {
   authenticateFederatedBroker,
   isFederatedBrokerAllowed,
+  isReservedForFederatedBroker,
   looksLikeGoogleIdToken,
   signerRecordFromSetting,
 } from "./broker-auth";
@@ -166,5 +167,29 @@ describe("isFederatedBrokerAllowed", () => {
     );
     expect(allowed("_INBOX.abc", "pub", ID, null)).toBe(false);
     expect(allowed("_INBOX.abc", "pub", Number(ID))).toBe(false);
+  });
+});
+
+describe("isReservedForFederatedBroker", () => {
+  it.each([
+    ["pub", "bay.bay-a.rpc.federated-broker.v1", true],
+    ["pub", "bay.*.rpc.federated-broker.v1", true],
+    ["pub", "bay.bay-a.rpc.>", true],
+    ["pub", `broker.${CLUSTER}.heartbeat.v1`, true],
+    ["sub", `broker.${CLUSTER}.rpc.mint.v1`, true],
+    ["sub", "broker.*.rpc.*.v1", true],
+    ["sub", "broker.>", true],
+    ["sub", ">", true],
+    ["pub", `broker.${CLUSTER}.rpc.mint.v1`, false],
+    ["pub", "bay.bay-a.rpc.federated-connector.v1", false],
+    ["pub", "bay.bay-a.rpc.federated-broker.v1.x", false],
+    ["sub", `broker.${CLUSTER}.heartbeat.v1`, false],
+    ["sub", "bay.bay-a.rpc.federated-broker.v1", false],
+    ["sub", `broker.${CLUSTER}.rpc.mint`, false],
+    ["sub", "broker.other-cluster.rpc.mint.v1", false],
+  ] as const)("%s %s → %s", (type, subject, reserved) => {
+    expect(
+      isReservedForFederatedBroker({ clusterId: CLUSTER, subject, type }),
+    ).toBe(reserved);
   });
 });

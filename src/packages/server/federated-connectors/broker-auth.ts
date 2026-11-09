@@ -170,3 +170,41 @@ export function isFederatedBrokerAllowed({
   const own = `${brokerInboxPrefix(signerId)}.`;
   return subject.startsWith(own) && subject.length > own.length;
 }
+
+/** Whether two subject patterns (with `*` and a terminal `>`) can match one subject. */
+function patternsIntersect(a: string, b: string): boolean {
+  const x = a.split(".");
+  const y = b.split(".");
+  for (let i = 0; ; i++) {
+    if (x[i] === ">" || y[i] === ">") {
+      // `>` needs at least one more segment on the other side.
+      return i < x.length && i < y.length;
+    }
+    if (i === x.length || i === y.length) return x.length === y.length;
+    if (x[i] !== "*" && y[i] !== "*" && x[i] !== y[i]) return false;
+  }
+}
+
+/**
+ * Whether a principal other than the broker is refused this subject: only
+ * the broker subscribes to its service subject and publishes heartbeats and
+ * bay lookups (G3b design v3 §3).
+ */
+export function isReservedForFederatedBroker({
+  clusterId,
+  subject,
+  type,
+}: {
+  clusterId: string;
+  subject: string;
+  type: "pub" | "sub";
+}): boolean {
+  if (typeof subject !== "string") return true;
+  if (type === "sub") {
+    return patternsIntersect(subject, brokerServiceSubject(clusterId));
+  }
+  return (
+    patternsIntersect(subject, "bay.*.rpc.federated-broker.v1") ||
+    patternsIntersect(subject, brokerHeartbeatSubject(clusterId))
+  );
+}

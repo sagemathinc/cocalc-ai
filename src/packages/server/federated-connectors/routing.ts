@@ -55,6 +55,9 @@ import {
 import type { MintRequest, MintResult } from "./broker";
 import { introspectAccessToken, type TextFetch } from "./google-identity";
 import { BrokerRegistration } from "./broker-registration";
+import { signerRecordFromSetting } from "./broker-auth";
+import { createBrokerLookupHandler } from "./broker-lookups";
+import { isAllowlisted, loadGrant } from "./db";
 import {
   setFederatedConnectorGateOnSeed,
   setFederatedProtectedSettingOnSeed,
@@ -277,6 +280,24 @@ export const federatedConnectorAtThisBay: InterBayFederatedConnectorApi = {
   setGate: setFederatedConnectorGateOnSeed,
   setProtectedSetting: setFederatedProtectedSettingOnSeed,
 };
+
+/**
+ * This bay's answers to the broker's lookups (G3b design v3 §3): the grant
+ * and the turn recheck from this bay's database (the broker asks the
+ * account's home bay), the allowlist only on the seed.
+ */
+export const federatedBrokerLookupsAtThisBay = createBrokerLookupHandler({
+  currentSignerId: async () => {
+    const settings = (await getServerSettings()) as Record<string, unknown>;
+    return signerRecordFromSetting(settings[FEDERATED_BROKER_SIGNER_SETTING])
+      ?.uniqueId;
+  },
+  loadGrant,
+  verifyLiveTurn: async (request) =>
+    await verifyFederatedLiveTurn(request, federatedTurnDeps()),
+  isAllowlisted,
+  isSeedBay: () => getConfiguredBayId() === getConfiguredClusterSeedBayId(),
+});
 
 function apiAt(bay_id: string): InterBayFederatedConnectorApi {
   return bay_id === getConfiguredBayId()

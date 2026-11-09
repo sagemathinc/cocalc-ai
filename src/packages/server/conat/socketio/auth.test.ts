@@ -410,9 +410,10 @@ describe("test isAllowed for hub", () => {
   it("hub user can do anything we try", async () => {
     for (const subject of ["*", "public", "global", ">", "hub", "test"]) {
       for (const type of PUBSUB) {
+        // ">" can match the federated token broker's reserved subjects (G3b).
         expect(
           await isAllowed({ user: { hub_id: "hub" }, type, subject }),
-        ).toBe(true);
+        ).toBe(subject !== ">");
       }
     }
   });
@@ -2041,6 +2042,29 @@ describe("federated token broker principal", () => {
       expect(await isAllowed({ user: broker as any, subject, type })).toBe(
         false,
       );
+    }
+  });
+
+  it("is the only principal on its reserved subjects", async () => {
+    const hub = { hub_id: "hub" };
+    for (const [type, subject] of [
+      ["pub", "bay.bay-a.rpc.federated-broker.v1"],
+      ["pub", "bay.*.rpc.federated-broker.v1"],
+      ["pub", "broker.cluster-1.heartbeat.v1"],
+      ["sub", "broker.cluster-1.rpc.mint.v1"],
+      ["sub", "broker.*.rpc.mint.v1"],
+      ["sub", "broker.cluster-1.>"],
+      ["sub", "broker.>"],
+      ["sub", ">"],
+    ] as const) {
+      expect(await isAllowed({ user: hub as any, subject, type })).toBe(false);
+    }
+    // Positive controls: bays send mint requests and hear heartbeats.
+    for (const [type, subject] of [
+      ["pub", "broker.cluster-1.rpc.mint.v1"],
+      ["sub", "broker.cluster-1.heartbeat.v1"],
+    ] as const) {
+      expect(await isAllowed({ user: hub as any, subject, type })).toBe(true);
     }
   });
 

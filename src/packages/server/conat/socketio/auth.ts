@@ -7,6 +7,7 @@ import {
   authenticateFederatedBroker,
   isFederatedBrokerAllowed,
   looksLikeGoogleIdToken,
+  isReservedForFederatedBroker,
   signerRecordFromSetting,
 } from "@cocalc/server/federated-connectors/broker-auth";
 import { FEDERATED_BROKER_SIGNER_SETTING } from "@cocalc/util/ai/federated-connectors";
@@ -647,6 +648,15 @@ export async function isAllowed({
       subject,
       type,
     });
+  }
+  if (
+    isReservedForFederatedBroker({
+      clusterId: getConfiguredClusterId(),
+      subject,
+      type,
+    })
+  ) {
+    return false;
   }
   // Computers connect to their project's host, never to a bay.
   if ((user as any).auth_actor === "computer") return false;
