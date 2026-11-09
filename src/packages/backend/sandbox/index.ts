@@ -2880,8 +2880,8 @@ export class SandboxedFilesystem {
   };
 
   rmdir = async (path: string, options?: RemoveDirOptions) => {
-    this.assertWritable(path);
     await this.assertNotSandboxRoot(path, "rmdir");
+    this.assertWritable(path);
     if (options?.sudo) {
       const target = await this.getPrivilegedDeleteTarget(path);
       await runPrivilegedDelete(

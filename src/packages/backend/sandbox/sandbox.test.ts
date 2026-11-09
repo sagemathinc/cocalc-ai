@@ -468,6 +468,64 @@ describe("rm and rmdir never remove the sandbox root", () => {
     expect((await readdir(home)).sort()).toEqual(["a", "keep.txt"]);
   });
 
+  it("checks the root before read-only, in rm and rmdir alike", async () => {
+    const ro = new SandboxedFilesystem(home, { readonly: true });
+    await expect(ro.rm("", { recursive: true })).rejects.toThrow(
+      /cannot remove the root/,
+    );
+    await expect(ro.rmdir("")).rejects.toThrow(/cannot remove the root/);
+    await expect(ro.rm("a", { recursive: true })).rejects.toThrow(/read only/);
+    await expect(ro.rmdir("a")).rejects.toThrow(/read only/);
+  });
+
+  it("refuses the rootfs, /tmp, /scratch and home-alias roots but not their children", async () => {
+    const base = await mkdtemp(join(tempDir, "rm-roots-"));
+    const dirs = {
+      rootfs: join(base, "rootfs"),
+      scratch: join(base, "scratch"),
+      sharedScratch: join(base, "shared"),
+    };
+    for (const d of Object.values(dirs)) {
+      await mkdir(join(d, "child"), { recursive: true });
+    }
+    await mkdir(join(home, "child"));
+    const fs = new SandboxedFilesystem(home, {
+      ...dirs,
+      homeAliases: ["/home/user"],
+    });
+    for (const p of [
+      "/",
+      "/tmp",
+      "/tmp/",
+      "/tmp/child/..",
+      "/scratch",
+      "/scratch/.",
+      "/home/user",
+      "/home/user/",
+      "/home/user/child/..",
+    ]) {
+      await expect(fs.rm(p, { recursive: true, force: true })).rejects.toThrow(
+        /cannot remove the root/,
+      );
+      await expect(fs.rmdir(p, { recursive: true })).rejects.toThrow(
+        /cannot remove the root/,
+      );
+    }
+    for (const d of Object.values(dirs)) {
+      expect(await readdir(d)).toEqual(["child"]);
+    }
+    expect(await readdir(home)).toContain("child");
+
+    await fs.rm("/child", { recursive: true });
+    await fs.rm("/tmp/child", { recursive: true });
+    await fs.rm("/scratch/child", { recursive: true });
+    await fs.rm("/home/user/child", { recursive: true });
+    for (const d of Object.values(dirs)) {
+      expect(await readdir(d)).toEqual([]);
+    }
+    expect(await readdir(home)).not.toContain("child");
+  });
+
   it("still removes a subfolder, including one named with spaces", async () => {
     await mkdir(join(home, "Lab 1 2026", "Student Notebooks"), {
       recursive: true,
