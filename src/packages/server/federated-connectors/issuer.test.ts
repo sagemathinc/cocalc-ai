@@ -155,6 +155,8 @@ describe("signed assertions", () => {
     "https://-staging.example.com/_cocalc/oidc/connectors",
     "https://staging.example.com:99999/_cocalc/oidc/connectors",
     "https://staging.example.com:443/_cocalc/oidc/connectors",
+    "https://staging.example.com:0/_cocalc/oidc/connectors",
+    `https://${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(60)}.example.com/_cocalc/oidc/connectors`,
     "https://STAGING.example.com/_cocalc/oidc/connectors",
     "https://localhost/_cocalc/oidc/connectors",
     "https://10.0.0.1/_cocalc/oidc/connectors",

@@ -54,6 +54,7 @@ export function isFederationIssuer(value: unknown): value is string {
   ) {
     return false;
   }
+  if (url.port === "0" || url.hostname.length > 253) return false;
   const labels = url.hostname.split(".");
   if (
     labels.length < 2 ||
