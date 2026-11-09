@@ -16238,6 +16238,21 @@ acquire_bootstrap_lifecycle_lock() {
   fi
 }
 
+# Like acquire_bootstrap_lifecycle_lock, but never waits: returns 1 (and
+# holds nothing) if bootstrap holds the lock.
+try_acquire_bootstrap_lifecycle_lock() {
+  install -d -o "${BOOTSTRAP_USER}" -g "${BOOTSTRAP_USER}" -m 0700 \
+    "$(dirname "${BOOTSTRAP_LIFECYCLE_LOCK}")"
+  touch "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  chown "${BOOTSTRAP_USER}:${BOOTSTRAP_USER}" "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  chmod 0600 "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  exec 7>>"${BOOTSTRAP_LIFECYCLE_LOCK}"
+  if ! flock -x -n 7; then
+    exec 7>&-
+    return 1
+  fi
+}
+
 apply_project_host_sysctls() {
   rm -f \
     /etc/sysctl.d/60-cocalc-project-host-keyring.conf \
@@ -16612,8 +16627,10 @@ PY
 # calls) used to keep project-host down until someone restarted the prepare
 # unit by hand. The watchdog's ensure retries it here, at most once per
 # PODMAN_BOOT_PREPARE_RETRY_SECONDS. The caller already holds the daemon
-# control lock; take the bootstrap lifecycle lock too, in the same order as
-# the prepare unit itself, and release it afterwards.
+# control lock, and bootstrap takes the lifecycle lock before that one, so
+# never wait for the lifecycle lock here: if bootstrap holds it, skip this
+# attempt without spending the retry interval (bootstrap prepares the host
+# itself, and the watchdog comes back a minute later).
 # Sets PODMAN_BOOT_PREPARE_RETRY_OK=1 on success. It reports through that
 # variable, not its status, because it must never run as a condition: bash
 # ignores errexit for everything inside one, even a subshell that sets -e, and
@@ -16631,10 +16648,13 @@ retry_failed_podman_boot_preparation() {
   if [ $((now - last)) -lt "${interval}" ]; then
     return 0
   fi
+  if ! try_acquire_bootstrap_lifecycle_lock; then
+    echo "bootstrap is running; not retrying Podman boot preparation now" >&2
+    return 0
+  fi
   install -d -m 0700 "$(dirname "${stamp}")"
   echo "${now}" > "${stamp}"
   echo "Podman boot preparation failed earlier; retrying it" >&2
-  acquire_bootstrap_lifecycle_lock
   set +e
   ( set -e; prepare_podman_boot )
   status="$?"
@@ -17287,15 +17307,17 @@ __HOST_INTRUSION_SNAPSHOT_HELPER__
 PY
 }
 
+# Lock order, everywhere: bootstrap lifecycle lock, then daemon control lock
+# (bootstrap holds the former while it stops and starts the daemon).
+if [ "${cmd}" = "prepare-podman-boot" ]; then
+  acquire_bootstrap_lifecycle_lock
+fi
+
 case "${cmd}" in
   start|ensure|restart|stop|protect|prepare-podman-boot)
     acquire_daemon_control_lock
     ;;
 esac
-
-if [ "${cmd}" = "prepare-podman-boot" ]; then
-  acquire_bootstrap_lifecycle_lock
-fi
 
 case "${cmd}" in
   start|ensure)

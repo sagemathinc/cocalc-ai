@@ -8651,7 +8651,12 @@ class BootstrapModesTest(unittest.TestCase):
                 )
 
     def _run_boot_preparation_guard(
-        self, *, failed: bool, prepare: str, last_retry: str | None = None
+        self,
+        *,
+        failed: bool,
+        prepare: str,
+        last_retry: str | None = None,
+        tmp: Path | None = None,
     ) -> tuple[subprocess.CompletedProcess, str, Path]:
         body = Path(bootstrap.__file__).read_text(encoding="utf-8")
 
@@ -8662,8 +8667,9 @@ class BootstrapModesTest(unittest.TestCase):
                 + "\n}\n"
             )
 
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(tmp)]))
+        if tmp is None:
+            tmp = Path(tempfile.mkdtemp())
+            self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(tmp)]))
         stamp = tmp / "run" / "retry-stamp"
         calls = tmp / "calls"
         if last_retry is not None:
@@ -8673,11 +8679,13 @@ class BootstrapModesTest(unittest.TestCase):
             "set -euo pipefail\n"
             f"PODMAN_BOOT_PREPARE_RETRY_STAMP='{stamp}'\n"
             f"CALLS='{calls}'\n"
+            f"BOOTSTRAP_LIFECYCLE_LOCK='{tmp / 'lock' / 'bootstrap.lock'}'\n"
+            f"BOOTSTRAP_USER='{__import__('getpass').getuser()}'\n"
             "systemctl() { echo \"systemctl $*\" >> \"$CALLS\"; "
             + ("[ \"$1\" = is-failed ] && return 0; " if failed else "[ \"$1\" = is-failed ] && return 1; ")
             + "return 0; }\n"
-            "acquire_bootstrap_lifecycle_lock() { echo lock >> \"$CALLS\"; exec 7>/dev/null; }\n"
-            f"prepare_podman_boot() {{ echo prepare >> \"$CALLS\"; {prepare} }}\n"
+            + function("try_acquire_bootstrap_lifecycle_lock")
+            + f"prepare_podman_boot() {{ echo prepare >> \"$CALLS\"; {prepare} }}\n"
             + function("retry_failed_podman_boot_preparation")
             + function("require_podman_boot_preparation_not_failed")
             + "require_podman_boot_preparation_not_failed\necho started\n"
@@ -8709,7 +8717,6 @@ class BootstrapModesTest(unittest.TestCase):
             calls.splitlines(),
             [
                 "systemctl is-failed --quiet cocalc-project-host-prepare.service",
-                "lock",
                 "prepare",
                 "systemctl reset-failed cocalc-project-host-prepare.service",
             ],
@@ -8742,6 +8749,44 @@ class BootstrapModesTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("prepare", calls.splitlines())
         self.assertIn("refusing to start project-host", result.stderr)
+
+    def test_retry_never_waits_for_bootstrap_and_keeps_its_slot(self) -> None:
+        # ensure holds the daemon control lock; bootstrap holds the lifecycle
+        # lock and then waits for the daemon one. Waiting here would deadlock.
+        import fcntl
+        import time
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(tmp)]))
+        lock_path = tmp / "lock" / "bootstrap.lock"
+        lock_path.parent.mkdir()
+        with open(lock_path, "a") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            started = time.monotonic()
+            result, calls, stamp = self._run_boot_preparation_guard(
+                failed=True, prepare="return 0;", tmp=tmp
+            )
+            self.assertLess(time.monotonic() - started, 10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bootstrap is running", result.stderr)
+        self.assertIn("refusing to start project-host", result.stderr)
+        self.assertNotIn("prepare", calls.splitlines())
+        self.assertFalse(stamp.exists())
+        # Once bootstrap lets go, the next ensure retries right away.
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=True, prepare="return 0;", tmp=tmp
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("prepare", calls.splitlines())
+
+    def test_rootctl_takes_the_lifecycle_lock_before_the_daemon_lock(
+        self,
+    ) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        dispatch = body.split('acquire_bootstrap_lifecycle_lock\nfi\n', 1)
+        self.assertEqual(len(dispatch), 2)
+        self.assertIn('if [ "${cmd}" = "prepare-podman-boot" ]; then', dispatch[0][-200:])
+        self.assertIn("    acquire_daemon_control_lock\n", dispatch[1][:400])
 
     def test_boot_preparation_has_room_for_a_busy_disk(self) -> None:
         body = Path(bootstrap.__file__).read_text(encoding="utf-8")
