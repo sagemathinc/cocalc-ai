@@ -691,8 +691,70 @@ describe("reconciliation order and health", () => {
     expect(new Set(seen).size).toBe(3);
   });
 
+  it("advances past more than a page of leases in one millisecond", async () => {
+    await q(
+      `UPDATE federated_connector_turn_leases SET ended_at=NOW(), end_reason='expired' WHERE ended_at IS NULL`,
+    );
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      runSeq += 1;
+      ids.push(
+        (await beginFederatedTurn(request(), deps)).entries[0].gcloud.lease_id,
+      );
+    }
+    // Same millisecond, distinct microseconds (test-only: created_at is
+    // part of the guarded binding).
+    await q(
+      `ALTER TABLE federated_connector_turn_leases DISABLE TRIGGER federated_connector_turn_leases_row_guard`,
+    );
+    try {
+      for (const [i, id] of ids.entries()) {
+        await q(
+          `UPDATE federated_connector_turn_leases
+              SET created_at = '2026-01-01 00:00:00.000101+00'::timestamptz + ($2::int * INTERVAL '1 microsecond')
+            WHERE lease_id=$1`,
+          [id, i],
+        );
+      }
+    } finally {
+      await q(
+        `ALTER TABLE federated_connector_turn_leases ENABLE ALWAYS TRIGGER federated_connector_turn_leases_row_guard`,
+      );
+    }
+    const order = [...ids];
+    const seen: string[] = [];
+    const runActivity = async ({ run_id }: { run_id: string }) => {
+      seen.push(run_id);
+      return "active" as const;
+    };
+    const first = await reconcileFederatedLeases({ runActivity, limit: 2 });
+    expect(first.checked).toBe(2);
+    expect(first.next?.created_at).toMatch(/\.000102/);
+    const second = await reconcileFederatedLeases({
+      runActivity,
+      limit: 2,
+      after: first.next,
+    });
+    // Exactly the third lease: nothing re-checked, nothing skipped.
+    expect(second.checked).toBe(1);
+    expect(new Set(seen).size).toBe(3);
+    expect(order).toHaveLength(3);
+    await q(
+      `UPDATE federated_connector_turn_leases SET ended_at=NOW(), end_reason='expired' WHERE lease_id = ANY($1)`,
+      [ids],
+    );
+  });
+
   it("counts stale open leases (count only)", async () => {
+    runSeq += 1;
+    const lease_id = (await beginFederatedTurn(request(), deps)).entries[0]
+      .gcloud.lease_id;
     expect(await countStaleOpenFederatedLeases(7)).toBe(0);
-    expect(await countStaleOpenFederatedLeases(-1)).toBeGreaterThan(0);
+    expect(await countStaleOpenFederatedLeases(-1)).toBe(1);
+    await q(
+      `UPDATE federated_connector_turn_leases SET ended_at=NOW(), end_reason='expired' WHERE lease_id=$1`,
+      [lease_id],
+    );
+    expect(await countStaleOpenFederatedLeases(-1)).toBe(0);
   });
 });

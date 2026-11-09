@@ -628,9 +628,13 @@ export async function verifyFederatedLiveTurn(
 /** Whether a lease's run is still active, from the authoritative record. */
 export type FederatedRunActivity = "active" | "ended" | "unknown";
 
-/** Where the next reconciliation pass continues (keyset order). */
+/**
+ * Where the next reconciliation pass continues (keyset order). created_at is
+ * the database's own text form, so the key keeps microseconds (a JS Date
+ * would round to milliseconds and could stall the cursor).
+ */
 export interface FederatedLeaseCursor {
-  created_at: Date;
+  created_at: string;
   lease_id: string;
 }
 
@@ -667,13 +671,15 @@ export async function reconcileFederatedLeases({
     agent_id: string;
     source_project_id: string;
     run_id: string;
-    created_at: Date;
+    created_key: string;
   }>(
-    `SELECT lease_id, account_id, agent_id, source_project_id, run_id, created_at
+    `SELECT lease_id, account_id, agent_id, source_project_id, run_id,
+            created_at::text AS created_key
        FROM ${LEASES}
       WHERE ended_at IS NULL
         AND created_at < NOW() - ($1::double precision * INTERVAL '1 millisecond')
-        AND ($3::timestamptz IS NULL OR (created_at, lease_id) > ($3, $4::uuid))
+        AND ($3::text IS NULL
+             OR (created_at, lease_id) > ($3::timestamptz, $4::uuid))
       ORDER BY created_at, lease_id
       LIMIT $2`,
     [olderThanMs, limit, after?.created_at ?? null, after?.lease_id ?? null],
@@ -703,7 +709,7 @@ export async function reconcileFederatedLeases({
     next:
       rows.length < limit || last == null
         ? undefined
-        : { created_at: last.created_at, lease_id: last.lease_id },
+        : { created_at: last.created_key, lease_id: last.lease_id },
   };
 }
 
