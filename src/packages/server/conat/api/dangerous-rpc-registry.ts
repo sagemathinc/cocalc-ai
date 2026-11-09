@@ -876,6 +876,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "rewrites authoritative bay ownership fields across core tables",
   },
+  "system.recordGlobalConfigEventOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "exported only for the federated connector gate setter on the seed; not a hub API method (no principal policy)",
+  },
   "system.recordLaunchSmokeResult": {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
