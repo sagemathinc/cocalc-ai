@@ -3776,6 +3776,14 @@ test("session/load has its own budget: default, configured and never below the r
       bad,
     );
   }
+  // Above the largest timer delay Node would fire at once: capped instead.
+  for (const huge of ["2147483648", "9999999999", "1e12"]) {
+    assert.equal(
+      resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: huge }),
+      2_147_483_647,
+      huge,
+    );
+  }
   // A configured value below the general request timeout never shortens it.
   assert.equal(
     resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: "1000" }),
