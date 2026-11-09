@@ -46,12 +46,14 @@ test("keeps the tail and truncates in place under an append-mode writer", async 
   const fd = openSync(logPath, "a");
   try {
     writeSync(fd, "old-".repeat(10) + "TAIL-OF-LOG");
-    const archive = await capAcpWorkerLog({
+    const cap = await capAcpWorkerLog({
       logPath,
       historyDir,
       maxBytes: 11,
       now,
     });
+    expect(cap?.outcome).toBe("archived");
+    const archive = cap?.outcome === "archived" ? cap.archive : undefined;
     expect(archive).toBe(
       path.join(historyDir, "acp-worker-2026-11-09T18-00-00-000Z.log"),
     );
@@ -86,13 +88,59 @@ test("keeps only the newest archives, and never touches other logs", async () =>
 
 test("never overwrites an archive with the same timestamp", async () => {
   await writeFile(logPath, "first-log");
-  const a = await capAcpWorkerLog({ logPath, historyDir, maxBytes: 3, now });
+  const archiveOf = (cap: Awaited<ReturnType<typeof capAcpWorkerLog>>) =>
+    cap?.outcome === "archived" ? cap.archive : undefined;
+  const a = archiveOf(
+    await capAcpWorkerLog({ logPath, historyDir, maxBytes: 3, now }),
+  );
   await writeFile(logPath, "second-log");
-  const b = await capAcpWorkerLog({ logPath, historyDir, maxBytes: 3, now });
+  const b = archiveOf(
+    await capAcpWorkerLog({ logPath, historyDir, maxBytes: 3, now }),
+  );
   expect(a).not.toBe(b);
   expect(b).toBe(
     path.join(historyDir, "acp-worker-2026-11-09T18-00-00-000Z-1.log"),
   );
   expect(await readFile(a!, "utf8")).toBe("log");
   expect(await readFile(b!, "utf8")).toBe("log");
+});
+
+// A copy that writes part of the archive and then fails, like a full disk.
+function failingCopy(code: string) {
+  return async (_src: string, dest: string) => {
+    await writeFile(dest, "partial");
+    throw Object.assign(new Error(`${code}: write failed`), { code });
+  };
+}
+
+test("out of space: no partial archive, and the live log is still bounded", async () => {
+  await writeFile(logPath, "0123456789abc");
+  const cap = await capAcpWorkerLog({
+    logPath,
+    historyDir,
+    maxBytes: 5,
+    now,
+    copy: failingCopy("ENOSPC"),
+  });
+  expect(cap).toEqual({
+    outcome: "truncated-without-archive",
+    error: "Error: ENOSPC: write failed",
+  });
+  expect(await readdir(historyDir)).toEqual([]);
+  expect((await stat(logPath)).size).toBe(0);
+});
+
+test("any other copy failure: no partial archive, the log is kept, and the error is thrown", async () => {
+  await writeFile(logPath, "0123456789abc");
+  await expect(
+    capAcpWorkerLog({
+      logPath,
+      historyDir,
+      maxBytes: 5,
+      now,
+      copy: failingCopy("EIO"),
+    }),
+  ).rejects.toThrow("EIO: write failed");
+  expect(await readdir(historyDir)).toEqual([]);
+  expect(await readFile(logPath, "utf8")).toBe("0123456789abc");
 });

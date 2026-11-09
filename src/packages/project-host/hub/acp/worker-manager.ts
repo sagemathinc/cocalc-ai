@@ -1634,11 +1634,16 @@ export function startProjectHostAcpWorkerSupervisor(): void {
       logPath: ACP_WORKER_LOG_FILE,
       historyDir: ACP_WORKER_LOG_HISTORY_DIR,
     })
-      .then((archive) => {
-        if (archive)
+      .then((cap) => {
+        if (cap?.outcome === "archived")
           logger.info("capped the ACP worker log", {
             log: ACP_WORKER_LOG_FILE,
-            archive,
+            archive: cap.archive,
+          });
+        else if (cap)
+          logger.warn("truncated the ACP worker log without an archive", {
+            log: ACP_WORKER_LOG_FILE,
+            err: cap.error,
           });
       })
       .catch((err) => {

@@ -21,6 +21,24 @@ import { pipeline } from "node:stream/promises";
 export const ACP_WORKER_LOG_HISTORY_PREFIX = "acp-worker-";
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 const DEFAULT_KEEP = 5;
+// Out of space: archiving cannot work, but the live log must still be bounded.
+const NO_SPACE_CODES = new Set(["ENOSPC", "EDQUOT"]);
+
+export type AcpWorkerLogCap =
+  | { outcome: "archived"; archive: string }
+  | { outcome: "truncated-without-archive"; error: string };
+
+async function copyTail(
+  src: string,
+  dest: string,
+  start: number,
+  end: number,
+): Promise<void> {
+  await pipeline(
+    createReadStream(src, { start, end }),
+    createWriteStream(dest, { flags: "wx", mode: 0o600 }),
+  );
+}
 
 function positiveIntEnv(name: string, fallback: number): number {
   const raw = Number(process.env[name]);
@@ -44,9 +62,14 @@ export function acpWorkerLogHistoryKeep(): number {
 
 /**
  * If logPath is over maxBytes, keep its last maxBytes in historyDir and
- * truncate it in place. Returns the archive's path, or undefined if the log
- * was small enough (or missing). Lines the worker writes between the copy and
- * the truncation are lost; that window is short and this is a debug log.
+ * truncate it in place. Returns undefined if the log was small enough (or
+ * missing). Lines the worker writes between the copy and the truncation are
+ * lost; that window is short and this is a debug log.
+ *
+ * A failed copy never leaves a partial archive. If it failed for lack of
+ * space, the log is truncated anyway (outcome "truncated-without-archive"):
+ * a full disk is when bounding it matters most. Any other failure leaves the
+ * log alone and throws.
  */
 export async function capAcpWorkerLog({
   logPath,
@@ -54,13 +77,16 @@ export async function capAcpWorkerLog({
   maxBytes = acpWorkerLogMaxBytes(),
   keep = acpWorkerLogHistoryKeep(),
   now = new Date(),
+  copy = copyTail,
 }: {
   logPath: string;
   historyDir: string;
   maxBytes?: number;
   keep?: number;
   now?: Date;
-}): Promise<string | undefined> {
+  /** For tests. */
+  copy?: typeof copyTail;
+}): Promise<AcpWorkerLogCap | undefined> {
   let size: number;
   try {
     size = (await stat(logPath)).size;
@@ -70,7 +96,13 @@ export async function capAcpWorkerLog({
   }
   if (size <= maxBytes) return;
 
-  await mkdir(historyDir, { recursive: true, mode: 0o700 });
+  try {
+    await mkdir(historyDir, { recursive: true, mode: 0o700 });
+  } catch (err: any) {
+    if (!NO_SPACE_CODES.has(err?.code)) throw err;
+    await truncate(logPath, 0);
+    return { outcome: "truncated-without-archive", error: `${err}` };
+  }
   const base = `${ACP_WORKER_LOG_HISTORY_PREFIX}${now
     .toISOString()
     .replace(/[:.]/g, "-")}`;
@@ -82,11 +114,17 @@ export async function capAcpWorkerLog({
   const archivePath = path.join(historyDir, name);
   // Copy only the tail: a log that grew far past the limit (before this
   // existed, or between checks) is not copied whole.
-  await pipeline(
-    createReadStream(logPath, { start: size - maxBytes, end: size - 1 }),
-    createWriteStream(archivePath, { flags: "wx", mode: 0o600 }),
-  );
-  await chmod(archivePath, 0o600).catch(() => {});
+  let result: AcpWorkerLogCap;
+  try {
+    await copy(logPath, archivePath, size - maxBytes, size - 1);
+    await chmod(archivePath, 0o600).catch(() => {});
+    result = { outcome: "archived", archive: archivePath };
+  } catch (err: any) {
+    // Never keep a partial archive; a failed removal must not hide err.
+    await rm(archivePath, { force: true }).catch(() => {});
+    if (!NO_SPACE_CODES.has(err?.code)) throw err;
+    result = { outcome: "truncated-without-archive", error: `${err}` };
+  }
   await truncate(logPath, 0);
 
   const old = (await readdir(historyDir))
@@ -101,5 +139,5 @@ export async function capAcpWorkerLog({
   for (const entry of old) {
     await rm(path.join(historyDir, entry), { force: true });
   }
-  return archivePath;
+  return result;
 }
