@@ -27,6 +27,26 @@ afterAll(async () => {
   await testCleanup();
 });
 
+// Inserts a row, then (because a supplied time is always overwritten) moves
+// its time with the row trigger disabled: a test-only way to make old rows.
+async function insertAt(interval: string): Promise<string> {
+  const id = await insert();
+  await getPool().query(
+    "ALTER TABLE federated_connector_mint_log DISABLE TRIGGER federated_connector_mint_log_append_only",
+  );
+  try {
+    await getPool().query(
+      `UPDATE federated_connector_mint_log SET time = NOW() - INTERVAL '${interval}' WHERE mint_id=$1`,
+      [id],
+    );
+  } finally {
+    await getPool().query(
+      "ALTER TABLE federated_connector_mint_log ENABLE ALWAYS TRIGGER federated_connector_mint_log_append_only",
+    );
+  }
+  return id;
+}
+
 async function insert(time = "NOW()"): Promise<string> {
   const mint_id = uuid();
   await getPool().query(
@@ -47,7 +67,7 @@ async function count(mint_id: string): Promise<number> {
 }
 
 describe("federated connector mint log", () => {
-  it("installs both guards, current and enabled", async () => {
+  it("installs every guard, current and enabled", async () => {
     expect(await getFederatedMintLogGuardStatus(getPool())).toEqual({
       state: "ok",
     });
@@ -86,8 +106,57 @@ describe("federated connector mint log", () => {
     expect(rows[0].outcome).toBe("denied");
   });
 
+  it("overwrites a supplied time with the database clock", async () => {
+    const id = await insert("NOW() - INTERVAL '14 months'");
+    const { rows } = await getPool().query(
+      "SELECT time > NOW() - INTERVAL '1 minute' AS recent FROM federated_connector_mint_log WHERE mint_id=$1",
+      [id],
+    );
+    expect(rows[0].recent).toBe(true);
+    // so a backdated record can't be deleted at once
+    await expect(
+      getPool().query(
+        "DELETE FROM federated_connector_mint_log WHERE mint_id=$1",
+        [id],
+      ),
+    ).rejects.toThrow("append-only");
+    expect(await count(id)).toBe(1);
+  });
+
+  it("enables every guard ALWAYS, so replica-mode sessions are covered", async () => {
+    const { rows } = await getPool().query(
+      `SELECT tgname, tgenabled::text AS enabled FROM pg_trigger
+        WHERE tgrelid='federated_connector_mint_log'::regclass AND NOT tgisinternal
+        ORDER BY tgname`,
+    );
+    expect(rows).toEqual([
+      { tgname: "federated_connector_mint_log_append_only", enabled: "A" },
+      { tgname: "federated_connector_mint_log_insert_time", enabled: "A" },
+      { tgname: "federated_connector_mint_log_no_truncate", enabled: "A" },
+    ]);
+  });
+
+  it("reports a trigger enabled only for origin sessions, and sync upgrades it", async () => {
+    await getPool().query(
+      "ALTER TABLE federated_connector_mint_log ENABLE TRIGGER federated_connector_mint_log_no_truncate",
+    );
+    expect(await getFederatedMintLogGuardStatus(getPool())).toEqual({
+      state: "outdated",
+    });
+    expect(await federatedMintLogSchemaNeedsSync(getPool())).toBe(true);
+    const client = await getPool().connect();
+    try {
+      await ensureFederatedMintLogSchema(client);
+    } finally {
+      client.release();
+    }
+    expect(await getFederatedMintLogGuardStatus(getPool())).toEqual({
+      state: "ok",
+    });
+  });
+
   it("refuses deleting a record younger than the retention period", async () => {
-    const id = await insert("NOW() - INTERVAL '12 months'");
+    const id = await insertAt("12 months");
     await expect(
       getPool().query(
         "DELETE FROM federated_connector_mint_log WHERE mint_id=$1",
@@ -105,8 +174,8 @@ describe("federated connector mint log", () => {
   });
 
   it("lets the retention job delete only expired records", async () => {
-    const old = await insert("NOW() - INTERVAL '14 months'");
-    const recent = await insert("NOW() - INTERVAL '1 day'");
+    const old = await insertAt("14 months");
+    const recent = await insertAt("1 day");
     expect(
       await purgeExpiredFederatedMintLog(getPool()),
     ).toBeGreaterThanOrEqual(1);
@@ -142,7 +211,7 @@ describe("federated connector mint log", () => {
       expect(await federatedMintLogSchemaNeedsSync(getPool())).toBe(false);
     } finally {
       await getPool().query(
-        "ALTER TABLE federated_connector_mint_log ENABLE TRIGGER federated_connector_mint_log_append_only",
+        "ALTER TABLE federated_connector_mint_log ENABLE ALWAYS TRIGGER federated_connector_mint_log_append_only",
       );
     }
   });

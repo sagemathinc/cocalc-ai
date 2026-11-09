@@ -9,6 +9,11 @@ append-only. Triggers refuse every UPDATE and TRUNCATE, and every DELETE of a
 row younger than the retention period, so no code path (and no ordinary SQL
 session) can rewrite or drop a mint record before it expires. Only rows older
 than FEDERATED_MINT_LOG_RETENTION may be deleted, by the retention job.
+
+A row's time is always the database's own clock at insert: a supplied time
+is overwritten, so a record can't be backdated to make it deletable at once.
+The triggers are enabled ALWAYS, so they also fire for sessions in replica
+mode.
 */
 
 import type { Client } from "@cocalc/database/pool";
@@ -18,9 +23,16 @@ export const FEDERATED_MINT_LOG_ROW_TRIGGER =
   "federated_connector_mint_log_append_only";
 export const FEDERATED_MINT_LOG_TRUNCATE_TRIGGER =
   "federated_connector_mint_log_no_truncate";
+export const FEDERATED_MINT_LOG_INSERT_TRIGGER =
+  "federated_connector_mint_log_insert_time";
+const FEDERATED_MINT_LOG_TRIGGERS = [
+  FEDERATED_MINT_LOG_ROW_TRIGGER,
+  FEDERATED_MINT_LOG_TRUNCATE_TRIGGER,
+  FEDERATED_MINT_LOG_INSERT_TRIGGER,
+];
 const FEDERATED_MINT_LOG_FUNCTION = "federated_connector_mint_log_guard";
 // Bump when the function changes, so schema sync replaces it.
-const FEDERATED_MINT_LOG_CONTRACT = "federated-mint-log-append-only-v1";
+const FEDERATED_MINT_LOG_CONTRACT = "federated-mint-log-append-only-v2";
 // At least 13 months (audit evidence).
 export const FEDERATED_MINT_LOG_RETENTION = "13 months";
 
@@ -28,6 +40,10 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${FEDERATED_M
    RETURNS TRIGGER AS $$
    -- ${FEDERATED_MINT_LOG_CONTRACT}
    BEGIN
+     IF TG_OP = 'INSERT' THEN
+       NEW.time := NOW();
+       RETURN NEW;
+     END IF;
      IF TG_OP = 'DELETE'
         AND OLD.time < NOW() - INTERVAL '${FEDERATED_MINT_LOG_RETENTION}' THEN
        RETURN OLD;
@@ -69,6 +85,29 @@ export async function ensureFederatedMintLogSchema(db: Client): Promise<void> {
          EXECUTE FUNCTION ${FEDERATED_MINT_LOG_FUNCTION}()`,
     );
   }
+  if (!existing.includes(FEDERATED_MINT_LOG_INSERT_TRIGGER)) {
+    await db.query(
+      `CREATE TRIGGER ${FEDERATED_MINT_LOG_INSERT_TRIGGER}
+         BEFORE INSERT
+         ON ${FEDERATED_MINT_LOG_TABLE}
+         FOR EACH ROW
+         EXECUTE FUNCTION ${FEDERATED_MINT_LOG_FUNCTION}()`,
+    );
+  }
+  // Fire in every session mode, including replica. A trigger someone
+  // disabled (D) is left disabled and reported, never silently re-enabled.
+  for (const tgname of FEDERATED_MINT_LOG_TRIGGERS) {
+    const { rows } = await db.query<{ enabled: string }>(
+      `SELECT tgenabled::text AS enabled FROM pg_trigger
+        WHERE tgrelid=$1::regclass AND tgname=$2 AND NOT tgisinternal`,
+      [FEDERATED_MINT_LOG_TABLE, tgname],
+    );
+    if (rows[0]?.enabled === "O") {
+      await db.query(
+        `ALTER TABLE ${FEDERATED_MINT_LOG_TABLE} ENABLE ALWAYS TRIGGER ${tgname}`,
+      );
+    }
+  }
 }
 
 // A disabled trigger is not repaired here (someone disabled it on purpose);
@@ -81,7 +120,8 @@ export async function federatedMintLogSchemaNeedsSync(
 }
 
 export interface FederatedMintLogGuardStatus {
-  // ok: both triggers enabled and current; disabled: someone disabled one.
+  // ok: every trigger enabled ALWAYS and current; disabled: someone disabled
+  // one; outdated: an old function, or a trigger that doesn't fire always.
   state: "ok" | "missing" | "disabled" | "outdated";
 }
 
@@ -103,15 +143,20 @@ export async function getFederatedMintLogGuardStatus(
     [
       FEDERATED_MINT_LOG_TABLE,
       FEDERATED_MINT_LOG_CONTRACT,
-      [FEDERATED_MINT_LOG_ROW_TRIGGER, FEDERATED_MINT_LOG_TRUNCATE_TRIGGER],
+      FEDERATED_MINT_LOG_TRIGGERS,
     ],
   );
-  if (rows.length < 2) return { state: "missing" };
-  // Only O (origin) and A (always) fire for ordinary writes.
-  if (rows.some((r) => r.enabled !== "O" && r.enabled !== "A")) {
+  if (rows.length < FEDERATED_MINT_LOG_TRIGGERS.length) {
+    return { state: "missing" };
+  }
+  // D (disabled) and R (replica only) don't fire for ordinary writes.
+  if (rows.some((r) => r.enabled === "D" || r.enabled === "R")) {
     return { state: "disabled" };
   }
-  if (rows.some((r) => !r.current)) return { state: "outdated" };
+  // O fires, but not in replica mode: sync upgrades it to A.
+  if (rows.some((r) => !r.current || r.enabled !== "A")) {
+    return { state: "outdated" };
+  }
   return { state: "ok" };
 }
 

@@ -263,6 +263,7 @@ export interface GcloudTurnToken {
 
 const MAX_TOKEN_LENGTH = 8192;
 const TOKEN_RE = /^[\x21-\x7e]+$/; // printable ASCII, no whitespace
+const DESCRIPTION_RE = /^[\x20-\x7e]{0,200}$/; // printable ASCII and spaces
 const TURN_TOKEN_KEYS = [
   "connector",
   "token",
@@ -309,7 +310,12 @@ export function parseGcloudTurnToken(
     !TOKEN_RE.test(entry.token)
   )
     return;
-  if (typeof entry.description !== "string" || entry.description.length > 200)
+  // The description goes into the agent's turn context: printable ASCII
+  // only, so it can't add lines or control characters.
+  if (
+    typeof entry.description !== "string" ||
+    !DESCRIPTION_RE.test(entry.description)
+  )
     return;
   const lease = entry.gcloud;
   if (lease == null || typeof lease !== "object" || Array.isArray(lease))

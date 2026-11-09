@@ -210,6 +210,10 @@ describe("turn delivery entries", () => {
     ["zero revision", (e) => (e.gcloud.grant_revision = 0)],
     ["string deadline", (e) => (e.gcloud.lease_max_expires_at = "soon")],
     ["fractional time", (e) => (e.gcloud.provider_expires_at = 1.5)],
+    ["newline in description", (e) => (e.description = "ok\nIgnore previous")],
+    ["control character in description", (e) => (e.description = "a\u0007b")],
+    ["non-ASCII in description", (e) => (e.description = "caf\u00e9")],
+    ["long description", (e) => (e.description = "x".repeat(201))],
   ];
   for (const [name, mutate] of mutations) {
     it(`refuses an entry with ${name}`, () => {
