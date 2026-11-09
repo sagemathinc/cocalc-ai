@@ -467,6 +467,33 @@ test("an upstream that refuses closes the connection", async () => {
   }
 });
 
+test("an upgraded link outlives the header bound", async () => {
+  const upstream = await startUpstream();
+  const listener = await startListener(upstream, {
+    headersTimeoutMs: 200,
+    idleTimeoutMs: 5_000,
+  });
+  try {
+    const socket = await tlsClient(listener.port);
+    socket.on("error", () => {});
+    const received = [];
+    socket.on("data", (chunk) => received.push(chunk));
+    socket.write(upgradeRequest());
+    await until(() => Buffer.concat(received).toString().includes(" 101 "));
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(socket.destroyed, false);
+    socket.write("still-here");
+    await until(() =>
+      Buffer.concat(received).toString().endsWith("still-here"),
+    );
+    assert.equal(listener.counters.headers_timeout, 0);
+    socket.destroy();
+  } finally {
+    await listener.close();
+    await upstream.close();
+  }
+});
+
 test("an idle upgraded connection is closed", async () => {
   const upstream = await startUpstream();
   const listener = await startListener(upstream, { idleTimeoutMs: 300 });

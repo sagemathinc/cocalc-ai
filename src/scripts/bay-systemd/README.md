@@ -629,7 +629,9 @@ coreutils.
 
 4. Check it with `cocalc-bay-broker-tls-key check`. This makes a TLS 1.3
    handshake from the bay. The served pin must equal the installed
-   certificate's pin.
+   certificate's pin. Only exit code 0 with a last line of `ok` is a
+   successful check. The tool reads the unit's env files, in the unit's
+   order.
 
 Nothing outside the bay can connect until the VPC firewall admits the broker.
 The firewall gate is hard:
@@ -651,6 +653,13 @@ Every pin change is a record line, run and kept by the operator:
 
 `activate` prints this line.
 
+- **The reason** must be one line of printable ASCII, at most 200 characters,
+  so it cannot forge a second record line. Anything else is refused before
+  anything changes.
+- **A step that fails** prints a `FAILED:` line instead of a record line. It
+  says what is still true, for example that the listener may still be
+  running.
+
 1. **Stage the next key.** Run `cocalc-bay-broker-tls-key stage`. It prints
    `next_pin`. Nothing serves it yet.
 2. **Re-pin the broker** to `next_pin` through its own configuration step.
@@ -667,12 +676,15 @@ Every pin change is a record line, run and kept by the operator:
      installs the staged key and restarts the listener.
    - It removes the old key only after a TLS 1.3 handshake shows the new pin
      being served.
-   - If that check fails:
-     - the listener is stopped;
-     - both keys stay on disk;
-     - the tool prints how to go back;
-     - `stage` and `activate` refuse to run until the `.old` files are dealt
-       with.
+   - If that check fails, the tool stops the listener and proves it: the
+     stop must succeed, systemd must report the unit inactive, and no TLS
+     handshake may reach its address.
+     - Proven stopped: both keys stay on disk and the tool prints how to go
+       back (exit 1).
+     - Not proven: a distinct hard failure (exit 2). The listener may still
+       be serving the key it loaded; stop it by hand before anything else.
+     - Either way, `stage` and `activate` refuse to run until the `.old`
+       files are dealt with.
 
 ### Emergency Revoke
 
@@ -680,8 +692,17 @@ Every pin change is a record line, run and kept by the operator:
 cocalc-bay-broker-tls-key revoke --yes --reason "<why>"
 ```
 
-This stops and disables the listener and deletes every key file. It prints a
-record line.
+This stops and disables the listener, then deletes every key file, and
+prints a record line.
+
+- The keys are deleted only once the stop and the disable are proven:
+  - the stop succeeds, systemd reports the unit inactive, and no TLS
+    handshake reaches its address;
+  - the disable succeeds, and systemd no longer reports the unit enabled.
+- A running listener keeps the key it loaded, so deleting the files alone
+  would revoke nothing. If either proof fails, nothing is deleted and the
+  tool prints a `FAILED:` line: stop or disable the unit by hand, then run
+  `revoke` again.
 
 - The broker can no longer connect, so it cannot register, and its gate stays
   closed.
