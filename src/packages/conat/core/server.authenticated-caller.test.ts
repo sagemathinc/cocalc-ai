@@ -91,6 +91,85 @@ describe("authenticated Conat caller metadata", () => {
     },
   );
 
+  const BROKER_ID = "109876543210987654321";
+  it.each([
+    [
+      "a verified broker",
+      { hub_id: "federated-broker", federated_broker_signer_id: BROKER_ID },
+      { federated_broker_signer_id: BROKER_ID },
+    ],
+    [
+      "a broker id mixed with a bay identity",
+      {
+        hub_id: "federated-broker",
+        federated_broker_signer_id: BROKER_ID,
+        cluster_id: "c",
+        bay_id: "b",
+        bay_credential_id: "k",
+      },
+      undefined,
+    ],
+    [
+      "a broker id mixed with an account",
+      { federated_broker_signer_id: BROKER_ID, account_id: "a" },
+      undefined,
+    ],
+    [
+      "a malformed broker id",
+      { hub_id: "federated-broker", federated_broker_signer_id: "0123456" },
+      undefined,
+    ],
+    [
+      "a numeric broker id",
+      { hub_id: "federated-broker", federated_broker_signer_id: 1234567 },
+      undefined,
+    ],
+    [
+      "a bay (unchanged)",
+      { hub_id: "bay:b", cluster_id: "c", bay_id: "b", bay_credential_id: "k" },
+      { cluster_id: "c", bay_id: "b", bay_credential_id: "k" },
+    ],
+    ["a plain hub (unchanged)", { hub_id: "service" }, undefined],
+  ])(
+    "stamps %s from its authentication, never from the message",
+    async (_label, principal, expected) => {
+      const server = init({
+        port: 0,
+        getUser: async (socket) =>
+          socket.handshake.auth.key
+            ? (principal as any)
+            : { hub_id: "receiver" },
+        isAllowed: async () => true,
+      });
+      const receiver = connect({ address: server.address(), noCache: true });
+      const sender = connect({
+        address: server.address(),
+        noCache: true,
+        auth: { key: true },
+      });
+      await receiver.waitUntilSignedIn({ timeout: 5_000 });
+      await sender.waitUntilSignedIn({ timeout: 5_000 });
+      const subscription = await receiver.subscribe("broker.test.subject");
+      const response = await sender.conn
+        .timeout(5_000)
+        .emitWithAck("publish", [
+          "broker.test.subject",
+          "broker-stamp-test",
+          0,
+          1,
+          DataEncoding.JsonCodec,
+          Buffer.from("null"),
+          undefined,
+          undefined,
+          { federated_broker_signer_id: "999999999999999999999" },
+        ]);
+      expect(response?.error).toBeUndefined();
+      expect((await subscription.next()).value?.caller ?? undefined).toEqual(
+        expected,
+      );
+    },
+  );
+
   it.each([
     ["the Hub API subject", true],
     ["any other subject", false],

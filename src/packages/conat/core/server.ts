@@ -1578,6 +1578,25 @@ export class ConatServer extends EventEmitter {
     user: any,
     subject: string,
   ): AuthenticatedCaller | undefined => {
+    // The federated token broker: only its verified signer id (set by the
+    // hub's authentication, never from a request). A user that mixes it with
+    // any other identity gets no stamp at all.
+    if (user?.federated_broker_signer_id !== undefined) {
+      const id = user.federated_broker_signer_id;
+      if (
+        typeof id === "string" &&
+        /^[1-9][0-9]{5,31}$/.test(id) &&
+        user.cluster_id == null &&
+        user.bay_id == null &&
+        user.bay_credential_id == null &&
+        user.account_id == null &&
+        user.project_id == null &&
+        user.host_id == null
+      ) {
+        return { federated_broker_signer_id: id };
+      }
+      return undefined;
+    }
     if (
       typeof user?.cluster_id === "string" &&
       typeof user?.bay_id === "string" &&

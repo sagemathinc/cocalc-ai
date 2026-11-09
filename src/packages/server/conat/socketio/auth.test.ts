@@ -61,6 +61,12 @@ jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
     verifyProjectHostTokenMock(...args),
 }));
 
+let serverSettingsMock: Record<string, unknown> = {};
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  __esModule: true,
+  getServerSettings: async () => serverSettingsMock,
+}));
+
 jest.mock("@cocalc/server/inter-bay/bay-credentials", () => ({
   __esModule: true,
   authenticateBayCredential: (...args: any[]) =>
@@ -1997,5 +2003,65 @@ describe("federated connector inter-bay subjects", () => {
       if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;
       else process.env.COCALC_CLUSTER_ROLE = previous;
     }
+  });
+});
+
+describe("federated token broker principal", () => {
+  const ID = "109876543210987654321";
+  const SIGNER = `fake-broker@example-project-1.iam.gserviceaccount.com ${ID}`;
+  const broker = { hub_id: "federated-broker", federated_broker_signer_id: ID };
+
+  beforeEach(() => {
+    serverSettingsMock = { federated_broker_signer: SIGNER };
+    process.env.COCALC_CLUSTER_ID = "cluster-1";
+  });
+
+  it("is allowed exactly its subjects", async () => {
+    for (const [type, subject] of [
+      ["pub", "_INBOX.abc"],
+      ["pub", "bay.bay-a.rpc.federated-broker.v1"],
+      ["pub", "broker.cluster-1.heartbeat.v1"],
+      ["sub", "broker.cluster-1.rpc.mint.v1"],
+      ["sub", `_INBOX.broker-${ID}.xyz`],
+    ] as const) {
+      expect(await isAllowed({ user: broker as any, subject, type })).toBe(
+        true,
+      );
+    }
+    for (const [type, subject] of [
+      ["pub", "bay.bay-a.rpc.federated-connector.v1"],
+      ["pub", "bay.bay-a.rpc.project-control.start"],
+      ["pub", "hub.account.x.api"],
+      ["pub", "global.directory.rpc.resolve-project-bay"],
+      ["sub", "_INBOX.>"],
+      ["sub", "_INBOX.someone-else.x"],
+      ["sub", "hub.>"],
+      ["sub", "bay.>"],
+    ] as const) {
+      expect(await isAllowed({ user: broker as any, subject, type })).toBe(
+        false,
+      );
+    }
+  });
+
+  it("gets nothing once the signer record names someone else, or no one", async () => {
+    serverSettingsMock = {
+      federated_broker_signer: SIGNER.replace(ID, "109876543210987654322"),
+    };
+    expect(
+      await isAllowed({
+        user: broker as any,
+        subject: "_INBOX.abc",
+        type: "pub",
+      }),
+    ).toBe(false);
+    serverSettingsMock = {};
+    expect(
+      await isAllowed({
+        user: broker as any,
+        subject: "broker.cluster-1.rpc.mint.v1",
+        type: "sub",
+      }),
+    ).toBe(false);
   });
 });

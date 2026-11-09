@@ -40,6 +40,9 @@ export type CoCalcUser =
       error?: string;
       auth_iat_s?: number;
       auth_session_hash?: string;
+      /** The federated token broker (hub_id "federated-broker"). */
+      federated_broker_signer_id?: string;
+      auth_lease_exp_s?: number;
     }
   | {
       account_id?: string;

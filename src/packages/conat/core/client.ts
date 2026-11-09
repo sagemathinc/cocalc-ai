@@ -3461,6 +3461,10 @@ export interface AuthenticatedCaller {
   // Only on the host-status subject from a host connection: that host's own
   // id, so the status service never trusts a host_id in the request (068).
   host_id?: string;
+  // Only for the federated token broker's connection: its signer's unique id
+  // (a decimal string), as verified at authentication. Never set together
+  // with any other identity.
+  federated_broker_signer_id?: string;
 }
 
 export class MessageData<T = any> {
