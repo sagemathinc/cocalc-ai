@@ -68,9 +68,11 @@ import {
   endFederatedConnectorTurn,
   federatedRunActivity,
   federatedTurnDeps,
-  parseFederationSnapshot,
+  federatedBrokerRegistration,
   owningBaySnapshot,
-  registerFederatedBroker,
+  parseFederationSnapshot,
+  setFederatedBrokerMintClient,
+  setFederatedHubReadiness,
 } from "./routing";
 import {
   FEDERATED_CONNECTOR_UNAVAILABLE,
@@ -218,17 +220,36 @@ describe("host turn calls", () => {
 });
 
 describe("gate", () => {
-  it("is closed until a broker registers, then follows the setting", async () => {
+  const SITE = "00000000-0000-4000-8000-0000000000aa";
+  const ready = {
+    identity: true,
+    database: true,
+    reference_time: true,
+    signing: true,
+  };
+  const beat = { instance_id: "broker-instance-0001", site_id: SITE, ready };
+
+  it("is closed until the broker is registered, the hub ready and a mint client set", async () => {
     const deps = federatedTurnDeps();
     settings = { federated_cli_connectors: "gcloud" };
-    registerFederatedBroker(undefined);
+    federatedBrokerRegistration.clear("expired");
+    setFederatedBrokerMintClient({ getToken: jest.fn() });
+    setFederatedHubReadiness(() => true);
     expect(await deps.gateOpen()).toBe(false);
-    registerFederatedBroker({ site_id: "site-1", getToken: jest.fn() });
+    federatedBrokerRegistration.heartbeat(beat, "conn-1");
     expect(await deps.gateOpen()).toBe(true);
-    expect(deps.site_id).toBe("site-1");
+    expect(deps.site_id).toBe(SITE);
+    setFederatedHubReadiness(() => false);
+    expect(await deps.gateOpen()).toBe(false);
+    setFederatedHubReadiness(() => true);
+    setFederatedBrokerMintClient(undefined);
+    expect(await deps.gateOpen()).toBe(false);
+    setFederatedBrokerMintClient({ getToken: jest.fn() });
     settings = { federated_cli_connectors: "" };
     expect(await deps.gateOpen()).toBe(false);
-    registerFederatedBroker(undefined);
+    federatedBrokerRegistration.transportLost("conn-1");
+    settings = { federated_cli_connectors: "gcloud" };
+    expect(await deps.gateOpen()).toBe(false);
   });
 });
 

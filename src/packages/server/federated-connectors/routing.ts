@@ -12,8 +12,9 @@ runs on, and the real dependencies of the turn (./turn.ts).
   owning bay; the snapshot is bounded (5 s) and fails closed.
 - The site gate runs on the seed.
 
-The broker (G3b) registers itself with registerFederatedBroker; until it
-does, the gate is closed.
+The broker registers through heartbeats (a lease, broker-registration.ts);
+while it isn't registered, or the hub's own side isn't ready, the gate is
+closed.
 */
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -51,6 +52,7 @@ import {
 } from "./assignments";
 import type { MintRequest, MintResult } from "./broker";
 import { introspectAccessToken, type TextFetch } from "./google-identity";
+import { BrokerRegistration } from "./broker-registration";
 import { setFederatedConnectorGateOnSeed } from "./site-gate";
 import { checkIssuedToken, TokenClaimsCache } from "./token-check";
 import {
@@ -76,16 +78,31 @@ const googleFetch: TextFetch = async (url, init) => {
   return { status: res.status, text: () => res.text() };
 };
 
-interface RegisteredBroker {
-  site_id: string;
+/**
+ * The broker's registration (a lease, §3), fed by its heartbeats over the
+ * fabric. The hub's own readiness (the pinned JWKS acknowledged by every
+ * active bay; G3b-2) is required too; until G3b-2 provides it, it's false and
+ * the gate stays closed.
+ */
+let hubReady: () => boolean = () => false;
+export function setFederatedHubReadiness(ready: () => boolean): void {
+  hubReady = ready;
+}
+export const federatedBrokerRegistration = new BrokerRegistration(
+  () => performance.now(),
+  () => hubReady(),
+);
+
+interface BrokerMintClient {
   getToken(request: MintRequest): Promise<MintResult>;
 }
+let mintClient: BrokerMintClient | undefined;
 
-let broker: RegisteredBroker | undefined;
-
-/** The broker transport (G3b) registers here; unset means the gate is closed. */
-export function registerFederatedBroker(next: RegisteredBroker | undefined) {
-  broker = next;
+/** The transport's client for the broker's mint method (G3b-1 transport). */
+export function setFederatedBrokerMintClient(
+  client: BrokerMintClient | undefined,
+): void {
+  mintClient = client;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -161,7 +178,9 @@ export function parseFederationSnapshot(
 }
 
 async function gateOpen(): Promise<boolean> {
-  if (broker == null) return false;
+  if (mintClient == null || federatedBrokerRegistration.registered() == null) {
+    return false;
+  }
   const settings = (await getServerSettings()) as Record<string, unknown>;
   return parseFederatedGate(settings[FEDERATED_GATE_SETTING]).includes(
     "gcloud",
@@ -177,8 +196,13 @@ export function federatedTurnDeps(): FederatedTurnDeps {
     gateOpen,
     snapshot: owningBaySnapshot,
     getToken: async (request) => {
-      if (broker == null) throw Error("no broker");
-      return await broker.getToken(request);
+      if (
+        mintClient == null ||
+        federatedBrokerRegistration.registered() == null
+      ) {
+        throw Error("no broker");
+      }
+      return await mintClient.getToken(request);
     },
     checkIssuedToken: async (issued, grant) =>
       await checkIssuedToken({
@@ -188,7 +212,7 @@ export function federatedTurnDeps(): FederatedTurnDeps {
         introspect: (token) => introspectAccessToken(googleFetch, token),
       }),
     get site_id() {
-      return broker?.site_id ?? "";
+      return federatedBrokerRegistration.registered()?.site_id ?? "";
     },
   };
 }
