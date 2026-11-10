@@ -776,6 +776,396 @@ describePglite("commercial order store", () => {
     expect(revised.next_action).toBe("Review agreement");
   });
 
+  async function provisionedOrder(
+    overrides: Partial<CommercialOrderCreateRequest> = {},
+  ) {
+    const created = await store.createCommercialOrder(
+      request({
+        terms_snapshot: {
+          invoice: { memo: "Campus-wide adoption pilot" },
+          site_license: { name: "Pilot license" },
+        },
+        ...overrides,
+      }),
+    );
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve provisioned billing fixture",
+    });
+    return await store.setCommercialFulfillment({
+      account_id: actor,
+      id: approved.id,
+      expected_version: approved.version,
+      reason: "provision billing fixture",
+      fulfillment_state: "provisioned",
+    });
+  }
+
+  const revisedItems = (amount: string, product_kind = "site_license") => [
+    {
+      description: "Campus-wide adoption pilot: department share",
+      quantity: "1",
+      unit_amount: amount,
+      subtotal: amount,
+      product_kind: product_kind as "site_license",
+    },
+  ];
+
+  it("lets a provisioned order revise what is billed before any money moves", async () => {
+    const provisioned = await provisionedOrder();
+    const revised = await store.reviseCommercialOrder({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "match the customer's purchase order",
+      changes: {
+        agreed_subtotal: "3500",
+        agreed_total: "3500",
+        po_number: "PO-123",
+        terms_snapshot: {
+          invoice: { memo: "Department share (purchase order PO-123)" },
+          site_license: { name: "Pilot license" },
+        },
+      },
+      items: revisedItems("3500"),
+    });
+    expect(revised.agreed_total).toBe("3500.0000000000");
+    expect(revised.po_number).toBe("PO-123");
+    expect(revised.fulfillment_state).toBe("provisioned");
+    expect(revised.workflow_state).toBe("draft");
+    const reapproved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: revised.id,
+      expected_version: revised.version,
+      reason: "approve revised billing",
+    });
+    expect(reapproved.workflow_state).toBe("ready_to_invoice");
+    expect(reapproved.fulfillment_state).toBe("provisioned");
+  });
+
+  it("keeps the provisioned terms of a fulfilled order frozen", async () => {
+    const provisioned = await provisionedOrder();
+    const base = {
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "attempt to change provisioned terms",
+    };
+    await expect(
+      store.reviseCommercialOrder({
+        ...base,
+        changes: { service_ends_at: "2030-01-01T00:00:00.000Z" },
+      }),
+    ).rejects.toThrow("fulfilled commercial terms cannot be revised");
+    await expect(
+      store.reviseCommercialOrder({
+        ...base,
+        changes: {
+          terms_snapshot: {
+            invoice: { memo: "Campus-wide adoption pilot" },
+            site_license: { name: "A different license" },
+          },
+        },
+      }),
+    ).rejects.toThrow("only the invoice and agreement terms may change");
+    await expect(
+      store.reviseCommercialOrder({
+        ...base,
+        changes: { agreed_subtotal: "3500", agreed_total: "3500" },
+        items: revisedItems("3500", "membership_package"),
+      }),
+    ).rejects.toThrow("line items must keep their products");
+    await expect(
+      store.reviseCommercialOrder({
+        ...base,
+        changes: { terms_snapshot: null as any },
+      }),
+    ).rejects.toThrow("terms_snapshot is required");
+  });
+
+  it("lets an ended, unpaid order revise what is billed", async () => {
+    const provisioned = await provisionedOrder();
+    const ended = await store.setCommercialFulfillment({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "service period over",
+      fulfillment_state: "ended",
+    });
+    const revised = await store.reviseCommercialOrder({
+      account_id: actor,
+      id: ended.id,
+      expected_version: ended.version,
+      reason: "match the customer's purchase order",
+      changes: { agreed_subtotal: "3500", agreed_total: "3500" },
+      items: revisedItems("3500"),
+    });
+    expect(revised.agreed_total).toBe("3500.0000000000");
+    expect(revised.fulfillment_state).toBe("ended");
+  });
+
+  it("matches line items by product and service period, not order or date format", async () => {
+    const item = (description: string, start: string, end: string) => ({
+      description,
+      quantity: "1",
+      unit_amount: "1950",
+      subtotal: "1950",
+      product_kind: "site_license" as const,
+      service_start: start,
+      service_end: end,
+    });
+    const provisioned = await provisionedOrder({
+      items: [
+        item(
+          "First term",
+          "2026-09-01T00:00:00.000Z",
+          "2027-01-01T00:00:00.000Z",
+        ),
+        item(
+          "Second term",
+          "2027-01-01T00:00:00.000Z",
+          "2027-06-01T00:00:00.000Z",
+        ),
+      ],
+    });
+    const revised = await store.reviseCommercialOrder({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "list the terms as the purchase order does",
+      items: [
+        item(
+          "Spring term",
+          "2027-01-01T00:00:00Z",
+          "2027-06-01T00:00:00+00:00",
+        ),
+        item(
+          "Autumn term",
+          "2026-09-01T00:00:00Z",
+          "2027-01-01T00:00:00+00:00",
+        ),
+      ],
+    });
+    expect(revised.items.map(({ description }) => description).sort()).toEqual([
+      "Autumn term",
+      "Spring term",
+    ]);
+    await expect(
+      store.reviseCommercialOrder({
+        account_id: actor,
+        id: revised.id,
+        expected_version: revised.version,
+        reason: "attempt to move a service period",
+        items: [
+          item("Spring term", "2027-01-01T00:00:00Z", "2027-07-01T00:00:00Z"),
+          item("Autumn term", "2026-09-01T00:00:00Z", "2027-01-01T00:00:00Z"),
+        ],
+      }),
+    ).rejects.toThrow(
+      "line items must keep their products and service periods",
+    );
+  });
+
+  it("refuses to re-bill a provisioned order that has collected funds", async () => {
+    const provisioned = await provisionedOrder();
+    const paid = await store.recordManualCommercialPayment({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "record independently verified partial payment",
+      amount: "1000",
+      currency: "usd",
+      method: "wire",
+      evidence_reference: `TEST-WIRE-${randomUUID()}`,
+    });
+    expect(paid.workflow_state).not.toBe("complete");
+    await expect(
+      store.reviseCommercialOrder({
+        account_id: actor,
+        id: paid.id,
+        expected_version: paid.version,
+        reason: "attempt to re-bill a paid order",
+        changes: { agreed_subtotal: "3500", agreed_total: "3500" },
+        items: revisedItems("3500"),
+      }),
+    ).rejects.toThrow("collected funds cannot be revised");
+  });
+
+  it("refuses to re-bill a provisioned order with a live invoice", async () => {
+    const provisioned = await provisionedOrder();
+    const invoiced = await store.issueManualCommercialInvoice({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "manual invoice for provisioned fixture",
+      idempotency_key: `manual-invoice-${randomUUID()}`,
+      invoice_reference: "FIN-2026-0100",
+      issued_at: "2026-08-01T00:00:00.000Z",
+      due_at: "2026-08-22T00:00:00.000Z",
+    });
+    await expect(
+      store.reviseCommercialOrder({
+        account_id: actor,
+        id: invoiced.id,
+        expected_version: invoiced.version,
+        reason: "attempt to re-bill an invoiced order",
+        changes: { agreed_subtotal: "3500", agreed_total: "3500" },
+        items: revisedItems("3500"),
+      }),
+    ).rejects.toThrow("void the active invoice");
+  });
+
+  async function billingOnlyRevision() {
+    const provisioned = await provisionedOrder();
+    const revised = await store.reviseCommercialOrder({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "match the customer's purchase order",
+      changes: { agreed_subtotal: "3500", agreed_total: "3500" },
+      items: revisedItems("3500"),
+    });
+    expect(revised.approved_at).toBeNull();
+    expect(revised.fulfillment_state).toBe("provisioned");
+    return { provisioned, revised };
+  }
+
+  it("keeps provisioned terms frozen for a generic update while a billing revision awaits re-approval", async () => {
+    const { revised } = await billingOnlyRevision();
+    const base = {
+      account_id: actor,
+      id: revised.id,
+      expected_version: revised.version,
+      reason: "attempt to change provisioned terms before re-approval",
+    };
+    for (const changes of [
+      { service_starts_at: "2026-01-01T00:00:00.000Z" },
+      { service_ends_at: "2030-01-01T00:00:00.000Z" },
+      { site_license_id: randomUUID() },
+      // Customer and CRM identity are frozen once provisioned.
+      { customer_account_id: randomUUID() },
+      { crm_organization_id: randomUUID() },
+      // Columns not on the provisioned-update allowlist are refused.
+      { organization_name: "Another University" },
+      { currency: "eur" },
+      { collection_mode: "complimentary" },
+    ] as const) {
+      await expect(
+        store.updateCommercialOrder({ ...base, changes: changes as any }),
+      ).rejects.toThrow(
+        `fulfilled commercial terms cannot be revised (${Object.keys(changes)[0]} affects provisioned service)`,
+      );
+    }
+    for (const terms_snapshot of [
+      {
+        invoice: { memo: "Campus-wide adoption pilot" },
+        site_license: { name: "A different license" },
+      },
+      {
+        invoice: { memo: "Campus-wide adoption pilot" },
+        site_license: { name: "Pilot license" },
+        fulfillment_required: false,
+      },
+    ]) {
+      await expect(
+        store.updateCommercialOrder({ ...base, changes: { terms_snapshot } }),
+      ).rejects.toThrow("only the invoice and agreement terms may change");
+    }
+    await expect(
+      store.updateCommercialOrder({
+        ...base,
+        changes: { terms_snapshot: null as any },
+      }),
+    ).rejects.toThrow("terms_snapshot is required");
+    await expect(
+      store.updateCommercialOrder({
+        ...base,
+        items: revisedItems("3500", "membership_package"),
+      }),
+    ).rejects.toThrow("line items must keep their products");
+    await expect(
+      store.updateCommercialOrder({
+        ...base,
+        items: revisedItems("3500").map((item) => ({
+          ...item,
+          service_start: "2026-09-01T00:00:00.000Z",
+          service_end: "2027-09-01T00:00:00.000Z",
+        })),
+      }),
+    ).rejects.toThrow("line items must keep their products and service periods");
+    const unchanged = await store.getCommercialOrder(revised.id);
+    expect(unchanged.version).toBe(revised.version);
+  });
+
+  it("allows a billing-only generic update while a billing revision awaits re-approval, then re-approves the frozen terms", async () => {
+    const { provisioned, revised } = await billingOnlyRevision();
+    const updated = await store.updateCommercialOrder({
+      account_id: actor,
+      id: revised.id,
+      expected_version: revised.version,
+      reason: "split to the customer's second purchase order",
+      changes: {
+        agreed_subtotal: "3000",
+        agreed_total: "3000",
+        po_number: "PO-456",
+        terms_snapshot: {
+          invoice: { memo: "Department share (purchase order PO-456)" },
+          site_license: { name: "Pilot license" },
+        },
+      },
+      items: revisedItems("3000"),
+    });
+    expect(updated.agreed_total).toBe("3000.0000000000");
+    expect(updated.po_number).toBe("PO-456");
+    expect(updated.approved_at).toBeNull();
+    const reapproved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: updated.id,
+      expected_version: updated.version,
+      reason: "approve revised billing",
+    });
+    expect(reapproved.workflow_state).toBe("ready_to_invoice");
+    expect(reapproved.fulfillment_state).toBe("provisioned");
+    expect(reapproved.site_license_id).toBe(provisioned.site_license_id);
+    expect(reapproved.service_starts_at).toBe(provisioned.service_starts_at);
+    expect(reapproved.service_ends_at).toBe(provisioned.service_ends_at);
+    expect(reapproved.collection_mode).toBe(provisioned.collection_mode);
+    expect(reapproved.terms_snapshot.site_license).toEqual(
+      provisioned.terms_snapshot.site_license,
+    );
+    expect(reapproved.items.map(({ product_kind }) => product_kind)).toEqual(
+      provisioned.items.map(({ product_kind }) => product_kind),
+    );
+  });
+
+  it("still allows administrative updates of a provisioned order, approved or awaiting re-approval", async () => {
+    const provisioned = await provisionedOrder();
+    expect(provisioned.approved_at).not.toBeNull();
+    const assigned = await store.updateCommercialOrder({
+      account_id: actor,
+      id: provisioned.id,
+      expected_version: provisioned.version,
+      reason: "assign the approved provisioned order",
+      changes: { assignee_account_id: actor, zendesk_ticket_ids: [101] },
+    });
+    expect(assigned.assignee_account_id).toBe(actor);
+    expect(assigned.zendesk_ticket_ids).toEqual([101]);
+
+    const { revised } = await billingOnlyRevision();
+    const reassigned = await store.updateCommercialOrder({
+      account_id: actor,
+      id: revised.id,
+      expected_version: revised.version,
+      reason: "assign the order awaiting re-approval",
+      changes: { assignee_account_id: actor, zendesk_ticket_ids: [102] },
+    });
+    expect(reassigned.assignee_account_id).toBe(actor);
+    expect(reassigned.zendesk_ticket_ids).toEqual([102]);
+    expect(reassigned.approved_at).toBeNull();
+  });
+
   it("replays an exact provisioning retry but refuses a new one when the expected fulfillment state is given", async () => {
     const created = await store.createCommercialOrder(request());
     const approved = await store.approveCommercialOrder({
