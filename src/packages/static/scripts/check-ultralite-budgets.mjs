@@ -330,7 +330,8 @@ const surfaces = [
     // 14.3.3 (#1291, a security fix) to 336.0 KiB. The Jupyter notebook
     // security guide (Trust switch removal) brings it to about 342.4 KiB.
     // "How long a verification lasts" (#1550) brings it to 345.1 KiB.
-    max: 346 * KiB,
+    // The Google Cloud connector design page (#1609) brings it to 348.9 KiB.
+    max: 350 * KiB,
   },
   {
     label: "minimal project settings",
