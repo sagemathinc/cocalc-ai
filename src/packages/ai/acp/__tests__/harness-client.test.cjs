@@ -3139,6 +3139,44 @@ for (const [flag, code] of [
     assert.equal(launches(), 1);
   });
 }
+// The same failures through session/resume (an agent that offers it): the
+// errors name session/resume, and a missing session is still never recreated.
+for (const [flag, code] of [
+  ["--reject-resume", "rejected"],
+  ["--missing-resume", "rejected"],
+  ["--crash-resume", "unavailable"],
+]) {
+  test(`${flag} through session/resume closes the adapter without fallback`, async (t) => {
+    const { agent, request, events, launches, stops } = adapter(t, [
+      "--resume-cap",
+      flag,
+    ]);
+    await assert.rejects(
+      agent.evaluate({ ...request, session_id: "fixture-session" }),
+      (error) => {
+        assert.equal(error.code, code);
+        assert.ok(!error.message.includes("private fixture resume detail"));
+        assert.ok(!error.message.includes("session/load"));
+        if (flag === "--missing-resume") {
+          assert.match(
+            error.message,
+            /Reconnecting will not recreate a missing session/,
+          );
+          assert.match(error.message, /chat history has been kept/);
+          assert.match(error.message, /session\/resume, code -32002/);
+        }
+        if (flag === "--reject-resume")
+          assert.match(error.message, /session\/resume, code -32603/);
+        return true;
+      },
+    );
+    assert.equal(launches(), 1);
+    assert.equal(stops(), 1);
+    assert.ok(!events.some((event) => event.event?.type === "message"));
+    await assert.rejects(agent.evaluate(request), /not idle/);
+    assert.equal(launches(), 1);
+  });
+}
 for (const prompt of [
   "crash",
   "malformed",
@@ -3356,6 +3394,36 @@ test("invalid project directory has actionable guidance without exposing the ret
     assert.match(error.message, /folder control/);
     assert.match(error.message, /existing project directory/);
     assert.match(error.message, /ACP session\/new, code -32602/);
+    assert.ok(!error.message.includes("secret"));
+    return true;
+  });
+});
+test("an unavailable directory on session/resume gets the directory guidance", async (t) => {
+  const client = await start(t, ["--resume-cap", "--reject-cwd"]);
+  await assert.rejects(client.open("fixture-session"), (error) => {
+    assert.equal(error.code, "rejected");
+    assert.match(error.message, /existing project directory/);
+    assert.match(error.message, /ACP session\/resume, code -32602/);
+    assert.ok(!error.message.includes("secret"));
+    return true;
+  });
+});
+test("a subscription resume with an unavailable workspace keeps the saved conversation", async (t) => {
+  const client = await start(
+    t,
+    ["--claude-adapter", "--resume-cap", "--reject-cwd"],
+    undefined,
+    [],
+    undefined,
+    undefined,
+    {},
+    "claude-subscription-controller",
+  );
+  await assert.rejects(client.open("fixture-session"), (error) => {
+    assert.equal(error.code, "rejected");
+    assert.match(error.message, /isolated Claude workspace is unavailable/);
+    assert.match(error.message, /saved conversation has not been replaced/);
+    assert.match(error.message, /ACP session\/resume, code -32602/);
     assert.ok(!error.message.includes("secret"));
     return true;
   });
