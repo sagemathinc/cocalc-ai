@@ -749,7 +749,9 @@ export async function createProjectCliTokenLease({
         run_id: string;
         turn_id: string;
         turn_ref: CocalcConnectorTurnRef;
+        idempotency_key: string;
         secret: string;
+        stillCurrent: () => boolean;
       }
     | undefined;
   let connectorTimer: NodeJS.Timeout | undefined;
@@ -804,9 +806,19 @@ export async function createProjectCliTokenLease({
     cliTimer = setInterval(() => {
       if (closed || renewalPending || !stillCurrent()) return;
       void sweepStaleTokens();
+      // The agent's identity run can be replaced during a long turn (after a
+      // gap that let it expire), and the hub only accepts a live run. Renew
+      // under the current run, but only for the same agent.
+      const identity = identityLease?.currentRun;
+      if (!identity || identity.agent_id !== request.agent_id) {
+        if (cliTimer) clearInterval(cliTimer);
+        cliTimer = undefined;
+        void setCliTokens([], stillCurrent).catch(() => undefined);
+        return;
+      }
       renewalPending = true;
       void hubApi.agent
-        .beginCliConnectorTurn(request)
+        .beginCliConnectorTurn({ ...request, run_id: identity.run_id })
         .then((next) => setCliTokens(next ?? [], stillCurrent))
         .catch(async (error) => {
           // Any failure removes the tokens: the hub could not confirm the
@@ -816,6 +828,9 @@ export async function createProjectCliTokenLease({
             err: `${error}`,
           });
           await setCliTokens([], stillCurrent);
+          // An expired run is replaced on the identity's next refresh; do it
+          // now, so the next renewal can use the new run.
+          void prepareIdentity().catch(() => undefined);
         })
         .catch((error) =>
           logger.error("CLI connector tokens could not be removed", {
@@ -969,35 +984,54 @@ export async function createProjectCliTokenLease({
       run_id: identity.run_id,
       turn_id: issued.turn_id,
       turn_ref,
+      idempotency_key,
       secret: issued.secret,
+      stillCurrent,
     };
     let renewalPending = false;
     connectorTimer = setInterval(() => {
       const active = connectorTurn;
       if (!active || closed || renewalPending) return;
       renewalPending = true;
-      void hubApi.agent
-        .renewCocalcConnectorTurn({
-          account_id: resolvedAccountId,
-          agent_id: active.agent_id,
-          source_project_id: projectId,
-          run_id: active.run_id,
-          turn_id: active.turn_id,
-          turn_ref: active.turn_ref,
-        })
-        .then(async () => {
-          if (connectorTurn === active && !closed) {
-            await setConnectorKey(
-              active.secret,
-              () => connectorTurn === active,
-            );
-          }
-        })
+      const identity = identityLease?.currentRun;
+      const renewal =
+        identity && identity.run_id !== active.run_id
+          ? rebindConnectorTurn(active)
+          : hubApi.agent
+              .renewCocalcConnectorTurn({
+                account_id: resolvedAccountId,
+                agent_id: active.agent_id,
+                source_project_id: projectId,
+                run_id: active.run_id,
+                turn_id: active.turn_id,
+                turn_ref: active.turn_ref,
+              })
+              .then(async () => {
+                if (connectorTurn === active && !closed) {
+                  await setConnectorKey(
+                    active.secret,
+                    () => connectorTurn === active,
+                  );
+                }
+              });
+      void renewal
         .catch(async (error) => {
           logger.warn("managed CoCalc connector renewal failed", {
             projectId,
             err: `${error}`,
           });
+          if (connectorTurn !== active) return;
+          // The run may have expired during a gap: refresh the identity (which
+          // replaces an expired run) and, if the run changed, issue the turn
+          // again under it rather than ending it.
+          await prepareIdentity().catch(() => undefined);
+          if (
+            connectorTurn === active &&
+            identityLease?.currentRun.run_id !== active.run_id
+          ) {
+            await rebindConnectorTurn(active);
+            return;
+          }
           if (connectorTurn === active) {
             await endConnectorTurn().catch((err) => {
               logger.warn("managed CoCalc connector revocation unconfirmed", {
@@ -1007,11 +1041,83 @@ export async function createProjectCliTokenLease({
             });
           }
         })
+        .catch((err) =>
+          logger.warn("managed CoCalc connector could not be reissued", {
+            projectId,
+            err: `${err}`,
+          }),
+        )
         .finally(() => {
           renewalPending = false;
         });
     }, 60_000);
     connectorTimer.unref();
+  };
+  // A managed connector turn is bound to the identity run it was issued
+  // under. When that run is replaced, end the old turn (under its own run)
+  // and issue the same chat turn again under the current run. Fail closed:
+  // the key file is removed first and only a newly issued key is written.
+  const rebindConnectorTurn = async (
+    active: NonNullable<typeof connectorTurn>,
+  ): Promise<void> => {
+    const identity = identityLease?.currentRun;
+    if (connectorTurn !== active) return;
+    connectorTurn = undefined;
+    await clearConnectorKey();
+    await hubApi.agent
+      .endCocalcConnectorTurn({
+        account_id: resolvedAccountId,
+        agent_id: active.agent_id,
+        source_project_id: projectId,
+        run_id: active.run_id,
+        turn_id: active.turn_id,
+      })
+      .catch((err) =>
+        logger.warn("managed CoCalc connector revocation unconfirmed", {
+          projectId,
+          err: `${err}`,
+        }),
+      );
+    if (
+      closed ||
+      !active.stillCurrent() ||
+      !identity ||
+      identity.agent_id !== active.agent_id
+    )
+      return;
+    const issued = await hubApi.agent.beginCocalcConnectorTurn({
+      account_id: resolvedAccountId,
+      agent_id: active.agent_id,
+      source_project_id: projectId,
+      run_id: identity.run_id,
+      idempotency_key: active.idempotency_key,
+      turn_ref: active.turn_ref,
+    });
+    if (!issued) return;
+    const next = {
+      ...active,
+      run_id: identity.run_id,
+      turn_id: issued.turn_id,
+      secret: issued.secret,
+    };
+    try {
+      if (closed || !active.stillCurrent() || connectorTurn)
+        throw Error("connector turn was superseded");
+      connectorTurn = next;
+      await setConnectorKey(issued.secret, () => connectorTurn === next);
+    } catch (error) {
+      if (connectorTurn === next) connectorTurn = undefined;
+      await hubApi.agent
+        .endCocalcConnectorTurn({
+          account_id: resolvedAccountId,
+          agent_id: active.agent_id,
+          source_project_id: projectId,
+          run_id: identity.run_id,
+          turn_id: issued.turn_id,
+        })
+        .catch(() => undefined);
+      throw error;
+    }
   };
   let identityPreparation: Promise<void> | undefined;
   const prepareIdentity = (): Promise<void> => {
