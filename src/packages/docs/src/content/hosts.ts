@@ -523,9 +523,11 @@ powers off after **Cleanup grace (minutes)** to stop spending.
 ### Billing
 
 The host owner pays the host's normal compute and network charges for as long
-as the host runs, including during the exam. There is no special exam billing
-and no automatic spending limit. In practice mode, the host keeps running, and
-billing, until you stop it yourself, including after you end the run.
+as the host runs, including during the exam. There is no special exam billing.
+If the host owner's dedicated-host spending limit is exceeded, CoCalc stops the
+host, which interrupts a running exam. In practice mode, the host keeps
+running, and billing, until you stop it yourself, including after you end the
+run.
 
 ### Automate with the CLI
 
@@ -671,7 +673,8 @@ the destination host, restores it there, and updates the project-host
 assignment.
 
 Use a move when a project needs more RAM, GPUs, a different region, a quieter
-host, or a host that a specific group can access.
+host, or a host that a specific group can access. A move to another region needs
+an explicit backup-region cutover: \`cocalc project move ... --cutover-backup-region\`.
 
 ## Before moving
 
@@ -687,7 +690,7 @@ Check these items before starting the move:
    skipped-file warning before confirming the move.
 6. SSH access must be reconfigured after the move.
 
-If the move changes backup region, CoCalc restores from the current backup
+With the requested backup-region cutover, CoCalc restores from the current backup
 region, creates a new backup in the destination region, then switches the
 project's backup region after that backup succeeds.
 
