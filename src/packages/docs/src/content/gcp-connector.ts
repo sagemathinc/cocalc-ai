@@ -43,10 +43,10 @@ A guided setup creates, in a Google Cloud project you choose:
 - a **workload identity pool** with **one provider** that trusts CoCalc's
   signing key. It accepts only statements for **your** CoCalc account and
   **this** connection;
-- **one service account**, with the roles you pick, plus the read-only
-  Browser role CoCalc uses to verify your project. Browser can also read
-  your project's access policy (who has which role), but it can't change
-  anything;
+- **one service account**, with the roles you pick, plus a small custom
+  role with one read-only permission (\`resourcemanager.projects.get\`).
+  CoCalc uses it only to confirm which project it is talking to; it can't
+  read your project's access policy or change anything;
 - **one binding** that lets this connection, and nothing else, act as that
   service account.
 
@@ -71,8 +71,8 @@ CoCalc-owned service account there.
   else.** Choose the smallest roles that do the job. For example, use a
   read-only role if agents only need to look.
 - **Setup refuses dangerous roles.** CoCalc's connection setup binds the
-  roles you choose, plus the read-only Browser role it needs to verify your
-  project. At setup, and again whenever the grant changes or is turned back
+  roles you choose, plus the one-permission read-only role it needs to
+  verify your project. At setup, and again whenever the grant changes or is turned back
   on, it refuses any role that could manage service accounts, keys, custom
   roles, identity pools or access policies in your project.
   - This means a connection can't be used for IAM administration, or for
@@ -127,7 +127,7 @@ You can always run \`gcloud auth login\` in a CoCalc project terminal. It signs
 |  | Google Cloud connector | \`gcloud auth login\` in a project |
 |---|---|---|
 | Acts as | one service account you create | you, with all your permissions, in every project you can reach |
-| Permissions | only the roles you give it (plus read-only Browser); dangerous roles refused at setup and re-enable | everything your Google account can do, including IAM administration |
+| Permissions | only the roles you give it (plus one read-only permission to identify the project); dangerous roles refused at setup and re-enable | everything your Google account can do, including IAM administration |
 | Credential in the project | a token valid for at most 15 minutes, renewed only while an agent works | a long-lived refresh token stored in the project's files until you revoke it |
 | Who can use it | agents working for you, and code they run during that work | anyone who can run code or read files in that project, at any time, until you revoke it |
 | Revoke | one switch in CoCalc, or in Google Cloud; at most 15 more minutes of use | revoke the sign-in in your Google account; the stored credential works until then |
