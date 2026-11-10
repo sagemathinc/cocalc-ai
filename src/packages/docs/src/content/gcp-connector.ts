@@ -84,8 +84,8 @@ CoCalc-owned service account there.
   needs to verify your project. At setup, and again whenever the grant
   changes or is turned back on, CoCalc refuses the connection if the service
   account can act as service accounts, create tokens or keys for them,
-  change your project's access policy or your organization's policies, edit
-  custom roles, or change identity pools.
+  change your project's access policy or its organization-policy settings,
+  edit custom roles, or change identity pools.
   - This means a connection can't be used for project IAM administration, or
     with roles such as Owner or Editor, which can act as service accounts.
   - At first setup only, the setup script also looks inside the roles you
@@ -93,13 +93,17 @@ CoCalc-owned service account there.
     individual resource, such as Storage Admin. CoCalc doesn't check this
     again later: if such a role is granted afterwards, the connection keeps
     working.
+  - CoCalc's checks with Google look at permissions granted on your project
+    (including those inherited from your organization) and on the
+    connection's own service account. A permission granted directly on one other resource,
+    such as a single other service account or bucket, isn't checked.
 - **CoCalc acts only through your service account.** Setup never grants any
   role to a CoCalc-owned service account in your project. CoCalc acts only
   through the one service account you create, with the roles you choose.
 - **CoCalc checks with Google, not just with its own setup script.** Before
   a connection is turned on, CoCalc asks Google directly whether the new
   identity holds any of the permissions CoCalc refuses at every check
-  (acting as service accounts, keys, access and organization policies,
+  (acting as service accounts, keys, access and organization-policy settings,
   custom roles, identity pools). If it does, or the answer
   is unclear, the connection stays off. The same check runs again whenever
   the grant changes or is turned back on.
