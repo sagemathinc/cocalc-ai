@@ -287,6 +287,95 @@ describePostgres("managed issuance across PostgreSQL connections", () => {
     30000,
   );
 
+  // When the agent's identity run is replaced mid-turn, the host ends the
+  // turn under its original run and issues the same chat turn again under
+  // the new run, with the same per-turn idempotency key.
+  test.each(["below-limit", "at-limit"])(
+    "reissuing a turn under a replacement run (%s)",
+    async (load) => {
+      const {
+        beginManagedCocalcConnectorTurn,
+        renewManagedCocalcConnectorTurn,
+        endManagedCocalcConnectorTurn,
+      } = await import("./cocalc-connector-turn");
+      const original = request();
+      const issued = await beginManagedCocalcConnectorTurn(original);
+      if (load === "at-limit") {
+        // Other active turns fill the account's limit (64) with this one;
+        // they are old, so only the active count applies.
+        await pool.query(
+          `INSERT INTO agent_cocalc_connector_turns
+             (turn_id,account_id,agent_id,source_project_id,source_host_id,run_id,
+              idempotency_key,chat_path,message_date,message_id,thread_id,
+              config_id,config_revision,key_id,secret_ciphertext,expires_at,created_at)
+           SELECT gen_random_uuid(),$1,gen_random_uuid(),$2,$3,gen_random_uuid(),
+                  gen_random_uuid(),'other.chat','d','m','t',gen_random_uuid(),1,
+                  'other-'||g,'x',now()+interval '1 hour',now()-interval '1 hour'
+             FROM generate_series(1,63) AS g`,
+          [owner, project, host],
+        );
+        // Issuing before ending would exceed the limit.
+        await expect(
+          beginManagedCocalcConnectorTurn({
+            ...original,
+            run_id: randomUUID(),
+          }),
+        ).rejects.toThrow("key limit reached");
+      }
+      const replacementRun = randomUUID();
+      // The old row is bound to its run: renewing under the new run fails.
+      await expect(
+        renewManagedCocalcConnectorTurn({
+          ...original,
+          run_id: replacementRun,
+          turn_id: issued!.turn_id,
+        }),
+      ).rejects.toThrow("no longer valid");
+      // Ending under the original run succeeds and deletes the old key.
+      await endManagedCocalcConnectorTurn({
+        ...original,
+        turn_id: issued!.turn_id,
+      });
+      const { rows: oldKeys } = await pool.query(
+        "SELECT 1 FROM api_keys WHERE key_id=$1",
+        [issued!.key_id],
+      );
+      expect(oldKeys).toHaveLength(0);
+      // The same chat turn and key under the new run make a new turn row.
+      const replacement = await beginManagedCocalcConnectorTurn({
+        ...original,
+        run_id: replacementRun,
+      });
+      expect(replacement!.turn_id).not.toBe(issued!.turn_id);
+      expect(replacement!.key_id).not.toBe(issued!.key_id);
+      const { rows } = await pool.query(
+        "SELECT run_id,idempotency_key,ended_at FROM agent_cocalc_connector_turns WHERE turn_id=$1",
+        [replacement!.turn_id],
+      );
+      expect(rows[0].run_id).toBe(replacementRun);
+      expect(rows[0].idempotency_key).toBe(original.idempotency_key);
+      expect(rows[0].ended_at).toBeNull();
+      // A retry of the reissue returns the same replacement.
+      const retry = await beginManagedCocalcConnectorTurn({
+        ...original,
+        run_id: replacementRun,
+      });
+      expect(retry).toEqual(replacement);
+      // The original run cannot reopen the ended turn.
+      await expect(beginManagedCocalcConnectorTurn(original)).rejects.toThrow(
+        "no longer valid",
+      );
+      await expect(
+        renewManagedCocalcConnectorTurn({
+          ...original,
+          run_id: replacementRun,
+          turn_id: replacement!.turn_id,
+        }),
+      ).resolves.toEqual(expect.any(Number));
+    },
+    30000,
+  );
+
   test.each(["turn", "key"])(
     "renewal waiting on a row lock cannot revive an expired %s",
     async (resource) => {

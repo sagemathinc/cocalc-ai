@@ -1005,6 +1005,643 @@ describe("initCodexProjectRunner", () => {
     },
   );
 
+  // After a gap long enough to expire the agent's identity run, the identity
+  // lease replaces the run. Connector renewals must follow it instead of
+  // repeating the expired run for the rest of the turn.
+  async function spawnWithRotatableIdentity(prefix: string) {
+    spawnMock.mockImplementation(() => new FakeProc());
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir(prefix);
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: prefix,
+      env: { OPENAI_API_KEY: "test-key" },
+    });
+    let expireNext = false;
+    hubApi.agent.issueIdentity.mockImplementation(
+      async ({ run_id, recover_expired_run_id }) => {
+        if (expireNext && !recover_expired_run_id) {
+          expireNext = false;
+          throw new Error("agent_identity_run_expired");
+        }
+        return {
+          agent_id: "registered-agent",
+          run_id,
+          token: "identity-token",
+          expires_at: Date.now() + 600000,
+        };
+      },
+    );
+    const intervalSpy = jest.spyOn(global, "setInterval");
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/home/user",
+      env: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+    });
+    const chat = {
+      project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      path: "/home/user/send.chat",
+      message_date: "2026-09-25T00:00:00.000Z",
+      message_id: "message-1",
+      thread_id: "thread-1",
+      sender_id: "00000000-0000-4000-8000-000000000001",
+    };
+    const initialRunId = hubApi.agent.issueIdentity.mock.calls[0][0].run_id;
+    // Expire the run and let the lease's own refresh timer replace it.
+    const rotate = async (): Promise<string> => {
+      const refresh = intervalSpy.mock.calls.find(
+        ([, ms]) => ms === 3 * 60_000,
+      )?.[0] as () => void;
+      const calls = hubApi.agent.issueIdentity.mock.calls.length;
+      expireNext = true;
+      refresh();
+      const deadline = Date.now() + 2000;
+      for (;;) {
+        const recovery = hubApi.agent.issueIdentity.mock.calls
+          .slice(calls)
+          .find(([req]) => req.recover_expired_run_id);
+        if (recovery) {
+          // Let the lease adopt the new run before returning it.
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return recovery[0].run_id;
+        }
+        if (Date.now() > deadline) throw Error("rotation not observed");
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    };
+    const connectorTimers = () =>
+      intervalSpy.mock.calls
+        .filter(([, ms]) => ms === 60_000)
+        .map(([fn]) => fn as () => void);
+    const cleanup = async () => {
+      intervalSpy.mockRestore();
+      for (const listener of spawned.proc.listeners("exit")) await listener(0);
+    };
+    return {
+      home,
+      spawned,
+      chat,
+      initialRunId,
+      rotate,
+      connectorTimers,
+      cleanup,
+    };
+  }
+
+  const waitFor = async (check: () => Promise<boolean> | boolean) => {
+    const deadline = Date.now() + 2000;
+    while (!(await check())) {
+      if (Date.now() > deadline) throw Error("condition not observed");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+
+  it("renews CLI connector tokens under the identity's replacement run", async () => {
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue(undefined);
+    const github = {
+      connector: "github",
+      token: "gho_cli_token",
+      expires_at: Date.now() + 900000,
+      description: "@octo",
+    };
+    let liveRunId = "";
+    hubApi.agent.beginCliConnectorTurn.mockImplementation(
+      async ({ run_id }) => {
+        // The hub accepts only the live run.
+        if (liveRunId && run_id !== liveRunId)
+          throw new Error("agent run has expired");
+        return [github];
+      },
+    );
+    const t = await spawnWithRotatableIdentity("codex-project-cli-rotate-");
+    try {
+      liveRunId = t.initialRunId;
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const bin = t.spawned.runtimeEnv!.PATH.split(":")[0];
+      const tokenFile = path
+        .join(bin, "..", "github-token")
+        .replace("/home/user", t.home);
+      const exists = () =>
+        fs.stat(tokenFile).then(
+          () => true,
+          () => false,
+        );
+      expect(await exists()).toBe(true);
+      const [renew] = t.connectorTimers();
+      liveRunId = await t.rotate();
+      expect(liveRunId).not.toBe(t.initialRunId);
+      const calls = hubApi.agent.beginCliConnectorTurn.mock.calls.length;
+      renew();
+      await waitFor(
+        () => hubApi.agent.beginCliConnectorTurn.mock.calls.length > calls,
+      );
+      const last = hubApi.agent.beginCliConnectorTurn.mock.calls.at(-1)![0];
+      expect(last.run_id).toBe(liveRunId);
+      expect(last.agent_id).toBe("registered-agent");
+      expect(last.turn_ref).toEqual(
+        expect.objectContaining({ message_id: "message-1" }),
+      );
+      expect(await exists()).toBe(true);
+      // The turn ended: no renewal brings a token back.
+      await t.spawned.endConnectorTurn!();
+      const after = hubApi.agent.beginCliConnectorTurn.mock.calls.length;
+      renew();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(hubApi.agent.beginCliConnectorTurn.mock.calls.length).toBe(after);
+      expect(await exists()).toBe(false);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("recovers CLI tokens when a renewal finds the run already expired", async () => {
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue(undefined);
+    const github = {
+      connector: "github",
+      token: "gho_cli_token",
+      expires_at: Date.now() + 900000,
+      description: "@octo",
+    };
+    let liveRunId = "";
+    hubApi.agent.beginCliConnectorTurn.mockImplementation(
+      async ({ run_id }) => {
+        if (liveRunId && run_id !== liveRunId)
+          throw new Error("agent run has expired");
+        return [github];
+      },
+    );
+    const t = await spawnWithRotatableIdentity("codex-project-cli-expired-");
+    try {
+      liveRunId = t.initialRunId;
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const bin = t.spawned.runtimeEnv!.PATH.split(":")[0];
+      const tokenFile = path
+        .join(bin, "..", "github-token")
+        .replace("/home/user", t.home);
+      const exists = () =>
+        fs.stat(tokenFile).then(
+          () => true,
+          () => false,
+        );
+      const [renew] = t.connectorTimers();
+      // The hub expired the run before the lease noticed: the renewal fails,
+      // removes the token, and refreshes the identity, which replaces the run.
+      liveRunId = "00000000-0000-4000-8000-00000000dead";
+      hubApi.agent.issueIdentity.mockImplementationOnce(async () => {
+        throw new Error("agent_identity_run_expired");
+      });
+      const identityCalls = hubApi.agent.issueIdentity.mock.calls.length;
+      renew();
+      await waitFor(async () => {
+        const recovery = hubApi.agent.issueIdentity.mock.calls
+          .slice(identityCalls)
+          .find(([req]) => req.recover_expired_run_id);
+        if (recovery) liveRunId = recovery[0].run_id;
+        return !!recovery && !(await exists());
+      });
+      // The next renewal uses the replacement run and restores the token.
+      renew();
+      await waitFor(exists);
+      expect(
+        hubApi.agent.beginCliConnectorTurn.mock.calls.at(-1)![0].run_id,
+      ).toBe(liveRunId);
+      await t.spawned.endConnectorTurn!();
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it.each(["rotation-before-renewal", "renewal-finds-expired-run"])(
+    "reissues the managed connector turn under the replacement run (%s)",
+    async (when) => {
+      hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+      const issued: Array<{
+        run_id: string;
+        idempotency_key: string;
+        turn_ref: any;
+      }> = [];
+      hubApi.agent.beginCocalcConnectorTurn.mockImplementation(async (req) => {
+        issued.push(req);
+        const n = issued.length;
+        return {
+          turn_id: `turn-${n}`,
+          key_id: `key-${n}`,
+          secret: `secret-${n}.scoped-key`,
+          expires_at: Date.now() + 300000,
+          config_id: "config-id",
+          config_revision: 1,
+        };
+      });
+      const ended: Array<{ run_id: string; turn_id: string }> = [];
+      hubApi.agent.endCocalcConnectorTurn.mockImplementation(async (req) => {
+        ended.push(req);
+      });
+      hubApi.agent.renewCocalcConnectorTurn.mockRejectedValue(
+        new Error("agent run has expired"),
+      );
+      const t = await spawnWithRotatableIdentity(
+        `codex-project-managed-${when}-`,
+      );
+      try {
+        await t.spawned.beginConnectorTurn!(t.chat);
+        const hostFile =
+          t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+            "/home/user",
+            t.home,
+          );
+        expect(await fs.readFile(hostFile, "utf8")).toBe(
+          "secret-1.scoped-key\n",
+        );
+        const [renew] = t.connectorTimers();
+        let newRunId: string;
+        if (when === "rotation-before-renewal") {
+          newRunId = await t.rotate();
+          renew();
+          // The doomed renewal under the old run is not even attempted.
+          await waitFor(() => issued.length === 2);
+          expect(hubApi.agent.renewCocalcConnectorTurn).not.toHaveBeenCalled();
+        } else {
+          hubApi.agent.issueIdentity.mockImplementationOnce(async () => {
+            throw new Error("agent_identity_run_expired");
+          });
+          renew();
+          await waitFor(() => issued.length === 2);
+          newRunId = issued[1].run_id;
+          expect(hubApi.agent.renewCocalcConnectorTurn).toHaveBeenCalledTimes(
+            1,
+          );
+        }
+        await waitFor(async () =>
+          fs.readFile(hostFile, "utf8").then(
+            (v) => v === "secret-2.scoped-key\n",
+            () => false,
+          ),
+        );
+        expect(newRunId).not.toBe(t.initialRunId);
+        // The old turn was ended under the run it was issued under (its row
+        // is bound to it), BEFORE the replacement was issued.
+        expect(ended[0]).toEqual(
+          expect.objectContaining({
+            run_id: t.initialRunId,
+            turn_id: "turn-1",
+          }),
+        );
+        const endOrder =
+          hubApi.agent.endCocalcConnectorTurn.mock.invocationCallOrder[0];
+        const beginOrder =
+          hubApi.agent.beginCocalcConnectorTurn.mock.invocationCallOrder[1];
+        expect(endOrder).toBeLessThan(beginOrder);
+        // The replacement is the same chat turn, under the new run, with the
+        // same per-turn retry key.
+        expect(issued[1].run_id).toBe(newRunId);
+        expect(issued[1].idempotency_key).toBe(issued[0].idempotency_key);
+        expect(issued[1].turn_ref).toEqual(issued[0].turn_ref);
+        // Later renewals renew the replacement under the new run.
+        hubApi.agent.renewCocalcConnectorTurn
+          .mockReset()
+          .mockResolvedValue(Date.now() + 300000);
+        renew();
+        await waitFor(
+          () => hubApi.agent.renewCocalcConnectorTurn.mock.calls.length === 1,
+        );
+        expect(hubApi.agent.renewCocalcConnectorTurn).toHaveBeenCalledWith(
+          expect.objectContaining({ run_id: newRunId, turn_id: "turn-2" }),
+        );
+        // The renewal rewrites the replacement's own key, never the old one.
+        await waitFor(async () =>
+          fs.readFile(hostFile, "utf8").then(
+            (v) => v === "secret-2.scoped-key\n",
+            () => false,
+          ),
+        );
+        // Ending the turn ends the replacement under its own run.
+        await t.spawned.endConnectorTurn!();
+        expect(ended.at(-1)).toEqual(
+          expect.objectContaining({ run_id: newRunId, turn_id: "turn-2" }),
+        );
+        await expect(fs.stat(hostFile)).rejects.toThrow();
+      } finally {
+        await t.cleanup();
+      }
+    },
+  );
+
+  it("reissues under the run current after the old turn ends, even if it changed again", async () => {
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+    const issued: Array<{ run_id: string }> = [];
+    hubApi.agent.beginCocalcConnectorTurn.mockImplementation(async (req) => {
+      issued.push(req);
+      const n = issued.length;
+      return {
+        turn_id: `turn-${n}`,
+        key_id: `key-${n}`,
+        secret: `secret-${n}.scoped-key`,
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      };
+    });
+    const t = await spawnWithRotatableIdentity("codex-project-managed-twice-");
+    let secondRun: string | undefined;
+    hubApi.agent.endCocalcConnectorTurn.mockImplementation(async () => {
+      // The run is replaced again while the old turn is being ended.
+      if (!secondRun) secondRun = await t.rotate();
+    });
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const hostFile =
+        t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+          "/home/user",
+          t.home,
+        );
+      const [renew] = t.connectorTimers();
+      const firstRun = await t.rotate();
+      renew();
+      await waitFor(() => issued.length === 2);
+      expect(secondRun).toBeDefined();
+      expect(secondRun).not.toBe(firstRun);
+      // Issued under the run current after the end, not the one seen before.
+      expect(issued[1].run_id).toBe(secondRun);
+      await waitFor(async () =>
+        fs.readFile(hostFile, "utf8").then(
+          (v) => v === "secret-2.scoped-key\n",
+          () => false,
+        ),
+      );
+      await t.spawned.endConnectorTurn!();
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("does not reissue the managed connector turn when ending the old one fails", async () => {
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue({
+      turn_id: "turn-1",
+      key_id: "key-1",
+      secret: "secret-1.scoped-key",
+      expires_at: Date.now() + 300000,
+      config_id: "config-id",
+      config_revision: 1,
+    });
+    hubApi.agent.endCocalcConnectorTurn.mockRejectedValue(
+      new Error("hub unavailable"),
+    );
+    const t = await spawnWithRotatableIdentity(
+      "codex-project-managed-endfail-",
+    );
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const hostFile =
+        t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+          "/home/user",
+          t.home,
+        );
+      const [renew] = t.connectorTimers();
+      await t.rotate();
+      renew();
+      await waitFor(
+        () => hubApi.agent.endCocalcConnectorTurn.mock.calls.length === 1,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      // The old key is gone locally and no replacement was issued or written.
+      expect(hubApi.agent.beginCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+      await expect(fs.stat(hostFile)).rejects.toThrow();
+      // Later ticks do nothing: the connector stays off for this turn.
+      renew();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(hubApi.agent.beginCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+      expect(hubApi.agent.renewCocalcConnectorTurn).not.toHaveBeenCalled();
+      await t.spawned.endConnectorTurn!();
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  // The identity lease fixes its agent when it is created, so these tests
+  // override what it reports to pin the guards against another agent.
+  function overrideLeaseRun() {
+    const leaseModule = require("./codex/agent-identity-lease");
+    const real = leaseModule.createAgentIdentityLease;
+    const state: {
+      override?: (run: { agent_id: string; run_id: string }) => {
+        agent_id: string;
+        run_id: string;
+      };
+    } = {};
+    const spy = jest
+      .spyOn(leaseModule, "createAgentIdentityLease")
+      .mockImplementation(async (opts: any) => {
+        const lease = await real(opts);
+        if (!lease) return lease;
+        return new Proxy(lease, {
+          get(target, prop) {
+            const value = Reflect.get(target, prop);
+            return prop === "currentRun" && state.override
+              ? state.override(value)
+              : value;
+          },
+        });
+      });
+    return { state, restore: () => spy.mockRestore() };
+  }
+
+  it("removes CLI tokens and stops renewing if the identity names another agent", async () => {
+    const lease = overrideLeaseRun();
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue(undefined);
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([
+      {
+        connector: "github",
+        token: "gho_cli_token",
+        expires_at: Date.now() + 900000,
+        description: "@octo",
+      },
+    ]);
+    const t = await spawnWithRotatableIdentity("codex-project-cli-otheragent-");
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const bin = t.spawned.runtimeEnv!.PATH.split(":")[0];
+      const tokenFile = path
+        .join(bin, "..", "github-token")
+        .replace("/home/user", t.home);
+      const exists = () =>
+        fs.stat(tokenFile).then(
+          () => true,
+          () => false,
+        );
+      expect(await exists()).toBe(true);
+      const [renew] = t.connectorTimers();
+      lease.state.override = (run) => ({ ...run, agent_id: "other-agent" });
+      const calls = hubApi.agent.beginCliConnectorTurn.mock.calls.length;
+      renew();
+      await waitFor(async () => !(await exists()));
+      renew();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(hubApi.agent.beginCliConnectorTurn.mock.calls.length).toBe(calls);
+      expect(await exists()).toBe(false);
+      await t.spawned.endConnectorTurn!();
+    } finally {
+      lease.restore();
+      await t.cleanup();
+    }
+  });
+
+  it.each(["other-agent", "turn-ended"])(
+    "does not reissue the managed connector turn when, after ending it, %s",
+    async (change) => {
+      const lease = overrideLeaseRun();
+      hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+      hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue({
+        turn_id: "turn-1",
+        key_id: "key-1",
+        secret: "secret-1.scoped-key",
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      });
+      const t = await spawnWithRotatableIdentity(
+        `codex-project-managed-${change}-`,
+      );
+      hubApi.agent.endCocalcConnectorTurn.mockImplementation(async () => {
+        if (change === "other-agent") {
+          lease.state.override = (run) => ({ ...run, agent_id: "other-agent" });
+        } else {
+          await t.spawned.endConnectorTurn!();
+        }
+      });
+      try {
+        await t.spawned.beginConnectorTurn!(t.chat);
+        const hostFile =
+          t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+            "/home/user",
+            t.home,
+          );
+        const [renew] = t.connectorTimers();
+        await t.rotate();
+        renew();
+        await waitFor(
+          () => hubApi.agent.endCocalcConnectorTurn.mock.calls.length >= 1,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(hubApi.agent.beginCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+        await expect(fs.stat(hostFile)).rejects.toThrow();
+        // The old turn was ended under the run it was issued under.
+        expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            run_id: t.initialRunId,
+            turn_id: "turn-1",
+          }),
+        );
+      } finally {
+        lease.restore();
+        await t.cleanup();
+      }
+    },
+  );
+
+  it("ends the replacement if the turn ends while it is being issued", async () => {
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+    let t!: Awaited<ReturnType<typeof spawnWithRotatableIdentity>>;
+    const issued: Array<{ run_id: string }> = [];
+    hubApi.agent.beginCocalcConnectorTurn.mockImplementation(async (req) => {
+      issued.push(req);
+      const n = issued.length;
+      // The chat turn ends while its replacement is in flight.
+      if (n === 2) await t.spawned.endConnectorTurn!();
+      return {
+        turn_id: `turn-${n}`,
+        key_id: `key-${n}`,
+        secret: `secret-${n}.scoped-key`,
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      };
+    });
+    const ended: Array<{ run_id: string; turn_id: string }> = [];
+    hubApi.agent.endCocalcConnectorTurn.mockImplementation(async (req) => {
+      ended.push(req);
+    });
+    t = await spawnWithRotatableIdentity("codex-project-managed-inflight-");
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const hostFile =
+        t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+          "/home/user",
+          t.home,
+        );
+      const [renew] = t.connectorTimers();
+      const newRun = await t.rotate();
+      renew();
+      await waitFor(() => ended.length === 2);
+      // The old turn under its run, then the just-issued replacement under
+      // the new run; no key is left.
+      expect(ended[0]).toEqual(
+        expect.objectContaining({ run_id: t.initialRunId, turn_id: "turn-1" }),
+      );
+      expect(ended[1]).toEqual(
+        expect.objectContaining({ run_id: newRun, turn_id: "turn-2" }),
+      );
+      await expect(fs.stat(hostFile)).rejects.toThrow();
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("leaves no managed connector key when the replacement turn is refused", async () => {
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+    hubApi.agent.beginCocalcConnectorTurn
+      .mockResolvedValueOnce({
+        turn_id: "turn-1",
+        key_id: "key-1",
+        secret: "secret-1.scoped-key",
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      })
+      .mockRejectedValueOnce(
+        new Error("managed CoCalc connector key limit reached"),
+      );
+    hubApi.agent.endCocalcConnectorTurn.mockResolvedValue(undefined);
+    const t = await spawnWithRotatableIdentity(
+      "codex-project-managed-refused-",
+    );
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const hostFile =
+        t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+          "/home/user",
+          t.home,
+        );
+      expect(await fs.readFile(hostFile, "utf8")).toBe("secret-1.scoped-key\n");
+      const [renew] = t.connectorTimers();
+      await t.rotate();
+      renew();
+      await waitFor(
+        () => hubApi.agent.beginCocalcConnectorTurn.mock.calls.length === 2,
+      );
+      // Fail closed: the old key is gone and no new one was written.
+      await expect(fs.stat(hostFile)).rejects.toThrow();
+      expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledWith(
+        expect.objectContaining({ run_id: t.initialRunId, turn_id: "turn-1" }),
+      );
+      // The old turn is not ended twice when the chat turn ends.
+      await t.spawned.endConnectorTurn!();
+      expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
   it("uses authenticated real-project app-server exec", async () => {
     spawnMock.mockReturnValue(new FakeProc());
     execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
