@@ -84,8 +84,9 @@ CoCalc-owned service account there.
   needs to verify your project. At setup, and again whenever the grant
   changes or is turned back on, CoCalc refuses the connection if the service
   account can act as service accounts, create tokens or keys for them,
-  change your project's access policy or its organization-policy settings,
-  edit custom roles, or change identity pools.
+  change your project's access policy, set organization policies through
+  the older Organization Policy permission (\`orgpolicy.policy.set\`), edit
+  custom roles, or change identity pools.
   - This means a connection can't be used for project IAM administration, or
     with roles such as Owner or Editor, which can act as service accounts.
   - At first setup only, the setup script also looks inside the roles you
@@ -98,16 +99,19 @@ CoCalc-owned service account there.
     connection's own service account. A permission granted directly on one
     other resource, such as a single other service account or bucket, isn't
     checked.
+  - The newer Organization Policy permissions
+    (\`orgpolicy.policies.create\`, \`update\` and \`delete\`) aren't
+    checked. A custom role that holds only those can change the organization
+    policies set on your project without being refused.
 - **CoCalc acts only through your service account.** Setup never grants any
   role to a CoCalc-owned service account in your project. CoCalc acts only
   through the one service account you create, with the roles you choose.
 - **CoCalc checks with Google, not just with its own setup script.** Before
   a connection is turned on, CoCalc asks Google directly whether the new
   identity holds any of the permissions CoCalc refuses at every check
-  (acting as service accounts, keys, access and organization-policy settings,
-  custom roles, identity pools). If it does, or the answer
-  is unclear, the connection stays off. The same check runs again whenever
-  the grant changes or is turned back on.
+  (listed above). If it does, or the answer is unclear, the connection stays
+  off. The same check runs again whenever the grant changes or is turned
+  back on.
 
 **What this does not guarantee.** These checks run at setup, whenever the
 grant changes, and when the connection is turned back on.
@@ -157,7 +161,7 @@ You can always run \`gcloud auth login\` in a CoCalc project terminal. It signs
 | Revoke | one switch in CoCalc, or in Google Cloud; at most 15 more minutes of use | revoke the sign-in in your Google account; the stored credential works until then |
 | Audit | the service account in your audit logs, plus CoCalc's signature log | your own user account in your audit logs |
 | Setup | a one-time guided setup; needs permission to create a pool, provider and service account in your project | none |
-| Works for project IAM or organization policy administration | no, by design | yes |
+| Works for project IAM administration | no, by design | yes |
 
 **Use the connector when** agents should work in Google Cloud for you,
 especially unattended or in a shared project, or when you want access you can
@@ -165,8 +169,8 @@ limit, see and switch off.
 
 **Use \`gcloud auth login\` when:**
 - you are working by yourself in a project only you use;
-- you need your own full permissions, for example IAM or organization
-  administration, which the connector refuses by design;
+- you need your own full permissions, for example for IAM or organization
+  administration;
 - you can't create the pool, provider and service account in your Google
   Cloud project.
 
