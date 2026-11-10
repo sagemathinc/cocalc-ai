@@ -70,7 +70,8 @@ EOF
 # "failquiet" (disable fails, though not enabled), "stuck" (disable succeeds,
 # still enabled), and, with the disable done: "queryfail" (nothing, fails),
 # "querystrange" ("static"), "rcfail" (prints "disabled" but fails),
-# "masked", "empty" (an empty answer with rc 0).
+# "masked", "empty" (an empty answer with rc 0), "notfound" (the disable
+# succeeds, then LoadState is not-found).
 # Only "show --property=... --value" answers state queries, as systemd does
 # (ActiveState from the listener process, UnitFileState from the
 # ${TMP_ROOT}/enabled flag); is-active and is-enabled are not supported.
@@ -114,6 +115,7 @@ case "\$1" in
     case "\$3" in
       --property=LoadState)
         [[ "\$stop_mode" == notfound ]] && { echo not-found; exit 0; }
+        [[ "\$disable_mode" == notfound && -f "${TMP_ROOT}/unloaded" ]] && { echo not-found; exit 0; }
         echo loaded
         exit 0
         ;;
@@ -149,6 +151,7 @@ case "\$1" in
       fail) exit 1 ;;
       failquiet) rm -f "${TMP_ROOT}/enabled"; exit 1 ;;
       stuck) exit 0 ;;
+      notfound) rm -f "${TMP_ROOT}/enabled"; touch "${TMP_ROOT}/unloaded"; exit 0 ;;
     esac
     rm -f "${TMP_ROOT}/enabled"
     ;;
@@ -453,7 +456,7 @@ for stop_mode in fail failquiet lie stuck queryfail querystrange rcfail notfound
   fi
   echo good > "${TMP_ROOT}/stop-mode"
 done
-for disable_mode in fail failquiet stuck queryfail querystrange rcfail masked empty; do
+for disable_mode in fail failquiet stuck queryfail querystrange rcfail masked empty notfound; do
   "$SYSTEMCTL" enable cocalc-bay-broker-tls.service
   echo "$disable_mode" > "${TMP_ROOT}/disable-mode"
   rc=0
@@ -462,7 +465,10 @@ for disable_mode in fail failquiet stuck queryfail querystrange rcfail masked em
   grep -q "^FAILED: broker fabric key NOT revoked (pin ${pin4}); the listener is stopped but could not be confirmed disabled" <<<"$out" ||
     fail "no FAILED line for revoke with an unconfirmed disable ($disable_mode)"
   grep -Eq "^record:|UnitFileState=" <<<"$out" && fail "revoke claimed a disable it did not prove ($disable_mode)"
+  [[ "$disable_mode" != notfound ]] || grep -q "LoadState as not-found" <<<"$out" ||
+    fail "the unknown unit was not named ($disable_mode)"
   same_as_snapshot "revoke with an unconfirmed disable ($disable_mode)"
+  rm -f "${TMP_ROOT}/unloaded"
 done
 echo good > "${TMP_ROOT}/disable-mode"
 "$SYSTEMCTL" enable cocalc-bay-broker-tls.service
