@@ -16631,15 +16631,31 @@ PY
 # never wait for the lifecycle lock here: if bootstrap holds it, skip this
 # attempt without spending the retry interval (bootstrap prepares the host
 # itself, and the watchdog comes back a minute later).
+# Only retry while the project-host daemon is NOT running: preparation removes
+# the rootless Podman runroot and migrates storage, which must never happen
+# under a live daemon. With the daemon up, ensure (and restart, which checks
+# before it stops the daemon) refuses exactly as before this retry existed and
+# the daemon keeps running; the next ensure after it is gone retries.
+# (prepare_podman_boot also refuses while project processes are active; this
+# check does not depend on process titles.)
+# A retrying ensure holds the daemon control lock for the whole preparation,
+# up to about 600 s (the watchdog unit's TimeoutStartSec): a start, stop,
+# restart or protect issued meanwhile waits for it.
 # Sets PODMAN_BOOT_PREPARE_RETRY_OK=1 on success. It reports through that
 # variable, not its status, because it must never run as a condition: bash
 # ignores errexit for everything inside one, even a subshell that sets -e, and
 # prepare_podman_boot relies on errexit to stop at its first failing step.
 retry_failed_podman_boot_preparation() {
-  local stamp="${PODMAN_BOOT_PREPARE_RETRY_STAMP:-/run/cocalc/podman-boot-prepare-retry}"
+  # Fixed path: this runs as root, so the stamp location is not taken from
+  # the environment.
+  local stamp="/run/cocalc/podman-boot-prepare-retry"
   local interval="${PODMAN_BOOT_PREPARE_RETRY_SECONDS:-300}"
   local now last status
   PODMAN_BOOT_PREPARE_RETRY_OK=0
+  if project_host_app_running; then
+    echo "project-host is running; not retrying Podman boot preparation under it" >&2
+    return 0
+  fi
   now="$(date +%s)"
   last="$(cat "${stamp}" 2>/dev/null || true)"
   case "${last}" in

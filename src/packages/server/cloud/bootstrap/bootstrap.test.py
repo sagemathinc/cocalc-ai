@@ -8657,6 +8657,7 @@ class BootstrapModesTest(unittest.TestCase):
         prepare: str,
         last_retry: str | None = None,
         tmp: Path | None = None,
+        daemon_running: bool = False,
     ) -> tuple[subprocess.CompletedProcess, str, Path]:
         body = Path(bootstrap.__file__).read_text(encoding="utf-8")
 
@@ -8672,21 +8673,29 @@ class BootstrapModesTest(unittest.TestCase):
             self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(tmp)]))
         stamp = tmp / "run" / "retry-stamp"
         calls = tmp / "calls"
+        pid_file = tmp / "daemon.pid"
         if last_retry is not None:
             stamp.parent.mkdir(parents=True)
             stamp.write_text(last_retry)
         script = (
             "set -euo pipefail\n"
-            f"PODMAN_BOOT_PREPARE_RETRY_STAMP='{stamp}'\n"
             f"CALLS='{calls}'\n"
-            f"BOOTSTRAP_LIFECYCLE_LOCK='{tmp / 'lock' / 'bootstrap.lock'}'\n"
+            f"PID_FILE='{pid_file}'\n"
+            # a live pid (this shell) when the daemon should look running
+            + ("echo $$ > \"$PID_FILE\"\n" if daemon_running else "")
+            + f"BOOTSTRAP_LIFECYCLE_LOCK='{tmp / 'lock' / 'bootstrap.lock'}'\n"
             f"BOOTSTRAP_USER='{__import__('getpass').getuser()}'\n"
             "systemctl() { echo \"systemctl $*\" >> \"$CALLS\"; "
             + ("[ \"$1\" = is-failed ] && return 0; " if failed else "[ \"$1\" = is-failed ] && return 1; ")
             + "return 0; }\n"
+            + function("read_pid_file")
+            + function("project_host_app_running")
             + function("try_acquire_bootstrap_lifecycle_lock")
             + f"prepare_podman_boot() {{ echo prepare >> \"$CALLS\"; {prepare} }}\n"
-            + function("retry_failed_podman_boot_preparation")
+            # the stamp path is fixed in the root script; point it at tmp here
+            + function("retry_failed_podman_boot_preparation").replace(
+                '"/run/cocalc/podman-boot-prepare-retry"', f"'{stamp}'"
+            )
             + function("require_podman_boot_preparation_not_failed")
             + "require_podman_boot_preparation_not_failed\necho started\n"
         )
@@ -8778,6 +8787,35 @@ class BootstrapModesTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("prepare", calls.splitlines())
+
+    def test_no_retry_under_a_running_daemon(self) -> None:
+        # Preparation removes the rootless runroot and migrates Podman
+        # storage; with project-host running, ensure must keep refusing (as
+        # before the retry existed) and never prepare under the daemon.
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=True, prepare="return 0;", daemon_running=True
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("started", result.stdout)
+        self.assertNotIn("prepare", calls.splitlines())
+        self.assertNotIn("reset-failed", calls)
+        self.assertIn("project-host is running; not retrying", result.stderr)
+        self.assertIn("refusing to start project-host", result.stderr)
+        # the retry slot is not spent: once the daemon is gone it retries
+        self.assertFalse(stamp.exists())
+
+    def test_retry_stamp_path_is_fixed_in_the_root_script(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        retry = body.split("retry_failed_podman_boot_preparation() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertIn('local stamp="/run/cocalc/podman-boot-prepare-retry"', retry)
+        self.assertNotIn("PODMAN_BOOT_PREPARE_RETRY_STAMP", body)
+        # the daemon check comes before anything is stamped or prepared
+        self.assertLess(
+            retry.index("if project_host_app_running; then"),
+            retry.index('echo "${now}" > "${stamp}"'),
+        )
 
     def test_rootctl_takes_the_lifecycle_lock_before_the_daemon_lock(
         self,
