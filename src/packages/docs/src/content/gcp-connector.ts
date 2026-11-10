@@ -95,8 +95,9 @@ CoCalc-owned service account there.
     working.
   - CoCalc's checks with Google look at permissions granted on your project
     (including those inherited from your organization) and on the
-    connection's own service account. A permission granted directly on one other resource,
-    such as a single other service account or bucket, isn't checked.
+    connection's own service account. A permission granted directly on one
+    other resource, such as a single other service account or bucket, isn't
+    checked.
 - **CoCalc acts only through your service account.** Setup never grants any
   role to a CoCalc-owned service account in your project. CoCalc acts only
   through the one service account you create, with the roles you choose.
