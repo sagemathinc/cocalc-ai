@@ -228,7 +228,9 @@ function requireFreshAuthUntil({
       { code: "fresh_auth_required" },
     );
   }
-  return until;
+  // The CLI gets what it asked for (and, over 8 hours, what the owner
+  // confirmed), never the rest of a longer browser verification.
+  return new Date(Math.min(until.valueOf(), Date.now() + requiredMs));
 }
 
 function hashToken(token: string): string {

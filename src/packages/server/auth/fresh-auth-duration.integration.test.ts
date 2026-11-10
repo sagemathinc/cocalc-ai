@@ -19,6 +19,7 @@ import {
   resolveFreshAuthDurationMs,
   setSessionFreshAuth,
 } from "./auth-sessions";
+import { createLocalCliLoginSession } from "@cocalc/server/inter-bay/accounts";
 import { setImpersonationActorFreshAuth } from "./impersonation";
 import { createRememberMeCookie } from "./remember-me";
 
@@ -119,6 +120,81 @@ it("emails the account when a fresh auth longer than 8 hours starts", async () =
   expect(testEmails[0].subject).toMatch(/72 hours/);
   expect(testEmails[0].text).toMatch(/End now/);
   expect(testEmails[0].text).toMatch(/\/settings\/profile#security/);
+});
+
+// The in-app notices about long verifications, newest first.
+async function longFreshAuthNotices(account_id: string): Promise<any[]> {
+  const { rows } = await getPool().query(
+    `SELECT payload_json->'summary' AS summary
+       FROM notification_target_outbox
+      WHERE target_account_id = $1
+        AND kind = 'account_notice'
+        AND payload_json->'summary'->>'notice_type' = 'long_fresh_auth'
+      ORDER BY created_at DESC`,
+    [account_id],
+  );
+  return rows.map(({ summary }) => summary);
+}
+
+// The in-app notice is written right after the email is queued: wait for it.
+async function noticesSettle(account_id: string, expected: number) {
+  const deadline = Date.now() + (expected > 0 ? 15_000 : 1_000);
+  let notices = await longFreshAuthNotices(account_id);
+  while (Date.now() < deadline && notices.length < Math.max(expected, 1)) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    notices = await longFreshAuthNotices(account_id);
+  }
+  return notices;
+}
+
+it("also leaves an in-app notice when a fresh auth longer than 8 hours starts", async () => {
+  const account_id = await newAccount();
+  const hash = await session(account_id);
+  await freshFor(account_id, hash, 8 * HOUR);
+  expect(await noticesSettle(account_id, 0)).toHaveLength(0);
+  await freshFor(account_id, hash, 72 * HOUR);
+  const notices = await noticesSettle(account_id, 1);
+  expect(notices).toHaveLength(1);
+  expect(notices[0].title).toMatch(/72 hours/);
+  expect(notices[0].severity).toBe("warning");
+  expect(notices[0].action_link).toBe("/settings/profile#security");
+});
+
+it("a CLI sign-in carrying a verification over 8 hours sends the email and the in-app notice", async () => {
+  const account_id = await newAccount();
+  await createLocalCliLoginSession({
+    account_id,
+    approved_challenge_id: randomUUID(),
+    factor_level: "totp",
+    fresh_auth_until: new Date(Date.now() + 8 * HOUR),
+    ip_address: "192.0.2.7",
+    user_agent: "cocalc-cli/1.0",
+  });
+  await emailsSettle();
+  expect(testEmails).toHaveLength(0);
+  expect(await noticesSettle(account_id, 0)).toHaveLength(0);
+
+  await createLocalCliLoginSession({
+    account_id,
+    approved_challenge_id: randomUUID(),
+    factor_level: "totp",
+    fresh_auth_until: new Date(Date.now() + 72 * HOUR),
+    ip_address: "192.0.2.7",
+    // A client chooses its own user agent: it must not become a link.
+    user_agent: "cocalc-cli/1.0 [click](https://evil.example)",
+  });
+  await emailsSettle(1);
+  expect(testEmails).toHaveLength(1);
+  expect(testEmails[0].to).toBe(`${account_id}@example.test`);
+  expect(testEmails[0].subject).toMatch(/72 hours/);
+  expect(testEmails[0].text).toMatch(/A CLI sign-in/);
+  expect(testEmails[0].text).toMatch(/IP address: 192\.0\.2\.7/);
+  expect(testEmails[0].text).toMatch(/cocalc-cli\/1\.0/);
+  const notices = await noticesSettle(account_id, 1);
+  expect(notices).toHaveLength(1);
+  expect(notices[0].title).toMatch(/CLI sign-in/);
+  expect(notices[0].body_markdown).toContain("192\\.0\\.2\\.7");
+  expect(notices[0].body_markdown).not.toContain("](");
 });
 
 it("lists the active fresh auths of an account, marking the current one", async () => {

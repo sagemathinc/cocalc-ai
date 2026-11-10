@@ -5,6 +5,7 @@
 
 import type { Request } from "express";
 
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import {
   withAccountRehomeWriteFence,
@@ -367,6 +368,8 @@ export async function getCurrentAuthSessionForSessionHash({
   return row;
 }
 
+const logger = getLogger("server:auth:auth-sessions");
+
 export async function setCurrentSessionFreshAuth({
   req,
   account_id,
@@ -507,9 +510,9 @@ export async function setSessionFreshAuth({
     // code pulls in much of the server, and many modules import this one only
     // for its session helpers.
     void import("@cocalc/server/auth/fresh-auth-notice")
-      .then(async ({ isLongFreshAuthUntil, sendLongFreshAuthNotice }) => {
+      .then(async ({ isLongFreshAuthUntil, notifyLongFreshAuth }) => {
         if (!isLongFreshAuthUntil(fresh_auth_until)) return;
-        await sendLongFreshAuthNotice({
+        await notifyLongFreshAuth({
           account_id,
           fresh_auth_until,
           factor_level,
@@ -517,7 +520,12 @@ export async function setSessionFreshAuth({
           user_agent: client.user_agent,
         });
       })
-      .catch(() => {});
+      .catch((err) =>
+        logger.warn("could not load the long fresh auth notice", {
+          account_id,
+          err: `${err}`,
+        }),
+      );
   }
 }
 
