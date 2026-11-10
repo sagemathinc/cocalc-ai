@@ -350,6 +350,14 @@ jest.mock("@cocalc/server/cloud/bootstrap-host", () => ({
   __esModule: true,
   buildCloudInitStartupScript: (...args: any[]) =>
     buildCloudInitStartupScriptMock(...args),
+  // the real one is tested in cloud/bootstrap-host.test.ts
+  buildBootstrapReconcileSshScript: ({
+    launcher,
+    scope,
+  }: {
+    launcher: string;
+    scope: string;
+  }) => `ssh-reconcile scope=${scope}\n${launcher}`,
 }));
 
 jest.mock("@cocalc/server/cloud/ssh-key", () => ({

@@ -3,9 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { networkInterfaces } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
+import path from "node:path";
 
 let getServerSettingsMock: jest.Mock;
 let loadEffectiveProjectHostRuntimeDeploymentsMock: jest.Mock;
@@ -45,6 +48,11 @@ jest.mock("./cloudflare-tunnel", () => ({
 jest.mock("./providers", () => ({
   __esModule: true,
   getServerProvider: (...args: any[]) => getServerProviderMock(...args),
+}));
+
+jest.mock("./ssh-key", () => ({
+  __esModule: true,
+  getHostSshPublicKeys: async () => [],
 }));
 
 describe("bootstrap-host promoted artifact defaults", () => {
@@ -738,5 +746,345 @@ describe("bootstrap-host promoted artifact defaults", () => {
     expect(scripts.toolsVersion).toBe("tools-latest");
     expect(scripts.toolsSha256).toBe("c".repeat(64));
     expect(scripts.toolsFallbackManifestUrl).toBe("");
+  });
+
+  describe("bootstrap launcher with a root-only state root", () => {
+    // A token no command may ever print: it must only reach root-only files
+    // and the Authorization header.
+    const SENTINEL = "SENTINEL-bootstrap-token-7f3c9e1d2a";
+    const CA_CERT =
+      "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----";
+
+    function row() {
+      return {
+        id: "host-123",
+        name: "spot-utah",
+        region: "connector-123",
+        metadata: {
+          machine: {
+            cloud: "self-host",
+            metadata: {
+              arch: "amd64",
+              self_host_mode: "local",
+              self_host_kind: "direct",
+            },
+          },
+          runtime: { public_ip: "127.0.0.1" },
+        },
+      };
+    }
+
+    // The rendered launcher with its root paths moved into a temp dir, and PATH
+    // shims for what needs root or the network. The shims never print their
+    // arguments: curl only records whether it was sent the bearer token, and
+    // python3 records its argv (no token) to a log file.
+    async function renderAndPrepare() {
+      const { buildCloudInitStartupScript } = await import("./bootstrap-host");
+      const launcher = await buildCloudInitStartupScript(
+        row() as any,
+        SENTINEL,
+        "https://bay.example.test",
+        CA_CERT,
+        { inlineBootstrapPayload: true },
+      );
+      const dir = fs.mkdtempSync(path.join(tmpdir(), "bootstrap-launcher-"));
+      const state = path.join(dir, "state");
+      const shims = path.join(dir, "shims");
+      fs.mkdirSync(shims);
+      fs.mkdirSync(path.join(dir, "home"));
+      fs.mkdirSync(path.join(dir, "var-lib-cocalc"));
+      fs.mkdirSync(path.join(dir, "data"));
+      const script = launcher
+        .split("/var/lib/cocalc-host-bootstrap")
+        .join(state)
+        .split("/var/lib/cocalc/.bootstrap_done")
+        .join(path.join(dir, "var-lib-cocalc", ".bootstrap_done"))
+        .split("/mnt/cocalc/data/.bootstrap_done")
+        .join(path.join(dir, "data", ".bootstrap_done"));
+      fs.writeFileSync(path.join(dir, "launcher.sh"), script);
+      const fakeBootstrapPy = path.join(dir, "bootstrap.py.published");
+      fs.writeFileSync(fakeBootstrapPy, "print('fake bootstrap')\n");
+      const shim = (name: string, body: string) =>
+        fs.writeFileSync(path.join(shims, name), `#!/bin/bash\n${body}\n`, {
+          mode: 0o755,
+        });
+      shim(
+        "install",
+        `args=()
+  while [ $# -gt 0 ]; do case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac; done
+  exec /usr/bin/install "\${args[@]}"`,
+      );
+      shim(
+        "stat",
+        `out="$(/usr/bin/stat "$@")" || exit $?
+  # as on a host: /var/lib and the state root are root's
+  case "$*" in
+    *"$SHIM_ROOT"*) printf '%s\\n' "$out" | sed -E 's/^[0-9]+:[0-9]+ /0:0 /' ;;
+    *" /var/lib") printf '%s\\n' "$out" | sed -E 's/^[0-9]+:/0:/' ;;
+    *var-lib-cocalc/.bootstrap_done) if [ "\${SHIM_LEGACY_ROOT:-0}" = 1 ]; then printf '%s\\n' "$out" | sed -E 's/^[0-9]+:/0:/'; else printf '%s\\n' "$out"; fi ;;
+    *var-lib-cocalc) if [ "\${SHIM_LEGACY_ROOT:-0}" = 1 ]; then printf '%s\\n' "$out" | sed -E 's/^[0-9]+:[0-9]+:/0:0:/'; else printf '%s\\n' "$out"; fi ;;
+    *) printf '%s\\n' "$out" ;;
+  esac`,
+      );
+      shim(
+        "curl",
+        `out=""; url=""; auth=0; wfmt=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -o) out="$2"; shift 2 ;;
+      -w) wfmt="$2"; shift 2 ;;
+      -H) [ "$2" = "Authorization: Bearer $SHIM_TOKEN" ] && auth=1; shift 2 ;;
+      --data|-X|--cacert) shift 2 ;;
+      -*) shift ;;
+      *) url="$1"; shift ;;
+    esac
+  done
+  echo "curl auth=$auth $(basename "$url")" >> "$SHIM_LOG"
+  case "$url" in
+    */software/*bootstrap.py) if [ "\${SHIM_PRIMARY_FAIL:-0}" = 1 ]; then exit 22; fi; cp "$SHIM_BOOTSTRAP_PY" "$out" ;;
+    *.sha256) if [ "\${SHIM_BAD_SHA:-0}" = 1 ]; then echo "0000  bootstrap.py"; else /usr/bin/sha256sum "$SHIM_BOOTSTRAP_PY"; fi ;;
+    *bootstrap.py) cp "$SHIM_BOOTSTRAP_PY" "$out" ;;
+    *) if [ -n "$out" ]; then : > "$out"; fi; if [ -n "$wfmt" ]; then printf 200; fi ;;
+  esac`,
+      );
+      shim(
+        "python3",
+        `echo "python3 $*" >> "$SHIM_LOG"
+  exit "\${SHIM_PY_RC:-0}"`,
+      );
+      return { dir, state, shims, fakeBootstrapPy };
+    }
+
+    function run(
+      ctx: Awaited<ReturnType<typeof renderAndPrepare>>,
+      env: Record<string, string>,
+    ) {
+      const log = path.join(ctx.dir, `shim-${Math.random()}.log`);
+      fs.writeFileSync(log, "");
+      const result = spawnSync("bash", [path.join(ctx.dir, "launcher.sh")], {
+        cwd: ctx.dir,
+        encoding: "utf8",
+        env: {
+          PATH: `${ctx.shims}:/usr/bin:/bin`,
+          HOME: path.join(ctx.dir, "home"),
+          SHIM_ROOT: ctx.state,
+          SHIM_LOG: log,
+          SHIM_TOKEN: SENTINEL,
+          SHIM_BOOTSTRAP_PY: ctx.fakeBootstrapPy,
+          ...env,
+        },
+      });
+      return {
+        status: result.status,
+        output: `${result.stdout}${result.stderr}`,
+        calls: fs.readFileSync(log, "utf8"),
+      };
+    }
+
+    it("renders scripts bash accepts", async () => {
+      const ctx = await renderAndPrepare();
+      const check = spawnSync(
+        "bash",
+        ["-n", path.join(ctx.dir, "launcher.sh")],
+        {
+          encoding: "utf8",
+        },
+      );
+      expect(check.stderr).toBe("");
+      expect(check.status).toBe(0);
+    });
+
+    it("reconciles from the root-only state without printing the token", async () => {
+      const ctx = await renderAndPrepare();
+      fs.mkdirSync(ctx.state, { recursive: true });
+      fs.writeFileSync(path.join(ctx.state, ".bootstrap_done"), "");
+      const { status, output, calls } = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+      });
+      expect(output).not.toContain(SENTINEL);
+      expect(status).toBe(0);
+      // only the verified, root-only copy runs, isolated
+      expect(calls).toContain(
+        `python3 -I ${ctx.state}/bootstrap/bootstrap.py helpers --bootstrap-dir ${ctx.state}/bootstrap`,
+      );
+      // the token reaches root-only state only
+      expect(
+        fs.readFileSync(
+          path.join(ctx.state, "bootstrap", "bootstrap-desired-state.json"),
+          "utf8",
+        ),
+      ).toContain(SENTINEL);
+      expect(
+        fs.readFileSync(
+          path.join(ctx.state, "bootstrap", "bootstrap.py"),
+          "utf8",
+        ),
+      ).toBe("print('fake bootstrap')\n");
+      // the CA file and the state are in the root-only dir; the payload is gone
+      expect(fs.existsSync(path.join(ctx.state, "bootstrap-ca.pem"))).toBe(
+        true,
+      );
+      expect(
+        fs
+          .readdirSync(path.join(ctx.state, "bootstrap"))
+          .filter((name) => name.startsWith("bootstrap.payload")),
+      ).toEqual([]);
+      for (const sub of ["", "bootstrap", "tmp"]) {
+        expect(
+          (fs.statSync(path.join(ctx.state, sub)).mode & 0o777).toString(8),
+        ).toBe("700");
+      }
+    });
+
+    it("does not print the token when bootstrap.py fails", async () => {
+      const ctx = await renderAndPrepare();
+      fs.mkdirSync(ctx.state, { recursive: true });
+      fs.writeFileSync(path.join(ctx.state, ".bootstrap_done"), "");
+      const { status, output, calls } = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "full",
+        SHIM_PY_RC: "1",
+      });
+      expect(output).not.toContain(SENTINEL);
+      expect(status).not.toBe(0);
+      expect(calls).toContain("python3 -I");
+      expect(calls).toContain("curl auth=1 status");
+    });
+
+    it("keeps the previous bootstrap.py and runs nothing on a sha256 mismatch", async () => {
+      const ctx = await renderAndPrepare();
+      fs.mkdirSync(path.join(ctx.state, "bootstrap"), { recursive: true });
+      fs.writeFileSync(path.join(ctx.state, ".bootstrap_done"), "");
+      fs.writeFileSync(
+        path.join(ctx.state, "bootstrap", "bootstrap.py"),
+        "previous\n",
+      );
+      const { status, output, calls } = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+        SHIM_BAD_SHA: "1",
+      });
+      expect(output).not.toContain(SENTINEL);
+      expect(status).not.toBe(0);
+      expect(calls).not.toContain("python3");
+      expect(
+        fs.readFileSync(
+          path.join(ctx.state, "bootstrap", "bootstrap.py"),
+          "utf8",
+        ),
+      ).toBe("previous\n");
+      expect(
+        fs.existsSync(path.join(ctx.state, "bootstrap", "bootstrap.py.new")),
+      ).toBe(false);
+    });
+
+    it("checks the published sha256 on the bay fallback download too", async () => {
+      const ctx = await renderAndPrepare();
+      fs.mkdirSync(path.join(ctx.state, "bootstrap"), { recursive: true });
+      fs.writeFileSync(path.join(ctx.state, ".bootstrap_done"), "");
+      const good = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+        SHIM_PRIMARY_FAIL: "1",
+      });
+      expect(good.output).not.toContain(SENTINEL);
+      expect(good.status).toBe(0);
+      // the token-authenticated fallback was used, and the sha still checked
+      expect(good.calls).toContain("curl auth=1 bootstrap.py");
+      expect(good.calls).toContain("bootstrap.py.sha256");
+      fs.writeFileSync(
+        path.join(ctx.state, "bootstrap", "bootstrap.py"),
+        "previous\n",
+      );
+      const bad = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+        SHIM_PRIMARY_FAIL: "1",
+        SHIM_BAD_SHA: "1",
+      });
+      expect(bad.output).not.toContain(SENTINEL);
+      expect(bad.status).not.toBe(0);
+      expect(bad.calls).not.toContain("python3");
+      expect(
+        fs.readFileSync(
+          path.join(ctx.state, "bootstrap", "bootstrap.py"),
+          "utf8",
+        ),
+      ).toBe("previous\n");
+    });
+
+    it("trusts /var/lib/cocalc's marker only while that directory is root's", async () => {
+      const ctx = await renderAndPrepare();
+      fs.writeFileSync(
+        path.join(ctx.dir, "var-lib-cocalc", ".bootstrap_done"),
+        "",
+      );
+      const roots = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+        SHIM_LEGACY_ROOT: "1",
+      });
+      expect(roots.calls).toContain("helpers --bootstrap-dir");
+      // a marker that isn't a single root-owned, unshared file is ignored
+      const marker = path.join(ctx.dir, "var-lib-cocalc", ".bootstrap_done");
+      for (const plant of ["symlink", "hardlink", "writable"]) {
+        fs.rmSync(marker, { force: true });
+        const real = path.join(ctx.dir, "marker-elsewhere");
+        fs.rmSync(real, { force: true });
+        fs.writeFileSync(real, "");
+        if (plant === "symlink") fs.symlinkSync(real, marker);
+        if (plant === "hardlink") fs.linkSync(real, marker);
+        if (plant === "writable") {
+          fs.writeFileSync(marker, "");
+          fs.chmodSync(marker, 0o666);
+        }
+        const planted = run(ctx, {
+          COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+          SHIM_LEGACY_ROOT: "1",
+          SHIM_PY_RC: "1",
+        });
+        expect(planted.output).toContain("not root's alone");
+        expect(planted.calls).not.toContain("helpers --bootstrap-dir");
+      }
+      fs.rmSync(marker, { force: true });
+      fs.writeFileSync(marker, "");
+      fs.chmodSync(marker, 0o644);
+      // runtime-owned (older hosts): ignored, so first boot runs
+      const runtimes = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+        SHIM_PY_RC: "1",
+      });
+      expect(runtimes.output).toContain("not root's alone");
+      expect(runtimes.calls).not.toContain("helpers --bootstrap-dir");
+      expect(runtimes.calls).toContain(
+        `python3 -I ${ctx.state}/bootstrap/bootstrap.py --bootstrap-dir ${ctx.state}/bootstrap`,
+      );
+    });
+
+    it("does not trust the data disk's marker", async () => {
+      const ctx = await renderAndPrepare();
+      fs.writeFileSync(path.join(ctx.dir, "data", ".bootstrap_done"), "");
+      const { output, calls } = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+        SHIM_PY_RC: "1",
+      });
+      expect(output).not.toContain(SENTINEL);
+      expect(output).toContain("ignoring");
+      // first boot: bootstrap.py without a reconcile mode
+      expect(calls).toContain(
+        `python3 -I ${ctx.state}/bootstrap/bootstrap.py --bootstrap-dir ${ctx.state}/bootstrap`,
+      );
+      expect(calls).not.toContain("helpers --bootstrap-dir");
+    });
+
+    it("refuses a state root that is a symlink", async () => {
+      const ctx = await renderAndPrepare();
+      const elsewhere = path.join(ctx.dir, "elsewhere");
+      fs.mkdirSync(elsewhere);
+      fs.symlinkSync(elsewhere, ctx.state);
+      const { status, output, calls } = run(ctx, {
+        COCALC_BOOTSTRAP_RECONCILE_SCOPE: "helpers",
+      });
+      expect(status).not.toBe(0);
+      expect(output).toContain("a symlink");
+      expect(output).not.toContain(SENTINEL);
+      expect(calls).not.toContain("python3");
+      expect(fs.readdirSync(elsewhere)).toEqual([]);
+    });
   });
 });

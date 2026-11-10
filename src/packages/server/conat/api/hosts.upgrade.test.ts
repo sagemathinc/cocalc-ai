@@ -48,6 +48,14 @@ jest.mock("@cocalc/server/cloud/bootstrap-host", () => ({
   __esModule: true,
   buildCloudInitStartupScript: (...args: any[]) =>
     buildCloudInitStartupScriptMock(...args),
+  // the real one is tested in cloud/bootstrap-host.test.ts
+  buildBootstrapReconcileSshScript: ({
+    launcher,
+    scope,
+  }: {
+    launcher: string;
+    scope: string;
+  }) => `ssh-reconcile scope=${scope}\n${launcher}`,
 }));
 
 jest.mock("@cocalc/server/cloud/ssh-key", () => ({
@@ -395,10 +403,9 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       }),
       {},
     );
-    expect(ssh.getScript()).toContain(
-      'BOOTSTRAP_PID="$(sudo -n bash -lc \'nohup env COCALC_BOOTSTRAP_RECONCILE_SCOPE="$3" bash "$1" >>"$2" 2>&1 </dev/null & echo $!\'',
+    expect(ssh.getScript()).toBe(
+      "ssh-reconcile scope=full\n#!/bin/bash\necho hi\n",
     );
-    expect(ssh.getScript()).toContain('"$BOOTSTRAP_LOG" "full")');
     expect(delayMock).toHaveBeenCalledTimes(2);
   });
 
@@ -838,10 +845,9 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       ).resolves.toBeUndefined();
 
       expect(spawnMock).toHaveBeenCalled();
-      expect(ssh.getScript()).toContain(
-        'COCALC_BOOTSTRAP_RECONCILE_SCOPE="$3"',
+      expect(ssh.getScript()).toBe(
+        `ssh-reconcile scope=${bootstrapScope}\n#!/bin/bash\necho hi\n`,
       );
-      expect(ssh.getScript()).toContain(`"${bootstrapScope}")`);
       expect(
         loadEffectiveProjectHostRuntimeDeploymentsMock,
       ).not.toHaveBeenCalled();
