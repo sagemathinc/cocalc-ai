@@ -14,7 +14,8 @@ export const GCP_CONNECTOR_BODY = String.raw`
 
 The Google Cloud connector will let your CoCalc agents run \`gcloud\` (and other
 Google Cloud tools) in **your** Google Cloud project. They will act as **one
-service account that you create**, with **only the roles you choose**.
+service account that you create**, with **the roles you choose**, plus one
+read-only permission used to verify the project.
 
 The connector is designed never to store a long-lived Google credential, in
 CoCalc or in your CoCalc project:
@@ -35,14 +36,16 @@ There are two sides, and they are set up separately.
   comes from agent X of account Y, for connection Z") with a key held in
   Google Cloud KMS. The key will be kept in hardware: nobody, including
   CoCalc's operators, can export or copy it. It can only be used to sign,
-  through an API call that Google logs.
+  through an API call that CoCalc's setup configures Google Cloud to log
+  (as a Data Access audit log entry).
 - **Separate projects.** The key is designed to live in a dedicated Google
   Cloud project that contains nothing else and runs no virtual machines.
 - **The broker.** Only the identity of a small token broker will be granted
   use of the key. The broker will run in a second, separate project.
   Separate projects will be used for staging and for production.
-- **Monitoring.** Any change to who may use the key, or to the broker's
-  machine, will raise an alert to CoCalc's operations team.
+- **Monitoring.** Changes to who may use the key, and security-sensitive
+  changes to the broker's identity or to its machine's access settings, will
+  raise an alert to CoCalc's operations team.
 
 **Your side (set up once per connection, in your project).**
 A guided setup creates, in a Google Cloud project you choose:
@@ -76,20 +79,28 @@ CoCalc-owned service account there.
 - **It can do exactly what your service account's roles allow, and nothing
   else.** Choose the smallest roles that do the job. For example, use a
   read-only role if agents only need to look.
-- **Setup refuses dangerous roles.** CoCalc's connection setup binds the
-  roles you choose, plus the one-permission read-only role it needs to
-  verify your project. At setup, and again whenever the grant changes or is
-  turned back on, it refuses any role that could manage service accounts,
-  keys, custom roles, identity pools or access policies in your project.
-  - This means a connection can't be used for IAM administration, or for
-    roles such as Owner, Editor or Storage Admin, which include
-    policy-changing permissions.
+- **CoCalc refuses the most dangerous permissions.** CoCalc's connection
+  setup binds the roles you choose, plus the one-permission read-only role it
+  needs to verify your project. At setup, and again whenever the grant
+  changes or is turned back on, CoCalc refuses the connection if the service
+  account can act as service accounts, create tokens or keys for them,
+  change your project's access policy or your organization's policies, edit
+  custom roles, or change identity pools.
+  - This means a connection can't be used for project IAM administration, or
+    with roles such as Owner or Editor, which can act as service accounts.
+  - At first setup only, the setup script also looks inside the roles you
+    request and refuses any role that can change the access policy of an
+    individual resource, such as Storage Admin. CoCalc doesn't check this
+    again later: if such a role is granted afterwards, the connection keeps
+    working.
 - **CoCalc acts only through your service account.** Setup never grants any
   role to a CoCalc-owned service account in your project. CoCalc acts only
   through the one service account you create, with the roles you choose.
 - **CoCalc checks with Google, not just with its own setup script.** Before
   a connection is turned on, CoCalc asks Google directly whether the new
-  identity holds any of the refused permissions. If it does, or the answer
+  identity holds any of the permissions CoCalc refuses at every check
+  (acting as service accounts, keys, access and organization policies,
+  custom roles, identity pools). If it does, or the answer
   is unclear, the connection stays off. The same check runs again whenever
   the grant changes or is turned back on.
 
@@ -135,13 +146,13 @@ You can always run \`gcloud auth login\` in a CoCalc project terminal. It signs
 |  | Google Cloud connector | \`gcloud auth login\` in a project |
 |---|---|---|
 | Acts as | one service account you create | you, with all your permissions, in every project you can reach |
-| Permissions | only the roles you give it (plus one read-only permission to identify the project); dangerous roles refused at setup, revision and re-enable | everything your Google account can do, including IAM administration |
+| Permissions | only the roles you give it (plus one read-only permission to identify the project); the most dangerous IAM permissions refused at setup, revision and re-enable | everything your Google account can do, including IAM administration |
 | Credential in the project | a token valid for at most 15 minutes, renewed only while an agent works | a long-lived refresh token stored in the project's files until you revoke it |
 | Who can use it | anyone who can run code in that CoCalc project while an agent is working | anyone who can run code or read files in that project, at any time, until you revoke it |
 | Revoke | one switch in CoCalc, or in Google Cloud; at most 15 more minutes of use | revoke the sign-in in your Google account; the stored credential works until then |
 | Audit | the service account in your audit logs, plus CoCalc's signature log | your own user account in your audit logs |
 | Setup | a one-time guided setup; needs permission to create a pool, provider and service account in your project | none |
-| Works for IAM or policy administration | no, by design | yes |
+| Works for project IAM or organization policy administration | no, by design | yes |
 
 **Use the connector when** agents should work in Google Cloud for you,
 especially unattended or in a shared project, or when you want access you can
