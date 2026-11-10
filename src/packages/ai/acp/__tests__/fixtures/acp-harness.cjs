@@ -337,7 +337,8 @@ lineReader.on("line", (line) => {
           sessionId: "fixture-session",
           ...controls(),
         });
-      update("old replayed answer");
+      // session/load replays the saved history first; session/resume does not.
+      if (message.method === "session/load") update("old replayed answer");
       if (process.argv.includes("--crash-resume")) return process.exit(2);
       if (
         process.argv.includes("--reject-resume") ||
