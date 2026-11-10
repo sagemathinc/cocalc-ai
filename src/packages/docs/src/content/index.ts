@@ -16,6 +16,7 @@ export * from "./files";
 export * from "./hosts";
 export * from "./jupyter";
 export * from "./notebook-security";
+export * from "./gcp-connector";
 export * from "./remote-jupyter";
 export * from "./migration";
 export * from "./projects";

@@ -8,6 +8,7 @@ import { CLAUDE_CODE_BODY } from "../content/claude-code";
 import { AGENT_FEATURES_BODY } from "../content/agent-features";
 import { AGENT_MEMORY_BODY } from "../content/agent-memory";
 import { COCALC_ACCESS_BODY } from "../content/cocalc-access";
+import { GCP_CONNECTOR_BODY } from "../content/gcp-connector";
 import { docsIcon, projectActionParameters } from "../helpers";
 import {
   AI_CREDENTIALS_BODY,
@@ -81,6 +82,22 @@ export const AI_ENTRIES: DocsEntry[] = [
     summary:
       "Give an agent temporary access to selected CoCalc projects or all your projects.",
     title: "Give an agent CoCalc access",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: GCP_CONNECTOR_BODY.trim(),
+    category: "AI",
+    id: "ai.gcp-connector",
+    lastReviewed: "2026-11-10",
+    noActionReason:
+      "Explains how the Google Cloud connector works and how it compares with gcloud auth login; setup happens in the connector wizard.",
+    searchKeywords:
+      "google cloud gcp gcloud connector service account workload identity federation pool provider kms key broker short-lived token least privilege revoke audit logs gcloud auth login security",
+    slug: "ai/google-cloud-connector",
+    status: "draft",
+    summary:
+      "How agents use Google Cloud through a service account you create, why no long-lived credential is stored, and when to use gcloud auth login instead.",
+    title: "Google Cloud connector: how it works and how it is secured",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],
