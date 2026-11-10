@@ -1056,11 +1056,11 @@ export async function createProjectCliTokenLease({
   // A managed connector turn is bound to the identity run it was issued
   // under. When that run is replaced, end the old turn (under its own run)
   // and issue the same chat turn again under the current run. Fail closed:
-  // the key file is removed first and only a newly issued key is written.
+  // the key file is removed first, nothing is issued unless the old turn was
+  // ended, and only a newly issued key is written.
   const rebindConnectorTurn = async (
     active: NonNullable<typeof connectorTurn>,
   ): Promise<void> => {
-    const identity = identityLease?.currentRun;
     if (connectorTurn !== active) return;
     connectorTurn = undefined;
     await clearConnectorKey();
@@ -1072,12 +1072,15 @@ export async function createProjectCliTokenLease({
         run_id: active.run_id,
         turn_id: active.turn_id,
       })
-      .catch((err) =>
+      .catch((err) => {
         logger.warn("managed CoCalc connector revocation unconfirmed", {
           projectId,
           err: `${err}`,
-        }),
-      );
+        });
+        throw err;
+      });
+    // Read the run only now: it may have been replaced again meanwhile.
+    const identity = identityLease?.currentRun;
     if (
       closed ||
       !active.stillCurrent() ||

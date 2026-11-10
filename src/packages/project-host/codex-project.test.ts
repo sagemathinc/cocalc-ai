@@ -1317,6 +1317,13 @@ describe("initCodexProjectRunner", () => {
         expect(hubApi.agent.renewCocalcConnectorTurn).toHaveBeenCalledWith(
           expect.objectContaining({ run_id: newRunId, turn_id: "turn-2" }),
         );
+        // The renewal rewrites the replacement's own key, never the old one.
+        await waitFor(async () =>
+          fs.readFile(hostFile, "utf8").then(
+            (v) => v === "secret-2.scoped-key\n",
+            () => false,
+          ),
+        );
         // Ending the turn ends the replacement under its own run.
         await t.spawned.endConnectorTurn!();
         expect(ended.at(-1)).toEqual(
@@ -1328,6 +1335,267 @@ describe("initCodexProjectRunner", () => {
       }
     },
   );
+
+  it("reissues under the run current after the old turn ends, even if it changed again", async () => {
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+    const issued: Array<{ run_id: string }> = [];
+    hubApi.agent.beginCocalcConnectorTurn.mockImplementation(async (req) => {
+      issued.push(req);
+      const n = issued.length;
+      return {
+        turn_id: `turn-${n}`,
+        key_id: `key-${n}`,
+        secret: `secret-${n}.scoped-key`,
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      };
+    });
+    const t = await spawnWithRotatableIdentity("codex-project-managed-twice-");
+    let secondRun: string | undefined;
+    hubApi.agent.endCocalcConnectorTurn.mockImplementation(async () => {
+      // The run is replaced again while the old turn is being ended.
+      if (!secondRun) secondRun = await t.rotate();
+    });
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const hostFile =
+        t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+          "/home/user",
+          t.home,
+        );
+      const [renew] = t.connectorTimers();
+      const firstRun = await t.rotate();
+      renew();
+      await waitFor(() => issued.length === 2);
+      expect(secondRun).toBeDefined();
+      expect(secondRun).not.toBe(firstRun);
+      // Issued under the run current after the end, not the one seen before.
+      expect(issued[1].run_id).toBe(secondRun);
+      await waitFor(async () =>
+        fs.readFile(hostFile, "utf8").then(
+          (v) => v === "secret-2.scoped-key\n",
+          () => false,
+        ),
+      );
+      await t.spawned.endConnectorTurn!();
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("does not reissue the managed connector turn when ending the old one fails", async () => {
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue({
+      turn_id: "turn-1",
+      key_id: "key-1",
+      secret: "secret-1.scoped-key",
+      expires_at: Date.now() + 300000,
+      config_id: "config-id",
+      config_revision: 1,
+    });
+    hubApi.agent.endCocalcConnectorTurn.mockRejectedValue(
+      new Error("hub unavailable"),
+    );
+    const t = await spawnWithRotatableIdentity(
+      "codex-project-managed-endfail-",
+    );
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const hostFile =
+        t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+          "/home/user",
+          t.home,
+        );
+      const [renew] = t.connectorTimers();
+      await t.rotate();
+      renew();
+      await waitFor(
+        () => hubApi.agent.endCocalcConnectorTurn.mock.calls.length === 1,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      // The old key is gone locally and no replacement was issued or written.
+      expect(hubApi.agent.beginCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+      await expect(fs.stat(hostFile)).rejects.toThrow();
+      // Later ticks do nothing: the connector stays off for this turn.
+      renew();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(hubApi.agent.beginCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+      expect(hubApi.agent.renewCocalcConnectorTurn).not.toHaveBeenCalled();
+      await t.spawned.endConnectorTurn!();
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  // The identity lease fixes its agent when it is created, so these tests
+  // override what it reports to pin the guards against another agent.
+  function overrideLeaseRun() {
+    const leaseModule = require("./codex/agent-identity-lease");
+    const real = leaseModule.createAgentIdentityLease;
+    const state: {
+      override?: (run: { agent_id: string; run_id: string }) => {
+        agent_id: string;
+        run_id: string;
+      };
+    } = {};
+    const spy = jest
+      .spyOn(leaseModule, "createAgentIdentityLease")
+      .mockImplementation(async (opts: any) => {
+        const lease = await real(opts);
+        if (!lease) return lease;
+        return new Proxy(lease, {
+          get(target, prop) {
+            const value = Reflect.get(target, prop);
+            return prop === "currentRun" && state.override
+              ? state.override(value)
+              : value;
+          },
+        });
+      });
+    return { state, restore: () => spy.mockRestore() };
+  }
+
+  it("removes CLI tokens and stops renewing if the identity names another agent", async () => {
+    const lease = overrideLeaseRun();
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue(undefined);
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([
+      {
+        connector: "github",
+        token: "gho_cli_token",
+        expires_at: Date.now() + 900000,
+        description: "@octo",
+      },
+    ]);
+    const t = await spawnWithRotatableIdentity("codex-project-cli-otheragent-");
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const bin = t.spawned.runtimeEnv!.PATH.split(":")[0];
+      const tokenFile = path
+        .join(bin, "..", "github-token")
+        .replace("/home/user", t.home);
+      const exists = () =>
+        fs.stat(tokenFile).then(
+          () => true,
+          () => false,
+        );
+      expect(await exists()).toBe(true);
+      const [renew] = t.connectorTimers();
+      lease.state.override = (run) => ({ ...run, agent_id: "other-agent" });
+      const calls = hubApi.agent.beginCliConnectorTurn.mock.calls.length;
+      renew();
+      await waitFor(async () => !(await exists()));
+      renew();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(hubApi.agent.beginCliConnectorTurn.mock.calls.length).toBe(calls);
+      expect(await exists()).toBe(false);
+      await t.spawned.endConnectorTurn!();
+    } finally {
+      lease.restore();
+      await t.cleanup();
+    }
+  });
+
+  it.each(["other-agent", "turn-ended"])(
+    "does not reissue the managed connector turn when, after ending it, %s",
+    async (change) => {
+      const lease = overrideLeaseRun();
+      hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+      hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue({
+        turn_id: "turn-1",
+        key_id: "key-1",
+        secret: "secret-1.scoped-key",
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      });
+      const t = await spawnWithRotatableIdentity(
+        `codex-project-managed-${change}-`,
+      );
+      hubApi.agent.endCocalcConnectorTurn.mockImplementation(async () => {
+        if (change === "other-agent") {
+          lease.state.override = (run) => ({ ...run, agent_id: "other-agent" });
+        } else {
+          await t.spawned.endConnectorTurn!();
+        }
+      });
+      try {
+        await t.spawned.beginConnectorTurn!(t.chat);
+        const hostFile =
+          t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+            "/home/user",
+            t.home,
+          );
+        const [renew] = t.connectorTimers();
+        await t.rotate();
+        renew();
+        await waitFor(
+          () => hubApi.agent.endCocalcConnectorTurn.mock.calls.length >= 1,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(hubApi.agent.beginCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+        await expect(fs.stat(hostFile)).rejects.toThrow();
+        // The old turn was ended under the run it was issued under.
+        expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            run_id: t.initialRunId,
+            turn_id: "turn-1",
+          }),
+        );
+      } finally {
+        lease.restore();
+        await t.cleanup();
+      }
+    },
+  );
+
+  it("ends the replacement if the turn ends while it is being issued", async () => {
+    hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
+    let t!: Awaited<ReturnType<typeof spawnWithRotatableIdentity>>;
+    const issued: Array<{ run_id: string }> = [];
+    hubApi.agent.beginCocalcConnectorTurn.mockImplementation(async (req) => {
+      issued.push(req);
+      const n = issued.length;
+      // The chat turn ends while its replacement is in flight.
+      if (n === 2) await t.spawned.endConnectorTurn!();
+      return {
+        turn_id: `turn-${n}`,
+        key_id: `key-${n}`,
+        secret: `secret-${n}.scoped-key`,
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      };
+    });
+    const ended: Array<{ run_id: string; turn_id: string }> = [];
+    hubApi.agent.endCocalcConnectorTurn.mockImplementation(async (req) => {
+      ended.push(req);
+    });
+    t = await spawnWithRotatableIdentity("codex-project-managed-inflight-");
+    try {
+      await t.spawned.beginConnectorTurn!(t.chat);
+      const hostFile =
+        t.spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+          "/home/user",
+          t.home,
+        );
+      const [renew] = t.connectorTimers();
+      const newRun = await t.rotate();
+      renew();
+      await waitFor(() => ended.length === 2);
+      // The old turn under its run, then the just-issued replacement under
+      // the new run; no key is left.
+      expect(ended[0]).toEqual(
+        expect.objectContaining({ run_id: t.initialRunId, turn_id: "turn-1" }),
+      );
+      expect(ended[1]).toEqual(
+        expect.objectContaining({ run_id: newRun, turn_id: "turn-2" }),
+      );
+      await expect(fs.stat(hostFile)).rejects.toThrow();
+    } finally {
+      await t.cleanup();
+    }
+  });
 
   it("leaves no managed connector key when the replacement turn is refused", async () => {
     hubApi.agent.beginCliConnectorTurn.mockResolvedValue([]);
