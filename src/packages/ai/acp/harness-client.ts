@@ -34,6 +34,7 @@ import type {
   AcpHarnessProfile,
 } from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
+import getLogger from "@cocalc/backend/logger";
 import {
   diagnosticError,
   HarnessStderrDiagnostics,
@@ -186,6 +187,7 @@ const REQUEST_ACTIONS = {
   initialize: "start the agent runtime",
   "session/new": "open a session to load models and settings",
   "session/load": "resume this conversation",
+  "session/resume": "resume this conversation",
   "session/fork": "copy this conversation",
   "session/set_mode": "apply the selected mode",
   "session/set_config_option": "apply the selected model or thinking level",
@@ -359,6 +361,29 @@ function promptBlocks(text: string, images: readonly AcpImageAttachment[]) {
   ];
 }
 
+// Resuming a session replays its whole history before the agent can answer,
+// so a long conversation can take far longer than an ordinary request. With
+// the general 30 s bound, such a session failed every turn at session/load.
+export const DEFAULT_SESSION_LOAD_TIMEOUT_MS = 180_000;
+
+const logger = getLogger("ai:acp:harness-client");
+
+export function resolveSessionLoadTimeoutMs(
+  requestTimeoutMs: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const configured = Number(env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS);
+  const value =
+    Number.isFinite(configured) && configured > 0
+      ? Math.floor(configured)
+      : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
+  // setTimeout fires at once for delays above 2^31 - 1 ms, so a huge value
+  // meant as "wait forever" would fail every resume immediately.
+  return Math.min(Math.max(value, requestTimeoutMs), MAX_TIMER_MS);
+}
+
+const MAX_TIMER_MS = 2_147_483_647;
+
 export class AcpHarnessClient {
   private connection: ClientSideConnection;
   private session?: NewSessionResponse;
@@ -381,6 +406,12 @@ export class AcpHarnessClient {
   private questionAbort?: AbortController;
   private readonly binding: HarnessBinding;
   private readonly timeoutMs: number;
+  /**
+   * session/load replays the saved history, so it gets its own, longer budget.
+   * session/resume shares it: it skips the replay, but still reads the saved
+   * session and starts the agent, which slow storage can stretch past 30 s.
+   */
+  private readonly sessionLoadTimeoutMs: number;
   private authStatus?: unknown;
   /** Newer session instructions for a resumed session's next turn. */
   private instructionsUpdate?: { text: string; version: string };
@@ -402,6 +433,7 @@ export class AcpHarnessClient {
       ),
     };
     this.timeoutMs = timeoutMs;
+    this.sessionLoadTimeoutMs = resolveSessionLoadTimeoutMs(timeoutMs);
     process.stderr.on("data", (chunk) => this.stderrDiagnostics.append(chunk));
     process.stderr.on("error", () => this.fail(Error("ACP stderr failed")));
     process.stdin.on("error", () => this.fail(Error("ACP stdin closed")));
@@ -758,13 +790,15 @@ export class AcpHarnessClient {
       if (!prompt)
         timer = setTimeout(
           () => reject(Error("ACP request timed out")),
-          this.timeoutMs,
+          method === "session/load" || method === "session/resume"
+            ? this.sessionLoadTimeoutMs
+            : this.timeoutMs,
         );
     });
     try {
       // Observe every promise even when a prior output failure already closed
       // the runtime. Otherwise the close rejection can escape unhandled.
-      return await Promise.race([
+      const result = await Promise.race([
         operation,
         closed,
         deadline,
@@ -772,6 +806,14 @@ export class AcpHarnessClient {
           ? [Promise.reject(Error("ACP runtime unavailable"))]
           : []),
       ]);
+      // How long resumes take, so the session/load budget can be judged from
+      // real replays (failures are already recorded as diagnostics).
+      if (method === "session/load" || method === "session/resume")
+        logger.info(`ACP ${method} completed`, {
+          elapsed_ms: Date.now() - startedAt,
+          timeout_ms: this.sessionLoadTimeoutMs,
+        });
+      return result;
     } catch (error) {
       const protocolRejection =
         !this.failure &&
@@ -835,12 +877,17 @@ export class AcpHarnessClient {
       recovery = subscription
         ? "Sign-in is required. Open agent settings and reconnect your Claude subscription."
         : "Authentication is required. Open agent settings and check the selected connection.";
-    } else if (method === "session/load" && code === -32002) {
+    } else if (
+      (method === "session/load" || method === "session/resume") &&
+      code === -32002
+    ) {
       recovery =
         "The saved session could not be opened. Reconnecting will not recreate a missing session. Contact the site administrator to check session storage and include the diagnostic code below; your chat history has been kept.";
     } else if (
       code === -32602 &&
-      (method === "session/new" || method === "session/load") &&
+      (method === "session/new" ||
+        method === "session/load" ||
+        method === "session/resume") &&
       typeof data?.cwd === "string"
     ) {
       recovery = subscription
@@ -919,17 +966,26 @@ export class AcpHarnessClient {
               : {}),
       };
       if (sessionId) {
-        if (!this.info.agentCapabilities?.loadSession)
+        // session/load replays the whole saved history as updates before it
+        // answers, and onUpdate ignores that phase. session/resume restores the
+        // same session without the replay, so prefer it whenever the agent
+        // offers it: a long conversation then resumes in constant time.
+        const resume = !!this.info.agentCapabilities?.sessionCapabilities?.resume;
+        if (!resume && !this.info.agentCapabilities?.loadSession)
           throw new HarnessError(
             "unsupported",
             "Harness cannot resume sessions",
           );
-        // Loading replays history, not a new response. onUpdate ignores this phase.
         try {
-          const loaded = await this.request(
-            this.connection.loadSession({ ...params, sessionId }),
-            "session/load",
-          );
+          const loaded = resume
+            ? await this.request(
+                this.connection.resumeSession({ ...params, sessionId }),
+                "session/resume",
+              )
+            : await this.request(
+                this.connection.loadSession({ ...params, sessionId }),
+                "session/load",
+              );
           this.session = { ...loaded, sessionId };
         } catch (error) {
           if (
