@@ -9,6 +9,7 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import isPost from "@cocalc/http-api/lib/api/is-post";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { approveDevCliElevate } from "@cocalc/server/auth/cli-auth";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 function getCookie(req: any, name: string): string {
   const direct = `${req.cookies?.[name] ?? ""}`.trim();
@@ -45,8 +46,7 @@ export default async function cliElevateDev(req: any, res: any) {
         hub_password:
           getCookie(req, HUB_PASSWORD_COOKIE_NAME) ||
           getCookie(req, "hub_password"),
-        duration:
-          `${duration ?? ""}`.trim() === "extended" ? "extended" : "default",
+        duration: parseFreshAuthDuration(duration),
       }),
     );
   } catch (err) {

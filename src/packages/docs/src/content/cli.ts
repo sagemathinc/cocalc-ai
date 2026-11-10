@@ -227,8 +227,11 @@ cocalc --profile cocalc-ai auth elevate
 ~~~
 
 Follow the printed browser approval and passkey or TOTP challenge. The default
-elevation lasts eight hours; \`--short\` requests fifteen minutes. To perform
-login, elevation, and verification together on your own computer:
+elevation lasts eight hours; \`--short\` requests fifteen minutes, and
+\`--duration 72h\` any whole number of hours up to 72. Longer than eight hours
+emails you, and every active elevation can be ended in your account's security
+settings. To perform login, elevation, and verification together on your own
+computer:
 
 ~~~sh
 cocalc --profile cocalc-ai --api https://cocalc.ai auth bootstrap

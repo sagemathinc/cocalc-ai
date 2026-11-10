@@ -18,7 +18,7 @@ export default async function cliLoginApprove(req, res) {
   }
 
   try {
-    const { challenge_id } = getParams(req);
+    const { challenge_id, confirmed_duration } = getParams(req);
     const cleanedChallengeId = `${challenge_id ?? ""}`.trim();
     const approval = await getApprovingAccount({
       req,
@@ -30,6 +30,7 @@ export default async function cliLoginApprove(req, res) {
         account_id: approval.account_id,
         factor_level: approval.factor_level,
         fresh_auth_until: approval.fresh_auth_until,
+        confirmed_duration,
       }),
     );
   } catch (err) {

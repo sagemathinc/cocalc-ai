@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readExternalAgentCredential } from "../core/external-agent-profile";
 
 import {
+  elevationDuration,
   profileScopedFetch,
   registerAuthCommand,
   type AuthCommandDeps,
@@ -1284,5 +1285,26 @@ test("auth use rejects reserved env auth profile names", async () => {
   await assert.rejects(
     program.parseAsync(["node", "test", "auth", "use", "_env"]),
     /reserved for environment-based auth/,
+  );
+});
+
+test("auth elevate --duration picks 1h to 72h; --short and --extended keep their meaning", () => {
+  assert.equal(elevationDuration({}), "extended");
+  assert.equal(elevationDuration({ extended: true }), "extended");
+  assert.equal(elevationDuration({ short: true }), "default");
+  assert.equal(elevationDuration({ duration: "72h" }), "72h");
+  assert.equal(elevationDuration({ duration: "24" }), "24h");
+  assert.equal(elevationDuration({ duration: "extended" }), "extended");
+  assert.throws(
+    () => elevationDuration({ duration: "73h" }),
+    /invalid fresh auth duration/,
+  );
+  assert.throws(
+    () => elevationDuration({ duration: "3d" }),
+    /invalid fresh auth duration/,
+  );
+  assert.throws(
+    () => elevationDuration({ short: true, duration: "24h" }),
+    /either --short or --duration/,
   );
 });

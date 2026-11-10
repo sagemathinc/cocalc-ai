@@ -109,6 +109,7 @@ import {
   ssoAuditProviderType,
 } from "@cocalc/server/auth/sso/audit";
 import siteUrl from "@cocalc/server/hub/site-url";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 const logger = getLogger("server:hub:auth");
 
@@ -193,7 +194,7 @@ function stringQueryValue(value: unknown): string | undefined {
 }
 
 function freshAuthDurationValue(value: unknown): FreshAuthDuration {
-  return value === "extended" ? "extended" : "default";
+  return parseFreshAuthDuration(value);
 }
 
 function googleOidcFreshAuthPopupHtml({

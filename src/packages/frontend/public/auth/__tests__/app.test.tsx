@@ -2345,10 +2345,14 @@ describe("PublicAuthApp", () => {
       await screen.findByText(/Approve an elevated CLI sign-in/),
     ).not.toBeNull();
     expect(
-      screen.getByRole("button", { name: "Approve Elevated CLI Login" }),
+      screen.getByRole("button", {
+        name: "Approve Elevated CLI Login for 8 hours",
+      }),
     ).not.toBeNull();
     fireEvent.click(
-      screen.getByRole("button", { name: "Approve Elevated CLI Login" }),
+      screen.getByRole("button", {
+        name: "Approve Elevated CLI Login for 8 hours",
+      }),
     );
 
     await waitFor(() =>
@@ -2417,6 +2421,79 @@ describe("PublicAuthApp", () => {
           current_password: "",
           method: "totp",
           code: "123456",
+        },
+      }),
+    );
+  });
+
+  it("makes the owner confirm a CLI elevation longer than 8 hours explicitly", async () => {
+    mockedPostAuthApi
+      .mockResolvedValueOnce({
+        challenge_id: "challenge-2",
+        kind: "elevate",
+        account_id: "acct-viewer",
+        email_address: "alice@example.com",
+        display_name: "Alice Example",
+        current_account_id: "acct-viewer",
+        current_email_address: "alice@example.com",
+        current_display_name: "Alice Example",
+        current_matches_account: true,
+        requested_duration: "72h",
+        state: "pending",
+        expires_at: "2026-05-08T18:00:00.000Z",
+      } as any)
+      .mockResolvedValueOnce({
+        mode: "account",
+        enabled: true,
+        methods: ["totp"],
+        has_password: true,
+        email_address: "alice@example.com",
+      } as any)
+      .mockResolvedValueOnce({ approved: true } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{ challengeId: "challenge-2", kind: "auth-cli-elevate" }}
+      />,
+    );
+
+    expect(await screen.findByText("Second factor")).not.toBeNull();
+    expect(
+      screen.getByText(/will stay elevated for 72 hours\. We will email you/),
+    ).not.toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("123456"), {
+      target: { value: "123456" },
+    });
+    const approve = screen.getByRole("button", {
+      name: "Approve CLI Elevation for 72 hours",
+    });
+    expect(approve).toBeDisabled();
+    // Enter in the code field does not skip the confirmation.
+    fireEvent.keyDown(screen.getByPlaceholderText("123456"), {
+      key: "Enter",
+      code: "Enter",
+    });
+    expect(
+      await screen.findByText(
+        /Confirm that the terminal should stay elevated for 72 hours/,
+      ),
+    ).not.toBeNull();
+    expect(mockedPostAuthApi).not.toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "auth/cli/elevate/approve" }),
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(approve).not.toBeDisabled();
+    fireEvent.click(approve);
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "auth/cli/elevate/approve",
+        body: {
+          challenge_id: "challenge-2",
+          current_password: "",
+          method: "totp",
+          code: "123456",
+          confirmed_duration: "72h",
         },
       }),
     );

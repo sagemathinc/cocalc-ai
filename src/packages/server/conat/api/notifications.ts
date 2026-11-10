@@ -71,6 +71,10 @@ import {
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import {
+  isLongFreshAuthDuration,
+  parseFreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
 
 const logger = getLogger("server:conat:api:notifications");
 
@@ -790,6 +794,14 @@ export async function startCodexFreshAuthAction(
   if (!browser_id || browser_id.length > 200) {
     throw new Error("valid browser id is required for fresh authorization");
   }
+  const duration = parseFreshAuthDuration(opts.duration);
+  // An agent asks for this approval; the verifications longer than 8 hours
+  // are only started by the owner (or a CLI elevation they confirm).
+  if (isLongFreshAuthDuration(duration)) {
+    throw new Error(
+      "an agent's fresh authorization request lasts at most 8 hours",
+    );
+  }
   const { home_bay_id } = await resolveAccountHomeBay({
     account_id,
     user_account_id: account_id,
@@ -808,7 +820,7 @@ export async function startCodexFreshAuthAction(
     started = await startCodexFreshAuthChallengeLocal({
       account_id,
       session_hash,
-      duration: opts.duration,
+      duration,
       context,
     });
   } else {
@@ -818,7 +830,7 @@ export async function startCodexFreshAuthAction(
     }).startCodexFreshAuth({
       account_id,
       browser_id,
-      duration: opts.duration,
+      duration,
       context,
     });
   }

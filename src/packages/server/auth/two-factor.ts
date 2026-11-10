@@ -24,6 +24,11 @@ import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import {
+  formatFreshAuthDuration,
+  freshAuthDurationNeedsStrongFactor,
+  isLongFreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
+import {
   getImpersonationBootstrapInfo,
   getCurrentImpersonationSession,
   setImpersonationActorFreshAuth,
@@ -443,13 +448,13 @@ function assertFreshAuthDurationMethodCompatible({
   duration?: FreshAuthDuration;
   method?: string;
 }): void {
-  if (duration !== "extended") {
+  if (!freshAuthDurationNeedsStrongFactor(duration)) {
     return;
   }
   const normalizedMethod = `${method ?? ""}`.trim();
   if (!normalizedMethod || normalizedMethod === "recovery_code") {
     throw new Error(
-      "extended fresh auth requires a TOTP or passkey verification in this browser session",
+      `${duration === "extended" ? "extended" : `a ${formatFreshAuthDuration(duration)}`} fresh auth requires a TOTP or passkey verification in this browser session`,
     );
   }
   if (normalizedMethod !== "totp" && normalizedMethod !== "passkey") {
@@ -1244,6 +1249,9 @@ export async function freshAuthSession({
     const session_hash = getRememberMeHash(req);
     if (!session_hash) {
       throw new Error("browser sign-in is required");
+    }
+    if (isLongFreshAuthDuration(duration)) {
+      throw new Error("an impersonation verification lasts at most 8 hours");
     }
     const factor_level = await verifyFreshAuthCredentialsForAccount({
       account_id: impersonation.actor_account_id,

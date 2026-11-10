@@ -89,6 +89,7 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { disablePublicDirectorySharesForBannedAccountAcrossCluster } from "@cocalc/server/public-directory-shares/ban-containment";
 import { setBillingAccountFrozen } from "@cocalc/server/purchases/billing-authority/client";
 import { isValidUUID } from "@cocalc/util/misc";
+import { FRESH_AUTH_EXTENDED_MS } from "@cocalc/util/auth/fresh-auth-duration";
 import {
   displayNameFromParts,
   normalizeDisplayName,
@@ -522,6 +523,33 @@ export async function createLocalCliLoginSession({
       user_agent: user_agent ?? undefined,
     },
   });
+  if (
+    validFreshAuthUntil != null &&
+    validFreshAuthUntil.valueOf() - Date.now() > FRESH_AUTH_EXTENDED_MS
+  ) {
+    // A CLI sign-in that carries a verification over 8 hours gets the same
+    // email and in-app notice as a browser verifying for that long. Not
+    // awaited, and loaded only here, as in setSessionFreshAuth.
+    const until = validFreshAuthUntil;
+    void import("@cocalc/server/auth/fresh-auth-notice")
+      .then(async ({ isLongFreshAuthUntil, notifyLongFreshAuth }) => {
+        if (!isLongFreshAuthUntil(until)) return;
+        await notifyLongFreshAuth({
+          account_id,
+          fresh_auth_until: until,
+          factor_level: effectiveFactorLevel,
+          ip_address,
+          user_agent,
+          source: "cli_login",
+        });
+      })
+      .catch((err) =>
+        logger.warn("could not load the long fresh auth notice", {
+          account_id,
+          err: `${err}`,
+        }),
+      );
+  }
   return {
     remember_me: value,
     session_hash: hash,

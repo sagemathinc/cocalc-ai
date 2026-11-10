@@ -16,6 +16,7 @@ import {
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import type { AuthSessionFactorLevel } from "@cocalc/server/auth/auth-sessions";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import { FRESH_AUTH_EXTENDED_MS } from "@cocalc/util/auth/fresh-auth-duration";
 import { isValidUUID } from "@cocalc/util/misc";
 import { impersonationReason } from "@cocalc/util/impersonation-audit";
 
@@ -505,6 +506,14 @@ export async function setImpersonationActorFreshAuth({
   const sessionHash = `${session_hash ?? ""}`.trim();
   if (!sessionHash) {
     throw new Error("session_hash is required");
+  }
+  // An admin acting as someone else gets at most the 8-hour verification;
+  // the longer ones are for an account owner's own sessions.
+  if (
+    fresh_auth_until.valueOf() >
+    Date.now() + FRESH_AUTH_EXTENDED_MS + 60_000
+  ) {
+    throw new Error("an impersonation verification lasts at most 8 hours");
   }
   await withAccountRehomeWriteFence({
     account_id: subjectAccountId,
