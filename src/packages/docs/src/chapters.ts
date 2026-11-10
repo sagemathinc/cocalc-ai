@@ -118,7 +118,7 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     category: "Project hosts",
     startEntryId: "hosts.choose-compute",
     summary:
-      "Choose research compute, then understand project-host access, RAM policy, lifecycle operations, storage, and reliability.",
+      "Choose compute, then understand project-host access, RAM policy, lifecycle operations, storage, and reliability.",
     workflows: ["Choose compute", "Host setup", "Lifecycle", "Storage"],
   },
   {

@@ -6,9 +6,11 @@
 export const CHOOSE_RESEARCH_COMPUTE_BODY = `
 ## Choose where your code runs
 
-Use this guide when a research task needs more RAM, CPU capacity, a GPU, or
-software that does not fit your current CoCalc AI project. Start with where
-the code and data should live, then choose a compatible machine you can use.
+Use this guide when your work needs more RAM, CPU capacity, a GPU, or software
+that does not fit your current CoCalc AI project. The work can be a notebook,
+a long-running terminal job, a service, or a task an agent runs in the project.
+Start with where the code and data should live, then choose a compatible
+machine you can use.
 The available choices depend on your CoCalc deployment and account.
 Managed VMs are optional and may be disabled on your site. Their links below
 open the CoCalc.ai reference guide, not a local VM control or an assertion that
