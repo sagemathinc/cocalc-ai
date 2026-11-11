@@ -250,3 +250,35 @@ describe("who reads a host's effective runtime deployments", () => {
     expect(readers).toEqual(["conat/api/host-software-admin.ts"]);
   });
 });
+
+describe("the last check before a version reaches a host", () => {
+  it("refuses an unsafe selection for a host, and passes a safe one", async () => {
+    const { assertSafeHostSoftwareSelectionForHost } =
+      await import("./host-software-admin");
+    expect(() =>
+      assertSafeHostSoftwareSelectionForHost(
+        { targets: [{ version: "../x" }] },
+        "host-1",
+        "upgrade",
+      ),
+    ).toThrow("invalid host software version or channel");
+    expect(() =>
+      assertSafeHostSoftwareSelectionForHost(
+        { version: "ph-v2" },
+        "host-1",
+        "stage",
+      ),
+    ).not.toThrow();
+  });
+
+  it("keeps a safe version and drops an unsafe or empty one", async () => {
+    const { safeHostSoftwareVersionOrUndefined } =
+      await import("./host-software-admin");
+    expect(safeHostSoftwareVersionOrUndefined("ph-v2", "h", "x")).toBe("ph-v2");
+    for (const value of ["../x", "a/b", "", undefined, null, 5]) {
+      expect(
+        safeHostSoftwareVersionOrUndefined(value, "h", "x"),
+      ).toBeUndefined();
+    }
+  });
+});

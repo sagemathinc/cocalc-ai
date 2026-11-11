@@ -660,6 +660,28 @@ describe("bootstrap-host promoted artifact defaults", () => {
     expect(scripts.projectHostVersion).toBe("1777603320059");
   });
 
+  it("ignores an unsafe host-reported artifact version and bootstrap selector", async () => {
+    loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([]);
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts({
+      ...baseRow(),
+      metadata: {
+        ...baseRow().metadata,
+        bootstrap_version: "a/b",
+        software_inventory: [
+          { artifact: "project-host", current_version: "../x" },
+          { artifact: "tools", current_version: "t?y" },
+        ],
+      },
+    } as any);
+    expect(scripts.projectHostVersion).not.toBe("../x");
+    expect(scripts.projectHostBundleUrl).not.toContain("..");
+    expect(scripts.toolsVersion).not.toBe("t?y");
+    expect(scripts.toolsUrl).not.toContain("?");
+    expect(scripts.bootstrapSelector).not.toBe("a/b");
+    expect(scripts.bootstrapPyUrl).not.toContain("a/b");
+  });
+
   it("falls back to the latest manifest when a promoted artifact version is no longer served", async () => {
     loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
       {
