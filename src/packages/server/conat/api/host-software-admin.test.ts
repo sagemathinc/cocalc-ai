@@ -224,7 +224,9 @@ describe("automatic artifact upgrade planning", () => {
 });
 
 describe("who reads a host's effective runtime deployments", () => {
-  it("is only the trusted loader: no other server code reads them unfiltered", async () => {
+  it("is only the trusted loader: no other server code reads them through the unfiltered loader API", async () => {
+    // (A raw SQL read elsewhere is not seen here: hosts.ts reads host rows for
+    // the host list display only, which decides nothing.)
     const { readdirSync, readFileSync, statSync } = await import("node:fs");
     const { join, relative } = await import("node:path");
     const root = join(__dirname, "..", "..");
