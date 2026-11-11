@@ -106,18 +106,17 @@ describe("persist write-rate counters", () => {
     }
   });
 
-  it("counts config() writes and the deletes of its limits as disk autocommits", () => {
+  it("counts config() writes and the deletes of its limits as ONE transaction, no autocommit (028)", () => {
     const stream = pstream({ path: join(dir, "config") });
     try {
       stream.setMany([msg("1"), msg("2"), msg("3")]);
       const before = getPersistWriteStats();
-      // one config upsert, then enforceLimits(0) deletes the two oldest
+      // one config upsert, then enforceLimits(0) deletes the two oldest: one
+      // commit (under FULL, one sync), never an autocommit
       stream.config({ max_msgs: 1 });
-      expect(delta(before, "disk_autocommits_total")).toBeGreaterThanOrEqual(2);
-      expect(delta(before, "disk_commits_total")).toBe(
-        delta(before, "disk_autocommits_total") +
-          delta(before, "disk_txn_commits_total"),
-      );
+      expect(delta(before, "disk_autocommits_total")).toBe(0);
+      expect(delta(before, "disk_txn_commits_total")).toBe(1);
+      expect(delta(before, "disk_commits_total")).toBe(1);
       expect(delta(before, "disk_rows_total")).toBe(0);
       expect(stream.length).toBe(1);
 
@@ -130,14 +129,15 @@ describe("persist write-rate counters", () => {
     }
   });
 
-  it("counts deleteCheckpoint as a disk autocommit, only when it deletes", () => {
+  it("counts deleteCheckpoint as one transaction, only when it deletes, no autocommit (028)", () => {
     const stream = pstream({ path: join(dir, "checkpoint") });
     try {
       const { seq } = stream.set(msg("1"));
       stream.setCheckpoint({ name: "c", seq });
       const before = getPersistWriteStats();
       stream.deleteCheckpoint("c");
-      expect(delta(before, "disk_autocommits_total")).toBe(1);
+      expect(delta(before, "disk_autocommits_total")).toBe(0);
+      expect(delta(before, "disk_txn_commits_total")).toBe(1);
       expect(delta(before, "disk_commits_total")).toBe(1);
       const none = getPersistWriteStats();
       stream.deleteCheckpoint("c");
@@ -640,15 +640,16 @@ describe("persist write-rate counters", () => {
 
     it("storage opens exactly one connection, and hands it to the counter", () => {
       expect(source.match(/createDatabase\(/g)).toHaveLength(1);
+      // (inside the poison gate, 028: once poisoned, no statement runs)
       expect(source).toMatch(
-        /const db = createDatabase\([^)]*\);\s*(\/\/[^\n]*\s*)*this\.db = writeCounter\?\.wrap\(db, /,
+        /const db = createDatabase\([^)]*\);\s*(\/\/[^\n]*\s*)*this\.db = this\.refuseWhenPoisoned\(\s*writeCounter\?\.wrap\(db, /,
       );
       expect(source).not.toMatch(/DatabaseSync\(/);
       // and the backend registers the counter with the persist context
       expect(
         readFileSync(join(packages, "backend/conat/persist.ts"), "utf8"),
       ).toMatch(
-        /initContext\(\{[\s\S]*?\n  writeCounter: persistWriteCounter,\n\}\);/,
+        /persistContextOptions[^=]*= \{[\s\S]*?\n  writeCounter: persistWriteCounter,\n  durability: persistDurabilityRecords\(\),\n\};\ninitContext\(persistContextOptions\);/,
       );
     });
 
@@ -665,9 +666,15 @@ describe("persist write-rate counters", () => {
     });
 
     it("storage resets the row tally before every BEGIN", () => {
-      expect(source).toMatch(
-        /private runTransaction = [^\n]*\n\s*this\.pendingRows = 0;\n\s*this\.pendingBytes = 0;\n\s*this\.db\.exec\("BEGIN"\);/,
-      );
+      // a transaction, and a group-commit batch (028)
+      const begins = [...source.matchAll(/this\.db\.exec\("BEGIN"\)/g)];
+      expect(begins).toHaveLength(2);
+      for (const begin of begins) {
+        const before = source.slice(Math.max(0, begin.index! - 200), begin.index);
+        expect(before).toMatch(
+          /this\.pendingRows = 0;\n\s*this\.pendingBytes = 0;\n\s*try \{\n\s*$/,
+        );
+      }
     });
 
     it("storage runs no multi-statement script through exec", () => {

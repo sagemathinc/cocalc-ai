@@ -25,7 +25,7 @@ import { lstat, open, opendir, rmdir, unlink } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 // (initialized with node:sqlite, as in the persist server)
-import { pstream } from "@cocalc/backend/conat/persist";
+import { pstream, closeDurably } from "@cocalc/backend/conat/persist";
 import { projectPersistTemplates } from "@cocalc/backend/conat/persist-volume-template";
 import {
   MAX_PERSIST_STORAGE_ACTIONS,
@@ -427,7 +427,13 @@ async function trim(
       }
     }
   } finally {
-    stream.close();
+    // once the trim's writes are committed (028 §4.5)
+    closeDurably(stream);
+  }
+  if (stream.isPoisoned()) {
+    throw Error(
+      `persist storage action ${action.name}: the stream had a sync error (poisoned); not reporting a result`,
+    );
   }
   return removed;
 }

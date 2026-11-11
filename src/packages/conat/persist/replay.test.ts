@@ -7,6 +7,7 @@
 // message (a 500 MB runaway notebook output) stalled a production host's
 // persist daemon for 7-8 s out of every 8 s while one browser kept retrying.
 
+import { testDurabilityContext } from "./test-durability";
 import { initContext } from "./context";
 import { replay, ReplayAdmission, resetReplayAdmission } from "./server";
 import type { StoredRow } from "./storage";
@@ -15,6 +16,7 @@ const pending: { buf: Buffer; resolve: (b: Buffer) => void }[] = [];
 let decompressSyncCalls = 0;
 
 initContext({
+    ...testDurabilityContext(),
   sqlite: { DatabaseSync: class {} as any },
   compress: (b: Buffer) => b,
   decompress: (b: Buffer) => {

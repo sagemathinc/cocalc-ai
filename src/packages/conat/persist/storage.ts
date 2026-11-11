@@ -75,7 +75,9 @@ import {
   assertSafeDatabasePath,
   isProjectOwnedDatabasePath,
   writeCounter,
+  durability,
 } from "./context";
+import { posix } from "path";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
 import {
@@ -92,6 +94,122 @@ import { decode } from "@cocalc/conat/core/codec";
 import { historyLimits, type HistoryLimits } from "./history-limits";
 
 const logger = getLogger("persist:storage");
+
+// ---------------------------------------------------------------------------
+// Durability (finding 028, DESIGN §3, §3.2).  Disk-backed streams run with
+// synchronous=FULL: a COMMIT that returned OK has synced its WAL frames.
+
+// SQLITE_IOERR_FSYNC and SQLITE_IOERR_DIR_FSYNC: errors returned by fsync,
+// from ANY SQLite call (a statement's spill, COMMIT, a checkpoint, close).
+// The data they were about may be gone from the disk while still in the page
+// cache, so the file is poisoned: never read, written, checkpointed or closed
+// again in this process (§3.2.2 A, §3.2.4).
+export const SQLITE_IOERR_FSYNC = 1034;
+export const SQLITE_IOERR_DIR_FSYNC = 1290;
+
+export function isSqliteSyncError(err: unknown): boolean {
+  const code = (err as any)?.errcode;
+  return code === SQLITE_IOERR_FSYNC || code === SQLITE_IOERR_DIR_FSYNC;
+}
+
+// group commit: at most this much per batch; the rest waits for the next one
+export const WRITE_BATCH_MAX_REQUESTS = 500;
+export const WRITE_BATCH_MAX_BYTES = 4 * 1024 * 1024;
+// an explicit, checked checkpoint once the WAL reaches this many pages (§4.7)
+export const CHECKPOINT_WAL_PAGES = 1000;
+
+// W (§3): how long a flush waits for more requests.  0 = only until the
+// event loop's current I/O phase ends.  Only the benchmark changes it.
+let writeBatchWindowMs = 0;
+export function setWriteBatchWindowMs(ms: number): void {
+  writeBatchWindowMs = Math.max(0, ms);
+}
+
+// A write that did not commit and can be sent again (the client retries).
+export function retryableWriteError(
+  reason: "poisoned" | "closing" | "aborted" | "unarmed",
+): ConatError {
+  const message = {
+    poisoned:
+      "persist: this stream's storage had a sync error and is refused until it is verified; try again later",
+    closing: "persist: this stream is closing; try again",
+    aborted: "persist: the write was not committed; try again",
+    unarmed:
+      "persist: the stream's durability record could not be written; try again later",
+  }[reason];
+  return new ConatError(message, { code: 503 });
+}
+
+function lostTransactionError(): ConatError {
+  return new ConatError(
+    "persist: SQLite rolled back the transaction; the write was not committed; try again",
+    { code: 503 },
+  );
+}
+
+// The class of a write error that every request of its batch gets (V-2): an
+// out-of-space error is the stream's, not one request's, so its clients do
+// not retry in a loop.  The quota probe that tells quota from a full
+// filesystem comes with B-3; until then, none.
+let classifyBatchWriteError: (
+  err: unknown,
+  path: string | undefined,
+) => ConatError | undefined = () => undefined;
+export function setBatchWriteErrorClassifier(
+  f: (err: unknown, path: string | undefined) => ConatError | undefined,
+): void {
+  classifyBatchWriteError = f;
+}
+function writeErrorForEveryRequest(
+  err: unknown,
+  path: string | undefined,
+): ConatError | undefined {
+  try {
+    return classifyBatchWriteError(err, path);
+  } catch {
+    return undefined;
+  }
+}
+
+export interface WriteOperation {
+  encoding: DataEncoding;
+  raw: Buffer;
+  headers?: JSONValue;
+  key?: string;
+  ttl?: number;
+  previousSeq?: number;
+  // if given, any attempt to publish something again with the same msgID
+  // is deduplicated. Use this to prevent accidentally writing twice, e.g.,
+  // due to not getting a response back from the server.
+  msgID?: string;
+  checkpoint?: CheckpointUpdate;
+}
+export type SetManyResult = Array<
+  { seq: number; time: number } | { error: string; code?: any }
+>;
+type WriteOutcome = { value: any } | { error: unknown };
+// per op of a request in a batch: its result, its error, or the earlier op
+// of the batch with the same msgID
+type OpResult =
+  | { value: { seq: number; time: number } }
+  | { error: unknown }
+  | { duplicateOf: { request: WriteRequest; op: number } };
+interface WriteRequest {
+  kind: "set" | "setMany";
+  ops: WriteOperation[];
+  bytes: number;
+  resolve?: (value: any) => void;
+  reject?: (err: unknown) => void;
+  outcome?: WriteOutcome;
+}
+
+// Poisoned streams, by path: held here (a strong reference) so that their
+// connection is never closed, nor garbage collected, which would checkpoint
+// it (§3.2.4 step 5).  The process exits with them open.
+const poisonedStreams = new Map<string, PersistentStream>();
+export function poisonedStreamPaths(): string[] {
+  return [...poisonedStreams.keys()];
+}
 
 export interface PartialInventory {
   // how much space is used by this stream
@@ -1192,6 +1310,8 @@ const streamLifecycle = {
   closed_disk_total: 0,
   open_ephemeral: 0,
   open_disk: 0,
+  // 028: a close reached with uncommitted writes queued (a bug: they fail)
+  closed_with_queued_writes_total: 0,
 };
 
 const openCacheSizes = {
@@ -1358,6 +1478,17 @@ export class PersistentStream extends EventEmitter {
     return rows;
   };
   private readonly sqliteCacheKiB: number;
+  // durability (disk-backed streams; finding 028): the id of the stream's
+  // records, whether its dirty record exists, and whether a sync error
+  // poisoned it
+  private readonly logicalId?: string;
+  private armed = false;
+  private poisoned = false;
+  private walPageBytes = 4096;
+  // group commit: the set/setMany requests not committed yet
+  private writeQueue: WriteRequest[] = [];
+  private flushTimer?: ReturnType<typeof setImmediate> | ReturnType<typeof setTimeout>;
+  private flushing = false;
   private readonly msgIDs = new TTL({ ttl: 2 * 60 * 1000 });
   private conf: Configuration;
   private throttledBackup?;
@@ -1387,6 +1518,9 @@ export class PersistentStream extends EventEmitter {
       if (location !== ":memory:") {
         this.dbPath = location;
         assertSafeDatabasePath(location);
+        // 028: before anything reads or copies the file
+        this.logicalId = posix.normalize(this.options.path);
+        this.assertOpenAllowed();
       }
       this.initArchive();
       if (location !== ":memory:") {
@@ -1395,15 +1529,18 @@ export class PersistentStream extends EventEmitter {
       }
       // defensive: no writable_schema or other ways to corrupt the file
       const db = createDatabase(location, { defensive: true });
-      // the backend counts its commits (backend/conat/persist-write-rate)
-      this.db = writeCounter?.wrap(db, this.storageKind, this.takeRows) ?? db;
+      // the backend counts its commits (backend/conat/persist-write-rate);
+      // once poisoned, nothing more runs on the connection (028)
+      this.db = this.refuseWhenPoisoned(
+        writeCounter?.wrap(db, this.storageKind, this.takeRows) ?? db,
+      );
       try {
         this.hardenConnection(location);
         if (location !== ":memory:") {
           this.assertExpectedSchema();
         }
       } catch (err) {
-        this.db.close();
+        this.closeConnection();
         throw err;
       }
       const configuredCacheKiB = this.options.ephemeral
@@ -1414,6 +1551,7 @@ export class PersistentStream extends EventEmitter {
       }
       this.sqliteCacheKiB = this.readSqliteCacheKiB();
       this.initSchema();
+      this.disarmIfIdle();
       this.maintenanceDirty = false;
       recordStreamOpen(this.storageKind, this.sqliteCacheKiB);
       openStreams.set(this, {
@@ -1427,6 +1565,218 @@ export class PersistentStream extends EventEmitter {
       throw err;
     }
   }
+
+  // ---------------------------------------------------------------------
+  // Durability (finding 028, DESIGN §3.2.4-§3.2.6)
+
+  isPoisoned = (): boolean => this.poisoned;
+
+  // At open, before anything reads or copies the file: a file poisoned in
+  // this boot is refused, and so is one another process left mid-write (a
+  // dirty record of another generation), whose state on disk is unknown.
+  // (B-2 replaces that refusal by a verified eviction.)
+  private assertOpenAllowed = (): void => {
+    const path = this.options.path;
+    if (poisonedStreams.has(path)) {
+      throw retryableWriteError("poisoned");
+    }
+    if (durability == null) {
+      throw new ConatError(
+        "persist: durability records are not configured, so disk-backed streams are refused",
+        { code: 503 },
+      );
+    }
+    const state = durability.check(this.logicalId!);
+    if (state == "poisoned") {
+      throw retryableWriteError("poisoned");
+    }
+    if (state == "unverified") {
+      logger.warn(
+        "persist: refusing a stream left mid-write by another process (finding 028)",
+        { path },
+      );
+      throw new ConatError(
+        "persist: this stream's storage was left mid-write by a crash and is not verified yet; try again later",
+        { code: 503 },
+      );
+    }
+  };
+
+  // Once poisoned, every statement on the connection throws: no read, no
+  // write, no checkpoint, ever (§3.2.4).  Outermost, so it also stops the
+  // statements of the write counter.
+  private refuseWhenPoisoned = (db: Database): Database => {
+    const prepare = db.prepare.bind(db);
+    const exec = db.exec.bind(db);
+    db.prepare = ((...args: any[]) => {
+      if (this.poisoned) throw retryableWriteError("poisoned");
+      return (prepare as any)(...args);
+    }) as any;
+    db.exec = ((sql: string) => {
+      if (this.poisoned) throw retryableWriteError("poisoned");
+      return exec(sql);
+    }) as any;
+    return db;
+  };
+
+  // Before any operation on a disk-backed stream's files that can consume a
+  // sync error -- a write transaction (SQLite can sync inside one, when a
+  // cache spill writes the first frames after a WAL restart), a checkpoint,
+  // the journal_mode switch, a close -- its dirty record exists (§3.2.6).
+  // Throws (a retryable error) if it can't be created: then the operation
+  // must not start.
+  private armBeforeWrite = (): void => {
+    if (this.storageKind != "disk") return;
+    if (this.poisoned) throw retryableWriteError("poisoned");
+    if (this.armed) return;
+    if (durability == null) throw retryableWriteError("unarmed");
+    try {
+      durability.arm(this.logicalId!);
+    } catch (err) {
+      logger.error("persist: could not create a dirty record (finding 028)", {
+        path: this.options?.path,
+        err: `${err}`,
+      });
+      throw retryableWriteError("unarmed");
+    }
+    this.armed = true;
+  };
+
+  // At a write idle -- nothing queued, no transaction in flight -- every
+  // commit since arming returned OK and is durable: the record goes.
+  private disarmIfIdle = (): void => {
+    if (
+      !this.armed ||
+      this.poisoned ||
+      this.flushing ||
+      this.writeQueue.length > 0 ||
+      this.db?.isTransaction
+    ) {
+      return;
+    }
+    durability?.disarm(this.logicalId!);
+    this.armed = false;
+  };
+
+  // A sync error (§3.2.2 A): synchronously, before anything else runs for
+  // this file, it is refused for good in this process, and its dirty record
+  // becomes the poisoned-file record, so no later open in this boot serves
+  // it either.  The connection is kept open and referenced, never closed.
+  private poison = (err: unknown, where: string): void => {
+    if (this.poisoned) return;
+    this.poisoned = true;
+    const path = this.options?.path;
+    if (path != null) poisonedStreams.set(path, this);
+    if (this.logicalId != null) {
+      durability?.poison(this.logicalId, {
+        where,
+        errcode: Number((err as any)?.errcode ?? 0),
+      });
+    }
+    this.trashGeneration += 1;
+    unregisterTrashWork(this);
+    this.throttledBackup?.cancel?.();
+    this.failQueuedWrites("poisoned");
+    logger.error(
+      "PERSIST FILE POISONED (finding 028): a sync error was returned; the file is refused until it is verified",
+      { path, where, err: `${err}`, errcode: (err as any)?.errcode },
+    );
+  };
+
+  // after every write transaction (and batch)
+  private afterWrite = (): void => {
+    this.checkpointIfLarge();
+    this.disarmIfIdle();
+  };
+
+  // EXPLICIT, CHECKED checkpoints (§4.7): auto-checkpoint is off, because its
+  // result is ignored; between batches, once the WAL reaches
+  // CHECKPOINT_WAL_PAGES, this runs a PASSIVE checkpoint and checks it.
+  private checkpointIfLarge = (): void => {
+    if (
+      this.storageKind != "disk" ||
+      this.poisoned ||
+      this.closing ||
+      this.db?.isTransaction ||
+      this.dbPath == null
+    ) {
+      return;
+    }
+    if (fileSize(this.dbPath + "-wal") < CHECKPOINT_WAL_PAGES * this.walPageBytes) {
+      return;
+    }
+    this.checkpoint("PASSIVE");
+  };
+
+  // a checked checkpoint; true if it completed (nothing left in the WAL that
+  // was not copied)
+  private checkpoint = (mode: "PASSIVE" | "FULL"): boolean => {
+    try {
+      this.armBeforeWrite();
+    } catch {
+      return false;
+    }
+    try {
+      const result = this.db
+        .prepare(`PRAGMA wal_checkpoint(${mode})`)
+        .get() as { busy: number; log: number; checkpointed: number } | undefined;
+      return result != null && !result.busy && result.checkpointed >= result.log;
+    } catch (err) {
+      if (isSqliteSyncError(err)) {
+        this.poison(err, `checkpoint(${mode})`);
+      } else {
+        // e.g., a user at quota: the WAL stays and the next checkpoint
+        // retries (no host effect)
+        logger.warn("persist: checkpoint failed", {
+          path: this.options?.path,
+          mode,
+          err: `${err}`,
+        });
+      }
+      return false;
+    }
+  };
+
+  // Every changefeed emit goes through here: only after the COMMIT that made
+  // the change returned OK (durable), never inside a transaction (§3).
+  private emitChange = (change: ChangefeedOperation): void => {
+    if (this.db?.isTransaction) {
+      throw Error("bug: a change emitted inside a transaction");
+    }
+    this.emit("change", change);
+  };
+
+  // Closes the SQLite connection, which checkpoints it: so armed first, and a
+  // sync error poisons (the connection is then left open, referenced).  True
+  // if it closed.
+  private closeConnection = (): boolean => {
+    if (this.poisoned) return false;
+    try {
+      this.armBeforeWrite();
+    } catch (err) {
+      // can't arm the close's checkpoint: left open until this process
+      // exits (it counts as open for the fence)
+      logger.error("persist: not closing a database that could not be armed", {
+        path: this.options?.path,
+        err: `${err}`,
+      });
+      return false;
+    }
+    try {
+      this.db.close();
+    } catch (err) {
+      if (isSqliteSyncError(err)) {
+        this.poison(err, "close");
+      }
+      throw err;
+    }
+    // closed: everything it committed and checkpointed is on disk
+    if (this.armed && this.logicalId != null) {
+      durability?.disarm(this.logicalId);
+      this.armed = false;
+    }
+    return true;
+  };
 
   addMaintenanceHandle = (handle: PersistMaintenanceHandle): void => {
     if (this.options.ephemeral || this.closing) return;
@@ -1533,36 +1883,62 @@ export class PersistentStream extends EventEmitter {
   };
 
   private initSchema = () => {
+    if (this.storageKind == "disk") {
+      // Durable writes (finding 028): a COMMIT returns only once its WAL
+      // frames are synced, and checkpoints run only explicitly, checked
+      // (auto-checkpoint ignores their errors).  Refused if not in effect.
+      this.db.exec("PRAGMA synchronous=FULL");
+      this.db.exec("PRAGMA wal_autocheckpoint=0");
+      const synchronous = Number(
+        (this.db.prepare("PRAGMA synchronous").get() as any)?.synchronous,
+      );
+      const autocheckpoint = Number(
+        (this.db.prepare("PRAGMA wal_autocheckpoint").get() as any)
+          ?.wal_autocheckpoint,
+      );
+      if (synchronous !== 2 || autocheckpoint !== 0) {
+        throw new ConatError(
+          `persist: durable mode is not in effect (synchronous=${synchronous}, wal_autocheckpoint=${autocheckpoint}); refusing the stream`,
+          { code: 503 },
+        );
+      }
+      this.walPageBytes =
+        Number((this.db.prepare("PRAGMA page_size").get() as any)?.page_size) ||
+        4096;
+      // Switching a file into WAL mode writes and syncs it (a no-op on a file
+      // already in WAL mode); it can't run in a transaction, so it is armed
+      // on its own, at every open.
+      this.armBeforeWrite();
+    }
     // WAL, so readers and a writer can use the file at once (see also
     // busy_timeout in hardenConnection).
     this.db.prepare("PRAGMA journal_mode=WAL").run();
-    if (!this.options.sync && !this.options.ephemeral) {
-      // Unless sync is set, we do not require that the filesystem has commited changes
-      // to disk after every insert. This can easily make things 10x faster.  sets are
-      // typically going to come in one-by-one as users edit files, so this works well
-      // for our application.  Also, loss of a few seconds persistence is acceptable
-      // in a lot  of applications, e.g., if it is just edit history for a file.
-      this.db.prepare("PRAGMA synchronous=OFF").run();
-    }
-    this.createMessagesTable();
-    this.db.prepare(SCHEMA.config).run();
-    this.db.prepare(SCHEMA.stream_metadata).run();
-    this.db.prepare(SCHEMA.stream_checkpoints).run();
-    this.db.prepare(SCHEMA.idx_stream_checkpoints_seq).run();
-    for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
-      if (name === "idx_message_ids_msg_id") {
-        this.ensurePurposeIndex("message_ids", "msg_id", name);
-      } else {
+
+    // Every write of the open in ONE transaction (no autocommits; 028 site
+    // (b')).
+    const changes: ChangefeedOperation[] = [];
+    this.runTransaction(() => {
+      this.createMessagesTable();
+      this.db.prepare(SCHEMA.config).run();
+      this.db.prepare(SCHEMA.stream_metadata).run();
+      this.db.prepare(SCHEMA.stream_checkpoints).run();
+      this.db.prepare(SCHEMA.idx_stream_checkpoints_seq).run();
+      for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
+        if (name === "idx_message_ids_msg_id") {
+          this.ensurePurposeIndex("message_ids", "msg_id", name);
+        } else {
+          this.db.prepare(sql).run();
+        }
+      }
+      for (const sql of Object.values(RESET_TRASH_SCHEMA)) {
         this.db.prepare(sql).run();
       }
-    }
-    for (const sql of Object.values(RESET_TRASH_SCHEMA)) {
-      this.db.prepare(sql).run();
-    }
-
-    this.conf = this.config();
-    this.ensureCurrentEpoch();
-    this.runTransaction(() => this.ensureCounts());
+      this.applyConfig(this.readConfig(), changes);
+      this.ensureCurrentEpoch();
+      this.ensureCounts();
+    });
+    // nobody listens yet; emitted anyway, after the COMMIT
+    for (const change of changes) this.emitChange(change);
     if (!this.runTrashStep()) registerTrashWork(this);
   };
 
@@ -2119,6 +2495,29 @@ export class PersistentStream extends EventEmitter {
     if (path == null || this.closing) {
       return;
     }
+    if (this.poisoned) {
+      // never closed in this process: closing checkpoints, and would copy
+      // pages that may be gone from the disk into the database (§3.2.4); it
+      // stays open, referenced (poisonedStreams) and counted for the fence
+      return;
+    }
+    if (this.writeQueue.length > 0) {
+      // a caller that bypassed atWriteIdle (releaseDurably/closeDurably):
+      // nothing of these requests was committed, so they fail and are sent
+      // again (§4.5)
+      streamLifecycle.closed_with_queued_writes_total += 1;
+      logger.error("persist: closing a stream with uncommitted writes", {
+        path,
+        queued: this.writeQueue.length,
+      });
+      this.failQueuedWrites("closing");
+    }
+    // a final checked checkpoint, armed (§4.8): a sync error poisons, and
+    // then nothing is closed or torn down
+    if (this.db != null && this.storageKind == "disk") {
+      this.checkpoint("FULL");
+      if (this.poisoned) return;
+    }
     this.closing = true;
     // the restore fence and every close: nothing of this stream's trash work
     // runs after this, even if already selected for a tick (H1c §5)
@@ -2126,6 +2525,7 @@ export class PersistentStream extends EventEmitter {
     unregisterTrashWork(this);
     logger.debug("close ", path);
     this.throttledBackup?.cancel?.();
+    let keepOpen = false;
     try {
       if (this.db != null) {
         // This must remain synchronous. refCacheSync removes the stream from
@@ -2133,26 +2533,34 @@ export class PersistentStream extends EventEmitter {
         // SQLite path to reopen while this connection was still checkpointing
         // and closing. A full VACUUM on every disconnect was also unnecessary
         // churn and expanded the native SQLite failure surface.
-        try {
-          this.db.prepare("PRAGMA wal_checkpoint(FULL)").run();
-        } catch (err) {
-          logger.debug("WARNING: error checkpointing database on close", {
-            path,
-            err,
-          });
+        if (this.storageKind != "disk") {
+          try {
+            this.db.prepare("PRAGMA wal_checkpoint(FULL)").run();
+          } catch (err) {
+            logger.debug("WARNING: error checkpointing database on close", {
+              path,
+              err,
+            });
+          }
         }
         let closed = false;
         try {
-          this.db.close();
-          closed = true;
+          closed = this.closeConnection();
         } catch (err) {
           logger.warn("WARNING: error closing database", { path, err });
-          // it may still be open: never fenced as closed (fence.ts)
+        }
+        if (this.poisoned) {
+          keepOpen = true;
+          return;
+        }
+        if (!closed) {
+          // it may still be open: never fenced as closed (fence.ts), and
+          // referenced, so it is not closed by garbage collection either
           if (this.storageKind === "disk") {
             unclosedDiskPaths.add(path);
+            unclosedStreams.add(this);
           }
-        }
-        if (closed) {
+        } else {
           this.backupClosedDatabase();
           for (const handle of this.maintenanceHandles.values()) {
             try {
@@ -2167,17 +2575,19 @@ export class PersistentStream extends EventEmitter {
         }
       }
     } finally {
-      // @ts-ignore
-      delete this.options;
-      this.msgIDs?.clear();
-      // @ts-ignore
-      delete this.msgIDs;
-      this.maintenanceHandles.clear();
-      openPaths.delete(path);
-      if (this.diagnosticsRegistered) {
-        openStreams.delete(this);
-        recordStreamClose(this.storageKind, this.sqliteCacheKiB);
-        this.diagnosticsRegistered = false;
+      if (!keepOpen) {
+        // @ts-ignore
+        delete this.options;
+        this.msgIDs?.clear();
+        // @ts-ignore
+        delete this.msgIDs;
+        this.maintenanceHandles.clear();
+        openPaths.delete(path);
+        if (this.diagnosticsRegistered) {
+          openStreams.delete(this);
+          recordStreamClose(this.storageKind, this.sqliteCacheKiB);
+          this.diagnosticsRegistered = false;
+        }
       }
     }
   };
@@ -2241,19 +2651,35 @@ export class PersistentStream extends EventEmitter {
     }
   };
 
-  private runTransaction = <T>(fn: () => T): T => {
+  // Every write on the connection runs in a transaction opened here, never as
+  // an autocommit (028, V-3): the sets queued before it commit first (arrival
+  // order), the stream is armed, and a sync error poisons the file.  Under
+  // FULL the COMMIT is durable when it returns.
+  private runTransaction = <T>(
+    fn: () => T,
+    { mutation = true }: { mutation?: boolean } = {},
+  ): T => {
+    this.drainWriteQueue();
+    this.armBeforeWrite();
     this.pendingRows = 0;
     this.pendingBytes = 0;
-    this.db.exec("BEGIN");
     try {
+      this.db.exec("BEGIN");
       const result = fn();
       this.db.exec("COMMIT");
-      this.markMaintenanceMutation();
+      if (mutation) this.markMaintenanceMutation();
+      this.afterWrite();
       return result;
     } catch (err) {
-      try {
-        this.db.exec("ROLLBACK");
-      } catch {}
+      if (isSqliteSyncError(err)) {
+        this.poison(err, "transaction");
+      } else if (!this.poisoned && this.db.isTransaction) {
+        try {
+          this.db.exec("ROLLBACK");
+        } catch (err2) {
+          if (isSqliteSyncError(err2)) this.poison(err2, "rollback");
+        }
+      }
       throw err;
     }
   };
@@ -2298,6 +2724,8 @@ export class PersistentStream extends EventEmitter {
   }): {
     time: number;
     seq: number;
+    // a resend of a committed message: nothing written, nothing to emit
+    duplicate?: true;
   } => {
     if (previousSeq === null) {
       previousSeq = undefined;
@@ -2305,20 +2733,17 @@ export class PersistentStream extends EventEmitter {
     if (key === null) {
       key = undefined;
     }
-    if (msgID != null && this.msgIDs?.has(msgID)) {
-      const existing = this.msgIDs.get(msgID)! as { seq: number; time: number };
-      changes.push({
-        seq: existing.seq,
-        time: existing.time,
-        key,
-        encoding,
-        raw,
-        headers: headers == null ? undefined : (headers as Headers),
-        msgID,
-      });
-      return {
-        ...existing,
-      };
+    if (msgID != null) {
+      // committed, so durable (028): answered from it, with no second row or
+      // change.  Also after a restart: a client whose ack was lost (e.g., the
+      // host stopped right after the COMMIT) sends it again, and the persisted
+      // msg id finds it (§5, §7 F1).
+      const existing =
+        (this.msgIDs?.get(msgID) as { seq: number; time: number } | undefined) ??
+        this.storedMsgID(msgID);
+      if (existing != null) {
+        return { seq: existing.seq, time: existing.time, duplicate: true };
+      }
     }
     this.checkRequiredHeaders(headers);
     if (key !== undefined && previousSeq !== undefined) {
@@ -2364,6 +2789,19 @@ export class PersistentStream extends EventEmitter {
       time,
       seq,
     };
+  };
+
+  // The message a msg id was stored with, if it is still in the stream.
+  private storedMsgID = (
+    msgID: string,
+  ): { seq: number; time: number } | undefined => {
+    const row = this.db
+      .prepare(
+        "SELECT m.seq AS seq, m.time AS time FROM message_ids i JOIN messages m ON m.seq = i.seq WHERE i.msg_id = ? LIMIT 1",
+      )
+      .get(msgID) as { seq: number; time: number } | undefined;
+    if (row == null) return undefined;
+    return { seq: Number(row.seq), time: Number(row.time) * 1000 };
   };
 
   // Insert one message, with its msg id and checkpoint, after all checks.
@@ -2428,95 +2866,442 @@ export class PersistentStream extends EventEmitter {
     return { time, seq };
   };
 
-  set = ({
-    encoding,
-    raw,
-    headers,
-    key,
-    ttl,
-    previousSeq,
-    msgID,
-    checkpoint,
-  }: {
-    encoding: DataEncoding;
-    raw: Buffer;
-    headers?: JSONValue;
-    key?: string;
-    ttl?: number;
-    previousSeq?: number;
-    // if given, any attempt to publish something again with the same msgID
-    // is deduplicated. Use this to prevent accidentally writing twice, e.g.,
-    // due to not getting a response back from the server.
-    msgID?: string;
-    checkpoint?: CheckpointUpdate;
-  }): { seq: number; time: number } => {
-    const changes: ChangefeedOperation[] = [];
-    const result = this.runTransaction(() =>
-      this.setInternal({
-        encoding,
-        raw,
-        headers,
-        key,
-        ttl,
-        previousSeq,
-        msgID,
-        checkpoint,
-        changes,
-      }),
+  // ---------------------------------------------------------------------
+  // Writes: group commit (finding 028, DESIGN §3).  Disk streams commit with
+  // synchronous=FULL, so a COMMIT that returned OK is durable, and every
+  // set/setMany is acked and emitted only after the COMMIT of its batch
+  // returned OK.  The requests queued for a stream commit together, in one
+  // transaction: each in its own SAVEPOINT (and each op of a setMany in a
+  // nested one), so a failing request or op gets its own error and leaves
+  // nothing behind.  Everything a request does in memory (its changes, its
+  // msgID, the write counter's rows) stays with the batch until the COMMIT
+  // returned OK, and is dropped with a rollback.
+
+  // set/setMany from a client: the promise settles once the batch's COMMIT
+  // returned (or failed)
+  setQueued = (operation: WriteOperation): Promise<{ seq: number; time: number }> =>
+    new Promise((resolve, reject) => {
+      this.enqueueWrite({ kind: "set", ops: [operation], resolve, reject });
+    });
+
+  setManyQueued = (operations: WriteOperation[]): Promise<SetManyResult> =>
+    new Promise((resolve, reject) => {
+      this.enqueueWrite({ kind: "setMany", ops: operations, resolve, reject });
+    });
+
+  // The same, synchronously: whatever is queued commits first (arrival
+  // order), then this, as one batch of its own.
+  set = (operation: WriteOperation): { seq: number; time: number } => {
+    const request = this.enqueueWrite(
+      { kind: "set", ops: [operation] },
+      { schedule: false },
     );
-    for (const change of changes) {
-      this.emit("change", change);
-    }
-    if (changes.length > 0) {
-      this.throttledBackup();
-    }
-    if (msgID !== undefined) {
-      this.msgIDs.set(msgID, { time: result.time, seq: result.seq });
-    }
-    return { time: result.time, seq: result.seq };
+    this.drainWriteQueue();
+    return this.syncOutcome(request);
   };
 
-  setMany = (
-    operations: Array<{
-      encoding: DataEncoding;
-      raw: Buffer;
-      headers?: JSONValue;
-      key?: string;
-      ttl?: number;
-      previousSeq?: number;
-      msgID?: string;
-      checkpoint?: CheckpointUpdate;
-    }>,
-  ): Array<{ seq: number; time: number } | { error: string; code?: any }> => {
-    const changes: ChangefeedOperation[] = [];
-    const msgIds: Array<{ msgID: string; time: number; seq: number }> = [];
-    const results = this.runTransaction(() =>
-      operations.map((operation) => {
-        try {
-          const result = this.setInternal({ ...operation, changes });
-          if (operation.msgID !== undefined) {
-            msgIds.push({
-              msgID: operation.msgID,
-              time: result.time,
-              seq: result.seq,
-            });
-          }
-          return { time: result.time, seq: result.seq };
-        } catch (err) {
-          return { error: `${err}`, code: err.code };
-        }
-      }),
+  setMany = (operations: WriteOperation[]): SetManyResult => {
+    const request = this.enqueueWrite(
+      { kind: "setMany", ops: operations },
+      { schedule: false },
     );
-    for (const change of changes) {
-      this.emit("change", change);
+    this.drainWriteQueue();
+    return this.syncOutcome(request);
+  };
+
+  private syncOutcome = (request: WriteRequest): any => {
+    const outcome = request.outcome;
+    if (outcome == null) {
+      throw Error("bug: a write was not settled by its flush");
     }
-    if (changes.length > 0) {
+    if ("error" in outcome) throw outcome.error;
+    return outcome.value;
+  };
+
+  private enqueueWrite = (
+    request: Omit<WriteRequest, "bytes">,
+    { schedule = true }: { schedule?: boolean } = {},
+  ): WriteRequest => {
+    const queued: WriteRequest = {
+      ...request,
+      bytes: request.ops.reduce(
+        (total, op) => total + (op.raw?.length ?? 0),
+        0,
+      ),
+    };
+    if (this.poisoned || this.closing) {
+      this.settle(
+        queued,
+        { error: retryableWriteError(this.poisoned ? "poisoned" : "closing") },
+      );
+      return queued;
+    }
+    this.writeQueue.push(queued);
+    if (schedule) this.scheduleFlush();
+    return queued;
+  };
+
+  // a flush after the event loop's current I/O phase, so every request that
+  // arrived in it joins the batch; W ms later, if configured (the bench)
+  private scheduleFlush = (): void => {
+    if (this.flushTimer != null) return;
+    const flush = () => {
+      this.flushTimer = undefined;
+      this.flushWriteBatch();
+      if (this.writeQueue.length > 0) this.scheduleFlush();
+    };
+    this.flushTimer =
+      writeBatchWindowMs > 0
+        ? setTimeout(flush, writeBatchWindowMs)
+        : setImmediate(flush);
+  };
+
+  private cancelScheduledFlush = (): void => {
+    const timer = this.flushTimer;
+    if (timer == null) return;
+    this.flushTimer = undefined;
+    clearTimeout(timer as any);
+    clearImmediate(timer as any);
+  };
+
+  // Commits everything queued, now, batch by batch.  Every other write calls
+  // this first, so commands apply in arrival order.
+  drainWriteQueue = (): void => {
+    if (this.flushing) return;
+    this.cancelScheduledFlush();
+    while (this.writeQueue.length > 0) {
+      this.flushWriteBatch();
+    }
+  };
+
+  // Runs fn once nothing is queued and no transaction is in flight: at once,
+  // after committing what is queued (synchronously: storage's SQLite calls
+  // are synchronous).  The release of a reference and every close go through
+  // this, so a close never runs on uncommitted requests (§4.5).
+  atWriteIdle = (fn: () => void): void => {
+    this.drainWriteQueue();
+    fn();
+  };
+
+  private takeWriteBatch = (): WriteRequest[] => {
+    const batch: WriteRequest[] = [];
+    let bytes = 0;
+    while (this.writeQueue.length > 0 && batch.length < WRITE_BATCH_MAX_REQUESTS) {
+      const next = this.writeQueue[0];
+      if (batch.length > 0 && bytes + next.bytes > WRITE_BATCH_MAX_BYTES) break;
+      batch.push(this.writeQueue.shift()!);
+      bytes += next.bytes;
+    }
+    return batch;
+  };
+
+  private settle = (request: WriteRequest, outcome: WriteOutcome): void => {
+    if (request.outcome != null) return;
+    request.outcome = outcome;
+    if ("error" in outcome) {
+      request.reject?.(outcome.error);
+    } else {
+      request.resolve?.(outcome.value);
+    }
+  };
+
+  private flushWriteBatch = (): void => {
+    const batch = this.takeWriteBatch();
+    if (batch.length == 0) return;
+    if (this.poisoned || this.closing) {
+      const error = retryableWriteError(this.poisoned ? "poisoned" : "closing");
+      for (const request of batch) this.settle(request, { error });
+      return;
+    }
+    this.flushing = true;
+    try {
+      this.commitWriteBatch(batch);
+    } catch (err) {
+      // a bug: never leave a request unsettled
+      logger.error("persist: write batch failed unexpectedly", {
+        path: this.options?.path,
+        err: `${err}`,
+      });
+      for (const request of batch) this.settle(request, { error: err });
+    } finally {
+      this.flushing = false;
+    }
+    if (this.poisoned) {
+      this.failQueuedWrites("poisoned");
+      return;
+    }
+    this.afterWrite();
+  };
+
+  private commitWriteBatch = (batch: WriteRequest[]): void => {
+    const failAll = (error: unknown) => {
+      for (const request of batch) this.settle(request, { error });
+    };
+    try {
+      this.armBeforeWrite();
+    } catch (err) {
+      failAll(err);
+      return;
+    }
+    this.pendingRows = 0;
+    this.pendingBytes = 0;
+    try {
+      this.db.exec("BEGIN");
+    } catch (err) {
+      this.abortWriteBatch(batch, err);
+      return;
+    }
+
+    // the requests (and ops) whose msgID is new in this batch, for the
+    // duplicates later in it
+    const owners = new Map<string, { request: WriteRequest; op: number }>();
+    // per request: per op, its result, its error, or the op it duplicates
+    const results = new Map<WriteRequest, OpResult[]>();
+    const changes = new Map<WriteRequest, ChangefeedOperation[]>();
+    const newMsgIDs: { msgID: string; seq: number; time: number }[] = [];
+    let wrote = false;
+    // set when SQLite rolled back the whole transaction, or a sync error:
+    // nothing more is applied (§3, SA H1)
+    let abort: { err: unknown; failing?: WriteRequest } | undefined;
+    const transactionGone = (err?: unknown) =>
+      isSqliteSyncError(err) || !this.db.isTransaction;
+
+    let n = 0;
+    for (const request of batch) {
+      if (!this.db.isTransaction) {
+        abort = { err: lostTransactionError() };
+        break;
+      }
+      const name = `req_${n++}`;
+      try {
+        this.db.exec(`SAVEPOINT ${name}`);
+      } catch (err) {
+        abort = { err, failing: request };
+        break;
+      }
+      const requestResults: OpResult[] = [];
+      const requestChanges: ChangefeedOperation[] = [];
+      let requestFailed: unknown = undefined;
+      for (let i = 0; i < request.ops.length; i++) {
+        const op = request.ops[i];
+        const owner = op.msgID != null ? owners.get(op.msgID) : undefined;
+        if (owner != null) {
+          // a duplicate of an op earlier in this batch: it gets that op's
+          // result, and writes and emits nothing
+          requestResults.push({ duplicateOf: owner });
+          continue;
+        }
+        const nested = request.kind == "setMany" ? `${name}_op_${i}` : undefined;
+        if (nested != null) {
+          if (!this.db.isTransaction) {
+            abort = { err: lostTransactionError(), failing: request };
+            break;
+          }
+          try {
+            this.db.exec(`SAVEPOINT ${nested}`);
+          } catch (err) {
+            abort = { err, failing: request };
+            break;
+          }
+        }
+        const opChanges: ChangefeedOperation[] = [];
+        const rows = this.pendingRows;
+        const bytes = this.pendingBytes;
+        try {
+          const result = this.setInternal({ ...op, changes: opChanges });
+          if (nested != null) this.db.exec(`RELEASE ${nested}`);
+          requestResults.push({ value: { seq: result.seq, time: result.time } });
+          requestChanges.push(...opChanges);
+          if (!result.duplicate) {
+            wrote = true;
+            if (op.msgID != null) {
+              owners.set(op.msgID, { request, op: i });
+              newMsgIDs.push({ msgID: op.msgID, seq: result.seq, time: result.time });
+            }
+          }
+        } catch (err) {
+          // its rows (and changes, dropped with opChanges) are not committed
+          this.pendingRows = rows;
+          this.pendingBytes = bytes;
+          if (transactionGone(err)) {
+            abort = { err, failing: request };
+            break;
+          }
+          if (nested == null) {
+            // a set: the request fails as a whole
+            requestFailed = err;
+            break;
+          }
+          try {
+            this.db.exec(`ROLLBACK TO ${nested}`);
+            this.db.exec(`RELEASE ${nested}`);
+          } catch (err2) {
+            abort = { err: err2, failing: request };
+            break;
+          }
+          if (!this.db.isTransaction) {
+            abort = { err: lostTransactionError(), failing: request };
+            break;
+          }
+          requestResults.push({ error: err });
+        }
+      }
+      if (abort != null) break;
+      if (requestFailed != null) {
+        try {
+          this.db.exec(`ROLLBACK TO ${name}`);
+          this.db.exec(`RELEASE ${name}`);
+        } catch (err2) {
+          abort = { err: err2, failing: request };
+          break;
+        }
+        if (!this.db.isTransaction) {
+          abort = { err: lostTransactionError(), failing: request };
+          break;
+        }
+        this.settle(request, { error: requestFailed });
+        continue;
+      }
+      try {
+        this.db.exec(`RELEASE ${name}`);
+      } catch (err) {
+        abort = { err, failing: request };
+        break;
+      }
+      results.set(request, requestResults);
+      changes.set(request, requestChanges);
+    }
+
+    if (abort != null) {
+      this.abortWriteBatch(batch, abort.err, abort.failing);
+      return;
+    }
+    if (!this.db.isTransaction) {
+      this.abortWriteBatch(batch, lostTransactionError());
+      return;
+    }
+    if (!wrote) {
+      // no request wrote anything: no COMMIT, so no sync (group commit must
+      // not add commits)
+      try {
+        this.db.exec("ROLLBACK");
+      } catch (err) {
+        if (isSqliteSyncError(err)) {
+          this.poison(err, "rollback");
+          this.failBatch(batch, retryableWriteError("poisoned"));
+          return;
+        }
+      }
+    } else {
+      try {
+        this.db.exec("COMMIT");
+      } catch (err) {
+        this.abortWriteBatch(batch, err);
+        return;
+      }
+      this.markMaintenanceMutation();
+      for (const { msgID, seq, time } of newMsgIDs) {
+        this.msgIDs.set(msgID, { seq, time });
+      }
+    }
+
+    // committed (= durable): ack, then emit, in arrival order
+    const final = (result: OpResult): { value: any } | { error: unknown } => {
+      if (!("duplicateOf" in result)) return result;
+      // the op it duplicates is earlier in this batch and committed with it
+      // (an owner is recorded only once its op was released)
+      const owner = results.get(result.duplicateOf.request)?.[
+        result.duplicateOf.op
+      ];
+      if (owner == null || "duplicateOf" in owner) {
+        return { error: retryableWriteError("aborted") };
+      }
+      return owner;
+    };
+    for (const request of batch) {
+      if (request.outcome != null) continue; // a set that failed alone
+      const requestResults = (results.get(request) ?? []).map(final);
+      if (request.kind == "set") {
+        this.settle(
+          request,
+          requestResults[0] ?? { error: lostTransactionError() },
+        );
+      } else {
+        this.settle(request, {
+          value: requestResults.map((result) =>
+            "error" in result
+              ? { error: `${result.error}`, code: (result.error as any)?.code }
+              : result.value,
+          ),
+        });
+      }
+    }
+    let emitted = 0;
+    for (const request of batch) {
+      for (const change of changes.get(request) ?? []) {
+        this.emitChange(change);
+        emitted += 1;
+      }
+    }
+    if (emitted > 0) {
       this.throttledBackup();
     }
-    for (const { msgID, time, seq } of msgIds) {
-      this.msgIDs.set(msgID, { time, seq });
+  };
+
+  private failBatch = (batch: WriteRequest[], error: unknown): void => {
+    for (const request of batch) this.settle(request, { error });
+  };
+
+  // Nothing of the batch is committed, and nothing of it is acked or emitted.
+  // A sync error poisons the file (§3.2.2 A); otherwise SQLite rolled back or
+  // the COMMIT failed: the failing request gets its own error, and the class
+  // of an out-of-space error goes to every request of the batch, so clients
+  // at quota don't retry in a loop (V-2); the others retry.
+  private abortWriteBatch = (
+    batch: WriteRequest[],
+    err: unknown,
+    failing?: WriteRequest,
+  ): void => {
+    this.pendingRows = 0;
+    this.pendingBytes = 0;
+    if (isSqliteSyncError(err)) {
+      this.poison(err, "write batch");
+      this.failBatch(batch, retryableWriteError("poisoned"));
+      return;
     }
-    return results;
+    if (this.db.isTransaction) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch (err2) {
+        if (isSqliteSyncError(err2)) {
+          this.poison(err2, "rollback");
+          this.failBatch(batch, retryableWriteError("poisoned"));
+          return;
+        }
+      }
+    }
+    const shared = writeErrorForEveryRequest(err, this.options?.path);
+    for (const request of batch) {
+      if (shared != null) {
+        this.settle(request, { error: shared });
+      } else if (request === failing || failing == null && batch.length == 1) {
+        this.settle(request, { error: err });
+      } else {
+        this.settle(request, { error: retryableWriteError("aborted") });
+      }
+    }
+    logger.debug("persist: write batch aborted", {
+      path: this.options?.path,
+      requests: batch.length,
+      err: `${err}`,
+    });
+  };
+
+  private failQueuedWrites = (reason: "poisoned" | "closing"): void => {
+    this.cancelScheduledFlush();
+    const queued = this.writeQueue.splice(0);
+    const error = retryableWriteError(reason);
+    for (const request of queued) this.settle(request, { error });
   };
 
   private checkRequiredHeaders = (headers?: JSONValue): void => {
@@ -2750,7 +3535,7 @@ export class PersistentStream extends EventEmitter {
       });
       seqs = seqs0;
     }
-    this.emit("change", { op: "delete", seqs });
+    this.emitChange({ op: "delete", seqs });
     this.throttledBackup();
     return { seqs };
   };
@@ -3241,14 +4026,14 @@ export class PersistentStream extends EventEmitter {
     this.config();
     // metadata first: open copies of the document close on the new epoch
     // rather than react to their history disappearing
-    this.emit("change", { op: "metadata", metadata });
-    this.emit("change", { op: "delete", seqs, through });
-    this.emit("change", {
+    this.emitChange({ op: "metadata", metadata });
+    this.emitChange({ op: "delete", seqs, through });
+    this.emitChange({
       op: "checkpoints",
       checkpoints: this.getCheckpoints(),
     });
     if (seedChange != null) {
-      this.emit("change", seedChange);
+      this.emitChange(seedChange);
     }
     this.throttledBackup();
     return result!;
@@ -4216,6 +5001,26 @@ export class PersistentStream extends EventEmitter {
   };
 
   config = (config?: Partial<Configuration>): Configuration => {
+    const next = this.readConfig(config);
+    const changes: ChangefeedOperation[] = [];
+    if (next.writes.length > 0 || limitsCanDelete(next.full)) {
+      // the config writes and the limit deletes: ONE commit (028), and the
+      // deletes' changes are emitted after it
+      this.runTransaction(() => this.applyConfig(next, changes), {
+        mutation: config != null,
+      });
+    } else {
+      this.conf = next.full;
+    }
+    for (const change of changes) this.emitChange(change);
+    this.throttledBackup();
+    return next.full;
+  };
+
+  // The configuration from the file with config's changes; writes nothing.
+  private readConfig = (
+    config?: Partial<Configuration>,
+  ): { full: Configuration; writes: [string, any][] } => {
     const cur: any = {};
     for (const { field, value } of this.db
       .prepare("SELECT * FROM config")
@@ -4223,6 +5028,7 @@ export class PersistentStream extends EventEmitter {
       cur[field] = value;
     }
     const full: Partial<Configuration> = {};
+    const writes: [string, any][] = [];
     for (const key in CONFIGURATION) {
       const { def, fromDb, toDb } = CONFIGURATION[key];
       full[key] =
@@ -4230,11 +5036,7 @@ export class PersistentStream extends EventEmitter {
       let x = toDb(full[key]);
       if (config?.[key] != null && full[key] != (cur[key] ?? def)) {
         // making a change
-        this.db
-          .prepare(
-            `INSERT INTO config (field, value) VALUES(?, ?) ON CONFLICT(field) DO UPDATE SET value=excluded.value`,
-          )
-          .run(key, x);
+        writes.push([key, x]);
       }
       full[key] = fromDb(x);
       if (
@@ -4248,14 +5050,24 @@ export class PersistentStream extends EventEmitter {
         full[key] = EPHEMERAL_MAX_BYTES;
       }
     }
-    this.conf = full as Configuration;
-    // ensure any new limits are enforced
-    this.enforceLimits(0);
-    if (config != null) {
-      this.markMaintenanceMutation();
+    return { full: full as Configuration, writes };
+  };
+
+  // in a transaction: write the changes, then enforce the (new) limits
+  private applyConfig = (
+    { full, writes }: { full: Configuration; writes: [string, any][] },
+    changes: ChangefeedOperation[],
+  ): void => {
+    for (const [key, x] of writes) {
+      this.db
+        .prepare(
+          `INSERT INTO config (field, value) VALUES(?, ?) ON CONFLICT(field) DO UPDATE SET value=excluded.value`,
+        )
+        .run(key, x);
     }
-    this.throttledBackup();
-    return full as Configuration;
+    this.conf = full;
+    // ensure any new limits are enforced
+    this.enforceLimits(0, changes);
   };
 
   getMetadata = (): JSONValue | undefined => {
@@ -4288,7 +5100,7 @@ export class PersistentStream extends EventEmitter {
           .run(JSON.stringify(metadata));
       }
     });
-    this.emit("change", { op: "metadata", metadata });
+    this.emitChange({ op: "metadata", metadata });
     this.throttledBackup();
     return metadata;
   };
@@ -4364,7 +5176,7 @@ export class PersistentStream extends EventEmitter {
     this.runTransaction(() => {
       this.writeCheckpoint({ name, seq, time, data });
     });
-    this.emit("change", {
+    this.emitChange({
       op: "checkpoints",
       checkpoints: this.getCheckpoints(),
     });
@@ -4373,9 +5185,12 @@ export class PersistentStream extends EventEmitter {
   };
 
   deleteCheckpoint = (name: string): void => {
-    this.db.prepare("DELETE FROM stream_checkpoints WHERE name = ?").run(name);
-    this.markMaintenanceMutation();
-    this.emit("change", {
+    this.runTransaction(() => {
+      this.db
+        .prepare("DELETE FROM stream_checkpoints WHERE name = ?")
+        .run(name);
+    });
+    this.emitChange({
       op: "checkpoints",
       checkpoints: this.getCheckpoints(),
     });
@@ -4464,17 +5279,13 @@ export class PersistentStream extends EventEmitter {
     }
   };
 
-  private emitDelete = (rows, deferredChanges?: ChangefeedOperation[]) => {
+  // in a transaction: the change is emitted after its COMMIT (028)
+  private emitDelete = (rows, deferredChanges: ChangefeedOperation[]) => {
     this.countRemoved(rows);
     if (rows.length > 0) {
       const seqs = rows.map((row: { seq: number }) => row.seq);
       this.deleteCheckpointsInSeqs(seqs);
-      if (deferredChanges != null) {
-        deferredChanges.push({ op: "delete", seqs });
-      } else {
-        this.emit("change", { op: "delete", seqs });
-        this.throttledBackup();
-      }
+      deferredChanges.push({ op: "delete", seqs });
     }
   };
 
@@ -4482,8 +5293,8 @@ export class PersistentStream extends EventEmitter {
   // with the given size; if size=0 assume not actually inserting a new message, and just
   // enforcingt current limits
   private enforceLimits = (
-    size: number = 0,
-    deferredChanges?: ChangefeedOperation[],
+    size: number,
+    deferredChanges: ChangefeedOperation[],
   ) => {
     if (
       size > 0 &&
@@ -4682,7 +5493,35 @@ export const cache = refCacheSync<CreateOptions, PersistentStream>({
   createObject: (options: CreateOptions) => {
     return new PersistentStream(options);
   },
+  // a poisoned stream is never handed out again: the next get tries to open
+  // it anew, which its records refuse (028)
+  isValid: (stream: PersistentStream) => !stream.isPoisoned(),
 });
+
+// Shutdown (028, SA F): commits what every open stream has queued, so the
+// process can exit WITHOUT closing anything (a close checkpoints; each WAL is
+// recovered at the next open).
+export function flushAllPersistWrites(): void {
+  for (const stream of openStreams.keys()) {
+    try {
+      stream.drainWriteQueue();
+    } catch (err) {
+      logger.warn("persist: flush at shutdown failed", { err: `${err}` });
+    }
+  }
+}
+
+// Releases one reference of a cached stream, once what it has queued is
+// committed (§4.5).  The final reference then closes it, synchronously.
+export function releaseDurably(stream: PersistentStream): void {
+  stream.atWriteIdle(() => stream.close());
+}
+
+// Closes a stream this caller owns alone (pstream with noCache), once what
+// it has queued is committed (§4.5).
+export function closeDurably(stream: PersistentStream): void {
+  stream.atWriteIdle(() => stream.close());
+}
 
 export function getPersistentStreamDiagnostics() {
   const cacheInfo = cache.info();
@@ -4766,6 +5605,7 @@ export function getPersistentStreamSqliteDiagnostics() {
 // Of disk-backed streams whose database failed to close: it may still be
 // open until this process exits.
 const unclosedDiskPaths = new Set<string>();
+const unclosedStreams = new Set<PersistentStream>();
 
 // The local paths (without .db) of the disk-backed streams open in this
 // process.
@@ -4784,6 +5624,16 @@ export function pstream(
   options: StorageOptions & { noCache?: boolean },
 ): PersistentStream {
   return cache(options);
+}
+
+// whether enforcing conf's limits (enforceLimits(0)) can delete anything
+function limitsCanDelete(conf: Configuration): boolean {
+  return (
+    conf.max_msgs > -1 ||
+    conf.max_age > 0 ||
+    conf.max_bytes > -1 ||
+    !!conf.allow_msg_ttl
+  );
 }
 
 function age(path: string) {

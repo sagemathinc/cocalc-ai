@@ -5,7 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
-import { drainPersistStreamReleaseQueue } from "@cocalc/conat/persist/server";
+import { flushAllPersistWrites } from "@cocalc/backend/conat/persist";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { startStandaloneProjectHostConatPersist } from "./conat-persist";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
@@ -50,7 +50,11 @@ export async function main(): Promise<ProjectHostConatPersistDaemonContext> {
     closed = true;
     try {
       await Promise.all([persistServer.end(), boardPersistServer.end()]);
-      await drainPersistStreamReleaseQueue();
+      // 028 (SA F): commit what is queued (each COMMIT is durable), then the
+      // process exits WITHOUT closing any stream: a close checkpoints, which
+      // takes long on a spot VM's grace period and would also checkpoint a
+      // poisoned file.  Every WAL is recovered at the next open.
+      flushAllPersistWrites();
     } finally {
       fenceService.close();
       maintenance?.close();

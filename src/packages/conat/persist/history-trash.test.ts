@@ -4,6 +4,7 @@ delete notification's `through`, trash and its non-circular admission, the
 one-budget step, and the one process-wide scheduler.
 */
 
+import { testDurabilityContext } from "./test-durability";
 import { mkdtempSync, rmSync, statSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ const LIMIT_ENV = [
 
 beforeAll(() => {
   initContext({
+    ...testDurabilityContext(),
     sqlite: { DatabaseSync },
     compress: (data) => data,
     decompress: (data) => data,

@@ -26,10 +26,12 @@ import {
   projectRootForPersistPath,
 } from "./persist-path-safety";
 import { persistWriteCounter } from "./persist-write-rate";
+import { persistDurabilityRecords } from "./persist-durability";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
 
-initContext({
+// exported for the tests' statement guard (028)
+export const persistContextOptions: Parameters<typeof initContext>[0] = {
   sqlite,
   compress: zstdCompressSync,
   // stored data is not trusted: always limit the output
@@ -46,9 +48,15 @@ initContext({
   statSync,
   copyFileSync,
   writeCounter: persistWriteCounter,
-});
+  durability: persistDurabilityRecords(),
+};
+initContext(persistContextOptions);
 
-export { pstream } from "@cocalc/conat/persist/storage";
+export {
+  pstream,
+  closeDurably,
+  flushAllPersistWrites,
+} from "@cocalc/conat/persist/storage";
 import { server } from "@cocalc/conat/persist/server";
 export { server };
 import { conat } from "./conat";

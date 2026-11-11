@@ -81,6 +81,31 @@ export interface PersistWriteCounter {
 }
 export let writeCounter: PersistWriteCounter | undefined = undefined;
 
+// Records that make a disk-backed stream's durability survive this process
+// (finding 028: DESIGN §3.2.5-§3.2.6), kept by the backend on tmpfs.  Keyed
+// by the stream's logical id (its normalized path, never a resolved one).
+// - arm: before any operation on the stream's files that can consume a sync
+//   error (a write transaction, a checkpoint, a journal_mode switch), its
+//   "dirty" record exists.  Throws if it can't be created: then the
+//   operation must not start.
+// - disarm: the stream is at a write idle and every commit since arm
+//   returned OK, so the record is removed.
+// - poison: a sync error was returned: the dirty record becomes the
+//   poisoned-file record, so no later open in this boot serves the file.
+//   Never throws.
+// - check: at open.  "poisoned" refuses; "unverified" is a dirty record left
+//   by another process (a crash mid-write): the outcome is unknown, so the
+//   open is refused until it is verified (B-2 adds that path).
+// Without it no disk-backed stream opens (fail closed).
+export type PersistDurabilityCheck = "ok" | "poisoned" | "unverified";
+export interface PersistDurabilityRecords {
+  arm: (id: string) => void;
+  disarm: (id: string) => void;
+  poison: (id: string, info: Record<string, string | number>) => void;
+  check: (id: string) => PersistDurabilityCheck;
+}
+export let durability: PersistDurabilityRecords | undefined = undefined;
+
 export let syncFiles = {
   local: "",
   localProjects: "",
@@ -127,6 +152,7 @@ export function initContext(opts: {
   statSync: (path: string) => { mtimeMs: number; size?: number };
   copyFileSync: (src: string, desc: string) => void;
   writeCounter?: PersistWriteCounter;
+  durability?: PersistDurabilityRecords;
 }) {
   sqliteModule = opts.sqlite;
   compress = opts.compress;
@@ -142,6 +168,7 @@ export function initContext(opts: {
   statSync = opts.statSync;
   copyFileSync = opts.copyFileSync;
   writeCounter = opts.writeCounter;
+  durability = opts.durability;
 }
 
 export function createDatabase(...args): Database {

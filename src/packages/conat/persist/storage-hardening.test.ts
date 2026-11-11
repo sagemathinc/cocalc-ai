@@ -5,6 +5,7 @@ them.  The persist server must not trust what it reads: these tests write
 them or bounds the cost of reading them.
 */
 
+import { testDurabilityContext } from "./test-durability";
 import { DatabaseSync } from "node:sqlite";
 import {
   copyFileSync,
@@ -43,6 +44,7 @@ let n = 0;
 
 beforeAll(() => {
   initContext({
+    ...testDurabilityContext(),
     sqlite: { DatabaseSync },
     compress: zstdCompressSync,
     decompress: (data, maxOutputLength) =>

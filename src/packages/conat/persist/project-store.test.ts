@@ -3,6 +3,7 @@ A project-host keeps each project's databases in a directory (volume) of their
 own, which it prepares before the persist server opens any of them.
 */
 
+import { testDurabilityContext } from "./test-durability";
 import { DatabaseSync } from "node:sqlite";
 import {
   copyFileSync,
@@ -27,6 +28,7 @@ let prepared: { project_id: string; root: string }[];
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "persist-project-store-"));
   initContext({
+    ...testDurabilityContext(),
     sqlite: { DatabaseSync },
     compress: zstdCompressSync,
     decompress: (data, maxOutputLength) =>

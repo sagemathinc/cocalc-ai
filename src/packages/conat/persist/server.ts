@@ -571,8 +571,9 @@ export function server({
           });
         }
         if (request.cmd == "set") {
+          // acked once the batch it commits in is durable (028 group commit)
           respondSync(
-            stream.set({
+            await stream.setQueued({
               key: request.key,
               previousSeq: request.previousSeq,
               raw: mesg.raw,
@@ -585,7 +586,7 @@ export function server({
           );
         } else if (request.cmd == "setMany") {
           respondSync(
-            stream.setMany(
+            await stream.setManyQueued(
               (mesg.data as SetOptions[]).map(
                 ({
                   key,
