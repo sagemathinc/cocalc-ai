@@ -444,6 +444,22 @@ type TunnelEntry = {
   tunnel_public_key: string | null;
 };
 
+// One authorized_keys line for a host row's stored tunnel. Only integer ports
+// reach a permitlisten option; a row with no valid port gets no line.
+export function authorizedKeyLineForTunnelRow(row: {
+  host_id: string;
+  http_tunnel_port: unknown;
+  ssh_tunnel_port: unknown;
+  tunnel_public_key: string | null;
+}): string | null {
+  return formatAuthorizedKey({
+    host_id: row.host_id,
+    http_tunnel_port: safeTunnelPort(row.http_tunnel_port) ?? null,
+    ssh_tunnel_port: safeTunnelPort(row.ssh_tunnel_port) ?? null,
+    tunnel_public_key: row.tunnel_public_key,
+  });
+}
+
 function formatAuthorizedKey(entry: TunnelEntry): string | null {
   if (!entry.tunnel_public_key) {
     return null;
@@ -566,15 +582,7 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   );
   const lines: string[] = [];
   for (const row of rows) {
-    const entry: TunnelEntry = {
-      host_id: row.host_id,
-      // Only integer ports reach a permitlisten option; a line with no valid
-      // port is not written (formatAuthorizedKey returns null).
-      http_tunnel_port: safeTunnelPort(row.http_tunnel_port) ?? null,
-      ssh_tunnel_port: safeTunnelPort(row.ssh_tunnel_port) ?? null,
-      tunnel_public_key: row.tunnel_public_key,
-    };
-    const line = formatAuthorizedKey(entry);
+    const line = authorizedKeyLineForTunnelRow(row);
     if (line) {
       lines.push(line);
     }
