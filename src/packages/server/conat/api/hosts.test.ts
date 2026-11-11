@@ -169,11 +169,12 @@ jest.mock("@cocalc/server/lro/stream", () => ({
   publishLroSummary: jest.fn(async () => undefined),
 }));
 
+const loggerWarnMock = jest.fn();
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
     debug: jest.fn(),
     info: jest.fn(),
-    warn: jest.fn(),
+    warn: (...args: any[]) => loggerWarnMock(...args),
     error: jest.fn(),
   });
   return {
@@ -6313,6 +6314,355 @@ describe("hosts.upgradeHostSoftware", () => {
       }),
     );
   });
+
+  // The host's owner (or anyone else) who is not a site admin.
+  const lifecycleCalls: Array<[string, (hosts: any) => Promise<unknown>]> = [
+    [
+      "pullHostRootfsImage",
+      (h) =>
+        h.pullHostRootfsImage({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          image: "x",
+        }),
+    ],
+    [
+      "deleteHostRootfsImage",
+      (h) =>
+        h.deleteHostRootfsImage({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          image: "x",
+        }),
+    ],
+    [
+      "gcDeletedHostRootfsImages",
+      (h) =>
+        h.gcDeletedHostRootfsImages({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ],
+    [
+      "upgradeHostSoftware",
+      (h) =>
+        h.upgradeHostSoftware({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          targets: [{ artifact: "project-host", version: "ph-v2" }],
+        }),
+    ],
+    [
+      "reconcileHostSoftware",
+      (h) => h.reconcileHostSoftware({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ],
+    [
+      "setHostRuntimeDeployments",
+      (h) =>
+        h.setHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          scope_type: "host",
+          id: HOST_ID,
+          deployments: [],
+        }),
+    ],
+    [
+      "reconcileHostRuntimeDeployments",
+      (h) =>
+        h.reconcileHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+        }),
+    ],
+    [
+      "rollbackHostRuntimeDeployments",
+      (h) =>
+        h.rollbackHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          target_type: "artifact",
+          target: "project-host",
+          version: "ph-v1",
+        }),
+    ],
+    [
+      "rolloutHostManagedComponents",
+      (h) =>
+        h.rolloutHostManagedComponents({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          components: ["project-host"],
+        }),
+    ],
+    [
+      "upgradeHostConnector",
+      (h) => h.upgradeHostConnector({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ],
+  ];
+
+  it.each(lifecycleCalls)(
+    "%s refuses the host's owner who is not an admin, before looking at the host",
+    async (_name, call) => {
+      isAdminMock = jest.fn(async () => false);
+      const hosts = await import("./hosts");
+      await expect(call(hosts)).rejects.toThrow(
+        "host software maintenance is limited to site admins",
+      );
+      expect(isAdminMock).toHaveBeenCalledWith(ACCOUNT_ID);
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(resolveHostBayMock).not.toHaveBeenCalled();
+      expect(createLroMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(lifecycleCalls)(
+    "%s refuses an unknown host id with the admin-only error for a non-admin",
+    async (_name, call) => {
+      isAdminMock = jest.fn(async () => false);
+      queryMock = jest.fn(async () => ({ rows: [] }));
+      const hosts = await import("./hosts");
+      await expect(call(hosts)).rejects.toThrow(
+        "host software maintenance is limited to site admins",
+      );
+    },
+  );
+
+  it("still lets a site admin upgrade a host's software, and logs the admin's software source", async () => {
+    loggerWarnMock.mockReset();
+    const { upgradeHostSoftware } = await import("./hosts");
+    await upgradeHostSoftware({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      targets: [{ artifact: "project-host", version: "ph-v2" }],
+      base_url: "http://10.1.2.3:8080/software",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-upgrade-software",
+        input: expect.objectContaining({
+          base_url: "http://10.1.2.3:8080/software",
+        }),
+      }),
+    );
+    expect(
+      loggerWarnMock.mock.calls.filter(
+        ([message]) => message === "host software base url from admin",
+      ),
+    ).toEqual([
+      [
+        "host software base url from admin",
+        {
+          account_id: ACCOUNT_ID,
+          host_id: HOST_ID,
+          entry: "upgradeHostSoftware",
+          source_host: "non-https",
+        },
+      ],
+    ]);
+  });
+
+  it.each([
+    ["no owner", {}],
+    ["a blank owner", { owner: "  " }],
+    ["another owner", { owner: "acct-other" }],
+  ])("refuses a non-admin read of a host with %s", async (_label, metadata) => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return { rows: [{ id: HOST_ID, status: "running", metadata }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { listHostRuntimeDeployments } = await import("./hosts");
+    await expect(
+      listHostRuntimeDeployments({
+        account_id: ACCOUNT_ID,
+        scope_type: "host",
+        id: HOST_ID,
+      }),
+    ).rejects.toThrow("not authorized");
+    expect(listProjectHostRuntimeDeploymentsMock).not.toHaveBeenCalled();
+  });
+
+  it("lets the host's owner read its runtime deployments", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { listHostRuntimeDeployments } = await import("./hosts");
+    await expect(
+      listHostRuntimeDeployments({
+        account_id: ACCOUNT_ID,
+        scope_type: "host",
+        id: HOST_ID,
+      }),
+    ).resolves.toEqual([]);
+    expect(listProjectHostRuntimeDeploymentsMock).toHaveBeenCalled();
+  });
+
+  it("refuses a non-admin's software source for the version list, fetching nothing", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { listHostSoftwareVersions } = await import("./hosts");
+    await expect(
+      listHostSoftwareVersions({
+        account_id: ACCOUNT_ID,
+        base_url: "https://evil.example.test/software",
+        artifacts: ["tools"],
+        channels: ["latest"],
+      }),
+    ).rejects.toThrow("host software maintenance is limited to site admins");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lists the site's own versions for a non-admin who names no source", async () => {
+    isAdminMock = jest.fn(async () => false);
+    getServerSettingsMock.mockResolvedValue({
+      project_hosts_software_base_url: "https://software.example.test/software",
+    });
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            url: "https://software.example.test/software/tools/v7/tools-linux-amd64.tar.xz",
+          }),
+        ),
+    );
+    const { listHostSoftwareVersions } = await import("./hosts");
+    await expect(
+      listHostSoftwareVersions({
+        account_id: ACCOUNT_ID,
+        artifacts: ["tools"],
+        channels: ["latest"],
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ artifact: "tools", available: true }),
+    ]);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://software.example.test/software/tools/latest-linux-amd64.json",
+    ]);
+  });
+
+  it("lets a site admin name any software source for the version list", async () => {
+    loggerWarnMock.mockReset();
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            url: "http://10.1.2.3/software/tools/v7/tools-linux-amd64.tar.xz",
+          }),
+        ),
+    );
+    const { listHostSoftwareVersions } = await import("./hosts");
+    await listHostSoftwareVersions({
+      account_id: ACCOUNT_ID,
+      base_url: "http://10.1.2.3/software",
+      artifacts: ["tools"],
+      channels: ["latest"],
+    });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://10.1.2.3/software/tools/latest-linux-amd64.json",
+    ]);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "host software base url from admin",
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        entry: "listHostSoftwareVersions",
+        source_host: "non-https",
+      }),
+    );
+  });
+});
+
+describe("hosts.hostSoftwareLifecycleOpRefusal", () => {
+  const LIFECYCLE_KINDS = [
+    "host-upgrade-software",
+    "host-reconcile-software",
+    "host-rollout-managed-components",
+    "host-reconcile-runtime-deployments",
+    "host-rollback-runtime-deployments",
+  ];
+
+  it.each(LIFECYCLE_KINDS)(
+    "refuses a queued %s requested by a non-admin",
+    async (kind) => {
+      isAdminMock = jest.fn(async () => false);
+      const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+      await expect(
+        hostSoftwareLifecycleOpRefusal({
+          kind,
+          account_id: ACCOUNT_ID,
+          input: { id: HOST_ID, account_id: ACCOUNT_ID },
+        }),
+      ).resolves.toBe("host software maintenance is limited to site admins");
+      expect(isAdminMock).toHaveBeenCalledWith(ACCOUNT_ID);
+    },
+  );
+
+  it.each(LIFECYCLE_KINDS)("runs a %s requested by an admin", async (kind) => {
+    isAdminMock = jest.fn(async () => true);
+    const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+    await expect(
+      hostSoftwareLifecycleOpRefusal({
+        kind,
+        account_id: ACCOUNT_ID,
+        input: { id: HOST_ID, base_url: "http://10.1.2.3/software" },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("runs the site's own automatic convergence, whoever it is attributed to", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+    await expect(
+      hostSoftwareLifecycleOpRefusal({
+        kind: "host-upgrade-software",
+        account_id: ACCOUNT_ID,
+        input: { id: HOST_ID, automatic: true },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    [
+      "names a software source",
+      { automatic: true, base_url: "https://x.test" },
+    ],
+    ["is only truthy", { automatic: "true" }],
+  ])(
+    "refuses an automatic-looking operation by a non-admin that %s",
+    async (_label, extra) => {
+      isAdminMock = jest.fn(async () => false);
+      const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+      await expect(
+        hostSoftwareLifecycleOpRefusal({
+          kind: "host-upgrade-software",
+          account_id: ACCOUNT_ID,
+          input: { id: HOST_ID, ...extra },
+        }),
+      ).resolves.toBe("host software maintenance is limited to site admins");
+    },
+  );
+
+  it("refuses a lifecycle operation with no requester", async () => {
+    isAdminMock = jest.fn(async () => true);
+    const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+    await expect(
+      hostSoftwareLifecycleOpRefusal({
+        kind: "host-upgrade-software",
+        input: { id: HOST_ID },
+      }),
+    ).resolves.toBe("host software maintenance is limited to site admins");
+    expect(isAdminMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["host-start", "host-stop", "host-public-route", "host-drain"])(
+    "leaves %s to its own checks",
+    async (kind) => {
+      isAdminMock = jest.fn(async () => false);
+      const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+      await expect(
+        hostSoftwareLifecycleOpRefusal({
+          kind,
+          account_id: ACCOUNT_ID,
+          input: { id: HOST_ID },
+        }),
+      ).resolves.toBeUndefined();
+    },
+  );
 });
 
 describe("hosts.stopHostProjects / restartHostProjects", () => {

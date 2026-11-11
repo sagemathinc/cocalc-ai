@@ -36,6 +36,7 @@ import {
   startHostInternal,
   stopHostInternal,
   upgradeHostSoftwareInternal,
+  hostSoftwareLifecycleOpRefusal,
 } from "@cocalc/server/conat/api/hosts";
 import {
   startProjectOnHost,
@@ -2243,6 +2244,23 @@ async function handleOp(op: LroSummary): Promise<void> {
     return;
   }
 
+  const refusal = await hostSoftwareLifecycleOpRefusal({
+    kind,
+    account_id,
+    input,
+  });
+  if (refusal) {
+    const updated = await updateLro({
+      op_id,
+      status: "failed",
+      error: refusal,
+    });
+    if (updated) {
+      await publishSummary(updated);
+    }
+    return;
+  }
+
   const heartbeat = setInterval(() => {
     touchLro({ op_id, owner_type: OWNER_TYPE, owner_id: WORKER_ID }).catch(
       (err) => logger.debug("host op heartbeat failed", { op_id, err }),
@@ -3201,8 +3219,9 @@ async function handleOp(op: LroSummary): Promise<void> {
       progressStep,
     });
     if (readinessAttempt) {
-      readinessAttempt.workId = (actionResult as { cloudWorkId?: string })
-        ?.cloudWorkId;
+      readinessAttempt.workId = (
+        actionResult as { cloudWorkId?: string }
+      )?.cloudWorkId;
     }
 
     const wait = waitConfig(kind);

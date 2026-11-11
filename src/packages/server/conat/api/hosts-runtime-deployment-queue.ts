@@ -238,6 +238,8 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
     input: {
       id: row.id,
       ...(requestedBy ? { account_id: requestedBy } : {}),
+      // The site's own convergence: runs whoever it is attributed to.
+      automatic: true,
       components: plan.reconciled_components,
       reason: reason ?? automatic_reason,
     },
@@ -340,6 +342,8 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcileInternal({
     input: {
       id: row.id,
       ...(requestedBy ? { account_id: requestedBy } : {}),
+      // The site's own convergence: runs whoever it is attributed to.
+      automatic: true,
       targets,
       align_runtime_stack: false,
       record_runtime_deployments: false,
