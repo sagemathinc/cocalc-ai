@@ -229,6 +229,7 @@ jobs:
 
       - name: Install system packages
         run: |
+          .github/scripts/ci-apt-mirror.sh
           APT_RETRY=(
             -o Acquire::Retries=3
             -o Acquire::http::Timeout=15
