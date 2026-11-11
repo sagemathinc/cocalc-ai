@@ -5,6 +5,8 @@
 
 import { spawn } from "node:child_process";
 
+import { DATABASE_SYNC_SOURCE } from "@cocalc/backend/sqlite";
+
 import type {
   PersistMaintenanceFileIdentity,
   PersistMaintenancePageStats,
@@ -13,7 +15,7 @@ import type {
 const WORKER_SOURCE = String.raw`
 const fs = require("node:fs");
 const os = require("node:os");
-const { DatabaseSync } = require("node:sqlite");
+const DatabaseSync = ${DATABASE_SYNC_SOURCE};
 
 function scalar(db, pragma) {
   const row = db.prepare(pragma).get();
@@ -116,6 +118,11 @@ export async function runPersistMaintenanceWorker({
       const child = spawn(process.execPath, ["-e", WORKER_SOURCE], {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        // Under Bun, process.execPath may be a compiled executable (the CoCalc
+        // Plus launcher); BUN_BE_BUN=1 makes it act as bun, so -e works.
+        env: process.versions.bun
+          ? { ...process.env, BUN_BE_BUN: "1" }
+          : process.env,
       });
       let stdout = "";
       let stderr = "";

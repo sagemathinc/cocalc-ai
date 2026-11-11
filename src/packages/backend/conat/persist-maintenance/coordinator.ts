@@ -21,7 +21,7 @@ import {
 import { copyFile, mkdir, rename, rm } from "node:fs/promises";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 
 import getLogger from "@cocalc/backend/logger";
 import { evaluatePersistMaintenanceCandidate } from "@cocalc/conat/persist/maintenance/candidates";
