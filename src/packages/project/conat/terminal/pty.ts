@@ -83,9 +83,9 @@ export class BunPty extends EventEmitter {
     return { dispose: () => this.removeListener("data", listener) };
   }
 
-  onExit(
-    listener: (e: { exitCode: number; signal: number }) => void,
-  ): { dispose: () => void } {
+  onExit(listener: (e: { exitCode: number; signal: number }) => void): {
+    dispose: () => void;
+  } {
     const f = (exitCode: number, signal: number) =>
       listener({ exitCode, signal });
     this.on("exit", f);
