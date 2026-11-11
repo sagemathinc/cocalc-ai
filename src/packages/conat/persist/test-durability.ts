@@ -9,9 +9,11 @@
 // - the STATEMENT GUARD: on a disk-backed stream's connection, a statement
 //   that can write, run while no transaction is open (an autocommit), throws.
 //   Under synchronous=FULL an autocommit syncs, so an unarmed one could
-//   consume a sync error with no dirty record (DESIGN §3.2.6, V-3).  The two
-//   writes that cannot run in a transaction -- the journal_mode switch and a
-//   checkpoint -- pass only while the stream's dirty record exists (armed).
+//   consume a sync error with no dirty record (DESIGN §3.2.6, V-3).  The
+//   statements that start or end a transaction (BEGIN, SAVEPOINT, RELEASE,
+//   COMMIT, END), and the two writes that cannot run in one -- the
+//   journal_mode switch and a checkpoint -- pass only while the stream's
+//   dirty record exists (armed), so an unarmed explicit transaction fails too.
 //   Installed on every disk-stream connection of the persist test suites, so
 //   a new unarmed write fails the day it is added.
 
@@ -85,8 +87,16 @@ export function guardedStatementClass(sql: string): GuardedClass {
       // reads, and connection settings that write nothing
       return undefined;
     }
+    case "BEGIN":
+    case "SAVEPOINT":
+    case "RELEASE":
+    case "COMMIT":
+    case "END":
+      // a transaction's start can sync (a cache spill), and its end does:
+      // armed only (#139 N-1)
+      return "armed-only";
     default:
-      // SELECT, EXPLAIN, BEGIN, SAVEPOINT, RELEASE, ROLLBACK, COMMIT, END
+      // SELECT, EXPLAIN, ROLLBACK
       return undefined;
   }
 }

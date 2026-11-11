@@ -2,6 +2,7 @@ import { loadConatConfiguration } from "../configuration";
 import {
   initPersistServer,
   initLoadBalancer,
+  installPersistExitGuard,
 } from "@cocalc/backend/conat/persist";
 import { conatPersistCount } from "@cocalc/backend/data";
 import {
@@ -49,6 +50,8 @@ export function getConatPersistSqliteDiagnostics() {
 }
 
 export async function initConatPersist() {
+  // 028 E-1: a natural exit must not close (and checkpoint) the disk streams
+  installPersistExitGuard();
   logger.debug("initPersistServer: sqlite3 stream persistence", {
     conatPersistCount,
   });

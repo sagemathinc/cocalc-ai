@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { testDurabilityRecords } from "./test-durability";
+import { createDurabilityRecords } from "./durability-records";
 
 describe("durability records (finding 028)", () => {
   it("arm, disarm: a dirty record exists only in between", () => {
@@ -80,14 +81,46 @@ describe("durability records (finding 028)", () => {
     expect(b.check("/f")).toBe("ok");
   });
 
+  it("arm survives another process's disarm removing the key directory between mkdir and write (#139 N-2)", () => {
+    const fs = require("node:fs");
+    const { dirname } = require("node:path");
+    const other = testDurabilityRecords();
+    let raced = 0;
+    const r = createDurabilityRecords({
+      root: other.root,
+      generation: "n2-test",
+      fs: {
+        ...fs,
+        writeFileSync: (path: string, ...rest) => {
+          if (raced == 0 && path.includes("/dirty/")) {
+            // the other process's disarm: its record gone, then the rmdir
+            // of the (now empty) key directory
+            raced += 1;
+            fs.rmdirSync(dirname(path));
+          }
+          return fs.writeFileSync(path, ...rest);
+        },
+      },
+      sha256: (data) =>
+        require("node:crypto").createHash("sha256").update(data).digest("hex"),
+    });
+    r.arm("/h");
+    expect(raced).toBe(1);
+    expect(existsSync(r.dirtyPath("/h"))).toBe(true);
+    expect(other.check("/h")).toBe("unverified");
+  });
+
   it("ignores a record still being written (its operation had not started)", () => {
     const a = testDurabilityRecords();
     const b = testDurabilityRecords({ root: a.root });
     a.arm("/g");
     a.disarm("/g");
-    require("node:fs").mkdirSync(require("node:path").dirname(a.dirtyPath("/g")), {
-      recursive: true,
-    });
+    require("node:fs").mkdirSync(
+      require("node:path").dirname(a.dirtyPath("/g")),
+      {
+        recursive: true,
+      },
+    );
     writeFileSync(`${a.dirtyPath("/g")}.x.tmp`, "{}");
     expect(b.check("/g")).toBe("ok");
   });

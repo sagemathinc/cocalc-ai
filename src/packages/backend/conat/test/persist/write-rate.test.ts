@@ -670,7 +670,10 @@ describe("persist write-rate counters", () => {
       const begins = [...source.matchAll(/this\.db\.exec\("BEGIN"\)/g)];
       expect(begins).toHaveLength(2);
       for (const begin of begins) {
-        const before = source.slice(Math.max(0, begin.index! - 200), begin.index);
+        const before = source.slice(
+          Math.max(0, begin.index! - 200),
+          begin.index,
+        );
         expect(before).toMatch(
           /this\.pendingRows = 0;\n\s*this\.pendingBytes = 0;\n\s*try \{\n\s*$/,
         );

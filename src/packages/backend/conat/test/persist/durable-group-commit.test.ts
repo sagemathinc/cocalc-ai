@@ -60,7 +60,11 @@ function trace(stream) {
 
 function rowCount(stream): number {
   return Number(
-    ((stream as any).db.prepare("SELECT COUNT(*) AS n FROM messages").get() as any).n,
+    (
+      (stream as any).db
+        .prepare("SELECT COUNT(*) AS n FROM messages")
+        .get() as any
+    ).n,
   );
 }
 
@@ -129,7 +133,14 @@ describe("028 B-1: durable group commit", () => {
     expect(log.filter((s) => s == "COMMIT")).toHaveLength(1);
     // the changes are emitted after the COMMIT, in arrival order; the acks
     // (promise callbacks) after that
-    expect(order).toEqual(["emit 1", "emit 2", "emit 3", "ack 1", "ack 2", "ack 3"]);
+    expect(order).toEqual([
+      "emit 1",
+      "emit 2",
+      "emit 3",
+      "ack 1",
+      "ack 2",
+      "ack 3",
+    ]);
   });
 
   it("a single request on an idle stream adds no timer delay (W = 0)", async () => {
@@ -169,7 +180,9 @@ describe("028 B-1: durable group commit", () => {
     const emitted: number[] = [];
     stream.on("change", (c) => c.seq != null && emitted.push(c.seq));
     const a = stream.setQueued(msg("a"));
-    const bad = stream.setQueued(msg("v1", { key: "k", previousSeq: seq + 100 }));
+    const bad = stream.setQueued(
+      msg("v1", { key: "k", previousSeq: seq + 100 }),
+    );
     const c = stream.setQueued(msg("c"));
     await expect(bad).rejects.toThrow("wrong last sequence");
     const [ra, rc] = await Promise.all([a, c]);
@@ -188,16 +201,15 @@ describe("028 B-1: durable group commit", () => {
     stream.on("change", (c) => changes.push(c));
     // the second op is over max_msg_size: enforceLimits first deletes the
     // oldest message to make room, then throws
-    const results = await stream.setManyQueued([
-      msg("3"),
-      msg("x".repeat(50)),
-    ]);
+    const results = await stream.setManyQueued([msg("3"), msg("x".repeat(50))]);
     expect((results[0] as any).seq).toBeGreaterThan(0);
     expect((results[1] as any).error).toContain("max_msg_size");
     // only op 1's own room-making delete (of seq 1) happened; op 2's was
     // rolled back with it
     const seqs = (
-      (stream as any).db.prepare("SELECT seq FROM messages ORDER BY seq").all() as any[]
+      (stream as any).db
+        .prepare("SELECT seq FROM messages ORDER BY seq")
+        .all() as any[]
     ).map((r) => r.seq);
     expect(seqs).toEqual([2, (results[0] as any).seq]);
     expect(seqs).not.toContain(first.seq);
@@ -291,7 +303,8 @@ describe("028 B-1: durable group commit", () => {
 
   it("every write transaction is armed BEFORE its BEGIN, and the record is removed at the next write idle", async () => {
     const stream = open("arm");
-    const records = require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
+    const records =
+      require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
     const dirty = records.dirtyPath((stream as any).logicalId);
     expect(existsSync(dirty)).toBe(false);
     const db = (stream as any).db;
@@ -312,7 +325,8 @@ describe("028 B-1: durable group commit", () => {
 
   it("if the dirty record can't be created, no BEGIN runs and the write fails retryably", async () => {
     const stream = open("arm-fail");
-    const records = require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
+    const records =
+      require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
     const log = trace(stream);
     const arm = jest.spyOn(records, "arm").mockImplementation(() => {
       throw Error("tmpfs full");
@@ -333,7 +347,11 @@ describe("028 B-1: durable group commit", () => {
       encoding: DataEncoding.MsgPack,
       raw: randomBytes(1024 * 1024),
     });
-    for (let i = 0; i < 6 && !log.some((s) => s.includes("wal_checkpoint")); i++) {
+    for (
+      let i = 0;
+      i < 6 && !log.some((s) => s.includes("wal_checkpoint"));
+      i++
+    ) {
       await stream.setQueued(big());
     }
     expect(log).toContain("PRAGMA wal_checkpoint(PASSIVE)");
@@ -343,13 +361,15 @@ describe("028 B-1: durable group commit", () => {
   it("close runs a checked FULL checkpoint, armed, and then removes the dirty record", async () => {
     const stream = open("close");
     await stream.setQueued(msg("a"));
-    const records = require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
+    const records =
+      require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
     const dirty = records.dirtyPath((stream as any).logicalId);
     const db = (stream as any).db;
     const prepare = db.prepare;
     let armedAtCheckpoint: boolean | undefined;
     db.prepare = (sql: string, ...rest) => {
-      if (sql.includes("wal_checkpoint(FULL)")) armedAtCheckpoint = existsSync(dirty);
+      if (sql.includes("wal_checkpoint(FULL)"))
+        armedAtCheckpoint = existsSync(dirty);
       return prepare(sql, ...rest);
     };
     stream.close();
@@ -360,13 +380,14 @@ describe("028 B-1: durable group commit", () => {
 
   it("a close reached with requests still queued fails them retryably and closes normally", async () => {
     const stream = pstream({ path: join(dir, "close-queued"), noCache: true });
-    const before = getPersistentStreamDiagnostics().closed_with_queued_writes_total;
+    const before =
+      getPersistentStreamDiagnostics().closed_with_queued_writes_total;
     const pending = stream.setQueued(msg("a"));
     expect(() => stream.close()).not.toThrow();
     await expect(pending).rejects.toMatchObject({ code: 503 });
-    expect(getPersistentStreamDiagnostics().closed_with_queued_writes_total).toBe(
-      before + 1,
-    );
+    expect(
+      getPersistentStreamDiagnostics().closed_with_queued_writes_total,
+    ).toBe(before + 1);
     // nothing of it was committed
     const again = pstream({ path: join(dir, "close-queued"), noCache: true });
     try {
@@ -400,7 +421,7 @@ describe("028 B-1: durable group commit", () => {
     expect(emits).toHaveLength(1);
     const helper = source.indexOf("private emitChange = ");
     expect(helper).toBeGreaterThan(0);
-    expect(emits[0].index! - helper).toBeLessThan(300);
+    expect(emits[0].index! - helper).toBeLessThan(500);
   });
 
   // review of #139 (security-audit, B1-1..B1-4)
@@ -445,7 +466,8 @@ describe("028 B-1: durable group commit", () => {
     const a = pstream({ path, noCache: true });
     const b = pstream({ path, noCache: true });
     try {
-      const records = require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
+      const records =
+        require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
       const dirty = records.dirtyPath(a.logicalId);
       const db = (a as any).db;
       const exec = db.exec;
@@ -504,12 +526,36 @@ describe("028 B-1: durable group commit", () => {
     expect(rowCount(stream)).toBe(2);
   });
 
+  it("B1-5: a listener that writes on the first change of a batch keeps the changefeed in seq order", async () => {
+    const stream = open("listener-order");
+    const seqs: number[] = [];
+    let once = false;
+    stream.on("change", (c) => {
+      if (c.seq == null) return;
+      seqs.push(c.seq);
+      if (!once) {
+        once = true;
+        stream.set(msg("from listener"));
+      }
+    });
+    await Promise.all([
+      stream.setQueued(msg("a")),
+      stream.setQueued(msg("b")),
+      stream.setQueued(msg("c")),
+    ]);
+    expect(seqs).toEqual([1, 2, 3, 4]);
+  });
+
   it("a write batch is synchronous from BEGIN to COMMIT: no await, so no read interleaves (061 D-4)", () => {
     const source = readFileSync(
       join(__dirname, "../../../../conat/persist/storage.ts"),
       "utf8",
     );
-    for (const fn of ["private flushWriteBatch = ", "private commitWriteBatch = ", "private abortWriteBatch = "]) {
+    for (const fn of [
+      "private flushWriteBatch = ",
+      "private commitWriteBatch = ",
+      "private abortWriteBatch = ",
+    ]) {
       const start = source.indexOf(fn);
       expect(start).toBeGreaterThan(0);
       const end = source.indexOf("\n  };\n", start);

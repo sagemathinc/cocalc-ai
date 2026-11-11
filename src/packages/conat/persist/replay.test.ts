@@ -16,7 +16,7 @@ const pending: { buf: Buffer; resolve: (b: Buffer) => void }[] = [];
 let decompressSyncCalls = 0;
 
 initContext({
-    ...testDurabilityContext(),
+  ...testDurabilityContext(),
   sqlite: { DatabaseSync: class {} as any },
   compress: (b: Buffer) => b,
   decompress: (b: Buffer) => {

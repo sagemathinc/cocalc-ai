@@ -78,6 +78,7 @@ import {
   durability,
 } from "./context";
 import { posix } from "path";
+import { isMainThread } from "worker_threads";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
 import {
@@ -215,6 +216,39 @@ const armedConnections = new Map<string, number>();
 const poisonedStreams = new Set<PersistentStream>();
 export function poisonedStreamPaths(): string[] {
   return [...new Set([...poisonedStreams].map((s) => s.poisonedPath!))];
+}
+
+// The disk-backed streams whose connection is open: from the open until a
+// close returned OK (a poisoned one, or one whose close could not be armed,
+// stays here).
+const liveDiskConnections = new Set<PersistentStream>();
+
+// At a NATURAL exit (the event loop drains), Node's teardown closes every
+// live DatabaseSync, however referenced: that close checkpoints, unarmed,
+// and for a poisoned file it is exactly the close §3.2.4 forbids.
+// process.exit skips it (as do an uncaught exception and a signal's default
+// action), and the WAL stays for the next open to recover.  Only for the
+// processes that serve disk streams, which opt in at their entry point
+// (hub, persist nodes, lite, project-host and its persist daemon): a library
+// import or a test runner exits normally.  A worker thread can't use this,
+// its exit always closes: disk streams are never opened in one (finding 028
+// E-1).
+let exitGuardInstalled = false;
+const exitWithoutClosing = (): void => {
+  if (liveDiskConnections.size == 0) return;
+  logger.warn(
+    "persist: exiting without closing the open disk streams (finding 028)",
+    {
+      open: liveDiskConnections.size,
+      poisoned: poisonedStreams.size,
+    },
+  );
+  process.exit();
+};
+export function installPersistExitGuard(): void {
+  if (exitGuardInstalled) return;
+  exitGuardInstalled = true;
+  process.on("beforeExit", exitWithoutClosing);
 }
 
 export interface PartialInventory {
@@ -1495,8 +1529,13 @@ export class PersistentStream extends EventEmitter {
   private walPageBytes = 4096;
   // group commit: the set/setMany requests not committed yet
   private writeQueue: WriteRequest[] = [];
-  private flushTimer?: ReturnType<typeof setImmediate> | ReturnType<typeof setTimeout>;
+  private flushTimer?:
+    | ReturnType<typeof setImmediate>
+    | ReturnType<typeof setTimeout>;
   private flushing = false;
+  // changes waiting to be emitted, and whether they are being emitted now
+  private pendingEmits: ChangefeedOperation[] = [];
+  private emitting = false;
   private readonly msgIDs = new TTL({ ttl: 2 * 60 * 1000 });
   private conf: Configuration;
   private throttledBackup?;
@@ -1542,6 +1581,9 @@ export class PersistentStream extends EventEmitter {
       this.db = this.refuseWhenPoisoned(
         writeCounter?.wrap(db, this.storageKind, this.takeRows) ?? db,
       );
+      if (location !== ":memory:") {
+        liveDiskConnections.add(this);
+      }
       try {
         this.hardenConnection(location);
         if (location !== ":memory:") {
@@ -1585,6 +1627,13 @@ export class PersistentStream extends EventEmitter {
   // (B-2 replaces that refusal by a verified eviction.)
   private assertOpenAllowed = (): void => {
     const path = this.options.path;
+    if (!isMainThread) {
+      // a worker thread's exit always closes its connections (E-1)
+      throw new ConatError(
+        "persist: disk-backed streams are not opened in a worker thread",
+        { code: 503 },
+      );
+    }
     if ([...poisonedStreams].some((s) => s.poisonedPath === path)) {
       throw retryableWriteError("poisoned");
     }
@@ -1752,7 +1801,10 @@ export class PersistentStream extends EventEmitter {
     ) {
       return;
     }
-    if (fileSize(this.dbPath + "-wal") < CHECKPOINT_WAL_PAGES * this.walPageBytes) {
+    if (
+      fileSize(this.dbPath + "-wal") <
+      CHECKPOINT_WAL_PAGES * this.walPageBytes
+    ) {
       return;
     }
     this.checkpoint("PASSIVE");
@@ -1767,10 +1819,12 @@ export class PersistentStream extends EventEmitter {
       return false;
     }
     try {
-      const result = this.db
-        .prepare(`PRAGMA wal_checkpoint(${mode})`)
-        .get() as { busy: number; log: number; checkpointed: number } | undefined;
-      return result != null && !result.busy && result.checkpointed >= result.log;
+      const result = this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get() as
+        | { busy: number; log: number; checkpointed: number }
+        | undefined;
+      return (
+        result != null && !result.busy && result.checkpointed >= result.log
+      );
     } catch (err) {
       if (isSqliteSyncError(err)) {
         this.poison(err, `checkpoint(${mode})`);
@@ -1789,11 +1843,27 @@ export class PersistentStream extends EventEmitter {
 
   // Every changefeed emit goes through here: only after the COMMIT that made
   // the change returned OK (durable), never inside a transaction (§3).
-  private emitChange = (change: ChangefeedOperation): void => {
+  // A listener can write (a sync set, or another mutation), and that write
+  // commits and emits at once: its changes are appended here and delivered
+  // by the outermost call, after the ones already being delivered, so the
+  // changefeed stays in seq order (#139 B1-5).
+  // All the changes of one commit are queued at once, before the first is
+  // delivered: a listener that writes (a sync set) commits its own change,
+  // which is queued after them, so the changefeed stays in seq order (B1-5).
+  private emitChange = (...changes: ChangefeedOperation[]): void => {
     if (this.db?.isTransaction) {
       throw Error("bug: a change emitted inside a transaction");
     }
-    this.emit("change", change);
+    this.pendingEmits.push(...changes);
+    if (this.emitting) return;
+    this.emitting = true;
+    try {
+      while (this.pendingEmits.length > 0) {
+        this.emit("change", this.pendingEmits.shift()!);
+      }
+    } finally {
+      this.emitting = false;
+    }
   };
 
   // Closes the SQLite connection, which checkpoints it: so armed first, and a
@@ -1821,6 +1891,7 @@ export class PersistentStream extends EventEmitter {
       throw err;
     }
     // closed: everything it committed and checkpointed is on disk
+    liveDiskConnections.delete(this);
     this.releaseArm();
     return true;
   };
@@ -1993,7 +2064,7 @@ export class PersistentStream extends EventEmitter {
       this.ensureCounts();
     });
     // nobody listens yet; emitted anyway, after the COMMIT
-    for (const change of changes) this.emitChange(change);
+    this.emitChange(...changes);
     if (!this.runTrashStep()) registerTrashWork(this);
   };
 
@@ -2794,8 +2865,9 @@ export class PersistentStream extends EventEmitter {
       // host stopped right after the COMMIT) sends it again, and the persisted
       // msg id finds it (§5, §7 F1).
       const existing =
-        (this.msgIDs?.get(msgID) as { seq: number; time: number } | undefined) ??
-        this.storedMsgID(msgID);
+        (this.msgIDs?.get(msgID) as
+          | { seq: number; time: number }
+          | undefined) ?? this.storedMsgID(msgID);
       if (existing != null) {
         return { seq: existing.seq, time: existing.time, duplicate: true };
       }
@@ -2934,7 +3006,9 @@ export class PersistentStream extends EventEmitter {
 
   // set/setMany from a client: the promise settles once the batch's COMMIT
   // returned (or failed)
-  setQueued = (operation: WriteOperation): Promise<{ seq: number; time: number }> =>
+  setQueued = (
+    operation: WriteOperation,
+  ): Promise<{ seq: number; time: number }> =>
     new Promise((resolve, reject) => {
       this.enqueueWrite({ kind: "set", ops: [operation], resolve, reject });
     });
@@ -2985,10 +3059,9 @@ export class PersistentStream extends EventEmitter {
       ),
     };
     if (this.poisoned || this.closing) {
-      this.settle(
-        queued,
-        { error: retryableWriteError(this.poisoned ? "poisoned" : "closing") },
-      );
+      this.settle(queued, {
+        error: retryableWriteError(this.poisoned ? "poisoned" : "closing"),
+      });
       return queued;
     }
     this.writeQueue.push(queued);
@@ -3041,7 +3114,10 @@ export class PersistentStream extends EventEmitter {
   private takeWriteBatch = (): WriteRequest[] => {
     const batch: WriteRequest[] = [];
     let bytes = 0;
-    while (this.writeQueue.length > 0 && batch.length < WRITE_BATCH_MAX_REQUESTS) {
+    while (
+      this.writeQueue.length > 0 &&
+      batch.length < WRITE_BATCH_MAX_REQUESTS
+    ) {
       const next = this.writeQueue[0];
       if (batch.length > 0 && bytes + next.bytes > WRITE_BATCH_MAX_BYTES) break;
       batch.push(this.writeQueue.shift()!);
@@ -3088,9 +3164,7 @@ export class PersistentStream extends EventEmitter {
     }
     // committed (= durable): emitted in arrival order, once the flush is
     // over, so a listener that writes (a sync set) starts a flush of its own
-    for (const change of changes) {
-      this.emitChange(change);
-    }
+    this.emitChange(...changes);
     if (changes.length > 0) {
       this.throttledBackup();
     }
@@ -3157,7 +3231,8 @@ export class PersistentStream extends EventEmitter {
           requestResults.push({ duplicateOf: owner });
           continue;
         }
-        const nested = request.kind == "setMany" ? `${name}_op_${i}` : undefined;
+        const nested =
+          request.kind == "setMany" ? `${name}_op_${i}` : undefined;
         if (nested != null) {
           if (!this.db.isTransaction) {
             abort = { err: lostTransactionError(), failing: request };
@@ -3176,13 +3251,19 @@ export class PersistentStream extends EventEmitter {
         try {
           const result = this.setInternal({ ...op, changes: opChanges });
           if (nested != null) this.db.exec(`RELEASE ${nested}`);
-          requestResults.push({ value: { seq: result.seq, time: result.time } });
+          requestResults.push({
+            value: { seq: result.seq, time: result.time },
+          });
           requestChanges.push(...opChanges);
           if (!result.duplicate) {
             wrote = true;
             if (op.msgID != null) {
               owners.set(op.msgID, { request, op: i });
-              newMsgIDs.push({ msgID: op.msgID, seq: result.seq, time: result.time });
+              newMsgIDs.push({
+                msgID: op.msgID,
+                seq: result.seq,
+                time: result.time,
+              });
             }
           }
         } catch (err) {
@@ -3341,7 +3422,10 @@ export class PersistentStream extends EventEmitter {
     for (const request of batch) {
       if (shared != null) {
         this.settle(request, { error: shared });
-      } else if (request === failing || failing == null && batch.length == 1) {
+      } else if (
+        request === failing ||
+        (failing == null && batch.length == 1)
+      ) {
         this.settle(request, { error: err });
       } else {
         this.settle(request, { error: retryableWriteError("aborted") });
@@ -4083,15 +4167,12 @@ export class PersistentStream extends EventEmitter {
     this.config();
     // metadata first: open copies of the document close on the new epoch
     // rather than react to their history disappearing
-    this.emitChange({ op: "metadata", metadata });
-    this.emitChange({ op: "delete", seqs, through });
-    this.emitChange({
-      op: "checkpoints",
-      checkpoints: this.getCheckpoints(),
-    });
-    if (seedChange != null) {
-      this.emitChange(seedChange);
-    }
+    this.emitChange(
+      { op: "metadata", metadata },
+      { op: "delete", seqs, through },
+      { op: "checkpoints", checkpoints: this.getCheckpoints() },
+      ...(seedChange != null ? [seedChange] : []),
+    );
     this.throttledBackup();
     return result!;
   };
@@ -5077,7 +5158,7 @@ export class PersistentStream extends EventEmitter {
     } else {
       this.conf = next.full;
     }
-    for (const change of changes) this.emitChange(change);
+    this.emitChange(...changes);
     this.throttledBackup();
     return next.full;
   };

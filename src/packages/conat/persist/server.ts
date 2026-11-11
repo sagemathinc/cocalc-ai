@@ -215,6 +215,21 @@ function instanceToReport(
   return stream.replacedInstance ?? "";
 }
 
+// The history epoch for a reply that is sent outside the request's try (a
+// busy reset) or from its catch (an oversized message): it reads the
+// database, which throws for a poisoned stream (finding 028), and a throw
+// there would escape the handler and end the shared persist process (SA,
+// 065 L1/L2).  Undefined if it can't be read.
+function historyEpochForReply(
+  stream: PersistentStream | undefined,
+): number | undefined {
+  try {
+    return stream?.historyEpochNow?.();
+  } catch {
+    return undefined;
+  }
+}
+
 export function classifyPersistStorageErrorCode(
   err: unknown,
 ): string | undefined {
@@ -511,11 +526,12 @@ export function server({
         }
         const key = `path:${storage.path}`;
         if (resetSlots.has(key)) {
-          if (stream != null) {
+          const history_epoch = historyEpochForReply(stream);
+          if (history_epoch != null) {
             mesg.respondSync({
               reset: false,
               refused: "busy",
-              history_epoch: stream.historyEpochNow(),
+              history_epoch,
               count: 0,
             });
           } else {
@@ -714,7 +730,7 @@ export function server({
         const oversizedEpoch =
           typeof oversizedSeq != "number"
             ? undefined
-            : ((err as any)?.oversizedEpoch ?? stream?.historyEpochNow?.());
+            : ((err as any)?.oversizedEpoch ?? historyEpochForReply(stream));
         mesg.respondSync(null, {
           headers: {
             error: `${err}`,

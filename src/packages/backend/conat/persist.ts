@@ -56,6 +56,7 @@ export {
   pstream,
   closeDurably,
   flushAllPersistWrites,
+  installPersistExitGuard,
 } from "@cocalc/conat/persist/storage";
 import { server } from "@cocalc/conat/persist/server";
 export { server };

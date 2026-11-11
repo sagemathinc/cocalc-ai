@@ -5,7 +5,10 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
-import { flushAllPersistWrites } from "@cocalc/backend/conat/persist";
+import {
+  flushAllPersistWrites,
+  installPersistExitGuard,
+} from "@cocalc/backend/conat/persist";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { startStandaloneProjectHostConatPersist } from "./conat-persist";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
@@ -19,6 +22,8 @@ export interface ProjectHostConatPersistDaemonContext {
 }
 
 export async function main(): Promise<ProjectHostConatPersistDaemonContext> {
+  // 028 E-1: a natural exit must not close (and checkpoint) the disk streams
+  installPersistExitGuard();
   const stopEventLoopStallMonitor = startEventLoopStallMonitor({
     loggerName: "project-host:conat-persist-daemon:event-loop-stalls",
     label: "project-host conat persist daemon",

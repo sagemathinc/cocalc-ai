@@ -106,14 +106,24 @@ export function createDurabilityRecords({
 
     arm: (id: string): void => {
       ensureDirs();
-      fs.mkdirSync(dirtyKeyDir(id), { recursive: true, mode: 0o700 });
       const record: DirtyRecord = {
         kind: "dirty",
         generation,
         pid,
         created: Date.now(),
       };
-      writeAtomically(dirtyPath(id), JSON.stringify(record));
+      const write = () => {
+        fs.mkdirSync(dirtyKeyDir(id), { recursive: true, mode: 0o700 });
+        writeAtomically(dirtyPath(id), JSON.stringify(record));
+      };
+      try {
+        write();
+      } catch (err) {
+        // another process's disarm removed the (then empty) key directory
+        // between our mkdir and our write: once more (#139 N-2)
+        if ((err as any)?.code !== "ENOENT") throw err;
+        write();
+      }
     },
 
     disarm: (id: string): void => {

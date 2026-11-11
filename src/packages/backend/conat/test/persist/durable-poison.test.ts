@@ -45,7 +45,11 @@ function syncError(): Error {
 
 function rowCount(stream): number {
   return Number(
-    ((stream as any).db.prepare("SELECT COUNT(*) AS n FROM messages").get() as any).n,
+    (
+      (stream as any).db
+        .prepare("SELECT COUNT(*) AS n FROM messages")
+        .get() as any
+    ).n,
   );
 }
 
@@ -171,7 +175,9 @@ describe("028 B-1: aborts, poison and the open check", () => {
       try {
         stream.set(msg("existing"));
         const db = (stream as any).db;
-        const pages = Number((db.prepare("PRAGMA page_count").get() as any).page_count);
+        const pages = Number(
+          (db.prepare("PRAGMA page_count").get() as any).page_count,
+        );
         db.exec(`PRAGMA max_page_count=${pages + 2}`);
         const r = await Promise.allSettled([
           stream.setQueued(msg("small-1")),
@@ -233,9 +239,9 @@ describe("028 B-1: aborts, poison and the open check", () => {
       expect(openDiskStreamPaths()).toContain(path);
       // no later open in this process, nor in another process of this boot
       expect(() => pstream({ path })).toThrow(/sync error/);
-      expect(nodeDurabilityRecords(persistRunDir(), "another-process").check(id)).toBe(
-        "poisoned",
-      );
+      expect(
+        nodeDurabilityRecords(persistRunDir(), "another-process").check(id),
+      ).toBe("poisoned");
     });
 
     it("at a statement inside the batch (a cache spill's WAL sync, V-1): the record already existed; nothing commits", async () => {
@@ -361,10 +367,20 @@ describe("028 B-1: aborts, poison and the open check", () => {
         expect(() => guarded.exec("CREATE TABLE t(a)")).toThrow(
           UnguardedWriteError,
         );
+        // an explicit transaction, armed (as runTransaction arms it)
+        armed = true;
         guarded.exec("BEGIN");
         guarded.exec("CREATE TABLE t(a)");
         guarded.prepare("INSERT INTO t VALUES (1)").run();
+        // a savepoint nested in the armed transaction, and its RELEASE (not
+        // the outermost commit): allowed (061's SAVEPOINT enforce_limits,
+        // once inside config's runTransaction)
+        guarded.exec("SAVEPOINT enforce_limits");
+        guarded.prepare("INSERT INTO t VALUES (1)").run();
+        guarded.exec("ROLLBACK TO enforce_limits");
+        guarded.exec("RELEASE enforce_limits");
         guarded.exec("COMMIT");
+        armed = false;
         expect(() => guarded.prepare("INSERT INTO t VALUES (2)").run()).toThrow(
           UnguardedWriteError,
         );
@@ -381,6 +397,17 @@ describe("028 B-1: aborts, poison and the open check", () => {
         expect(guarded.prepare("SELECT COUNT(*) AS n FROM t").get()).toEqual({
           n: 1,
         });
+        // an unarmed explicit transaction: refused at its BEGIN (a spill can
+        // sync inside it) and at its COMMIT (#139 N-1)
+        armed = false;
+        expect(() => guarded.exec("BEGIN")).toThrow(UnguardedWriteError);
+        armed = true;
+        guarded.exec("BEGIN");
+        guarded.prepare("INSERT INTO t VALUES (3)").run();
+        armed = false;
+        expect(() => guarded.exec("COMMIT")).toThrow(UnguardedWriteError);
+        expect(() => guarded.exec("RELEASE x")).toThrow(UnguardedWriteError);
+        guarded.exec("ROLLBACK");
       } finally {
         db.close();
       }
