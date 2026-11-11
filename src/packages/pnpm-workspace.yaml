@@ -112,7 +112,6 @@ allowBuilds:
   storage-engine: true
   unrs-resolver: true
   utf-8-validate: true
-  zeromq: set this to true or false
 
 patchedDependencies:
   react-native@0.86.0: patches/react-native@0.86.0.patch
