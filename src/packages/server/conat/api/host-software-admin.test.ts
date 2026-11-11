@@ -222,3 +222,31 @@ describe("automatic artifact upgrade planning", () => {
     ).toEqual([{ artifact: "tools", version: "tools-7" }]);
   });
 });
+
+describe("who reads a host's effective runtime deployments", () => {
+  it("is only the trusted loader: no other server code reads them unfiltered", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join, relative } = await import("node:path");
+    const root = join(__dirname, "..", "..");
+    const readers: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === "node_modules" || name === "dist") continue;
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) {
+          walk(path);
+        } else if (
+          /\.(ts|tsx|js|mjs)$/.test(name) &&
+          !/\.test\.(ts|tsx|js|mjs)$/.test(name) &&
+          readFileSync(path, "utf8").includes(
+            "loadEffectiveProjectHostRuntimeDeployments",
+          )
+        ) {
+          readers.push(relative(root, path));
+        }
+      }
+    };
+    walk(root);
+    expect(readers).toEqual(["conat/api/host-software-admin.ts"]);
+  });
+});
