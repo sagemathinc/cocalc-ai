@@ -1721,6 +1721,8 @@ export function nebiusManagedSshKeySyncArgs(opts: {
     "StrictHostKeyChecking=accept-new",
     "-o",
     "UserKnownHostsFile=/dev/null",
+    // "--" ends the options: the destination can never be read as one.
+    "--",
     `user@${opts.host}`,
     command,
   ];
@@ -1737,29 +1739,43 @@ async function runProviderComputeWindowsPowerShell(
   const encoded = Buffer.from(script, "utf16le").toString("base64");
   await execFileAsync(
     "ssh",
-    [
-      "-i",
-      selectedIdentity.privateKeyPath,
-      "-o",
-      "BatchMode=yes",
-      "-o",
-      "IdentitiesOnly=yes",
-      "-o",
-      "StrictHostKeyChecking=accept-new",
-      "-o",
-      "UserKnownHostsFile=/dev/null",
-      "-o",
-      "ConnectTimeout=10",
-      `${vm.ssh_user || "user"}@${host}`,
-      "powershell.exe",
-      "-NoLogo",
-      "-NoProfile",
-      "-NonInteractive",
-      "-EncodedCommand",
+    windowsPowerShellSshArgs({
+      privateKeyPath: selectedIdentity.privateKeyPath,
+      destination: `${vm.ssh_user || "user"}@${host}`,
       encoded,
-    ],
+    }),
     { timeout: 60_000, maxBuffer: 1024 * 1024 },
   );
+}
+
+export function windowsPowerShellSshArgs(opts: {
+  privateKeyPath: string;
+  destination: string;
+  encoded: string;
+}): string[] {
+  return [
+    "-i",
+    opts.privateKeyPath,
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "IdentitiesOnly=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "ConnectTimeout=10",
+    // "--" ends the options: the destination can never be read as one.
+    "--",
+    opts.destination,
+    "powershell.exe",
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-EncodedCommand",
+    opts.encoded,
+  ];
 }
 
 export async function prepareProviderComputeWindowsRdp(

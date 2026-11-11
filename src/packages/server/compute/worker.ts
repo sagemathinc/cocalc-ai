@@ -1732,22 +1732,11 @@ async function waitForSsh(
       });
       await execFileAsync(
         "ssh",
-        [
-          "-i",
-          identity.privateKeyPath,
-          "-o",
-          "BatchMode=yes",
-          "-o",
-          "IdentitiesOnly=yes",
-          "-o",
-          "StrictHostKeyChecking=accept-new",
-          "-o",
-          "UserKnownHostsFile=/dev/null",
-          "-o",
-          "ConnectTimeout=5",
-          `${vm.ssh_user || "user"}@${host}`,
+        managedVmReadinessSshArgs({
+          privateKeyPath: identity.privateKeyPath,
+          destination: `${vm.ssh_user || "user"}@${host}`,
           command,
-        ],
+        }),
         { timeout: 15_000 },
       );
       return;
@@ -1757,6 +1746,31 @@ async function waitForSsh(
     }
   }
   throw new Error(`SSH readiness timed out: ${lastError}`);
+}
+
+export function managedVmReadinessSshArgs(opts: {
+  privateKeyPath: string;
+  destination: string;
+  command: string;
+}): string[] {
+  return [
+    "-i",
+    opts.privateKeyPath,
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "IdentitiesOnly=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "ConnectTimeout=5",
+    // "--" ends the options: the destination can never be read as one.
+    "--",
+    opts.destination,
+    opts.command,
+  ];
 }
 
 export function volumeAttachedToVm(users: string[], vm: ComputeVmRow) {

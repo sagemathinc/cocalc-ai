@@ -77,6 +77,7 @@ a = require('../../dist/cloud/smoke-runner/project-host'); await a.runProjectHos
 
 */
 import { execFile as execFileCb } from "node:child_process";
+import { safeSshDestination } from "@cocalc/backend/ssh-destination";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1788,8 +1789,10 @@ async function loadHostConnectionHints(
     ssh_user === "root"
       ? "/root/cocalc-host/bootstrap/bootstrap.log"
       : `/home/${ssh_user}/cocalc-host/bootstrap/bootstrap.log`;
-  const ssh_target =
-    public_ip && ssh_user ? `${ssh_user}@${public_ip}` : undefined;
+  // Shown to the operator as commands to paste: only checked values.
+  const ssh_target = safeSshDestination(ssh_user, public_ip, {
+    requireIp: true,
+  });
   const host_url =
     normalizeUrl(row.public_url ?? undefined) ??
     normalizeUrl(row.internal_url ?? undefined) ??
@@ -1803,10 +1806,10 @@ async function loadHostConnectionHints(
     host_log_path: "/mnt/cocalc/data/log",
     bootstrap_log_path,
     ssh_tail_log: ssh_target
-      ? `ssh ${ssh_target} 'tail -n 300 /mnt/cocalc/data/log'`
+      ? `ssh -- ${ssh_target} 'tail -n 300 /mnt/cocalc/data/log'`
       : undefined,
     scp_log: ssh_target
-      ? `scp ${ssh_target}:/mnt/cocalc/data/log ./host.log`
+      ? `scp -- ${ssh_target}:/mnt/cocalc/data/log ./host.log`
       : undefined,
   };
 }

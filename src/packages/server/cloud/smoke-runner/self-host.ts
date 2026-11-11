@@ -530,6 +530,21 @@ async function getMultipassIp(vmName: string): Promise<string> {
   return ip;
 }
 
+export function sshReadyArgs(sshTarget: string): string[] {
+  return [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ConnectTimeout=5",
+    // "--" ends the options: the destination can never be read as one.
+    "--",
+    sshTarget,
+    "true",
+  ];
+}
+
 async function waitForSshReady({
   sshTarget,
   wait,
@@ -540,20 +555,7 @@ async function waitForSshReady({
   let lastErr: unknown;
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
     try {
-      await runCommand(
-        "ssh",
-        [
-          "-o",
-          "BatchMode=yes",
-          "-o",
-          "StrictHostKeyChecking=accept-new",
-          "-o",
-          "ConnectTimeout=5",
-          sshTarget,
-          "true",
-        ],
-        { timeoutMs: 15_000 },
-      );
+      await runCommand("ssh", sshReadyArgs(sshTarget), { timeoutMs: 15_000 });
       return;
     } catch (err) {
       lastErr = err;

@@ -646,3 +646,44 @@ esac`,
     ).toThrow(/runtime user/);
   });
 });
+
+describe("bootstrap ssh user (057)", () => {
+  const hostile = [
+    "-oProxyCommand=touch /tmp/x",
+    'u"; id; "',
+    "$(id)",
+    "Ubuntu",
+  ];
+
+  it("buildBootstrapScripts refuses a stored ssh user that is not a plain login name", async () => {
+    for (const ssh_user of hostile) {
+      await expect(
+        bootstrapHost.buildBootstrapScripts({
+          id: "832da43c-d18e-406d-8e1d-c28973378b24",
+          metadata: { machine: { cloud: "gcp" }, runtime: { ssh_user } },
+        } as any),
+      ).rejects.toThrow("plain login name");
+      await expect(
+        bootstrapHost.buildBootstrapScripts({
+          id: "832da43c-d18e-406d-8e1d-c28973378b24",
+          metadata: { machine: { cloud: "gcp", metadata: { ssh_user } } },
+        } as any),
+      ).rejects.toThrow("plain login name");
+    }
+  });
+
+  it("buildCloudInitStartupScript refuses a stored ssh user that is not a plain login name", async () => {
+    for (const ssh_user of hostile) {
+      await expect(
+        bootstrapHost.buildCloudInitStartupScript(
+          {
+            id: "832da43c-d18e-406d-8e1d-c28973378b24",
+            metadata: { machine: { cloud: "gcp" }, runtime: { ssh_user } },
+          } as any,
+          "token",
+          "https://bay.example.com",
+        ),
+      ).rejects.toThrow("plain login name");
+    }
+  });
+});
