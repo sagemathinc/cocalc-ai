@@ -24,6 +24,7 @@ import { spawn } from "node:child_process";
 import getLogger from "@cocalc/backend/logger";
 import {
   safeSshDestination,
+  safeSshLoginName,
   sshDestinationArgs,
 } from "@cocalc/backend/ssh-destination";
 import getPool from "@cocalc/database/pool";
@@ -762,6 +763,10 @@ export function remotePythonSshArgs({
   }
   if (port !== 22) {
     args.push("-p", `${port}`);
+  }
+  if (sudo_user != null && safeSshLoginName(sudo_user) == null) {
+    // It becomes a word of the remote shell command line.
+    throw new Error("benchmark sudo user is not allowed");
   }
   args.push(
     ...sshDestinationArgs(

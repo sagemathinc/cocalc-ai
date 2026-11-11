@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { assertHostSshMetadataAllowed } from "@cocalc/server/cloud/host-ssh-metadata";
+import {
+  assertHostSshMetadataAllowed,
+  canonicalSelfHostSshTarget,
+  withCanonicalSshTarget,
+} from "@cocalc/server/cloud/host-ssh-metadata";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import { delay } from "awaiting";
 import type {
@@ -6698,8 +6702,10 @@ export async function createHost({
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
-  // The bay later runs ssh with machine metadata values: refuse bad ones first.
+  // The bay later runs ssh with machine metadata values: refuse bad ones
+  // first, and store a self-host target in its canonical form.
   assertHostSshMetadataAllowed(machine?.metadata);
+  machine = withCanonicalSshTarget(machine);
   const title = normalizeProjectHostTitle(name);
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
   await assertUserHostCreateAllowed({ account_id: owner });
@@ -7835,12 +7841,12 @@ async function updateHostMachineLocked({
   ) {
     throw new Error("local hosts are limited to admins");
   }
-  // The bay later runs ssh with this target: refuse one that is not allowed.
-  if (typeof self_host_ssh_target === "string" && self_host_ssh_target.trim()) {
-    assertHostSshMetadataAllowed({
-      self_host_ssh_target: self_host_ssh_target.trim(),
-    });
-  }
+  // The bay later runs ssh with this target: refuse one that is not allowed,
+  // and store it in its canonical form.
+  const canonicalTarget =
+    typeof self_host_ssh_target === "string" && self_host_ssh_target.trim()
+      ? canonicalSelfHostSshTarget(self_host_ssh_target)
+      : "";
   if (requestedCloud === "self-host" && machineCloud !== "self-host") {
     const settings = await getServerSettings();
     if (settings.project_hosts_self_host_alpha_enabled !== true) {
@@ -8059,7 +8065,7 @@ async function updateHostMachineLocked({
     nonDiskChange = true;
   }
   if (isSelfHost && typeof self_host_ssh_target === "string") {
-    const nextTarget = self_host_ssh_target.trim();
+    const nextTarget = canonicalTarget;
     const currentTarget = String(machine.metadata?.self_host_ssh_target ?? "");
     if (nextTarget !== currentTarget) {
       nextMachine.metadata = {
