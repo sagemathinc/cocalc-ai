@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +23,15 @@ beforeEach(async () => {
   // Stand-ins for the real commands: print the token they were given.
   await fs.writeFile(
     join(realBin, "gh"),
-    '#!/bin/sh\n[ "$1" = fail ] && exit 4\necho "gh:${GH_TOKEN-unset}:$*"\n',
+    [
+      "#!/bin/sh",
+      '[ "$1" = fail ] && exit 4',
+      // For the signal tests: record our pid, then wait a long time.
+      '[ "$1" = sleep ] && { echo $$ > "$2"; exec sleep 30; }',
+      '[ "$1" = cat ] && exec cat',
+      'echo "gh:${GH_TOKEN-unset}:$*"',
+      "",
+    ].join("\n"),
     { mode: 0o755 },
   );
   await fs.writeFile(
@@ -157,6 +165,66 @@ describe("saying what is going on", () => {
     const withToken = sh("gh", ["fail"]);
     expect(withToken.status).toBe(4);
     expect(withToken.stderr).toBe("");
+  });
+
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it.each(["SIGTERM", "SIGINT", "SIGHUP"] as const)(
+    "without a token, %s sent to the wrapper alone reaches the real command",
+    async (signal) => {
+      // timeout(1) or child.kill() signal only the process they started.
+      const pidFile = join(dir, `real-${signal}.pid`);
+      const wrapper = spawn("gh", ["sleep", pidFile], {
+        env: env(),
+        stdio: "ignore",
+      });
+      const exited = new Promise<number | null>((resolve) =>
+        wrapper.once("exit", (code) => resolve(code)),
+      );
+      let real = 0;
+      for (let i = 0; i < 100 && !real; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        real = parseInt(await fs.readFile(pidFile, "utf8").catch(() => ""));
+      }
+      expect(alive(real)).toBe(true);
+      wrapper.kill(signal);
+      const code = await exited;
+      expect(code).not.toBe(0);
+      for (let i = 0; i < 40 && alive(real); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(alive(real)).toBe(false);
+    },
+    15_000,
+  );
+
+  it("without a token, stdin still reaches the real command", () => {
+    const result = spawnSync("gh", ["cat"], {
+      env: env(),
+      input: "piped input\n",
+      encoding: "utf8",
+    });
+    expect(result.stdout).toBe("piped input\n");
+    expect(result.status).toBe(0);
+    // git too.
+    const hash = spawnSync("git", ["hash-object", "--stdin"], {
+      env: env(),
+      input: "x\n",
+      encoding: "utf8",
+    });
+    expect(hash.stdout.trim()).toBe(
+      spawnSync("/usr/bin/git", ["hash-object", "--stdin"], {
+        input: "x\n",
+        encoding: "utf8",
+      }).stdout.trim(),
+    );
   });
 
   it("git uses https for git@github.com: remotes, only during a turn", async () => {

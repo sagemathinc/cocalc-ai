@@ -32,6 +32,32 @@ function inactiveNote(command: string, connector: CliConnector): string {
   return `${command}: note: the CoCalc ${label} connector is not active here. It signs ${command} in only during a turn of an agent that has it turned on, not in sensors or background jobs.`;
 }
 
+// Runs the real command as a child (not exec, so a failure can be explained
+// after it) without changing how it behaves for callers: its stdin stays the
+// caller's (a background job's would be /dev/null, so pass it as fd 3), a
+// TERM, INT or HUP sent to the wrapper alone (timeout, child.kill()) reaches
+// it, and the wrapper waits until it has really exited, with its status.
+// A background job starts with INT and QUIT ignored, which sh cannot undo;
+// env --default-signal (coreutils 8.31+, uutils) restores them.
+const RUN_REAL_AS_CHILD = `exec 3<&0
+if env --default-signal=INT,QUIT true 2>/dev/null; then
+  env --default-signal=INT,QUIT "$real" "$@" <&3 3<&- &
+else
+  "$real" "$@" <&3 3<&- &
+fi
+child=$!
+exec 3<&-
+trap 'kill -TERM "$child" 2>/dev/null' TERM
+trap 'kill -INT "$child" 2>/dev/null' INT
+trap 'kill -HUP "$child" 2>/dev/null' HUP
+status=0
+wait "$child" || status=$?
+while kill -0 "$child" 2>/dev/null; do
+  status=0
+  wait "$child" || status=$?
+done
+trap - TERM INT HUP`;
+
 // The real command is the first one on PATH that is not this wrapper.
 function wrapperScript({
   command,
@@ -72,8 +98,7 @@ if [ -r "$token_file" ]; then
   fi
   exec "$real" "$@"
 fi
-"$real" "$@"
-status=$?
+${RUN_REAL_AS_CHILD}
 if [ "$status" -ne 0 ]; then
   echo "${inactiveNote(command, connector)}" >&2
 fi
@@ -162,8 +187,7 @@ if [ -r "$self_dir/../${tokenFile("github")}" ]; then
     -c url.https://github.com/.insteadOf=git@github.com: \\
     -c url.https://github.com/.insteadOf=ssh://git@github.com/ "$@"
 fi
-"$real" "$@"
-status=$?
+${RUN_REAL_AS_CHILD}
 if [ "$status" -ne 0 ]; then
   # The subcommand: the first argument after git's own options.
   sub=""
