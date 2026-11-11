@@ -4,17 +4,15 @@
  */
 
 /*
-JupyterSockets (./index.ts) on the transport COCALC_JUPYTER_ZMQ selects,
+JupyterSockets (./index.ts) on the pure-JS ZMTP transport,
 against libzmq (pyzmq ROUTERs and an XPUB), for the behaviors PR-A keeps or
 records rather than changes (plan-cocalc-pure-js-zmtp r4, sections b.5, b.6):
 
-- overlapping, un-awaited sends to a kernel that isn't listening yet: how
-  many arrive, and whether the transport rejected any (recorded per
-  transport; the pure-JS one delivers all of them);
+- overlapping, un-awaited sends to a kernel that isn't listening yet: all
+  of them arrive, and the transport rejects none;
 - a signed message whose JSON is malformed: Message._decode catches it and
   null is emitted, and the loop goes on; a listener that throws: that
-  channel's loop ends and its listen task rejects.  The same on either
-  transport, as before.
+  channel's loop ends and its listen task rejects, as before.
 
 Skipped when python3 has no zmq module.
 */
@@ -22,7 +20,6 @@ Skipped when python3 has no zmq module.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
 import { jupyterSockets, type JupyterConnectionInfo } from "./index";
-import { transport } from "./transport";
 
 const PY = process.env.PYTHON ?? "python3";
 const zmqCheck = spawnSync(PY, ["-c", "import zmq"], { encoding: "utf8" });
@@ -146,7 +143,7 @@ const msg = (i: number) => ({
 const maybe = hasZmq ? describe : describe.skip;
 
 maybe(
-  `JupyterSockets on the ${process.env.COCALC_JUPYTER_ZMQ || "js"} transport`,
+  "JupyterSockets on the pure-JS transport",
   () => {
     let rejections: unknown[] = [];
     const onRejection = (e: unknown) => rejections.push(e);
@@ -173,16 +170,8 @@ maybe(
       const h = helper(ports, "count");
       try {
         const n = Number((await line(h, "count", 20_000)).split(" ")[1]);
-        console.log(
-          `overlapping sends on ${transport().name}: ${n} of 2000 received, ${threw} threw, ${rejections.length} rejected`,
-        );
-        if (transport().name === "js") {
-          expect(n).toBe(2000);
-          expect(threw + rejections.length).toBe(0);
-        } else {
-          // a record, but every send is accounted for (grader N5)
-          expect(n + threw + rejections.length).toBe(2000);
-        }
+        expect(n).toBe(2000);
+        expect(threw + rejections.length).toBe(0);
       } finally {
         s.close();
         h.proc.kill("SIGKILL");

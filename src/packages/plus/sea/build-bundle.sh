@@ -81,43 +81,6 @@ echo "- Bundle entry point with @vercel/ncc"
   --external utf-8-validate \
   --external reflect-sync
 
-# zeromq expects its build manifest next to the native addon; ncc copies the
-# compiled .node file but not the manifest.json, so copy it manually.
-# Ensure zeromq native addon files are available where the loader expects them.
-ZEROMQ_BUILD=""
-for base in plus jupyter project backend conat; do
-  candidate="$ROOT/packages/$base/node_modules/zeromq/build"
-  if [ -d "$candidate" ]; then
-    ZEROMQ_BUILD="$candidate"
-    break
-  fi
-done
-if [ -n "$ZEROMQ_BUILD" ]; then
-  mkdir -p "$OUT"/bundle/build
-  cp -r "$ZEROMQ_BUILD/"* "$OUT"/bundle/build/
-  # Keep only target OS + arch for SEA output.
-  find "$OUT"/bundle/build -mindepth 1 -maxdepth 1 -type d \
-    ! -name "$TARGET_OS" -exec rm -rf {} +
-  if [ -d "$OUT"/bundle/build/"$TARGET_OS" ]; then
-    find "$OUT"/bundle/build/"$TARGET_OS" -mindepth 1 -maxdepth 1 -type d \
-      ! -name "$TARGET_ARCH" -exec rm -rf {} +
-  fi
-  if [ "$TARGET_OS" = "linux" ]; then
-    # SEA target is glibc-based; drop musl payloads.
-    rm -rf "$OUT"/bundle/build/linux/"$TARGET_ARCH"/node/musl-* || true
-  fi
-  # Keep the legacy sibling build path available. Windows archives cannot
-  # reliably preserve symlinks, so materialize it there.
-  rm -rf "$OUT"/build
-  if [ "$TARGET_OS" = "win32" ]; then
-    cp -r "$OUT"/bundle/build "$OUT/build"
-  else
-    ln -s "bundle/build" "$OUT/build"
-  fi
-else
-  echo "zeromq build directory not found; skipping copy"
-fi
-
 copy_native_pkg() {
   local pkg="$1"
   local dir=""
@@ -287,10 +250,6 @@ echo "- Verify target native addons"
 if [ ! -f "$OUT/bundle/node_modules/node-pty/prebuilds/$TARGET_PREBUILDS_DIR/conpty.node" ] &&
    [ ! -f "$OUT/bundle/node_modules/node-pty/prebuilds/$TARGET_PREBUILDS_DIR/pty.node" ]; then
   echo "ERROR: missing node-pty prebuild for $TARGET_PREBUILDS_DIR" >&2
-  exit 1
-fi
-if ! find "$OUT/bundle/build/$TARGET_OS/$TARGET_ARCH" -name addon.node -print -quit | grep -q .; then
-  echo "ERROR: missing zeromq addon for $TARGET_OS/$TARGET_ARCH" >&2
   exit 1
 fi
 

@@ -1,6 +1,6 @@
 /*
 A real kernel whose libzmq speaks ZMTP 3.0 (libzmq 4.2 and older), on the
-transport COCALC_JUPYTER_ZMQ selects.  Opt-in, since CI has no such kernel:
+pure-JS transport.  Opt-in, since CI has no such kernel:
 set COCALC_TEST_ZMTP30_KERNEL to its kernel name.  For example, IRkernel with
 the ZeroMQ 4.2.2 that R's pbdZMQ bundles:
 
