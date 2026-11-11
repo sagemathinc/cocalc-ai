@@ -7,16 +7,18 @@
 // §3.2.5-§3.2.6), on tmpfs, so they survive a persist restart and vanish at
 // reboot, together with the page cache they are about.
 //
-//   <root>/dirty/<key>          created before an operation that can consume
-//                               a sync error, removed at the next write idle
-//   <root>/poisoned-file/<key>  the dirty record, renamed when a sync error
-//                               was returned
+//   <root>/dirty/<key>/<generation>  created by a process before an
+//                               operation that can consume a sync error,
+//                               removed at its next write idle
+//   <root>/poisoned-file/<key>  that process's dirty record, renamed when a
+//                               sync error was returned
 //
 // key = sha256 of the stream's logical id (its normalized path, never a
 // resolved one: a user who can swap a symlink must not wash a record off).
-// A record holds the generation of the process that wrote it, so a dirty
-// record left by another process (a crash mid-write) is told apart from this
-// process's own.  Every write is a temp file plus rename, never fsync'd: the
+// Each process has its own dirty record per key (named by its generation),
+// so no process removes another's, and a dirty record of another process (a
+// crash mid-write, or another process writing the same file now) is told
+// apart from this process's own.  Every write is a temp file plus rename, never fsync'd: the
 // record only has to outlive the process, not the boot.
 //
 // The file system is passed in (the backend passes node:fs), since this
@@ -31,7 +33,9 @@ import type {
 export interface DurabilityFs {
   mkdirSync: (path: string, opts: { recursive: true; mode: number }) => any;
   readFileSync: (path: string, encoding: "utf8") => string;
+  readdirSync: (path: string) => string[];
   renameSync: (from: string, to: string) => void;
+  rmdirSync: (path: string) => void;
   unlinkSync: (path: string) => void;
   writeFileSync: (path: string, data: string, opts: { mode: number }) => void;
 }
@@ -74,7 +78,9 @@ export function createDurabilityRecords({
     fs.mkdirSync(poisonedDir, { recursive: true, mode: 0o700 });
     ready = true;
   };
-  const dirtyPath = (id: string) => posix.join(dirtyDir, sha256(id));
+  // this process's dirty record for id
+  const dirtyKeyDir = (id: string) => posix.join(dirtyDir, sha256(id));
+  const dirtyPath = (id: string) => posix.join(dirtyKeyDir(id), generation);
   const poisonedPath = (id: string) => posix.join(poisonedDir, sha256(id));
   // atomic: a reader sees the old record or the new one, never a part
   const writeAtomically = (path: string, data: string) => {
@@ -100,6 +106,7 @@ export function createDurabilityRecords({
 
     arm: (id: string): void => {
       ensureDirs();
+      fs.mkdirSync(dirtyKeyDir(id), { recursive: true, mode: 0o700 });
       const record: DirtyRecord = {
         kind: "dirty",
         generation,
@@ -113,10 +120,16 @@ export function createDurabilityRecords({
       try {
         fs.unlinkSync(dirtyPath(id));
       } catch (err) {
-        if ((err as any)?.code === "ENOENT") return;
-        // a record that stays only costs a verified open later
-        warn("could not remove a dirty record", err);
+        if ((err as any)?.code !== "ENOENT") {
+          // a record that stays only costs a verified open later
+          warn("could not remove a dirty record", err);
+          return;
+        }
       }
+      try {
+        // fails while another process has a record for id: fine
+        fs.rmdirSync(dirtyKeyDir(id));
+      } catch {}
     },
 
     poison: (id: string, info: Record<string, string | number>): void => {
@@ -148,20 +161,24 @@ export function createDurabilityRecords({
 
     check: (id: string): PersistDurabilityCheck => {
       if (exists(poisonedPath(id))) return "poisoned";
-      let data: string;
+      let names: string[];
       try {
-        data = fs.readFileSync(dirtyPath(id), "utf8");
+        names = fs.readdirSync(dirtyKeyDir(id));
       } catch (err) {
         if ((err as any)?.code === "ENOENT") return "ok";
         return "unverified"; // can't tell: fail closed
       }
-      try {
-        const record = JSON.parse(data) as DirtyRecord;
+      for (const name of names) {
+        // a record still being written: its operation had not started
+        if (name.endsWith(".tmp")) continue;
         // ours: this process armed it and saw no sync error (or it would be
         // poisoned), e.g., an open that failed after arming
-        if (record?.generation === generation) return "ok";
-      } catch {}
-      return "unverified";
+        if (name === generation) continue;
+        // another process's: it crashed mid-write, or is writing the file
+        // now; either way this process can't vouch for the page cache
+        return "unverified";
+      }
+      return "ok";
     },
   };
 }

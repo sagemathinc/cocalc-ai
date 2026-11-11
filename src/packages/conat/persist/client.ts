@@ -21,7 +21,7 @@ import type {
   ArchivedHistoryEpoch,
 } from "./storage";
 export { StoredMessage, StorageOptions };
-import { persistSubject, SERVICE, type User } from "./util";
+import { persistSubject, SERVICE, type User } from "./subject";
 import { assertHasWritePermission as assertHasWritePermission0 } from "./auth";
 import { refCacheSync } from "@cocalc/util/refcache";
 import { EventEmitter } from "events";

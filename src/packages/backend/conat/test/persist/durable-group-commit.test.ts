@@ -402,4 +402,119 @@ describe("028 B-1: durable group commit", () => {
     expect(helper).toBeGreaterThan(0);
     expect(emits[0].index! - helper).toBeLessThan(300);
   });
+
+  // review of #139 (security-audit, B1-1..B1-4)
+
+  it("B1-1: after a large checkpoint, small batches run no checkpoint until the WAL is large again", async () => {
+    const stream = open("ckpt-once");
+    const log = trace(stream);
+    await stream.setQueued({
+      encoding: DataEncoding.MsgPack,
+      raw: randomBytes(5 * 1024 * 1024),
+    });
+    expect(log.filter((s) => s.includes("wal_checkpoint"))).toHaveLength(1);
+    for (let i = 0; i < 20; i++) {
+      await stream.setQueued(msg(`small ${i}`));
+    }
+    expect(log.filter((s) => s.includes("wal_checkpoint"))).toHaveLength(1);
+  });
+
+  it("B1-2: a config change that rolls back leaves the committed config in effect", () => {
+    const stream = open("config-rollback");
+    stream.setMany([msg("1"), msg("2"), msg("3")]);
+    const db = (stream as any).db;
+    const prepare = db.prepare;
+    db.prepare = (sql: string, ...rest) => {
+      const stmt = prepare(sql, ...rest);
+      if (sql.includes("ORDER BY seq ASC LIMIT ?")) {
+        stmt.all = () => {
+          throw Error("injected failure in the limit delete");
+        };
+      }
+      return stmt;
+    };
+    expect(() => stream.config({ max_msgs: 1 })).toThrow("injected");
+    db.prepare = prepare;
+    expect((stream as any).conf.max_msgs).toBe(-1);
+    expect(stream.config().max_msgs).toBe(-1);
+    expect(stream.length).toBe(3);
+  });
+
+  it("B1-3: a second connection to the same file never removes the dirty record the first still needs", async () => {
+    const path = join(dir, "two-connections");
+    const a = pstream({ path, noCache: true });
+    const b = pstream({ path, noCache: true });
+    try {
+      const records = require("@cocalc/backend/conat/persist-durability").persistDurabilityRecords();
+      const dirty = records.dirtyPath(a.logicalId);
+      const db = (a as any).db;
+      const exec = db.exec;
+      const armedAtBegin: boolean[] = [];
+      db.exec = (sql: string) => {
+        if (sql == "BEGIN") armedAtBegin.push(existsSync(dirty));
+        return exec(sql);
+      };
+      const n = WRITE_BATCH_MAX_REQUESTS + 10;
+      const all = Promise.all(
+        Array.from({ length: n }, (_, i) => a.setQueued(msg(`a${i}`))),
+      );
+      // after a's first batch (500), before its second: b writes and idles
+      setImmediate(() => b.set(msg("b")));
+      await all;
+      expect(armedAtBegin).toEqual([true, true]);
+      expect(existsSync(dirty)).toBe(false);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  it("B1-3: a sync error on one connection poisons every connection of this process to the file", async () => {
+    const path = join(dir, "two-poison");
+    const a = pstream({ path, noCache: true });
+    const b = pstream({ path, noCache: true });
+    const db = (a as any).db;
+    const exec = db.exec;
+    db.exec = (sql: string) => {
+      if (sql == "COMMIT") {
+        const err: any = new Error("disk I/O error");
+        err.errcode = 1034;
+        throw err;
+      }
+      return exec(sql);
+    };
+    await expect(a.setQueued(msg("x"))).rejects.toMatchObject({ code: 503 });
+    expect(a.isPoisoned()).toBe(true);
+    expect(b.isPoisoned()).toBe(true);
+    expect(() => b.get({ seq: 1 })).toThrow(/sync error/);
+  });
+
+  it("B1-4: a change listener that writes synchronously gets its result, and its write is stored once", async () => {
+    const stream = open("listener-writes");
+    const results: any[] = [];
+    let once = false;
+    stream.on("change", (c) => {
+      if (once || c.seq == null) return;
+      once = true;
+      results.push(stream.set(msg("from listener")));
+    });
+    const r = await stream.setQueued(msg("first"));
+    expect(results).toHaveLength(1);
+    expect(results[0].seq).toBe(r.seq + 1);
+    expect(rowCount(stream)).toBe(2);
+  });
+
+  it("a write batch is synchronous from BEGIN to COMMIT: no await, so no read interleaves (061 D-4)", () => {
+    const source = readFileSync(
+      join(__dirname, "../../../../conat/persist/storage.ts"),
+      "utf8",
+    );
+    for (const fn of ["private flushWriteBatch = ", "private commitWriteBatch = ", "private abortWriteBatch = "]) {
+      const start = source.indexOf(fn);
+      expect(start).toBeGreaterThan(0);
+      const end = source.indexOf("\n  };\n", start);
+      const body = source.slice(start, end);
+      expect(body).not.toMatch(/\bawait\b|\basync\b|\.then\(/);
+    }
+  });
 });

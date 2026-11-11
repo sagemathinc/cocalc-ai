@@ -203,12 +203,18 @@ interface WriteRequest {
   outcome?: WriteOutcome;
 }
 
+// How many open connections of this process hold the dirty record of a
+// logical id (arms are per process, the record is per process: two
+// connections to one file, e.g., a cached stream and a noCache one, or files
+// shared in NORMAL locking, must not remove it under each other).
+const armedConnections = new Map<string, number>();
+
 // Poisoned streams, by path: held here (a strong reference) so that their
 // connection is never closed, nor garbage collected, which would checkpoint
 // it (§3.2.4 step 5).  The process exits with them open.
-const poisonedStreams = new Map<string, PersistentStream>();
+const poisonedStreams = new Set<PersistentStream>();
 export function poisonedStreamPaths(): string[] {
-  return [...poisonedStreams.keys()];
+  return [...new Set([...poisonedStreams].map((s) => s.poisonedPath!))];
 }
 
 export interface PartialInventory {
@@ -1481,7 +1487,9 @@ export class PersistentStream extends EventEmitter {
   // durability (disk-backed streams; finding 028): the id of the stream's
   // records, whether its dirty record exists, and whether a sync error
   // poisoned it
-  private readonly logicalId?: string;
+  readonly logicalId?: string;
+  // the path, once poisoned (kept: the stream is never torn down)
+  poisonedPath?: string;
   private armed = false;
   private poisoned = false;
   private walPageBytes = 4096;
@@ -1577,7 +1585,7 @@ export class PersistentStream extends EventEmitter {
   // (B-2 replaces that refusal by a verified eviction.)
   private assertOpenAllowed = (): void => {
     const path = this.options.path;
-    if (poisonedStreams.has(path)) {
+    if ([...poisonedStreams].some((s) => s.poisonedPath === path)) {
       throw retryableWriteError("poisoned");
     }
     if (durability == null) {
@@ -1630,16 +1638,36 @@ export class PersistentStream extends EventEmitter {
     if (this.poisoned) throw retryableWriteError("poisoned");
     if (this.armed) return;
     if (durability == null) throw retryableWriteError("unarmed");
-    try {
-      durability.arm(this.logicalId!);
-    } catch (err) {
-      logger.error("persist: could not create a dirty record (finding 028)", {
-        path: this.options?.path,
-        err: `${err}`,
-      });
-      throw retryableWriteError("unarmed");
+    const id = this.logicalId!;
+    const holders = armedConnections.get(id) ?? 0;
+    if (holders == 0) {
+      try {
+        durability.arm(id);
+      } catch (err) {
+        logger.error("persist: could not create a dirty record (finding 028)", {
+          path: this.options?.path,
+          err: `${err}`,
+        });
+        throw retryableWriteError("unarmed");
+      }
     }
+    armedConnections.set(id, holders + 1);
     this.armed = true;
+  };
+
+  // this connection no longer needs the dirty record; it goes once no
+  // connection of this process does
+  private releaseArm = (): void => {
+    if (!this.armed) return;
+    this.armed = false;
+    const id = this.logicalId!;
+    const holders = (armedConnections.get(id) ?? 1) - 1;
+    if (holders > 0) {
+      armedConnections.set(id, holders);
+      return;
+    }
+    armedConnections.delete(id);
+    durability?.disarm(id);
   };
 
   // At a write idle -- nothing queued, no transaction in flight -- every
@@ -1654,8 +1682,7 @@ export class PersistentStream extends EventEmitter {
     ) {
       return;
     }
-    durability?.disarm(this.logicalId!);
-    this.armed = false;
+    this.releaseArm();
   };
 
   // A sync error (§3.2.2 A): synchronously, before anything else runs for
@@ -1666,7 +1693,8 @@ export class PersistentStream extends EventEmitter {
     if (this.poisoned) return;
     this.poisoned = true;
     const path = this.options?.path;
-    if (path != null) poisonedStreams.set(path, this);
+    this.poisonedPath = path;
+    poisonedStreams.add(this);
     if (this.logicalId != null) {
       durability?.poison(this.logicalId, {
         where,
@@ -1680,6 +1708,28 @@ export class PersistentStream extends EventEmitter {
     logger.error(
       "PERSIST FILE POISONED (finding 028): a sync error was returned; the file is refused until it is verified",
       { path, where, err: `${err}`, errcode: (err as any)?.errcode },
+    );
+    // the FILE is poisoned: every other connection of this process to it too
+    // (its record is now the poisoned-file record)
+    if (this.logicalId != null) {
+      armedConnections.delete(this.logicalId);
+      for (const other of openStreams.keys()) {
+        if (other !== this && other.logicalId === this.logicalId) {
+          other.poisonedByPeer(where);
+        }
+      }
+    }
+  };
+
+  // another connection of this process to the same file got a sync error
+  private poisonedByPeer = (where: string): void => {
+    if (this.poisoned) return;
+    this.armed = false; // the record was renamed by the peer
+    this.poison(
+      new ConatError("a sync error on another connection to this file", {
+        code: 503,
+      }),
+      `${where} (another connection)`,
     );
   };
 
@@ -1771,10 +1821,7 @@ export class PersistentStream extends EventEmitter {
       throw err;
     }
     // closed: everything it committed and checkpointed is on disk
-    if (this.armed && this.logicalId != null) {
-      durability?.disarm(this.logicalId);
-      this.armed = false;
-    }
+    this.releaseArm();
     return true;
   };
 
@@ -1905,6 +1952,14 @@ export class PersistentStream extends EventEmitter {
       this.walPageBytes =
         Number((this.db.prepare("PRAGMA page_size").get() as any)?.page_size) ||
         4096;
+      // SQLite reuses the WAL file from its start after a complete checkpoint
+      // but never shrinks it, so its size would stay above the checkpoint
+      // threshold forever (a checkpoint after every batch: twice the syncs).
+      // This truncates it, when the WAL restarts, below the threshold, so the
+      // file is that large again only once that many pages were written.
+      this.db.exec(
+        `PRAGMA journal_size_limit=${(CHECKPOINT_WAL_PAGES / 2) * this.walPageBytes}`,
+      );
       // Switching a file into WAL mode writes and syncs it (a no-op on a file
       // already in WAL mode); it can't run in a transaction, so it is armed
       // on its own, at every open.
@@ -3014,8 +3069,9 @@ export class PersistentStream extends EventEmitter {
       return;
     }
     this.flushing = true;
+    let changes: ChangefeedOperation[] = [];
     try {
-      this.commitWriteBatch(batch);
+      changes = this.commitWriteBatch(batch);
     } catch (err) {
       // a bug: never leave a request unsettled
       logger.error("persist: write batch failed unexpectedly", {
@@ -3030,10 +3086,20 @@ export class PersistentStream extends EventEmitter {
       this.failQueuedWrites("poisoned");
       return;
     }
+    // committed (= durable): emitted in arrival order, once the flush is
+    // over, so a listener that writes (a sync set) starts a flush of its own
+    for (const change of changes) {
+      this.emitChange(change);
+    }
+    if (changes.length > 0) {
+      this.throttledBackup();
+    }
     this.afterWrite();
   };
 
-  private commitWriteBatch = (batch: WriteRequest[]): void => {
+  // Commits batch; returns the changes to emit, in arrival order (none if
+  // nothing committed).
+  private commitWriteBatch = (batch: WriteRequest[]): ChangefeedOperation[] => {
     const failAll = (error: unknown) => {
       for (const request of batch) this.settle(request, { error });
     };
@@ -3041,7 +3107,7 @@ export class PersistentStream extends EventEmitter {
       this.armBeforeWrite();
     } catch (err) {
       failAll(err);
-      return;
+      return [];
     }
     this.pendingRows = 0;
     this.pendingBytes = 0;
@@ -3049,7 +3115,7 @@ export class PersistentStream extends EventEmitter {
       this.db.exec("BEGIN");
     } catch (err) {
       this.abortWriteBatch(batch, err);
-      return;
+      return [];
     }
 
     // the requests (and ops) whose msgID is new in this batch, for the
@@ -3174,11 +3240,11 @@ export class PersistentStream extends EventEmitter {
 
     if (abort != null) {
       this.abortWriteBatch(batch, abort.err, abort.failing);
-      return;
+      return [];
     }
     if (!this.db.isTransaction) {
       this.abortWriteBatch(batch, lostTransactionError());
-      return;
+      return [];
     }
     if (!wrote) {
       // no request wrote anything: no COMMIT, so no sync (group commit must
@@ -3189,7 +3255,7 @@ export class PersistentStream extends EventEmitter {
         if (isSqliteSyncError(err)) {
           this.poison(err, "rollback");
           this.failBatch(batch, retryableWriteError("poisoned"));
-          return;
+          return [];
         }
       }
     } else {
@@ -3197,7 +3263,7 @@ export class PersistentStream extends EventEmitter {
         this.db.exec("COMMIT");
       } catch (err) {
         this.abortWriteBatch(batch, err);
-        return;
+        return [];
       }
       this.markMaintenanceMutation();
       for (const { msgID, seq, time } of newMsgIDs) {
@@ -3236,16 +3302,7 @@ export class PersistentStream extends EventEmitter {
         });
       }
     }
-    let emitted = 0;
-    for (const request of batch) {
-      for (const change of changes.get(request) ?? []) {
-        this.emitChange(change);
-        emitted += 1;
-      }
-    }
-    if (emitted > 0) {
-      this.throttledBackup();
-    }
+    return batch.flatMap((request) => changes.get(request) ?? []);
   };
 
   private failBatch = (batch: WriteRequest[], error: unknown): void => {
@@ -5005,10 +5062,18 @@ export class PersistentStream extends EventEmitter {
     const changes: ChangefeedOperation[] = [];
     if (next.writes.length > 0 || limitsCanDelete(next.full)) {
       // the config writes and the limit deletes: ONE commit (028), and the
-      // deletes' changes are emitted after it
-      this.runTransaction(() => this.applyConfig(next, changes), {
-        mutation: config != null,
-      });
+      // deletes' changes are emitted after it.  this.conf is the new config
+      // inside the transaction (enforceLimits reads it), and the committed
+      // one again if it rolls back.
+      const committed = this.conf;
+      try {
+        this.runTransaction(() => this.applyConfig(next, changes), {
+          mutation: config != null,
+        });
+      } catch (err) {
+        this.conf = committed;
+        throw err;
+      }
     } else {
       this.conf = next.full;
     }

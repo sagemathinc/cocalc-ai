@@ -66,14 +66,9 @@ export const MAX_PER_USER = 500;
 export const MAX_GLOBAL = 10000;
 export const RESOURCE = "persistent storage";
 
-export const SERVICE = "persist";
-
-export type User = {
-  account_id?: string;
-  project_id?: string;
-  hub_id?: string;
-  host_id?: string;
-};
+// (in subject.ts, which the browser can bundle without storage)
+import { SERVICE, persistSubject, type User } from "./subject";
+export { SERVICE, persistSubject, type User };
 
 function resolveTemplateBase(base: string, token: string, id: string): string {
   const placeholder = `[${token}]`;
@@ -171,23 +166,6 @@ function maintenanceScope(storagePath: string): {
     return { scopeType: "hub" };
   }
   return { scopeType: "other" };
-}
-
-export function persistSubject({
-  account_id,
-  project_id,
-  host_id,
-  service = SERVICE,
-}: User & { service?: string }) {
-  if (account_id) {
-    return `${service}.account-${account_id}`;
-  } else if (project_id) {
-    return `${service}.project-${project_id}`;
-  } else if (host_id) {
-    return `${service}.host-${host_id}`;
-  } else {
-    return `${service}.hub`;
-  }
 }
 
 export async function getStream({
