@@ -44,7 +44,7 @@ import {
   isLoopbackHost,
 } from "@cocalc/backend/network/policy";
 import { maybeHandleLiteStaticAppRequest } from "./static-apps";
-import { isApiV2Enabled } from "./api-v2";
+import { isApiV2Enabled, loadHttpApi } from "./api-v2";
 import {
   authorizeLiteSiteSettings,
   configureLiteSiteSettingsFreshAuth,
@@ -168,15 +168,15 @@ export async function initApp({
   );
   let apiV2Router;
   if (isApiV2Enabled()) {
-    try {
-      // CoCalc Plus bundles leave @cocalc/http-api out (plus/sea/build-bundle.sh):
-      // it brings in the whole hub API and the cloud SDKs.
-      const { createApiV2Router } = await import("@cocalc/http-api");
-      apiV2Router = createApiV2Router({ browserCors: "request-origin" });
-    } catch (err) {
+    const httpApi = await loadHttpApi();
+    if (httpApi == null) {
       logger.error(
-        `the v2 API is enabled, but this build doesn't include it (@cocalc/http-api); serving only the built-in local account: ${err}`,
+        "the v2 API is enabled, but this build doesn't include @cocalc/http-api; serving only the built-in local account",
       );
+    } else {
+      apiV2Router = httpApi.createApiV2Router({
+        browserCors: "request-origin",
+      });
     }
   }
   if (apiV2Router != null) {
