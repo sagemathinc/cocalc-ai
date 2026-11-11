@@ -149,6 +149,7 @@ import {
   assertSafeHostSoftwareSelection,
   HOST_SOFTWARE_ADMIN_ONLY,
   loadTrustedEffectiveRuntimeDeployments,
+  safeHostSoftwareVersionOrUndefined,
   UNSAFE_HOST_SOFTWARE_SELECTION,
   unsafeHostSoftwareSelection,
 } from "./host-software-admin";
@@ -9665,7 +9666,7 @@ function bootstrapLifecycleSummaryStatus(row: any): string | undefined {
   return summary || undefined;
 }
 
-function desiredSoftwareTargetsForReconcile(
+export function desiredSoftwareTargetsForReconcile(
   row: any,
   desiredArtifacts?: HostRuntimeDesiredArtifactsSummary,
 ): HostSoftwareUpgradeTarget[] {
@@ -9682,7 +9683,13 @@ function desiredSoftwareTargetsForReconcile(
     observedArtifact: HostRuntimeArtifact,
     desiredVersion?: string,
   ) => {
-    const desired = `${desiredVersion ?? ""}`.trim();
+    // The fallbacks (row.version, metadata.software) are host-reported, so
+    // a version that is not safe is skipped, never sent.
+    const desired = safeHostSoftwareVersionOrUndefined(
+      `${desiredVersion ?? ""}`.trim(),
+      row?.id,
+      `reconcile ${artifact}`,
+    );
     if (!desired) return;
     if ((observed.get(observedArtifact) ?? "") === desired) return;
     targets.push({ artifact, version: desired });

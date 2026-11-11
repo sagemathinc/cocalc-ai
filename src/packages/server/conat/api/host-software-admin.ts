@@ -103,6 +103,35 @@ export function unsafeHostSoftwareSelection(input: any): boolean {
   );
 }
 
+// The last check before a version or channel is sent to a host, whatever
+// its source: refuse, and log the host only (never the value).
+export function assertSafeHostSoftwareSelectionForHost(
+  input: any,
+  host_id: string,
+  what: string,
+): void {
+  if (unsafeHostSoftwareSelection(input)) {
+    logger.warn("refused to send an unsafe software version to a host", {
+      host_id,
+      what,
+    });
+    throw new Error(UNSAFE_HOST_SOFTWARE_SELECTION);
+  }
+}
+
+// A version from any source, or undefined (logged with the host only) when
+// it is not safe.
+export function safeHostSoftwareVersionOrUndefined(
+  value: unknown,
+  host_id: string,
+  what: string,
+): string | undefined {
+  if (value == null || value === "") return undefined;
+  if (isSafeHostSoftwareVersion(value)) return value;
+  logger.warn("ignoring an unsafe software version", { host_id, what });
+  return undefined;
+}
+
 export function assertSafeHostSoftwareSelection(input: any): void {
   if (unsafeHostSoftwareSelection(input)) {
     throw new Error(UNSAFE_HOST_SOFTWARE_SELECTION);

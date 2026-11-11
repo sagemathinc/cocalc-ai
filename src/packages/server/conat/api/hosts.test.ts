@@ -6679,6 +6679,46 @@ describe("hosts software versions and channels at the entry points", () => {
   );
 });
 
+describe("hosts.desiredSoftwareTargetsForReconcile", () => {
+  // What the host reports it runs now, so every desired version below differs.
+  const software_inventory = [
+    { artifact: "project-host", current_version: "ph-v0" },
+    { artifact: "tools", current_version: "tools-0" },
+  ];
+
+  it("never targets an unsafe host-reported fallback version", async () => {
+    const { desiredSoftwareTargetsForReconcile } = await import("./hosts");
+    expect(
+      desiredSoftwareTargetsForReconcile({
+        id: HOST_ID,
+        version: "../x",
+        metadata: { software_inventory, software: { tools: "t:1" } },
+      }),
+    ).toEqual([]);
+    expect(
+      desiredSoftwareTargetsForReconcile({
+        id: HOST_ID,
+        version: "ph-v1",
+        metadata: { software_inventory, software: { project_host: "a/b" } },
+      }),
+    ).toEqual([]);
+  });
+
+  it("still targets a safe version", async () => {
+    const { desiredSoftwareTargetsForReconcile } = await import("./hosts");
+    expect(
+      desiredSoftwareTargetsForReconcile({
+        id: HOST_ID,
+        version: "ph-v1",
+        metadata: { software_inventory, software: { tools: "tools-7" } },
+      }),
+    ).toEqual([
+      { artifact: "project-host", version: "ph-v1" },
+      { artifact: "tools", version: "tools-7" },
+    ]);
+  });
+});
+
 describe("hosts.hostSoftwareLifecycleOpRefusal", () => {
   const LIFECYCLE_KINDS = [
     "host-upgrade-software",

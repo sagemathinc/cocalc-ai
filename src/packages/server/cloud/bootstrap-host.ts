@@ -54,7 +54,12 @@ import type {
 import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { resolveProjectContentDomain } from "./host-content-dns";
-import { loadTrustedEffectiveRuntimeDeployments } from "@cocalc/server/conat/api/host-software-admin";
+import {
+  isSafeHostSoftwareChannel,
+  isSafeHostSoftwareVersion,
+  loadTrustedEffectiveRuntimeDeployments,
+  safeHostSoftwareVersionOrUndefined,
+} from "@cocalc/server/conat/api/host-software-admin";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import getPool from "@cocalc/database/pool";
 import siteURL from "@cocalc/database/settings/site-url";
@@ -400,15 +405,25 @@ function resolveBootstrapSelector({
   const settingsVersion =
     settings.project_hosts_bootstrap_version?.trim() || "";
   const deploymentVersion = `${promotedVersion ?? ""}`.trim();
-  if (metaVersion) return { selector: metaVersion, source: "host-version" };
-  if (metaChannel) return { selector: metaChannel, source: "host-channel" };
-  if (deploymentVersion) {
-    return { selector: deploymentVersion, source: "deployment-version" };
+  // The selector goes into the host's bootstrap URLs, and the host's own
+  // metadata is host-reported: the first candidate that is a safe version or
+  // a known channel wins.
+  const candidates: Array<[string, string]> = [
+    [metaVersion, "host-version"],
+    [metaChannel, "host-channel"],
+    [deploymentVersion, "deployment-version"],
+    [settingsVersion, "site-version"],
+    [settingsChannel, "site-channel"],
+  ];
+  for (const [selector, source] of candidates) {
+    if (
+      selector &&
+      (isSafeHostSoftwareVersion(selector) ||
+        isSafeHostSoftwareChannel(selector))
+    ) {
+      return { selector, source };
+    }
   }
-  if (settingsVersion)
-    return { selector: settingsVersion, source: "site-version" };
-  if (settingsChannel)
-    return { selector: settingsChannel, source: "site-channel" };
   return { selector: "latest", source: "default" };
 }
 
@@ -812,8 +827,18 @@ function chooseBootstrapArtifactVersion({
   desiredVersion?: string;
   observedVersion?: string;
 }): string | undefined {
-  const desired = `${desiredVersion ?? ""}`.trim() || undefined;
-  const observed = `${observedVersion ?? ""}`.trim() || undefined;
+  // A version goes into the host's download URLs and install paths; the
+  // observed one is host-reported. An unsafe one is ignored.
+  const desired = safeHostSoftwareVersionOrUndefined(
+    `${desiredVersion ?? ""}`.trim(),
+    host_id,
+    `bootstrap ${artifact} desired`,
+  );
+  const observed = safeHostSoftwareVersionOrUndefined(
+    `${observedVersion ?? ""}`.trim(),
+    host_id,
+    `bootstrap ${artifact} observed`,
+  );
   if (!desired) return observed;
   if (!observed) return desired;
   if (isBuildIdLike(desired) && /^\d+$/.test(observed)) {
