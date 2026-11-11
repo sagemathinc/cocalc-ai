@@ -1193,112 +1193,457 @@ const streamLifecycle = {
   open_disk: 0,
 };
 
-// Write activity of this process: how many transactions commit, how many
-// messages they add, and how long COMMIT takes.  Used to size durability work
-// against real load, so it holds counts only, never paths or content.
-const writeStats = {
-  commits_total: 0,
-  disk_commits_total: 0,
-  ephemeral_commits_total: 0,
-  rows_total: 0,
-  bytes_total: 0,
-  commit_ms_total: 0,
-  commit_ms_max: 0,
+// Write activity of this process, to size durability work against real load.
+// Counts only, never paths, keys, SQL or content.  Every figure is kept per
+// storage kind: disk streams are the headline; ephemeral streams are in-memory
+// and never reach a disk, so they are reported separately under ephemeral_*.
+//
+// Scope: the connections PersistentStream opens (one per open stream).  Other
+// connections to the same files are not counted: persist maintenance and
+// compaction (backend/conat/persist-maintenance), project-host
+// persist-storage helpers, and backend/sqlite-checkpoint.
+//
+// commits = txn_commits + autocommits, counted by countCommits on the
+// connection itself rather than from a list of call sites:
+// - txn_commits: a COMMIT/END/RELEASE that ended a transaction which changed
+//   rows or the schema (runTransaction: set, setMany, delete, resetHistory,
+//   metadata, checkpoints, purges, trash steps, the count bookkeeping at
+//   open).  A transaction that changed nothing writes no WAL frame and is not
+//   counted; a rolled-back one never is.
+// - autocommits: a write statement outside a transaction, which SQLite
+//   commits by itself (e.g., config() and the deletes its enforceLimits(0)
+//   makes, deleteCheckpoint, ensureCurrentEpoch, writes through sqlite()), if
+//   it wrote: DML that changed rows, DDL that changed the schema, a
+//   journal_mode change, and always VACUUM, REINDEX, ANALYZE,
+//   incremental_vacuum and setting user_version/application_id/
+//   schema_version.  A multi-statement exec counts each statement.
+//   Exception: a script with a trigger counts at most one (storage has none).
+// rows/bytes: messages that insertMessage added in a counted transaction.
+//   Deletes, trims, config changes and checkpoint-only commits add none.
+// sqlite_commit_call_ms: wall time of the synchronous SQLite COMMIT call on
+//   the main thread, for txn_commits only, including any auto-checkpoint it
+//   runs.  Under synchronous=OFF it includes no fsync, so it is not the
+//   latency a durable commit would have.  Autocommits are not timed.
+type WriteKindStats = {
+  commits_total: number;
+  txn_commits_total: number;
+  autocommits_total: number;
+  rows_total: number;
+  bytes_total: number;
+  sqlite_commit_call_ms_total: number;
+  sqlite_commit_call_ms_max: number;
 };
 
-// Since the last write-rate log line: the totals then, and the busiest second.
+function newWriteKindStats(): WriteKindStats {
+  return {
+    commits_total: 0,
+    txn_commits_total: 0,
+    autocommits_total: 0,
+    rows_total: 0,
+    bytes_total: 0,
+    sqlite_commit_call_ms_total: 0,
+    sqlite_commit_call_ms_max: 0,
+  };
+}
+
+const writeStats: Record<StreamStorageKind, WriteKindStats> = {
+  disk: newWriteKindStats(),
+  ephemeral: newWriteKindStats(),
+};
+
+type WriteKindWindow = {
+  totals: WriteKindStats;
+  second_commits: number;
+  second_rows: number;
+  peak_commits_per_second: number;
+  peak_rows_per_second: number;
+  sqlite_commit_call_ms_max: number;
+};
+
+function newWriteKindWindow(kind: StreamStorageKind): WriteKindWindow {
+  return {
+    totals: { ...writeStats[kind] },
+    second_commits: 0,
+    second_rows: 0,
+    peak_commits_per_second: 0,
+    peak_rows_per_second: 0,
+    sqlite_commit_call_ms_max: 0,
+  };
+}
+
+// Since the last write-rate log line (or the start of logging): the totals
+// then, and the busiest clock second, per kind.
 const writeWindow = {
   started_at: Date.now(),
-  totals: { ...writeStats },
   second: 0,
-  second_commits: 0,
-  second_rows: 0,
-  peak_commits_per_second: 0,
-  peak_rows_per_second: 0,
-  commit_ms_max: 0,
+  disk: newWriteKindWindow("disk"),
+  ephemeral: newWriteKindWindow("ephemeral"),
 };
+
+// A new window: nothing before `now`, including a partly counted second,
+// belongs to it.
+function resetWriteWindow(now: number): void {
+  writeWindow.started_at = now;
+  writeWindow.second = 0;
+  writeWindow.disk = newWriteKindWindow("disk");
+  writeWindow.ephemeral = newWriteKindWindow("ephemeral");
+}
 
 export const PERSIST_WRITE_RATE_LOG_INTERVAL_MS = 60_000;
 let writeRateTimer: ReturnType<typeof setInterval> | undefined;
 
 function recordCommit(
   kind: StreamStorageKind,
-  rows: number,
-  bytes: number,
-  commitMs: number,
+  commit:
+    | { autocommit: true }
+    | { autocommit?: false; rows: number; bytes: number; commitMs: number },
   now: number = Date.now(),
 ): void {
-  writeStats.commits_total += 1;
-  writeStats[`${kind}_commits_total`] += 1;
-  writeStats.rows_total += rows;
-  writeStats.bytes_total += bytes;
-  writeStats.commit_ms_total += commitMs;
-  writeStats.commit_ms_max = Math.max(writeStats.commit_ms_max, commitMs);
+  const stats = writeStats[kind];
+  const rows = commit.autocommit ? 0 : commit.rows;
+  stats.commits_total += 1;
+  stats.rows_total += rows;
+  if (commit.autocommit) {
+    stats.autocommits_total += 1;
+  } else {
+    stats.txn_commits_total += 1;
+    stats.bytes_total += commit.bytes;
+    stats.sqlite_commit_call_ms_total += commit.commitMs;
+    stats.sqlite_commit_call_ms_max = Math.max(
+      stats.sqlite_commit_call_ms_max,
+      commit.commitMs,
+    );
+  }
   const second = Math.floor(now / 1000);
   if (second !== writeWindow.second) {
     writeWindow.second = second;
-    writeWindow.second_commits = 0;
-    writeWindow.second_rows = 0;
+    writeWindow.disk.second_commits = writeWindow.disk.second_rows = 0;
+    writeWindow.ephemeral.second_commits =
+      writeWindow.ephemeral.second_rows = 0;
   }
-  writeWindow.second_commits += 1;
-  writeWindow.second_rows += rows;
-  writeWindow.peak_commits_per_second = Math.max(
-    writeWindow.peak_commits_per_second,
-    writeWindow.second_commits,
+  const w = writeWindow[kind];
+  w.second_commits += 1;
+  w.second_rows += rows;
+  w.peak_commits_per_second = Math.max(
+    w.peak_commits_per_second,
+    w.second_commits,
   );
-  writeWindow.peak_rows_per_second = Math.max(
-    writeWindow.peak_rows_per_second,
-    writeWindow.second_rows,
-  );
-  writeWindow.commit_ms_max = Math.max(writeWindow.commit_ms_max, commitMs);
+  w.peak_rows_per_second = Math.max(w.peak_rows_per_second, w.second_rows);
+  if (!commit.autocommit) {
+    w.sqlite_commit_call_ms_max = Math.max(
+      w.sqlite_commit_call_ms_max,
+      commit.commitMs,
+    );
+  }
 }
 
-export function getPersistWriteStats() {
-  return { ...writeStats };
+// Flat, prefixed by kind (disk_commits_total, ephemeral_rows_total, ...).
+export function getPersistWriteStats(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const kind of ["disk", "ephemeral"] as const) {
+    for (const [key, value] of Object.entries(writeStats[kind])) {
+      out[`${kind}_${key}`] = value;
+    }
+  }
+  return out;
+}
+
+function writeWindowFields(
+  kind: StreamStorageKind,
+  seconds: number,
+): Record<string, number> {
+  const now = writeStats[kind];
+  const w = writeWindow[kind];
+  const commits = now.commits_total - w.totals.commits_total;
+  const txnCommits = now.txn_commits_total - w.totals.txn_commits_total;
+  const rows = now.rows_total - w.totals.rows_total;
+  const fields = {
+    commits,
+    txn_commits: txnCommits,
+    autocommits: now.autocommits_total - w.totals.autocommits_total,
+    rows,
+    bytes: now.bytes_total - w.totals.bytes_total,
+    commits_per_second: commits / seconds,
+    rows_per_second: rows / seconds,
+    peak_commits_per_second: w.peak_commits_per_second,
+    peak_rows_per_second: w.peak_rows_per_second,
+    sqlite_commit_call_ms_avg:
+      txnCommits > 0
+        ? (now.sqlite_commit_call_ms_total -
+            w.totals.sqlite_commit_call_ms_total) /
+          txnCommits
+        : 0,
+    sqlite_commit_call_ms_max: w.sqlite_commit_call_ms_max,
+  };
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    out[`${kind}_${key}`] = value;
+  }
+  return out;
 }
 
 // One line per interval with the deltas since the previous one; quiet when
-// nothing was written.  Returns what it logged (for tests).
-export function logPersistWriteRate(now: number = Date.now()) {
+// nothing was committed.  Returns what it logged (for tests).
+export function logPersistWriteRate(
+  now: number = Date.now(),
+): Record<string, number> {
   const seconds = Math.max((now - writeWindow.started_at) / 1000, 0.001);
-  const commits = writeStats.commits_total - writeWindow.totals.commits_total;
-  const rows = writeStats.rows_total - writeWindow.totals.rows_total;
-  const entry = {
+  const entry: Record<string, number> = {
     window_seconds: Math.round(seconds),
-    commits,
-    disk_commits:
-      writeStats.disk_commits_total - writeWindow.totals.disk_commits_total,
-    rows,
-    bytes: writeStats.bytes_total - writeWindow.totals.bytes_total,
-    commits_per_second: commits / seconds,
-    rows_per_second: rows / seconds,
-    peak_commits_per_second: writeWindow.peak_commits_per_second,
-    peak_rows_per_second: writeWindow.peak_rows_per_second,
-    commit_ms_avg:
-      commits > 0
-        ? (writeStats.commit_ms_total - writeWindow.totals.commit_ms_total) /
-          commits
-        : 0,
-    commit_ms_max: writeWindow.commit_ms_max,
+    ...writeWindowFields("disk", seconds),
+    ...writeWindowFields("ephemeral", seconds),
   };
-  writeWindow.started_at = now;
-  writeWindow.totals = { ...writeStats };
-  writeWindow.peak_commits_per_second = 0;
-  writeWindow.peak_rows_per_second = 0;
-  writeWindow.commit_ms_max = 0;
-  if (commits > 0) {
+  resetWriteWindow(now);
+  if (entry.disk_commits > 0 || entry.ephemeral_commits > 0) {
     logger.info("persist write rate", entry);
   }
   return entry;
 }
 
+// The first window starts here, when the first disk stream opens, not when
+// this module was loaded.
 function startWriteRateLog(): void {
   if (writeRateTimer != null) return;
+  resetWriteWindow(Date.now());
   writeRateTimer = setInterval(
     () => logPersistWriteRate(),
     PERSIST_WRITE_RATE_LOG_INTERVAL_MS,
   );
   writeRateTimer.unref?.();
+}
+
+// The first word of a statement, after leading whitespace and comments.
+function sqlVerb(sql: string): string {
+  const m = /^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*([A-Za-z]+)/.exec(sql);
+  return (m?.[1] ?? "").toUpperCase();
+}
+
+// What a statement can do to the transaction state, for countCommits:
+// - begin: may open a transaction (BEGIN, SAVEPOINT outside one);
+// - end: may commit one (COMMIT, END, RELEASE of the outermost savepoint);
+// - dml, ddl, journal-mode, other-write: may write;
+// - undefined: cannot write or commit: SELECT, EXPLAIN, ROLLBACK, and the
+//   PRAGMAs other than those below.  The ones storage uses are reads and
+//   connection settings (busy_timeout, locking_mode, trusted_schema,
+//   cache_size, synchronous, page_size/page_count/freelist_count reads), plus
+//   wal_checkpoint, which copies committed pages and commits nothing.
+type SqlClass =
+  | "begin"
+  | "end"
+  | "dml"
+  | "ddl"
+  | "journal-mode"
+  | "other-write"
+  | undefined;
+
+function sqlClass(sql: string): SqlClass {
+  switch (sqlVerb(sql)) {
+    case "BEGIN":
+    case "SAVEPOINT":
+      return "begin";
+    case "COMMIT":
+    case "END":
+    case "RELEASE":
+      return "end";
+    case "INSERT":
+    case "UPDATE":
+    case "DELETE":
+    case "REPLACE":
+      return "dml";
+    case "WITH":
+      return /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql)
+        ? "dml"
+        : undefined;
+    case "CREATE":
+    case "DROP":
+    case "ALTER":
+      return "ddl";
+    case "VACUUM":
+    case "REINDEX":
+    case "ANALYZE":
+      return "other-write";
+    case "PRAGMA": {
+      const m = /\bPRAGMA\s+(?:[\w"]+\s*\.\s*)?(\w+)\s*([=(])?/i.exec(sql);
+      const name = m?.[1]?.toLowerCase();
+      const sets = m?.[2] != null;
+      if (name === "journal_mode" && sets) return "journal-mode";
+      if (name === "incremental_vacuum") return "other-write";
+      if (
+        sets &&
+        (name === "user_version" ||
+          name === "application_id" ||
+          name === "schema_version")
+      ) {
+        return "other-write";
+      }
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+// A script's statements, split at the semicolons outside quotes and
+// comments.  Undefined for a script with a trigger (its body has semicolons).
+function splitSqlStatements(sql: string): string[] | undefined {
+  if (/\bTRIGGER\b/i.test(sql)) return undefined;
+  const out: string[] = [];
+  let start = 0;
+  let i = 0;
+  while (i >= 0 && i < sql.length) {
+    const c = sql[i];
+    if (c === "'" || c === '"' || c === "`" || c === "[") {
+      const end = sql.indexOf(c === "[" ? "]" : c, i + 1);
+      i = end < 0 ? -1 : end + 1;
+    } else if (c === "-" && sql[i + 1] === "-") {
+      i = sql.indexOf("\n", i);
+    } else if (c === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? -1 : end + 2;
+    } else if (c === ";") {
+      out.push(sql.slice(start, i));
+      start = i += 1;
+    } else {
+      i += 1;
+    }
+  }
+  out.push(sql.slice(start));
+  return out.filter((s) => sqlVerb(s) !== "");
+}
+
+// Counts, per storage kind, every commit made on this connection (see
+// writeStats), from SQLite's own state (db.isTransaction), so a failed BEGIN,
+// COMMIT or statement can't make it drift.  A count happens only after the
+// call returned.  Statements that can't write or commit are returned
+// untouched.  Write statements outside a transaction, and BEGIN/COMMIT, cost
+// one or two extra reads of total_changes()/schema_version.  Nothing here logs
+// or keeps SQL text or bound values.  takeRows returns the messages the
+// transaction added and resets them.  Needs db.isTransaction (node 22.16+);
+// without it nothing is counted.
+function countCommits(
+  db: Database,
+  kind: StreamStorageKind,
+  takeRows: () => { rows: number; bytes: number },
+): Database {
+  if (typeof (db as any).isTransaction !== "boolean") return db;
+  const inTransaction = (): boolean => (db as any).isTransaction;
+  const prepare = db.prepare.bind(db);
+  const exec = db.exec.bind(db);
+  const reads: Record<string, any> = {};
+  const read = (sql: string, column: string) =>
+    ((reads[sql] ??= prepare(sql)).get() as any)[column];
+  const totalChanges = (): number =>
+    Number(read("SELECT total_changes() AS n", "n"));
+  const schemaVersion = (): number =>
+    Number(read("PRAGMA schema_version", "schema_version"));
+  const journalMode = (): string =>
+    String(read("PRAGMA journal_mode", "journal_mode"));
+  // the state when the open transaction began
+  let txnStart: { changes: number; schema: number } | undefined;
+
+  const track = <T>(
+    cls: SqlClass,
+    call: () => T,
+    changes?: (result: T) => number,
+  ): T => {
+    if (cls == null) return call();
+    const wasInTransaction = inTransaction();
+    if (cls === "begin") {
+      if (wasInTransaction) return call();
+      const start = { changes: totalChanges(), schema: schemaVersion() };
+      const result = call();
+      if (inTransaction()) txnStart = start;
+      return result;
+    }
+    if (cls === "end") {
+      if (!wasInTransaction) return call();
+      const started = performance.now();
+      const result = call();
+      const commitMs = performance.now() - started;
+      if (!inTransaction()) {
+        // A transaction that changed nothing writes no WAL frame.
+        const start = txnStart;
+        txnStart = undefined;
+        const rows = takeRows();
+        if (
+          start == null ||
+          totalChanges() !== start.changes ||
+          schemaVersion() !== start.schema
+        ) {
+          recordCommit(kind, { ...rows, commitMs });
+        }
+      }
+      return result;
+    }
+    // A write inside a transaction is committed (and counted) by its end.
+    if (wasInTransaction) return call();
+    // Outside one, SQLite commits it by itself if it wrote anything: a DML
+    // statement that changed no row writes no WAL frame.
+    const before =
+      cls === "ddl"
+        ? schemaVersion()
+        : cls === "journal-mode"
+          ? journalMode()
+          : cls === "dml" && changes == null
+            ? totalChanges()
+            : undefined;
+    const result = call();
+    const wrote =
+      cls === "ddl"
+        ? schemaVersion() !== before
+        : cls === "journal-mode"
+          ? journalMode() !== before
+          : cls === "dml"
+            ? changes != null
+              ? changes(result) > 0
+              : totalChanges() !== before
+            : true;
+    if (wrote) recordCommit(kind, { autocommit: true });
+    return result;
+  };
+
+  db.prepare = ((sql: string, ...rest: any[]) => {
+    const stmt = (prepare as any)(sql, ...rest);
+    const cls = sqlClass(sql);
+    if (cls == null) return stmt;
+    const run = stmt.run.bind(stmt);
+    const get = stmt.get.bind(stmt);
+    const all = stmt.all.bind(stmt);
+    const iterate = stmt.iterate.bind(stmt);
+    stmt.run = (...args: any[]) =>
+      track(
+        cls,
+        () => run(...args),
+        (r: any) => Number(r?.changes ?? 0),
+      );
+    stmt.get = (...args: any[]) => track(cls, () => get(...args));
+    stmt.all = (...args: any[]) => track(cls, () => all(...args));
+    stmt.iterate = (...args: any[]) => {
+      // Runs as it is consumed, so this can't tell what it did: a write
+      // outside a transaction counts once, when it starts.  (Storage never
+      // iterates a write.)
+      if (cls !== "begin" && cls !== "end" && !inTransaction()) {
+        recordCommit(kind, { autocommit: true });
+      }
+      return iterate(...args);
+    };
+    return stmt;
+  }) as any;
+
+  // A script runs statement by statement, each its own commit outside a
+  // transaction, so it is counted statement by statement.
+  const execOne = (sql: string) => track(sqlClass(sql), () => exec(sql));
+  db.exec = ((sql: string) => {
+    if (sql.includes(";")) {
+      const statements = splitSqlStatements(sql);
+      if (statements != null && statements.length > 1) {
+        for (const statement of statements) execOne(statement);
+        return;
+      }
+    }
+    return execOne(sql);
+  }) as any;
+  return db;
 }
 
 const openCacheSizes = {
@@ -1458,9 +1803,14 @@ export class PersistentStream extends EventEmitter {
   private readonly db: Database;
   private readonly dbPath?: string;
   private readonly storageKind: StreamStorageKind;
-  // messages added by the transaction in progress (recordCommit)
+  // messages added by the transaction in progress (countCommits)
   private pendingRows = 0;
   private pendingBytes = 0;
+  private takeRows = () => {
+    const rows = { rows: this.pendingRows, bytes: this.pendingBytes };
+    this.pendingRows = this.pendingBytes = 0;
+    return rows;
+  };
   private readonly sqliteCacheKiB: number;
   private readonly msgIDs = new TTL({ ttl: 2 * 60 * 1000 });
   private conf: Configuration;
@@ -1498,7 +1848,11 @@ export class PersistentStream extends EventEmitter {
         assertSafeDatabasePath(location);
       }
       // defensive: no writable_schema or other ways to corrupt the file
-      this.db = createDatabase(location, { defensive: true });
+      this.db = countCommits(
+        createDatabase(location, { defensive: true }),
+        this.storageKind,
+        this.takeRows,
+      );
       try {
         this.hardenConnection(location);
         if (location !== ":memory:") {
@@ -2349,14 +2703,7 @@ export class PersistentStream extends EventEmitter {
     this.db.exec("BEGIN");
     try {
       const result = fn();
-      const commitStarted = performance.now();
       this.db.exec("COMMIT");
-      recordCommit(
-        this.storageKind,
-        this.pendingRows,
-        this.pendingBytes,
-        performance.now() - commitStarted,
-      );
       this.markMaintenanceMutation();
       return result;
     } catch (err) {
