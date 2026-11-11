@@ -29,6 +29,7 @@ out.iterate = [...db.prepare("SELECT name FROM t ORDER BY id").iterate()].map((r
 out.blob = Buffer.from(db.prepare("SELECT data FROM t WHERE id = 1").get().data).toString();
 out.isOpen = db.isOpen;
 db.close();
+let db2;
 const ro = new DatabaseSync(path, { readOnly: true });
 try {
   ro.exec("INSERT INTO t (name) VALUES ('c')");
@@ -38,6 +39,19 @@ try {
   out.readOnly = { code: err.code, errcode: err.errcode, errstr: typeof err.errstr };
 }
 ro.close();
+// stopping an iteration early releases the statement at once (not when it is
+// collected): the table can be dropped right after
+db2 = new DatabaseSync(path);
+db2.exec("CREATE TABLE it (x)");
+db2.exec("INSERT INTO it VALUES (1), (2)");
+const scan = db2.prepare("SELECT * FROM it");
+const rows = scan.iterate();
+for (const row of rows) break;
+// and the statement is still usable, as in node:sqlite
+out.reuseAfterBreak = scan.all().length;
+db2.exec("DROP TABLE it");
+out.dropAfterBreak = "dropped";
+db2.close();
 // close() releases the connection: its locks and its open transaction, even
 // with a prepared statement still referenced, which close() finalizes
 const lockPath = path + "-lock";
@@ -73,6 +87,8 @@ const EXPECTED = {
   blob: "xy",
   isOpen: true,
   readOnly: { code: "ERR_SQLITE_ERROR", errcode: 8, errstr: "string" },
+  reuseAfterBreak: 2,
+  dropAfterBreak: "dropped",
   // the open transaction was rolled back
   afterClose: [{ x: 2 }],
   retainedAfterClose: "finalized",

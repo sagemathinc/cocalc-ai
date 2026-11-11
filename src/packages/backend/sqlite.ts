@@ -48,8 +48,10 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
   }
 
   class StatementSync {
+    private readBigInts = false;
     constructor(
-      private readonly stmt: any,
+      private readonly db: any,
+      private stmt: any,
       readonly sourceSQL: string,
     ) {}
     all(...params: any[]) {
@@ -68,10 +70,44 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
     }
     *iterate(...params: any[]) {
       const rows = sqliteCall(() => this.stmt.iterate(...params));
-      while (true) {
-        const next = sqliteCall(() => rows.next());
-        if (next.done) return;
-        yield next.value;
+      let finished = false;
+      let failed = false;
+      try {
+        while (true) {
+          let next;
+          try {
+            next = sqliteCall(() => rows.next());
+          } catch (err) {
+            failed = true;
+            throw err;
+          }
+          if (next.done) {
+            finished = true;
+            return;
+          }
+          yield next.value;
+        }
+      } finally {
+        // Stopped early (break, return, or an error in the loop body):
+        // bun:sqlite's iterator keeps the statement, and its read
+        // transaction and table locks, busy until it is collected, and
+        // closing it doesn't reset the statement.  Replace the statement
+        // with a fresh one, as node:sqlite's stays usable.
+        if (!finished) {
+          try {
+            rows.return?.();
+          } catch {}
+          try {
+            this.stmt.finalize();
+          } catch {}
+          if (failed) {
+            try {
+              this.renew();
+            } catch {}
+          } else {
+            this.renew();
+          }
+        }
       }
     }
     columns() {
@@ -85,7 +121,12 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
         type: types[i] ?? null,
       }));
     }
+    private renew() {
+      this.stmt = sqliteCall(() => this.db.prepare(this.sourceSQL));
+      if (this.readBigInts) this.stmt.safeIntegers(true);
+    }
     setReadBigInts(enabled: boolean) {
+      this.readBigInts = enabled;
       this.stmt.safeIntegers(enabled);
     }
     setAllowBareNamedParameters(_enabled: boolean) {
@@ -153,6 +194,7 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
     prepare(sql: string) {
       const db = this.connection();
       const stmt = new StatementSync(
+        db,
         sqliteCall(() => db.prepare(sql)),
         sql,
       );
