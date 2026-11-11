@@ -34,8 +34,10 @@ case "$action" in
   setup)
     # stanza-create takes the archive and backup locks without waiting, and the
     # async archive-push process holds the archive lock while it pushes WAL. Every
-    # backup@ pulls this unit in, so retry only on LockAcquireError [050].
-    attempts="${COCALC_BAY_PGBACKREST_SETUP_LOCK_ATTEMPTS:-20}"
+    # backup@ pulls this unit in, so retry only on LockAcquireError [050]. The
+    # defaults keep the worst case (11 sleeps of 15 s, the creates, then check
+    # waiting up to archive-timeout=300s) inside the unit's 10 min timeout.
+    attempts="${COCALC_BAY_PGBACKREST_SETUP_LOCK_ATTEMPTS:-12}"
     delay="${COCALC_BAY_PGBACKREST_SETUP_LOCK_DELAY_S:-15}"
     if [[ ! "$attempts" =~ ^[1-9][0-9]*$ || ! "$delay" =~ ^[0-9]+$ ]]; then
       bay_log "invalid setup lock retry settings: attempts=${attempts} delay=${delay}"

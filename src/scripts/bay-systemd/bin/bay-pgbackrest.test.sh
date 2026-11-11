@@ -108,7 +108,7 @@ run_setup() {
   : > "$COCALC_TEST_SETUP_CALLS"
   local rc=0
   COCALC_BAY_PGBACKREST_BIN="$setup_pgbackrest" COCALC_TEST_STANZA_CODES="$1" \
-    COCALC_BAY_PGBACKREST_SETUP_LOCK_ATTEMPTS="$2" COCALC_BAY_PGBACKREST_SETUP_LOCK_DELAY_S=0 \
+    COCALC_BAY_PGBACKREST_SETUP_LOCK_ATTEMPTS="$2" COCALC_BAY_PGBACKREST_SETUP_LOCK_DELAY_S="${3:-0}" \
     bash "${SCRIPT_DIR}/bay-pgbackrest-run" setup >/dev/null 2>&1 || rc=$?
   setup_calls="$(paste -sd, "$COCALC_TEST_SETUP_CALLS")"
   return "$rc"
@@ -121,6 +121,10 @@ rc=0; run_setup "50 50 50" 3 || rc=$?
 rc=0; run_setup "28" 20 || rc=$?
 [[ "$rc" == 28 && "$setup_calls" == "stanza-create" ]]
 rc=0; run_setup "0" 0 || rc=$?
+[[ "$rc" == 2 && "$setup_calls" == "" ]]
+rc=0; run_setup "0" abc || rc=$?
+[[ "$rc" == 2 && "$setup_calls" == "" ]]
+rc=0; run_setup "0" 20 x || rc=$?
 [[ "$rc" == 2 && "$setup_calls" == "" ]]
 
 echo "bay pgBackRest configuration tests passed"
