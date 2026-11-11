@@ -22,6 +22,10 @@ bulk throughput.
 
 import { spawn } from "node:child_process";
 import getLogger from "@cocalc/backend/logger";
+import {
+  safeSshDestination,
+  sshDestinationArgs,
+} from "@cocalc/backend/ssh-destination";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
@@ -234,7 +238,11 @@ export async function resolveProjectBackupR2BenchmarkBackend({
 }
 
 function sshTarget({ user, host }: { user: string; host: string }): string {
-  return `${user}@${host}`;
+  const target = safeSshDestination(user, host);
+  if (target == null) {
+    throw new Error("benchmark ssh user or host is not allowed");
+  }
+  return target;
 }
 
 function remotePythonProgram(opts: RemoteOptions): string {
@@ -735,6 +743,35 @@ if __name__ == "__main__":
 `;
 }
 
+export function remotePythonSshArgs({
+  host,
+  user,
+  sudo_user,
+  port,
+  identity,
+}: {
+  host: string;
+  user: string;
+  sudo_user?: string;
+  port: number;
+  identity?: string;
+}): string[] {
+  const args = ["-o", "BatchMode=yes"];
+  if (identity) {
+    args.push("-i", identity);
+  }
+  if (port !== 22) {
+    args.push("-p", `${port}`);
+  }
+  args.push(
+    ...sshDestinationArgs(
+      sshTarget({ user, host }),
+      sudo_user ? ["sudo", "-u", sudo_user, "python3", "-"] : ["python3", "-"],
+    ),
+  );
+  return args;
+}
+
 async function runRemotePython({
   host,
   user,
@@ -752,19 +789,7 @@ async function runRemotePython({
   script: string;
   onStderrLine?: (line: string) => void;
 }): Promise<string> {
-  const args = ["-o", "BatchMode=yes"];
-  if (identity) {
-    args.push("-i", identity);
-  }
-  if (port !== 22) {
-    args.push("-p", `${port}`);
-  }
-  args.push(sshTarget({ user, host }));
-  if (sudo_user) {
-    args.push("sudo", "-u", sudo_user, "python3", "-");
-  } else {
-    args.push("python3", "-");
-  }
+  const args = remotePythonSshArgs({ host, user, sudo_user, port, identity });
   const child = spawn("ssh", args, {
     stdio: ["pipe", "pipe", "pipe"],
   });

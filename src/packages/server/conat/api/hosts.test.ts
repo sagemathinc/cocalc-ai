@@ -1959,6 +1959,98 @@ describe("hosts.createHost", () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
+  it("rejects local host creation for non-admins (057)", async () => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { createHost } = await import("./hosts");
+
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        name: "local",
+        region: "pending",
+        size: "custom",
+        machine: { cloud: "local", metadata: {} },
+      }),
+    ).rejects.toThrow("local hosts are limited to admins");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects machine ssh fields that are not allowed, for every cloud (057)", async () => {
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { createHost } = await import("./hosts");
+    const cases: [string, any, string][] = [
+      ["gcp", { ssh_user: "-oProxyCommand=touch /tmp/x" }, "ssh_user"],
+      ["gcp", { ssh_user: "Ubuntu" }, "ssh_user"],
+      ["local", { ssh_user: "x;id" }, "ssh_user"],
+      ["gcp", { public_ip: "169.254.169.254" }, "public_ip"],
+      ["local", { public_ip: "-oProxyCommand=id" }, "public_ip"],
+      ["lambda", { public_ip: "host.example.com" }, "public_ip"],
+      [
+        "self-host",
+        { self_host_ssh_target: "-oProxyCommand=id" },
+        "self_host_ssh_target",
+      ],
+      [
+        "self-host",
+        { self_host_ssh_target: "u@-oProxyCommand=id" },
+        "self_host_ssh_target",
+      ],
+    ];
+    for (const [cloud, metadata, field] of cases) {
+      await expect(
+        createHost({
+          account_id: ACCOUNT_ID,
+          name: "h",
+          region: "pending",
+          size: "custom",
+          machine: { cloud, metadata },
+        }),
+      ).rejects.toThrow(field);
+    }
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to start a local host for non-admins (057)", async () => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "local",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "local",
+                  metadata: { ssh_user: "local", public_ip: "10.0.0.5" },
+                },
+              },
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { startHost, startHostInternal } = await import("./hosts");
+    await expect(
+      startHost({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ).rejects.toThrow("local hosts are limited to admins");
+    expect(createLroMock).not.toHaveBeenCalled();
+    // the start worker checks again, for a start queued some other way
+    await expect(
+      startHostInternal({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ).rejects.toThrow("local hosts are limited to admins");
+  });
+
   it("rejects self-hosted host creation when disabled in site settings", async () => {
     getServerSettingsMock = jest.fn(async () => ({
       project_hosts_self_host_alpha_enabled: false,
@@ -2245,6 +2337,102 @@ describe("hosts browser fresh auth gating", () => {
         disk_gb: 100,
       }),
     ).rejects.toThrow("self-hosted hosts are limited to admins");
+  });
+
+  it("rejects local host machine updates for non-admins (057)", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "local", metadata: {} },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({ account_id: ACCOUNT_ID, id: HOST_ID, disk_gb: 100 }),
+    ).rejects.toThrow("local hosts are limited to admins");
+  });
+
+  it("rejects switching a host to local for non-admins (057)", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-west1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "gcp", metadata: {} },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        cloud: "local",
+      }),
+    ).rejects.toThrow("local hosts are limited to admins");
+  });
+
+  it("rejects a self-host ssh target that is not allowed (057)", async () => {
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "self-host", metadata: {} },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { updateHostMachine } = await import("./hosts");
+    for (const target of [
+      "-oProxyCommand=touch /tmp/x",
+      "user@-oProxyCommand=id",
+      "User@host",
+      "user@host:0",
+      "user@169.254.169.254",
+    ]) {
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          self_host_ssh_target: target,
+        }),
+      ).rejects.toThrow("self_host_ssh_target");
+    }
   });
 
   it("rejects converting a host to self-hosted when disabled", async () => {

@@ -45,35 +45,68 @@ function isRefusedIpv4(address: string): boolean {
   );
 }
 
-function isRefusedIpv6(address: string): boolean {
-  if (isIP(address) !== 6) return false;
-  const a = address.toLowerCase();
-  if (a === "::" || a === "::1") return true;
-  // fe80::/10 is link-local
-  if (/^fe[89ab][0-9a-f]:/.test(a)) return true;
-  // IPv4-mapped and IPv4-compatible forms of a refused IPv4 address
-  const mapped = a.match(/^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped && isRefusedIpv4(mapped[1])) return true;
-  const hexMapped = a.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (hexMapped) {
-    const hi = parseInt(hexMapped[1], 16);
-    const lo = parseInt(hexMapped[2], 16);
-    const v4 = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
-    if (isRefusedIpv4(v4)) return true;
+// The eight 16-bit groups of an IPv6 address (any spelling: "::", an embedded
+// dotted quad, a zone id), or undefined if it is not one.
+function ipv6Groups(address: string): number[] | undefined {
+  let a = address.toLowerCase();
+  const zone = a.indexOf("%");
+  if (zone >= 0) a = a.slice(0, zone);
+  if (isIP(a) !== 6) return undefined;
+  const dotted = a.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const o = ipv4Octets(dotted[2]);
+    if (!o) return undefined;
+    a = `${dotted[1]}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
   }
-  return false;
+  const [head, tail] = a.includes("::") ? a.split("::") : [a, undefined];
+  const parse = (s: string) =>
+    s ? s.split(":").map((x) => parseInt(x, 16)) : [];
+  const h = parse(head);
+  if (tail === undefined) return h.length === 8 ? h : undefined;
+  const t = parse(tail);
+  const fill = 8 - h.length - t.length;
+  if (fill < 1) return undefined;
+  return [...h, ...new Array(fill).fill(0), ...t];
 }
 
+function embeddedIpv4(g: number[]): string {
+  return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
+}
+
+// The IPv4 address an IPv6 address stands for: IPv4-mapped ::ffff:0:0/96,
+// IPv4-translated ::ffff:0:0:0/96, IPv4-compatible ::/96 and the NAT64
+// well-known prefix 64:ff9b::/96. Undefined for any other IPv6 address.
+function ipv4InIpv6(g: number[]): string | undefined {
+  const zero = (from: number, to: number) =>
+    g.slice(from, to).every((x) => x === 0);
+  if (zero(0, 5) && g[5] === 0xffff) return embeddedIpv4(g);
+  if (zero(0, 4) && g[4] === 0xffff && g[5] === 0) return embeddedIpv4(g);
+  if (zero(0, 6)) return embeddedIpv4(g);
+  if (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 6)) return embeddedIpv4(g);
+  return undefined;
+}
+
+function isRefusedIpv6(address: string): boolean {
+  const g = ipv6Groups(address);
+  if (!g) return false;
+  // ::1 and :: are covered below as ::0.0.0.1 and ::0.0.0.0 (0.0.0.0/8).
+  // fe80::/10 is link-local
+  if ((g[0] & 0xffc0) === 0xfe80) return true;
+  const v4 = ipv4InIpv6(g);
+  return v4 != null && isRefusedIpv4(v4);
+}
+
+// Loopback only in the forms a bay uses for itself: 127.0.0.0/8, ::1, the
+// IPv4-mapped ::ffff:127.0.0.0/104, and the localhost names.
 function isLoopbackHostname(h: string): boolean {
   if (h === "localhost" || h.endsWith(".localhost")) return true;
   const o = ipv4Octets(h);
   if (o) return o[0] === 127;
-  if (isIP(h) === 6) {
-    if (h === "::1") return true;
-    const mapped = h.match(/^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
-    return !!mapped && ipv4Octets(mapped[1])?.[0] === 127;
-  }
-  return false;
+  const g = ipv6Groups(h);
+  if (!g) return false;
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true;
+  const mapped = g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff;
+  return mapped && g[6] >> 8 === 127;
 }
 
 /** Single-machine development runs hub and project host on one machine, with

@@ -26,6 +26,10 @@ contains the cloud bootstrap reconcile mechanics.
 import { spawn } from "node:child_process";
 import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
+import {
+  safeSshDestination,
+  sshDestinationArgs,
+} from "@cocalc/backend/ssh-destination";
 import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { createProjectHostBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
@@ -76,9 +80,8 @@ async function runSshScript({
     "ConnectTimeout=10",
     "-i",
     identityFile,
-    target,
-    "bash",
-    "-se",
+    // "--" ends the options: the destination can never be read as one.
+    ...sshDestinationArgs(target, ["bash", "-se"]),
   ];
   return await new Promise((resolve, reject) => {
     const child = spawn("ssh", args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -398,7 +401,12 @@ async function waitForHostBootstrapReconcile({
   throw new Error("timeout waiting for host bootstrap reconcile");
 }
 
+// The ssh destination for a cloud host, from its stored metadata. Those values
+// could be written by host reports and by host creation, so the user must be a
+// plain login name and the address a plain IP outside the refused classes;
+// otherwise there is no target (logged without the values).
 function cloudHostSshTarget(row: {
+  id?: string;
   metadata?: Record<string, any>;
 }): string | undefined {
   const runtime = row.metadata?.runtime ?? {};
@@ -409,7 +417,19 @@ function cloudHostSshTarget(row: {
   const sshUser =
     `${runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu"}`.trim();
   if (!sshUser) return undefined;
-  return `${sshUser}@${publicIp}`;
+  const target = safeSshDestination(sshUser, publicIp, {
+    requireIp: true,
+    allowLoopback: false,
+  });
+  if (target == null) {
+    logger.warn(
+      "refusing host ssh target: stored user or address not allowed",
+      {
+        host_id: row.id,
+      },
+    );
+  }
+  return target;
 }
 
 async function trustHostOwnerBaySshKeyViaHostControl({
@@ -649,3 +669,5 @@ export async function reconcileCloudHostBootstrapOverSsh(opts: {
     baseline,
   });
 }
+
+export const _test = { runSshScript, cloudHostSshTarget };

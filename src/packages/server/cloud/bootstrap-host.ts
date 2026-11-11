@@ -41,6 +41,7 @@
  * - cloudflared runs under systemd and restarts on reboot.
  */
 
+import { hostSshUser } from "./host-ssh-metadata";
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
@@ -1060,7 +1061,7 @@ export async function buildBootstrapScripts(
   const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
   const bootstrapUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
-    : (runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu");
+    : hostSshUser(runtime?.ssh_user ?? machine.metadata?.ssh_user);
   const runtimeUser = projectHostRuntimeUser();
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
@@ -2376,8 +2377,10 @@ export async function buildCloudInitStartupScript(
   let bootstrapBase = baseUrl;
   let tunnelScript = "";
   const machine: HostMachine = row.metadata?.machine ?? {};
-  const sshUser =
-    row.metadata?.runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+  // Interpolated into the bootstrap script, so only a plain login name.
+  const sshUser = hostSshUser(
+    row.metadata?.runtime?.ssh_user ?? machine.metadata?.ssh_user,
+  );
   const selfHostMode = machine?.metadata?.self_host_mode;
   const isSelfHostLocal =
     machine?.cloud === "self-host" &&

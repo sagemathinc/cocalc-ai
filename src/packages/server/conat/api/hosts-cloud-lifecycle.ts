@@ -572,6 +572,11 @@ export async function startHostInternalHelper({
   const owner = metadata.owner ?? account_id;
   const machine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  // Starting a local host provisions a runtime from its stored request values
+  // (cloud/local.ts), so only an admin may start one.
+  if (machineCloud === "local" && !(await isAdmin(account_id))) {
+    throw new Error("local hosts are limited to admins");
+  }
   const effectivePricingModel =
     row.metadata?.effective_pricing_model ??
     row.metadata?.desired_pricing_model ??
