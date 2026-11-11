@@ -99,6 +99,7 @@ import {
 } from "@cocalc/server/purchases/billing-authority/client";
 import { registerBillingAuthorityHubApiExecutor } from "@cocalc/server/purchases/billing-authority/dispatch";
 import { executeHubApiCall, registerHubApiLocalExecutor } from "./edge-routing";
+import { assertHostSoftwareAdminBeforeRouting } from "./host-software-admin";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -507,6 +508,8 @@ async function getResponse({
   if (isBillingAuthorityHubApiCall(name)) {
     return await executeBillingHubApiCall(call);
   }
+  // Before routing, which looks up (and may forward to) the host's bay.
+  await assertHostSoftwareAdminBeforeRouting({ name, args, account_id });
   // Runs here, or on the bay that owns the call's data (see edge-routing).
   return await executeHubApiCall(call);
 }

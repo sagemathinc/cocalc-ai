@@ -26,6 +26,13 @@ jest.mock("@cocalc/database/postgres/project-host-runtime-deployments", () => ({
   __esModule: true,
   loadEffectiveProjectHostRuntimeDeployments: (...args: any[]) =>
     loadEffectiveProjectHostRuntimeDeploymentsMock(...args),
+  listProjectHostRuntimeDeployments: jest.fn(async () => []),
+}));
+
+// Host-scoped runtime deployments count only when an admin set them.
+jest.mock("@cocalc/server/accounts/is-admin", () => ({
+  __esModule: true,
+  default: async (account_id: string) => account_id === "admin-account",
 }));
 
 jest.mock("./host-util", () => ({
@@ -624,6 +631,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
     loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
       {
         scope_type: "host",
+        requested_by: "admin-account",
         scope_id: "host-123",
         target_type: "artifact",
         target: "project-host",
@@ -679,6 +687,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
     loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
       {
         scope_type: "host",
+        requested_by: "admin-account",
         scope_id: "host-123",
         target_type: "artifact",
         target: "project-host",

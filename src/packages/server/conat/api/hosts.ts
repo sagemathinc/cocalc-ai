@@ -145,6 +145,13 @@ import {
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import {
+  assertSafeHostSoftwareSelection,
+  HOST_SOFTWARE_ADMIN_ONLY,
+  loadTrustedEffectiveRuntimeDeployments,
+  UNSAFE_HOST_SOFTWARE_SELECTION,
+  unsafeHostSoftwareSelection,
+} from "./host-software-admin";
 import { isIP } from "node:net";
 import {
   gcpSafeName,
@@ -217,7 +224,6 @@ import {
   clearProjectHostRuntimeDeployments,
   ensureProjectHostRuntimeDeploymentsSchema,
   listProjectHostRuntimeDeployments,
-  loadEffectiveProjectHostRuntimeDeployments,
   setProjectHostRuntimeDeployments,
 } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import {
@@ -1059,8 +1065,7 @@ async function loadHostForRootfsManagement(
   return row;
 }
 
-export const HOST_SOFTWARE_ADMIN_ONLY =
-  "host software maintenance is limited to site admins";
+export { HOST_SOFTWARE_ADMIN_ONLY };
 
 // Checked first, before any host lookup, so that a non-admin learns nothing
 // about the host either.
@@ -1105,6 +1110,14 @@ export async function hostSoftwareLifecycleOpRefusal({
   input?: any;
 }): Promise<string | undefined> {
   if (!HOST_SOFTWARE_LIFECYCLE_OP_KINDS.has(kind)) return undefined;
+  if (unsafeHostSoftwareSelection(input)) {
+    logger.warn("host software operation with an unsafe version refused", {
+      kind,
+      account_id,
+      host_id: input?.id,
+    });
+    return UNSAFE_HOST_SOFTWARE_SELECTION;
+  }
   if (input?.automatic === true && input?.base_url == null) return undefined;
   if (account_id && (await isAdmin(account_id))) return undefined;
   logger.warn("host software operation refused", {
@@ -9078,6 +9091,7 @@ export async function rolloutHostRuntimeFleet({
   account_id?: string;
 }): Promise<HostRuntimeFleetRolloutResponse> {
   const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
+  assertSafeHostSoftwareSelection({ version });
   logAdminSoftwareBaseUrl({
     account_id: requested_by,
     base_url: `${base_url ?? ""}`.trim() || undefined,
@@ -9298,6 +9312,7 @@ export async function upgradeHostSoftware({
   record_runtime_deployments?: boolean;
 }): Promise<HostLroResponse> {
   await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ targets });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
   const row = await loadHostForSoftwareLifecycle(id, account_id);
@@ -9754,6 +9769,7 @@ export async function setHostRuntimeDeployments({
   align_runtime_stack?: boolean;
 }): Promise<HostRuntimeDeploymentRecord[]> {
   await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ deployments });
   const expandedDeployments = (deployments ?? []).flatMap((deployment) => {
     if (
       align_runtime_stack &&
@@ -10055,6 +10071,7 @@ export async function rollbackHostRuntimeDeployments({
   reason?: string;
 }): Promise<HostLroResponse> {
   await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ version });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
   const row = await loadHostForSoftwareLifecycle(id, account_id);
@@ -10127,6 +10144,7 @@ export async function rolloutHostManagedComponents({
   reason?: string;
 }): Promise<HostLroResponse> {
   await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ desired_version });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
   const row = await loadHostForSoftwareLifecycle(id, account_id);
@@ -10171,6 +10189,7 @@ export async function upgradeHostConnector({
   version?: string;
 }): Promise<void> {
   await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ version });
   await upgradeHostConnectorInternalHelper({
     account_id,
     id,
@@ -10222,7 +10241,7 @@ export async function reconcileHostSoftwareInternal({
 
   if (availability.online) {
     try {
-      const effective = await loadEffectiveProjectHostRuntimeDeployments({
+      const effective = await loadTrustedEffectiveRuntimeDeployments({
         host_id: row.id,
       });
       const desiredArtifacts: HostRuntimeDesiredArtifactsSummary = {};
@@ -10774,7 +10793,7 @@ export async function rolloutHostManagedComponentsInternal({
     runtimeDeploymentsForComponentRollout,
     requestedByForRuntimeDeployments,
     setProjectHostRuntimeDeployments,
-    loadEffectiveRuntimeDeployments: loadEffectiveProjectHostRuntimeDeployments,
+    loadEffectiveRuntimeDeployments: loadTrustedEffectiveRuntimeDeployments,
     base_url,
     onProgress,
   });

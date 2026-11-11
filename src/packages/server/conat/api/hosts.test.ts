@@ -6567,6 +6567,118 @@ describe("hosts.upgradeHostSoftware", () => {
   });
 });
 
+describe("hosts software versions and channels at the entry points", () => {
+  const UNSAFE = "invalid host software version or channel";
+  beforeEach(() => {
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async () => {
+      throw new Error("no host lookup expected");
+    });
+  });
+
+  it.each([
+    [
+      "upgradeHostSoftware with an unsafe version",
+      (h: any) =>
+        h.upgradeHostSoftware({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          targets: [{ artifact: "project-host", version: "../x" }],
+        }),
+    ],
+    [
+      "upgradeHostSoftware with an unknown channel",
+      (h: any) =>
+        h.upgradeHostSoftware({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          targets: [{ artifact: "project-host", channel: "x?y" }],
+        }),
+    ],
+    [
+      "setHostRuntimeDeployments",
+      (h: any) =>
+        h.setHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          scope_type: "host",
+          id: HOST_ID,
+          deployments: [
+            {
+              target_type: "artifact",
+              target: "project-host",
+              desired_version: "a/b",
+            },
+          ],
+        }),
+    ],
+    [
+      "rolloutHostManagedComponents",
+      (h: any) =>
+        h.rolloutHostManagedComponents({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          components: ["project-host"],
+          desired_version: "current",
+        }),
+    ],
+    [
+      "rollbackHostRuntimeDeployments",
+      (h: any) =>
+        h.rollbackHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          target_type: "artifact",
+          target: "project-host",
+          version: "a#b",
+        }),
+    ],
+    [
+      "upgradeHostConnector",
+      (h: any) =>
+        h.upgradeHostConnector({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          version: "a:b",
+        }),
+    ],
+    [
+      "rolloutHostRuntimeFleet",
+      (h: any) =>
+        h.rolloutHostRuntimeFleet({
+          account_id: ACCOUNT_ID,
+          host_ids: [HOST_ID],
+          artifact: "project-host",
+          version: "%2e%2e",
+        }),
+    ],
+  ])("refuses %s, even for an admin", async (_label, call) => {
+    const hosts = await import("./hosts");
+    await expect(call(hosts)).rejects.toThrow(UNSAFE);
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an upgrade target version", { targets: [{ version: "../x" }] }],
+    ["an upgrade target channel", { targets: [{ channel: "x/y" }] }],
+    ["a desired version", { desired_version: "a b" }],
+    ["a rollback version", { version: ".hidden" }],
+  ])(
+    "refuses a queued automatic operation that names %s",
+    async (_label, extra) => {
+      isAdminMock = jest.fn(async () => true);
+      const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+      await expect(
+        hostSoftwareLifecycleOpRefusal({
+          kind: "host-upgrade-software",
+          account_id: ACCOUNT_ID,
+          input: { id: HOST_ID, automatic: true, ...extra },
+        }),
+      ).resolves.toBe(UNSAFE);
+    },
+  );
+});
+
 describe("hosts.hostSoftwareLifecycleOpRefusal", () => {
   const LIFECYCLE_KINDS = [
     "host-upgrade-software",
