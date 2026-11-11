@@ -490,7 +490,9 @@ function normalizeScratchpadTitle(value: unknown): string {
 }
 
 function publicHostname(host: ExamHostRow): string {
-  const raw = `${host.public_url ?? host.metadata?.public_url ?? ""}`.trim();
+  // Only the column the bay validates; metadata.public_url is never read
+  // (host reports could write it).
+  const raw = `${host.public_url ?? ""}`.trim();
   if (!raw) {
     throw new Error("host must have a public URL before exam mode is enabled");
   }

@@ -56,6 +56,7 @@ import {
   type PlannedProjectHostRuntimeTransition,
 } from "@cocalc/server/hosts/runtime-transition";
 import { recoverHostToRunning } from "@cocalc/server/hosts/desired-state";
+import { safeProjectHostUrl } from "@cocalc/backend/project-host-target";
 
 // A GCP Spot VM gets a new ephemeral public IP on every start, and a host
 // stack started at boot reports the previous boot's address until it is
@@ -71,8 +72,119 @@ export function authoritativeSshServer(
   return publicIp ? `${publicIp}:2222` : reported;
 }
 
+// Top-level metadata keys a host report may never set. self_host holds the
+// reverse-tunnel ports the bay proxies to on its own machine; local, provider,
+// cloud_provider and machine switch a host onto that local-proxy route. The
+// rest are the bay's own record of where the host is and what it owns at the
+// edge: runtime (the provider's view, incl. the IP and user the bay SSHes to),
+// dns, cloudflare_tunnel, public_route and content_dns (DNS records and
+// tunnels the bay creates and deletes), and public_url, public_ip and
+// ip_address (read as addresses). Bay code writes them (host create, provider
+// reconcile, tunnel registration, DNS work, the Star seed, which calls
+// upsertProjectHost directly); a host report drops them. Hosts never send them
+// (project-host/master.ts buildPayload).
+export const HOST_REPORT_DENIED_METADATA_KEYS = [
+  "self_host",
+  "local",
+  "provider",
+  "cloud_provider",
+  "machine",
+  "runtime",
+  "dns",
+  "cloudflare_tunnel",
+  "public_route",
+  "content_dns",
+  "public_url",
+  "public_ip",
+  "ip_address",
+] as const;
+
+export function stripHostReportedMetadata(metadata: unknown): unknown {
+  if (
+    metadata == null ||
+    typeof metadata !== "object" ||
+    Array.isArray(metadata)
+  ) {
+    return metadata;
+  }
+  const stripped = { ...(metadata as Record<string, unknown>) };
+  for (const key of HOST_REPORT_DENIED_METADATA_KEYS) {
+    delete stripped[key];
+  }
+  return stripped;
+}
+
+const HOST_REPORT_URL_FIELDS = ["public_url", "internal_url"] as const;
+type HostReportUrlField = (typeof HOST_REPORT_URL_FIELDS)[number];
+
+// The one place a register or heartbeat report is cleaned before any use: the
+// denied metadata keys are dropped, a local self-host reports no URLs, and a
+// URL naming a loopback, link-local or metadata address is refused (the caller
+// keeps the stored value for a refused field). Values are never logged.
+export function sanitizeHostReport<
+  T extends { metadata?: any; public_url?: string; internal_url?: string },
+>(
+  info: T,
+  { isLocalSelfHost }: { isLocalSelfHost: boolean },
+): { report: T; refusedUrlFields: HostReportUrlField[] } {
+  const report: T = {
+    ...info,
+    metadata: stripHostReportedMetadata(info.metadata),
+  };
+  if (isLocalSelfHost) {
+    report.public_url = undefined;
+    report.internal_url = undefined;
+    return { report, refusedUrlFields: [] };
+  }
+  const refusedUrlFields: HostReportUrlField[] = [];
+  for (const field of HOST_REPORT_URL_FIELDS) {
+    const value = report[field];
+    if (value == null || `${value}`.trim() === "") continue;
+    if (!safeProjectHostUrl(value)) {
+      refusedUrlFields.push(field);
+      report[field] = undefined;
+    }
+  }
+  return { report, refusedUrlFields };
+}
+
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
+
+async function keepStoredUrlsForRefusedFields<
+  T extends { public_url?: string; internal_url?: string },
+>(
+  host_id: string,
+  report: T,
+  refusedUrlFields: HostReportUrlField[],
+): Promise<T> {
+  if (!refusedUrlFields.length) return report;
+  const { rows } = await pool().query<{
+    public_url?: string | null;
+    internal_url?: string | null;
+  }>(
+    "SELECT public_url, internal_url FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    [host_id],
+  );
+  const next = { ...report };
+  for (const field of refusedUrlFields) {
+    next[field] = rows[0]?.[field] ?? undefined;
+  }
+  return next;
+}
+
+function warnRefusedHostReportUrls(
+  host_id: string,
+  source: "register" | "heartbeat",
+  refusedUrlFields: HostReportUrlField[],
+): void {
+  if (!refusedUrlFields.length) return;
+  logger.warn("host report url refused; keeping the stored value", {
+    host_id,
+    source,
+    fields: refusedUrlFields,
+  });
+}
 const STOP_POLICY_PRIORITY_CACHE_TTL_MS = 5 * 60_000;
 const HOST_RESTART_RECOVERY_SCHEDULE_DELAY_MS = 1_000;
 const HOST_RESTART_RECOVERY_DEFAULT_PARALLEL_STARTS = 4;
@@ -1419,7 +1531,6 @@ export async function initHostRegistryService() {
         logger.debug("register", {
           id: info.id,
           region: info.region,
-          url: info.public_url,
         });
         const currentStatus = await loadCurrentStatus(info.id);
         if (
@@ -1435,15 +1546,21 @@ export async function initHostRegistryService() {
           });
           return;
         }
-        const isLocalSelfHost = await resolveLocalSelfHost(info);
-        const sanitized = isLocalSelfHost
-          ? { ...info, public_url: undefined, internal_url: undefined }
-          : info;
+        // Decided from the bay's row: a report's own machine is stripped first.
+        const isLocalSelfHost = await resolveLocalSelfHost({
+          ...info,
+          metadata: stripHostReportedMetadata(info.metadata),
+        } as HostRegistration);
+        const { report: cleaned, refusedUrlFields } = sanitizeHostReport(info, {
+          isLocalSelfHost,
+        });
+        warnRefusedHostReportUrls(info.id, "register", refusedUrlFields);
+        // Never the URL text: a host chooses it (presence only).
         logger.debug("register host urls", {
           id: info.id,
           isLocalSelfHost,
-          public_url: sanitized.public_url,
-          internal_url: sanitized.internal_url,
+          has_public_url: !!cleaned.public_url,
+          has_internal_url: !!cleaned.internal_url,
         });
         const { rows: previousRows } = await pool().query<{
           metadata: any;
@@ -1451,6 +1568,11 @@ export async function initHostRegistryService() {
         }>(
           "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
           [info.id],
+        );
+        const sanitized = await keepStoredUrlsForRefusedFields(
+          info.id,
+          cleaned,
+          refusedUrlFields,
         );
         const registryBayId = registryBayIdForHeartbeat(
           previousRows[0]?.bay_id,
@@ -1545,16 +1667,26 @@ export async function initHostRegistryService() {
           });
           return;
         }
-        const isLocalSelfHost = await resolveLocalSelfHost(info);
-        const sanitized = isLocalSelfHost
-          ? { ...info, public_url: undefined, internal_url: undefined }
-          : info;
+        // Decided from the bay's row: a report's own machine is stripped first.
+        const isLocalSelfHost = await resolveLocalSelfHost({
+          ...info,
+          metadata: stripHostReportedMetadata(info.metadata),
+        } as HostRegistration);
+        const { report: cleaned, refusedUrlFields } = sanitizeHostReport(info, {
+          isLocalSelfHost,
+        });
+        warnRefusedHostReportUrls(info.id, "heartbeat", refusedUrlFields);
         const { rows: previousRows } = await pool().query<{
           metadata: any;
           bay_id?: string | null;
         }>(
           "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
           [info.id],
+        );
+        const sanitized = await keepStoredUrlsForRefusedFields(
+          info.id,
+          cleaned,
+          refusedUrlFields,
         );
         const registryBayId = registryBayIdForHeartbeat(
           previousRows[0]?.bay_id,

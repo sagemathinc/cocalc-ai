@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  assertHostSshMetadataAllowed,
+  canonicalSelfHostSshTarget,
+  withCanonicalSshTarget,
+} from "@cocalc/server/cloud/host-ssh-metadata";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import { delay } from "awaiting";
 import type {
@@ -6697,6 +6702,10 @@ export async function createHost({
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
+  // The bay later runs ssh with machine metadata values: refuse bad ones
+  // first, and store a self-host target in its canonical form.
+  assertHostSshMetadataAllowed(machine?.metadata);
+  machine = withCanonicalSshTarget(machine);
   const title = normalizeProjectHostTitle(name);
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
   await assertUserHostCreateAllowed({ account_id: owner });
@@ -6704,6 +6713,13 @@ export async function createHost({
     cloud: machine?.cloud,
     disk_type: machine?.disk_type,
   });
+  if (normalizeProviderId(machine?.cloud) === "local") {
+    // A development/test provider with no VM; its runtime comes from the
+    // request, so it is never offered to non-admins.
+    if (!(await isAdmin(owner))) {
+      throw new Error("local hosts are limited to admins");
+    }
+  }
   if (normalizeProviderId(machine?.cloud) === "self-host") {
     if (!(await isAdmin(owner))) {
       throw new Error("self-hosted hosts are limited to admins");
@@ -7022,6 +7038,14 @@ export async function startHost({
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, actor);
+  // A local host's runtime comes from its stored request values; only an
+  // admin may start one (the start worker checks this again).
+  if (
+    normalizeProviderId(row.metadata?.machine?.cloud) === "local" &&
+    !(await isAdmin(actor))
+  ) {
+    throw new Error("local hosts are limited to admins");
+  }
   assertHostNotUnderMaintenance(row);
   assertNoUnfinishedMachineChange(row);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
@@ -7811,6 +7835,18 @@ async function updateHostMachineLocked({
   ) {
     throw new Error("self-hosted hosts are limited to admins");
   }
+  if (
+    (requestedCloud === "local" || machineCloud === "local") &&
+    !(await isAdmin(actor))
+  ) {
+    throw new Error("local hosts are limited to admins");
+  }
+  // The bay later runs ssh with this target: refuse one that is not allowed,
+  // and store it in its canonical form.
+  const canonicalTarget =
+    typeof self_host_ssh_target === "string" && self_host_ssh_target.trim()
+      ? canonicalSelfHostSshTarget(self_host_ssh_target)
+      : "";
   if (requestedCloud === "self-host" && machineCloud !== "self-host") {
     const settings = await getServerSettings();
     if (settings.project_hosts_self_host_alpha_enabled !== true) {
@@ -8029,7 +8065,7 @@ async function updateHostMachineLocked({
     nonDiskChange = true;
   }
   if (isSelfHost && typeof self_host_ssh_target === "string") {
-    const nextTarget = self_host_ssh_target.trim();
+    const nextTarget = canonicalTarget;
     const currentTarget = String(machine.metadata?.self_host_ssh_target ?? "");
     if (nextTarget !== currentTarget) {
       nextMachine.metadata = {
