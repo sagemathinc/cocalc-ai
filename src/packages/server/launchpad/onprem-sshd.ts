@@ -1,3 +1,4 @@
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
@@ -567,10 +568,10 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   for (const row of rows) {
     const entry: TunnelEntry = {
       host_id: row.host_id,
-      http_tunnel_port: row.http_tunnel_port
-        ? Number(row.http_tunnel_port)
-        : null,
-      ssh_tunnel_port: row.ssh_tunnel_port ? Number(row.ssh_tunnel_port) : null,
+      // Only integer ports reach a permitlisten option; a line with no valid
+      // port is not written (formatAuthorizedKey returns null).
+      http_tunnel_port: safeTunnelPort(row.http_tunnel_port) ?? null,
+      ssh_tunnel_port: safeTunnelPort(row.ssh_tunnel_port) ?? null,
       tunnel_public_key: row.tunnel_public_key,
     };
     const line = formatAuthorizedKey(entry);

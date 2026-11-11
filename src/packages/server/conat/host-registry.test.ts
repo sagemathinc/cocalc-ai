@@ -1492,6 +1492,215 @@ describe("host-registry automatic convergence retry", () => {
   });
 });
 
+describe("host report sanitizer (054 C containment)", () => {
+  const DENIED = ["self_host", "local", "provider", "cloud_provider", "machine"];
+  const STORED_URLS = {
+    public_url: "https://host-1.cocalc.example",
+    internal_url: "http://10.0.0.5:9002",
+  };
+  let currentMetadata: any;
+  let storedUrlQueries: number;
+
+  beforeEach(() => {
+    publishMock = jest.fn(async () => undefined);
+    connectMock = jest.fn(() => {
+      throw new Error("unexpected db connection");
+    });
+    appendProjectOutboxEventForProjectMock = jest.fn(async () => undefined);
+    publishProjectAccountFeedEventsBestEffortMock = jest.fn(
+      async () => undefined,
+    );
+    appendProjectLogRowBestEffortMock = jest.fn(async () => true);
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      effective_limits: { shared_compute_priority: 0 },
+    }));
+    startProjectOnHostMock = jest.fn(async () => undefined);
+    computeQuotaMock = jest.fn(async () => undefined);
+    loadProjectRuntimeSponsorMock = jest.fn(async () => undefined);
+    reserveProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    heartbeatProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    releaseProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    enqueueCloudVmWorkOnceMock = jest.fn(async () => undefined);
+    recordProviderSpotPreemptionMock = jest.fn(({ state }) => ({
+      state: state ?? { phase: "idle" },
+      recorded: true,
+      circuit_breaker_triggered: false,
+    }));
+    shouldAutoRestoreInterruptedSpotHostMock = jest.fn(() => false);
+    spotRecoveryPolicyMock = jest.fn(() => undefined);
+    ensureAutomaticHostRuntimeDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+    ensureAutomaticHostArtifactDeploymentsReconcileMock = jest.fn(
+      async () => ({
+        queued: false,
+        host_id: "host-1",
+        reason: "no_reconcile_needed",
+      }),
+    );
+    // The bay-seeded row: a cloud host whose self_host the bay wrote.
+    currentMetadata = {
+      host_session_id: "session-1",
+      host_boot_id: "boot-1",
+      machine: { cloud: "gcp" },
+      self_host: { http_tunnel_port: 41000, ssh_tunnel_port: 41001 },
+    };
+    storedUrlQueries = 0;
+    upsertProjectHostMock = jest.fn(async () => undefined);
+    queryMock = jest.fn(async (sql: string) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "running" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT public_url, internal_url FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        storedUrlQueries += 1;
+        return { rows: [STORED_URLS] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata, bay_id: "bay-0" }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+  });
+
+  it("strips each denied top-level key and keeps everything else", async () => {
+    const { stripHostReportedMetadata, HOST_REPORT_DENIED_METADATA_KEYS } =
+      await import("./host-registry");
+    expect([...HOST_REPORT_DENIED_METADATA_KEYS].sort()).toEqual(
+      [...DENIED].sort(),
+    );
+    for (const key of DENIED) {
+      const stripped: any = stripHostReportedMetadata({
+        [key]: { anything: 1 },
+        software: { project_host: "1.0.0" },
+        host_session_id: "s",
+      });
+      expect(stripped).not.toHaveProperty(key);
+      expect(stripped.software).toEqual({ project_host: "1.0.0" });
+      expect(stripped.host_session_id).toBe("s");
+    }
+    const original = { self_host: { http_tunnel_port: 1 }, metrics: {} };
+    stripHostReportedMetadata(original);
+    expect(original).toHaveProperty("self_host");
+    expect(stripHostReportedMetadata(undefined)).toBeUndefined();
+  });
+
+  it("refuses each bad URL class and keeps good URLs", async () => {
+    const { sanitizeHostReport } = await import("./host-registry");
+    for (const bad of [
+      "http://127.0.0.1:5432",
+      "http://localhost:9002",
+      "http://2130706433/",
+      "http://[::1]/",
+      "http://0.0.0.0:9002",
+      "http://169.254.169.254/",
+      "http://metadata.google.internal/",
+      "file:///etc/passwd",
+      "http://user:pw@host.example",
+      "not a url",
+    ]) {
+      const { report, refusedUrlFields } = sanitizeHostReport(
+        { public_url: bad, internal_url: bad } as any,
+        { isLocalSelfHost: false },
+      );
+      expect(refusedUrlFields.sort()).toEqual(["internal_url", "public_url"]);
+      expect(report.public_url).toBeUndefined();
+      expect(report.internal_url).toBeUndefined();
+    }
+    const good = sanitizeHostReport(
+      {
+        public_url: "https://host-1.cocalc.example",
+        internal_url: "http://10.206.0.38:9002",
+      } as any,
+      { isLocalSelfHost: false },
+    );
+    expect(good.refusedUrlFields).toEqual([]);
+    expect(good.report.public_url).toBe("https://host-1.cocalc.example");
+    expect(good.report.internal_url).toBe("http://10.206.0.38:9002");
+    const local = sanitizeHostReport(
+      {
+        public_url: "http://127.0.0.1:9002",
+        internal_url: "http://127.0.0.1:9002",
+        metadata: { local: true },
+      } as any,
+      { isLocalSelfHost: true },
+    );
+    expect(local.refusedUrlFields).toEqual([]);
+    expect(local.report.public_url).toBeUndefined();
+    expect(local.report.metadata).toEqual({});
+  });
+
+  for (const method of ["register", "heartbeat"] as const) {
+    it(`${method}: a host report can't set or replace denied keys or point the URLs at refused addresses`, async () => {
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      await service[method]({
+        id: "host-1",
+        public_url: "http://127.0.0.1:5432",
+        internal_url: "http://169.254.169.254/",
+        metadata: {
+          host_session_id: "session-1",
+          host_boot_id: "boot-1",
+          software: { project_host: "1.0.0" },
+          self_host: { http_tunnel_port: "127.0.0.1:22#" },
+          local: true,
+          provider: "star",
+          cloud_provider: "star",
+          machine: { cloud: "self-host", metadata: { self_host_mode: "local" } },
+        },
+      } as any);
+      expect(upsertProjectHostMock).toHaveBeenCalledTimes(1);
+      const written = upsertProjectHostMock.mock.calls[0][0];
+      for (const key of DENIED) {
+        expect(written.metadata).not.toHaveProperty(key);
+      }
+      expect(written.metadata.software).toEqual({ project_host: "1.0.0" });
+      // refused URLs keep the stored values, never the reported ones
+      expect(written.public_url).toBe(STORED_URLS.public_url);
+      expect(written.internal_url).toBe(STORED_URLS.internal_url);
+      expect(storedUrlQueries).toBe(1);
+    });
+
+    it(`${method}: a clean report is passed through unchanged`, async () => {
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      await service[method]({
+        id: "host-1",
+        public_url: "https://host-1.cocalc.example",
+        internal_url: "http://10.0.0.5:9002",
+        metadata: {
+          host_session_id: "session-1",
+          host_boot_id: "boot-1",
+          software: { project_host: "1.0.0" },
+        },
+      } as any);
+      const written = upsertProjectHostMock.mock.calls[0][0];
+      expect(written.public_url).toBe("https://host-1.cocalc.example");
+      expect(written.internal_url).toBe("http://10.0.0.5:9002");
+      expect(written.metadata.software).toEqual({ project_host: "1.0.0" });
+      expect(storedUrlQueries).toBe(0);
+    });
+  }
+});
+
 describe("host-registry runtime availability", () => {
   const readyMetadata = {
     runtime_health: {

@@ -1,3 +1,4 @@
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import getLogger from "@cocalc/backend/logger";
 import { computerAccessForHost } from "@cocalc/server/computers/computers";
 import { conat } from "@cocalc/backend/conat";
@@ -534,7 +535,8 @@ export async function initHostStatusService() {
         });
         const reversePort =
           sshTarget &&
-          Number(rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0);
+          (safeTunnelPort(rows[0]?.metadata?.self_host?.ssh_reverse_port) ??
+            0);
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??

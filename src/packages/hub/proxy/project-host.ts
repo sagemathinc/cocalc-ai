@@ -7,13 +7,17 @@ import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-h
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  safeProjectHostUrl,
+  safeTunnelPort,
+} from "@cocalc/backend/project-host-target";
 
 const logger = getLogger("proxy:project-host");
 const PROJECT_HOST_PROXY_ACCOUNT_ID_KEY = Symbol.for(
   "@cocalc/hub/proxy/project-host-account-id",
 );
 
-type HostRow = {
+export type HostRow = {
   host_id?: string;
   internal_url?: string;
   public_url?: string;
@@ -127,6 +131,36 @@ export async function getProjectHostRedirectUrl({
   return target.toString();
 }
 
+// The proxy target for a host row. Every value that picks it may have come
+// from a host report, so each is checked and the request FAILS CLOSED (an error,
+// no value logged) instead of going somewhere unexpected: a tunnel port must be
+// an integer port, and a stored host URL must not name a loopback, link-local
+// or metadata address. A local self-host's own internal_url fallback is on this
+// machine by design and is only used on the local-proxy route.
+export function proxyTargetForHost(host: HostRow, what: string): string {
+  const rawTunnelPort = host.metadata?.self_host?.http_tunnel_port;
+  if (rawTunnelPort) {
+    const port = safeTunnelPort(rawTunnelPort);
+    if (port == null) {
+      throw new Error(`invalid tunnel port for ${what}`);
+    }
+    return `http://127.0.0.1:${port}`;
+  }
+  if (isLocalProxyHost(host)) {
+    if (host.internal_url) return host.internal_url.replace(/\/+$/, "");
+    throw new Error(`local tunnel port missing for ${what}`);
+  }
+  const base = host.internal_url || host.public_url;
+  if (!base) {
+    throw Error(`no host recorded for ${what}`);
+  }
+  if (safeProjectHostUrl(base) == null) {
+    throw new Error(`host url for ${what} is not an allowed target`);
+  }
+  // Let http-proxy append the incoming path; only provide the base.
+  return base.replace(/\/+$/, "");
+}
+
 export async function createProjectHostProxyHandlers() {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -178,24 +212,7 @@ export async function createProjectHostProxyHandlers() {
     if (!host) {
       throw Error(`host ${host_id} not found`);
     }
-    const directTunnelPort = host.metadata?.self_host?.http_tunnel_port;
-    if (directTunnelPort) {
-      return `http://127.0.0.1:${directTunnelPort}`;
-    }
-    if (isLocalProxyHost(host)) {
-      const tunnelPort = host.metadata?.self_host?.http_tunnel_port;
-      if (!tunnelPort) {
-        if (host.internal_url) return host.internal_url.replace(/\/+$/, "");
-        throw new Error(`local tunnel port missing for host ${host_id}`);
-      }
-      return `http://127.0.0.1:${tunnelPort}`;
-    }
-    const base = host.internal_url || host.public_url;
-    if (!base) {
-      throw Error(`no host recorded for host ${host_id}`);
-    }
-    // Let http-proxy append the incoming path; only provide the base.
-    return base.replace(/\/+$/, "");
+    return proxyTargetForHost(host, `host ${host_id}`);
   }
 
   async function targetForProject(project_id: string): Promise<string> {
@@ -203,24 +220,7 @@ export async function createProjectHostProxyHandlers() {
     if (!host) {
       throw Error(`project ${project_id} not found`);
     }
-    const directTunnelPort = host.metadata?.self_host?.http_tunnel_port;
-    if (directTunnelPort) {
-      return `http://127.0.0.1:${directTunnelPort}`;
-    }
-    if (isLocalProxyHost(host)) {
-      const tunnelPort = host.metadata?.self_host?.http_tunnel_port;
-      if (!tunnelPort) {
-        if (host.internal_url) return host.internal_url.replace(/\/+$/, "");
-        throw new Error(`local tunnel port missing for project ${project_id}`);
-      }
-      return `http://127.0.0.1:${tunnelPort}`;
-    }
-    const base = host.internal_url || host.public_url;
-    if (!base) {
-      throw Error(`no host recorded for project ${project_id}`);
-    }
-    // Let http-proxy append the incoming path; only provide the base.
-    return base.replace(/\/+$/, "");
+    return proxyTargetForHost(host, `project ${project_id}`);
   }
 
   function setProjectHostAuthorizationHeader({

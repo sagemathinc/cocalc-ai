@@ -203,3 +203,77 @@ describe("hub project-host proxy auth injection", () => {
     });
   });
 });
+
+describe("proxyTargetForHost (054 C containment)", () => {
+  const saved = process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+  beforeEach(() => {
+    jest.resetModules();
+    delete process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+  });
+  afterAll(() => {
+    if (saved != null) process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = saved;
+  });
+
+  async function target(host: any): Promise<string> {
+    const { proxyTargetForHost } = await import("./project-host");
+    return proxyTargetForHost(host, "host x");
+  }
+
+  it("uses a valid tunnel port on this machine", async () => {
+    expect(
+      await target({ metadata: { self_host: { http_tunnel_port: 41000 } } }),
+    ).toBe("http://127.0.0.1:41000");
+    expect(
+      await target({ metadata: { self_host: { http_tunnel_port: "41000" } } }),
+    ).toBe("http://127.0.0.1:41000");
+  });
+
+  it("fails closed on a tunnel port that is not an integer port", async () => {
+    for (const bad of ["127.0.0.1:22#", "80@evil.example", 22, 70000, 9.5, {}]) {
+      await expect(
+        target({
+          internal_url: "http://10.0.0.5:9002",
+          metadata: { self_host: { http_tunnel_port: bad } },
+        }),
+      ).rejects.toThrow("invalid tunnel port for host x");
+    }
+  });
+
+  it("uses a stored host URL that names an ordinary address", async () => {
+    expect(await target({ internal_url: "http://10.0.0.5:9002/" })).toBe(
+      "http://10.0.0.5:9002",
+    );
+    expect(
+      await target({ internal_url: null, public_url: "https://h.example" }),
+    ).toBe("https://h.example");
+  });
+
+  it("fails closed on a stored host URL naming a refused address", async () => {
+    for (const bad of [
+      "http://127.0.0.1:5432",
+      "http://localhost:9002",
+      "http://169.254.169.254/",
+      "http://metadata.google.internal/",
+      "http://2130706433/",
+    ]) {
+      await expect(target({ internal_url: bad })).rejects.toThrow(
+        "not an allowed target",
+      );
+      await expect(target({ public_url: bad })).rejects.toThrow(
+        "not an allowed target",
+      );
+    }
+  });
+
+  it("keeps a local self-host's internal_url fallback on the local route", async () => {
+    expect(
+      await target({
+        internal_url: "http://127.0.0.1:9002",
+        metadata: { machine: { cloud: "self-host" } },
+      }),
+    ).toBe("http://127.0.0.1:9002");
+    await expect(
+      target({ metadata: { machine: { cloud: "self-host" } } }),
+    ).rejects.toThrow("local tunnel port missing for host x");
+  });
+});

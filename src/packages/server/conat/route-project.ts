@@ -10,6 +10,10 @@ import {
   resolveProjectBayAcrossCluster,
 } from "@cocalc/server/inter-bay/directory";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  safeProjectHostUrl,
+  safeTunnelPort,
+} from "@cocalc/backend/project-host-target";
 
 // Host statuses that projects are routed to. A draining host still holds its
 // projects until each move finishes (and the move code treats it as online),
@@ -57,8 +61,15 @@ let invalidationCursor = 0;
 let lastInvalidationPruneAt = 0;
 
 function onPremTunnelAddress(metadata: any): string | undefined {
-  const port = metadata?.self_host?.http_tunnel_port;
-  if (!port) return undefined;
+  const raw = metadata?.self_host?.http_tunnel_port;
+  if (!raw) return undefined;
+  // The port becomes a target on this machine: only an integer port is used,
+  // anything else routes nowhere (logged without the value).
+  const port = safeTunnelPort(raw);
+  if (port == null) {
+    log.warn("refusing self-host tunnel route: invalid tunnel port");
+    return undefined;
+  }
   return `http://127.0.0.1:${port}`;
 }
 
@@ -136,7 +147,7 @@ function cacheHostTarget(
   });
 }
 
-function selectHostAddress(
+export function selectHostAddress(
   row: {
     internal_url?: string | null;
     public_url?: string | null;
@@ -166,10 +177,17 @@ function selectHostAddress(
     };
   }
   const usePublicRoute = resolveProjectHostRouteMode(routeMode) === "public";
+  const reported = usePublicRoute
+    ? (row?.public_url ?? row?.internal_url ?? undefined)
+    : (row?.internal_url ?? row?.public_url ?? undefined);
+  // A stored host URL naming a loopback, link-local or metadata address is
+  // never a route target (it may have come from a host report).
+  const address = reported == null ? undefined : safeProjectHostUrl(reported);
+  if (reported != null && address == null) {
+    log.warn("refusing host route: stored host url is not an allowed target");
+  }
   return {
-    address: usePublicRoute
-      ? (row?.public_url ?? row?.internal_url ?? undefined)
-      : (row?.internal_url ?? row?.public_url ?? undefined),
+    address,
     host_session_id,
   };
 }

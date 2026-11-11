@@ -1,3 +1,4 @@
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import { spawn, type ChildProcess } from "node:child_process";
 import { getLogger } from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
@@ -107,8 +108,9 @@ async function loadSelfHostMetadata(host_id: string): Promise<any> {
 
 async function ensureReversePort(host_id: string): Promise<number> {
   const metadata = await loadSelfHostMetadata(host_id);
-  const stored = Number(metadata?.self_host?.ssh_reverse_port ?? 0);
-  if (stored) return stored;
+  // Only a valid stored port is reused; anything else gets a fresh port.
+  const stored = safeTunnelPort(metadata?.self_host?.ssh_reverse_port);
+  if (stored != null) return stored;
   const port = await getPort();
   await updateHostSelfHostMetadata(host_id, {
     ssh_reverse_port: port,
