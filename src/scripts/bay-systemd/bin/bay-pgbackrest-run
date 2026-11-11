@@ -32,7 +32,27 @@ case "$action" in
     exec "${common[@]}" stanza-create
     ;;
   setup)
-    "${common[@]}" stanza-create
+    # stanza-create takes the archive and backup locks without waiting, and the
+    # async archive-push process holds the archive lock while it pushes WAL. Every
+    # backup@ pulls this unit in, so retry only on LockAcquireError [050].
+    attempts="${COCALC_BAY_PGBACKREST_SETUP_LOCK_ATTEMPTS:-20}"
+    delay="${COCALC_BAY_PGBACKREST_SETUP_LOCK_DELAY_S:-15}"
+    if [[ ! "$attempts" =~ ^[1-9][0-9]*$ || ! "$delay" =~ ^[0-9]+$ ]]; then
+      bay_log "invalid setup lock retry settings: attempts=${attempts} delay=${delay}"
+      exit 2
+    fi
+    attempt=1
+    while true; do
+      rc=0
+      "${common[@]}" stanza-create || rc=$?
+      [[ "$rc" == 0 ]] && break
+      if [[ "$rc" != 50 ]] || ((attempt >= attempts)); then
+        exit "$rc"
+      fi
+      bay_log "stanza-create could not take its lock (attempt ${attempt}/${attempts}); retrying in ${delay}s"
+      sleep "$delay"
+      attempt=$((attempt + 1))
+    done
     exec "${common[@]}" check
     ;;
   full|diff|incr)

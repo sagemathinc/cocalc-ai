@@ -90,4 +90,37 @@ assert status["archive"]["postgres_ready_files"] == 1, status
 assert status["archive"]["postgres_ready_bytes"] == 16777216, status
 PY
 
+# setup retries stanza-create only while its lock is busy (LockAcquireError [050]).
+setup_pgbackrest="${TMP_ROOT}/fake-pgbackrest-setup"
+cat > "$setup_pgbackrest" <<'EOF'
+#!/usr/bin/env bash
+cmd="${*: -1}"
+[[ "$cmd" == stanza-create || "$cmd" == check ]] || exit 0
+printf '%s\n' "$cmd" >> "$COCALC_TEST_SETUP_CALLS"
+if [[ "$cmd" == stanza-create ]]; then
+  n="$(grep -c '^stanza-create$' "$COCALC_TEST_SETUP_CALLS")"
+  read -r -a codes <<< "$COCALC_TEST_STANZA_CODES"
+  exit "${codes[n - 1]:-0}"
+fi
+EOF
+chmod 0755 "$setup_pgbackrest"
+run_setup() {
+  : > "$COCALC_TEST_SETUP_CALLS"
+  local rc=0
+  COCALC_BAY_PGBACKREST_BIN="$setup_pgbackrest" COCALC_TEST_STANZA_CODES="$1" \
+    COCALC_BAY_PGBACKREST_SETUP_LOCK_ATTEMPTS="$2" COCALC_BAY_PGBACKREST_SETUP_LOCK_DELAY_S=0 \
+    bash "${SCRIPT_DIR}/bay-pgbackrest-run" setup >/dev/null 2>&1 || rc=$?
+  setup_calls="$(paste -sd, "$COCALC_TEST_SETUP_CALLS")"
+  return "$rc"
+}
+export COCALC_TEST_SETUP_CALLS="${TMP_ROOT}/setup-calls"
+run_setup "50 50 0" 20
+[[ "$setup_calls" == "stanza-create,stanza-create,stanza-create,check" ]]
+rc=0; run_setup "50 50 50" 3 || rc=$?
+[[ "$rc" == 50 && "$setup_calls" == "stanza-create,stanza-create,stanza-create" ]]
+rc=0; run_setup "28" 20 || rc=$?
+[[ "$rc" == 28 && "$setup_calls" == "stanza-create" ]]
+rc=0; run_setup "0" 0 || rc=$?
+[[ "$rc" == 2 && "$setup_calls" == "" ]]
+
 echo "bay pgBackRest configuration tests passed"
