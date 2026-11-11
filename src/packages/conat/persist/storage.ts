@@ -1193,6 +1193,114 @@ const streamLifecycle = {
   open_disk: 0,
 };
 
+// Write activity of this process: how many transactions commit, how many
+// messages they add, and how long COMMIT takes.  Used to size durability work
+// against real load, so it holds counts only, never paths or content.
+const writeStats = {
+  commits_total: 0,
+  disk_commits_total: 0,
+  ephemeral_commits_total: 0,
+  rows_total: 0,
+  bytes_total: 0,
+  commit_ms_total: 0,
+  commit_ms_max: 0,
+};
+
+// Since the last write-rate log line: the totals then, and the busiest second.
+const writeWindow = {
+  started_at: Date.now(),
+  totals: { ...writeStats },
+  second: 0,
+  second_commits: 0,
+  second_rows: 0,
+  peak_commits_per_second: 0,
+  peak_rows_per_second: 0,
+  commit_ms_max: 0,
+};
+
+export const PERSIST_WRITE_RATE_LOG_INTERVAL_MS = 60_000;
+let writeRateTimer: ReturnType<typeof setInterval> | undefined;
+
+function recordCommit(
+  kind: StreamStorageKind,
+  rows: number,
+  bytes: number,
+  commitMs: number,
+  now: number = Date.now(),
+): void {
+  writeStats.commits_total += 1;
+  writeStats[`${kind}_commits_total`] += 1;
+  writeStats.rows_total += rows;
+  writeStats.bytes_total += bytes;
+  writeStats.commit_ms_total += commitMs;
+  writeStats.commit_ms_max = Math.max(writeStats.commit_ms_max, commitMs);
+  const second = Math.floor(now / 1000);
+  if (second !== writeWindow.second) {
+    writeWindow.second = second;
+    writeWindow.second_commits = 0;
+    writeWindow.second_rows = 0;
+  }
+  writeWindow.second_commits += 1;
+  writeWindow.second_rows += rows;
+  writeWindow.peak_commits_per_second = Math.max(
+    writeWindow.peak_commits_per_second,
+    writeWindow.second_commits,
+  );
+  writeWindow.peak_rows_per_second = Math.max(
+    writeWindow.peak_rows_per_second,
+    writeWindow.second_rows,
+  );
+  writeWindow.commit_ms_max = Math.max(writeWindow.commit_ms_max, commitMs);
+}
+
+export function getPersistWriteStats() {
+  return { ...writeStats };
+}
+
+// One line per interval with the deltas since the previous one; quiet when
+// nothing was written.  Returns what it logged (for tests).
+export function logPersistWriteRate(now: number = Date.now()) {
+  const seconds = Math.max((now - writeWindow.started_at) / 1000, 0.001);
+  const commits = writeStats.commits_total - writeWindow.totals.commits_total;
+  const rows = writeStats.rows_total - writeWindow.totals.rows_total;
+  const entry = {
+    window_seconds: Math.round(seconds),
+    commits,
+    disk_commits:
+      writeStats.disk_commits_total - writeWindow.totals.disk_commits_total,
+    rows,
+    bytes: writeStats.bytes_total - writeWindow.totals.bytes_total,
+    commits_per_second: commits / seconds,
+    rows_per_second: rows / seconds,
+    peak_commits_per_second: writeWindow.peak_commits_per_second,
+    peak_rows_per_second: writeWindow.peak_rows_per_second,
+    commit_ms_avg:
+      commits > 0
+        ? (writeStats.commit_ms_total - writeWindow.totals.commit_ms_total) /
+          commits
+        : 0,
+    commit_ms_max: writeWindow.commit_ms_max,
+  };
+  writeWindow.started_at = now;
+  writeWindow.totals = { ...writeStats };
+  writeWindow.peak_commits_per_second = 0;
+  writeWindow.peak_rows_per_second = 0;
+  writeWindow.commit_ms_max = 0;
+  if (commits > 0) {
+    logger.info("persist write rate", entry);
+  }
+  return entry;
+}
+
+function startWriteRateLog(): void {
+  if (writeRateTimer != null) return;
+  writeRateTimer = setInterval(
+    () => logPersistWriteRate(),
+    PERSIST_WRITE_RATE_LOG_INTERVAL_MS,
+  );
+  writeRateTimer.unref?.();
+}
+
 const openCacheSizes = {
   ephemeral: new Map<number, number>(),
   disk: new Map<number, number>(),
@@ -1274,6 +1382,9 @@ function updateCacheSizeCount(
 }
 
 function recordStreamOpen(kind: StreamStorageKind, cacheKiB: number): void {
+  if (kind === "disk") {
+    startWriteRateLog();
+  }
   streamLifecycle.opened_total += 1;
   streamLifecycle[`opened_${kind}_total`] += 1;
   streamLifecycle[`open_${kind}`] += 1;
@@ -1347,6 +1458,9 @@ export class PersistentStream extends EventEmitter {
   private readonly db: Database;
   private readonly dbPath?: string;
   private readonly storageKind: StreamStorageKind;
+  // messages added by the transaction in progress (recordCommit)
+  private pendingRows = 0;
+  private pendingBytes = 0;
   private readonly sqliteCacheKiB: number;
   private readonly msgIDs = new TTL({ ttl: 2 * 60 * 1000 });
   private conf: Configuration;
@@ -2230,10 +2344,19 @@ export class PersistentStream extends EventEmitter {
   };
 
   private runTransaction = <T>(fn: () => T): T => {
+    this.pendingRows = 0;
+    this.pendingBytes = 0;
     this.db.exec("BEGIN");
     try {
       const result = fn();
+      const commitStarted = performance.now();
       this.db.exec("COMMIT");
+      recordCommit(
+        this.storageKind,
+        this.pendingRows,
+        this.pendingBytes,
+        performance.now() - commitStarted,
+      );
       this.markMaintenanceMutation();
       return result;
     } catch (err) {
@@ -2388,7 +2511,10 @@ export class PersistentStream extends EventEmitter {
         ttl ?? null,
       );
     const seq = Number((row as any).seq);
-    this.countAdded(seq, messageSize({ serializedHeaders, raw, key }));
+    const size = messageSize({ serializedHeaders, raw, key });
+    this.countAdded(seq, size);
+    this.pendingRows += 1;
+    this.pendingBytes += size;
     this.db
       .prepare("UPDATE history_epochs SET info_json=? WHERE last_seq IS NULL")
       .run(ledgerInfo(seq));
@@ -4685,6 +4811,7 @@ export function getPersistentStreamDiagnostics() {
       ephemeral_override_kib: resolveEphemeralSqliteCacheKiB(),
     },
     open_stream_inventory: summarizeOpenStreams(Date.now()),
+    write_stats: getPersistWriteStats(),
   };
 }
 
