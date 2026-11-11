@@ -26,6 +26,30 @@ jest.mock("@cocalc/database/postgres/project-host-runtime-deployments", () => ({
   __esModule: true,
   loadEffectiveProjectHostRuntimeDeployments: (...args: any[]) =>
     loadEffectiveProjectHostRuntimeDeploymentsMock(...args),
+  listProjectHostRuntimeDeployments: jest.fn(async () => []),
+}));
+
+// One test bypasses the trusted loader, to check the bootstrap sink's own
+// version check against an unsafe desired version.
+let bypassTrustedLoader = false;
+jest.mock("@cocalc/server/conat/api/host-software-admin", () => {
+  const actual = jest.requireActual(
+    "@cocalc/server/conat/api/host-software-admin",
+  );
+  return {
+    __esModule: true,
+    ...actual,
+    loadTrustedEffectiveRuntimeDeployments: async (opts: any) =>
+      bypassTrustedLoader
+        ? await loadEffectiveProjectHostRuntimeDeploymentsMock(opts)
+        : await actual.loadTrustedEffectiveRuntimeDeployments(opts),
+  };
+});
+
+// Host-scoped runtime deployments count only when an admin set them.
+jest.mock("@cocalc/server/accounts/is-admin", () => ({
+  __esModule: true,
+  default: async (account_id: string) => account_id === "admin-account",
 }));
 
 jest.mock("./host-util", () => ({
@@ -624,6 +648,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
     loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
       {
         scope_type: "host",
+        requested_by: "admin-account",
         scope_id: "host-123",
         target_type: "artifact",
         target: "project-host",
@@ -650,6 +675,60 @@ describe("bootstrap-host promoted artifact defaults", () => {
       `${softwareBaseUrl}/project-host/1777603320059/bundle-linux.tar.xz`,
     );
     expect(scripts.projectHostVersion).toBe("1777603320059");
+  });
+
+  it("ignores an unsafe desired version even if one reaches bootstrap", async () => {
+    bypassTrustedLoader = true;
+    try {
+      loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
+        {
+          scope_type: "global",
+          scope_id: "global",
+          requested_by: "admin-account",
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "../x",
+        },
+        {
+          scope_type: "global",
+          scope_id: "global",
+          requested_by: "admin-account",
+          target_type: "artifact",
+          target: "tools",
+          desired_version: "a/b",
+        },
+      ]);
+      const { buildBootstrapScripts } = await loadBootstrapHost();
+      const scripts = await buildBootstrapScripts(baseRow() as any);
+      expect(scripts.projectHostVersion).not.toBe("../x");
+      expect(scripts.projectHostBundleUrl).not.toContain("..");
+      expect(scripts.toolsVersion).not.toBe("a/b");
+      expect(scripts.toolsUrl).not.toContain("a/b");
+    } finally {
+      bypassTrustedLoader = false;
+    }
+  });
+
+  it("ignores an unsafe host-reported artifact version and bootstrap selector", async () => {
+    loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([]);
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts({
+      ...baseRow(),
+      metadata: {
+        ...baseRow().metadata,
+        bootstrap_version: "a/b",
+        software_inventory: [
+          { artifact: "project-host", current_version: "../x" },
+          { artifact: "tools", current_version: "t?y" },
+        ],
+      },
+    } as any);
+    expect(scripts.projectHostVersion).not.toBe("../x");
+    expect(scripts.projectHostBundleUrl).not.toContain("..");
+    expect(scripts.toolsVersion).not.toBe("t?y");
+    expect(scripts.toolsUrl).not.toContain("?");
+    expect(scripts.bootstrapSelector).not.toBe("a/b");
+    expect(scripts.bootstrapPyUrl).not.toContain("a/b");
   });
 
   it("falls back to the latest manifest when a promoted artifact version is no longer served", async () => {
@@ -679,6 +758,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
     loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
       {
         scope_type: "host",
+        requested_by: "admin-account",
         scope_id: "host-123",
         target_type: "artifact",
         target: "project-host",

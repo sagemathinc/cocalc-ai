@@ -2420,30 +2420,60 @@ describe("host reads across bays", () => {
     assert.deepEqual(await bobsRoles(), ["user"]);
   });
 
-  it("sets a host's runtime deployments on the host's bay", async () => {
+  it("sets a host's runtime deployments on the host's bay, for an admin", async () => {
     // Host-scoped: routed to the host's bay, which records it, and the
-    // listing (also routed) reads it back there.
-    const forwarded = async () =>
+    // listing (also routed) reads it back there. Host software is managed
+    // by site admins only, so an admin homed on the other bay sets it.
+    const admin = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "wade",
+    });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    const forwarded = async (account_id) =>
       await runInBay(
         cluster,
         ATTACHED,
         `const getPool = require("@cocalc/database/pool").default;
          const { rows } = await getPool().query(
-           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.setHostRuntimeDeployments' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
-           [${JSON.stringify(SEED)}, ${JSON.stringify(alice.account_id)}]);
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='hosts.setHostRuntimeDeployments' AND source_bay_id=$1 AND account_id=$2",
+           [${JSON.stringify(SEED)}, ${JSON.stringify(account_id)}]);
          return rows[0].n;`,
       );
-    const before = await forwarded();
-    const set = await alice.client.call("hosts.setHostRuntimeDeployments", {
+    const deployments = [
+      {
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "ph-routed",
+      },
+    ];
+
+    // The host's owner, who is not an admin, is refused where the call
+    // arrives: it is never forwarded to the host's bay.
+    const aliceBefore = await forwarded(alice.account_id);
+    await assert.rejects(
+      alice.client.call("hosts.setHostRuntimeDeployments", {
+        scope_type: "host",
+        id: host_id,
+        deployments,
+        replace: true,
+      }),
+      /host software maintenance is limited to site admins/,
+    );
+    assert.equal(await forwarded(alice.account_id), aliceBefore);
+
+    const before = await forwarded(admin.account_id);
+    const set = await admin.client.call("hosts.setHostRuntimeDeployments", {
       scope_type: "host",
       id: host_id,
-      deployments: [
-        {
-          target_type: "artifact",
-          target: "project-host",
-          desired_version: "ph-routed",
-        },
-      ],
+      deployments,
       replace: true,
     });
     assert.ok(
@@ -2451,8 +2481,8 @@ describe("host reads across bays", () => {
         (d) => d.host_id === host_id && d.desired_version === "ph-routed",
       ),
     );
-    assert.equal(await forwarded(), before + 1);
-    const listed = await alice.client.call("hosts.listHostRuntimeDeployments", {
+    assert.equal(await forwarded(admin.account_id), before + 1);
+    const listed = await admin.client.call("hosts.listHostRuntimeDeployments", {
       scope_type: "host",
       id: host_id,
     });

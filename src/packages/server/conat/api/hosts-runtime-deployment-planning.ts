@@ -25,6 +25,7 @@ This keeps the deploy-plan logic readable in one place while `hosts.ts`
 continues to own the operational flow that executes those plans.
 */
 
+import { isSafeHostSoftwareVersion } from "./host-software-admin";
 import type {
   HostRuntimeArtifact,
   HostRuntimeDeploymentRecord,
@@ -238,6 +239,9 @@ export function computeAutomaticArtifactUpgradeTargets({
     if (target === "bootstrap-environment") {
       continue;
     }
+    // Checked again here: a stored version goes into the host's URLs and
+    // paths, and a bad one is skipped, never repaired.
+    if (!isSafeHostSoftwareVersion(deployment.desired_version)) continue;
     const observed = observedTargets.get(target);
     const observedState = observed?.observed_version_state;
     if (observedState === "aligned" || observedState === "unsupported") {

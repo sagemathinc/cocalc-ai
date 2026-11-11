@@ -1067,6 +1067,8 @@ async function enqueueRunningStaleHostRepairs(
           account_id,
           reason: "running_stale_heartbeat",
           source: "host_availability_maintenance",
+          // The site's own repair: runs whoever it is attributed to.
+          automatic: true,
         },
         dedupe_key: `${HOST_RECONCILE_LRO_KIND}:${row.id}`,
         status: "queued",
@@ -2201,6 +2203,7 @@ export async function annotateHostAvailabilityEvent({
 }
 
 export const _test = {
+  enqueueRunningStaleHostRepairs,
   getRunningStaleHosts,
   reportRunningStaleCondition,
   conatPersistAlertRow,
