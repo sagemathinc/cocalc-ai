@@ -1,5 +1,6 @@
 import {
   setStaticFontCorsHeaders,
+  setStaticScriptCorpHeaders,
   setWidgetHostHeaders,
   WIDGET_HOST_FILENAME,
 } from "@cocalc/util/jupyter/widget-host";
@@ -203,6 +204,8 @@ export async function initApp({
       setHeaders: (res, path) => {
         if (basename(path) === WIDGET_HOST_FILENAME) setWidgetHostHeaders(res);
         setStaticFontCorsHeaders(res, path);
+        // the widget frame's script, under the COEP above
+        setStaticScriptCorpHeaders(res, path);
       },
     }),
   );

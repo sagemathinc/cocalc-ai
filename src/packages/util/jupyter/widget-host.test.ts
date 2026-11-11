@@ -5,6 +5,7 @@
 
 import {
   setStaticFontCorsHeaders,
+  setStaticScriptCorpHeaders,
   setWidgetHostHeaders,
   WIDGET_HOST_HEADERS,
 } from "./widget-host";
@@ -39,6 +40,28 @@ describe("widget host headers", () => {
       "/static/x.css",
     ]) {
       expect(headers((res) => setStaticFontCorsHeaders(res, path))).toEqual({});
+    }
+  });
+
+  it("let opaque frames load the static scripts and styles (for COEP servers), not documents", () => {
+    for (const path of [
+      "/static/widget-host-8f1b.js",
+      "/static/a1b2.mjs",
+      "/static/x.css",
+    ]) {
+      expect(headers((res) => setStaticScriptCorpHeaders(res, path))).toEqual({
+        "Cross-Origin-Resource-Policy": "cross-origin",
+      });
+    }
+    for (const path of [
+      "/static/app.html",
+      "/static/widget-host.html",
+      "/static/a.woff2",
+      "/static/x.json",
+    ]) {
+      expect(headers((res) => setStaticScriptCorpHeaders(res, path))).toEqual(
+        {},
+      );
     }
   });
 });
