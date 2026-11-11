@@ -2,7 +2,7 @@ name: CoCalc Plus on Bun
 
 # Builds CoCalc Plus for Bun (plus/bun/build.sh: the app, from the release
 # bundle, and the launchers) and starts it through the Linux launcher
-# (plus/bun/smoke.sh).  Run by hand, it also uploads the build, with
+# (plus/bun/smoke.sh, which also syncs a file with reflect-sync).  Run by hand, it also uploads the build, with
 # launchers for every platform, for testing.
 
 on:
@@ -11,7 +11,13 @@ on:
       - "src/packages/plus/**"
       - "src/packages/lite/**"
       - "src/packages/backend/sqlite*.ts"
+      - "src/packages/backend/sandbox/sync-fs-watch.ts"
+      - "src/packages/backend/conat/persist*"
+      - "src/packages/backend/conat/persist-maintenance/**"
+      - "src/packages/conat/core/**"
       - "src/packages/project/conat/terminal/**"
+      - "src/packages/pnpm-lock.yaml"
+      - "src/packages/pnpm-workspace.yaml"
       - ".github/workflows/plus-bun.yml"
   workflow_dispatch:
 
