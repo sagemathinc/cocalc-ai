@@ -166,9 +166,21 @@ export async function initApp({
       }
     },
   );
+  let apiV2Router;
   if (isApiV2Enabled()) {
-    const { createApiV2Router } = await import("@cocalc/http-api");
-    app.use("/api/v2", createApiV2Router({ browserCors: "request-origin" }));
+    try {
+      // CoCalc Plus bundles leave @cocalc/http-api out (plus/sea/build-bundle.sh):
+      // it brings in the whole hub API and the cloud SDKs.
+      const { createApiV2Router } = await import("@cocalc/http-api");
+      apiV2Router = createApiV2Router({ browserCors: "request-origin" });
+    } catch (err) {
+      logger.error(
+        `the v2 API is enabled, but this build doesn't include it (@cocalc/http-api); serving only the built-in local account: ${err}`,
+      );
+    }
+  }
+  if (apiV2Router != null) {
+    app.use("/api/v2", apiV2Router);
   } else {
     // Lite/Plus has one built-in local account and does not need the control
     // plane auth API. Answer the frontend bootstrap probe directly so startup

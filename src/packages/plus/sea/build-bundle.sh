@@ -79,7 +79,9 @@ echo "- Bundle entry point with @vercel/ncc"
   --external node-pty \
   --external bufferutil \
   --external utf-8-validate \
-  --external reflect-sync
+  --external reflect-sync \
+  --external @cocalc/http-api \
+  --minify
 
 copy_native_pkg() {
   local pkg="$1"
@@ -242,8 +244,10 @@ rsync -a --delete \
   packages/static/dist/ "$OUT/static/"
 
 echo "- Copy public assets"
+# features/ and about/ are the cocalc.ai marketing pages' images and videos
+# (about 26 MB); only the public website (frontend/public) uses them.
 mkdir -p "$OUT"/public
-rsync -a --delete \
+rsync -a --delete --exclude /features/ --exclude /about/ \
   packages/assets/public/ "$OUT/public/"
 
 echo "- Verify target native addons"
