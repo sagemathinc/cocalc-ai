@@ -21,6 +21,31 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
     return (process as any).getBuiltinModule("node:sqlite").DatabaseSync;
   }
   const { Database } = (process as any).getBuiltinModule("bun:sqlite");
+  // (not in this package's TypeScript lib)
+  const WeakRef: new <T>(value: T) => { deref(): T | undefined } = (
+    globalThis as any
+  ).WeakRef;
+
+  // Errors as node:sqlite throws them: bun:sqlite's SQLiteError has
+  // code "SQLITE_..." and errno; node:sqlite's has code "ERR_SQLITE_ERROR",
+  // errcode and errstr (sqlite-checkpoint, for one, reads errcode).
+  function sqliteCall<T>(f: () => T): T {
+    try {
+      return f();
+    } catch (err: any) {
+      if (err?.name !== "SQLiteError" || typeof err.errno !== "number") {
+        throw err;
+      }
+      // (a SQLiteError's fields are read-only)
+      const e: any = new Error(err.message);
+      e.cause = err;
+      e.code = "ERR_SQLITE_ERROR";
+      e.errcode = err.errno;
+      e.errstr = err.message;
+      e.stack = err.stack;
+      throw e;
+    }
+  }
 
   class StatementSync {
     constructor(
@@ -28,19 +53,26 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
       readonly sourceSQL: string,
     ) {}
     all(...params: any[]) {
-      return this.stmt.all(...params);
+      return sqliteCall(() => this.stmt.all(...params));
     }
     get(...params: any[]) {
       // node:sqlite returns undefined for no row; bun:sqlite returns null
-      const row = this.stmt.get(...params);
+      const row = sqliteCall(() => this.stmt.get(...params));
       return row === null ? undefined : row;
     }
     run(...params: any[]) {
-      const { changes, lastInsertRowid } = this.stmt.run(...params);
+      const { changes, lastInsertRowid } = sqliteCall(() =>
+        this.stmt.run(...params),
+      );
       return { changes, lastInsertRowid };
     }
     *iterate(...params: any[]) {
-      yield* this.stmt.iterate(...params);
+      const rows = sqliteCall(() => this.stmt.iterate(...params));
+      while (true) {
+        const next = sqliteCall(() => rows.next());
+        if (next.done) return;
+        yield next.value;
+      }
     }
     columns() {
       const names: string[] = this.stmt.columnNames ?? [];
@@ -59,10 +91,20 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
     setAllowBareNamedParameters(_enabled: boolean) {
       // bare names are always allowed ({ strict: true } below)
     }
+    finalize() {
+      this.stmt.finalize();
+    }
   }
 
   class DatabaseSync {
     private db: any = null;
+    // Statements still in use, finalized by close(): bun:sqlite keeps the
+    // connection (and its locks and open transaction) alive while any
+    // statement is, and node:sqlite's close() releases it.  Weak, so that
+    // statements that are no longer used can be collected (bun:sqlite then
+    // finalizes them); pruned as it grows.
+    private statements = new Set<{ deref(): StatementSync | undefined }>();
+    private pruneAt = 256;
     constructor(
       private readonly path: string,
       private readonly options: {
@@ -77,19 +119,21 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
     open() {
       if (this.db != null) throw new Error("database is already open");
       // strict: named parameters bind without their prefix, as in node:sqlite
-      this.db = this.options.readOnly
-        ? new Database(this.path, { readonly: true, strict: true })
-        : new Database(this.path, {
-            readwrite: true,
-            create: true,
-            strict: true,
-          });
+      this.db = sqliteCall(() =>
+        this.options.readOnly
+          ? new Database(this.path, { readonly: true, strict: true })
+          : new Database(this.path, {
+              readwrite: true,
+              create: true,
+              strict: true,
+            }),
+      );
       if (this.options.timeout) {
-        this.db.exec(`PRAGMA busy_timeout = ${Number(this.options.timeout)}`);
+        this.exec(`PRAGMA busy_timeout = ${Number(this.options.timeout)}`);
       }
       // node:sqlite's default
       if (this.options.enableForeignKeyConstraints !== false) {
-        this.db.exec("PRAGMA foreign_keys = ON");
+        this.exec("PRAGMA foreign_keys = ON");
       }
     }
     get isOpen() {
@@ -103,13 +147,33 @@ export function loadDatabaseSync(): typeof NodeDatabaseSync {
       return this.db;
     }
     exec(sql: string) {
-      this.connection().exec(sql);
+      const db = this.connection();
+      sqliteCall(() => db.exec(sql));
     }
     prepare(sql: string) {
-      return new StatementSync(this.connection().prepare(sql), sql);
+      const db = this.connection();
+      const stmt = new StatementSync(
+        sqliteCall(() => db.prepare(sql)),
+        sql,
+      );
+      this.statements.add(new WeakRef(stmt));
+      if (this.statements.size >= this.pruneAt) {
+        for (const ref of this.statements) {
+          if (ref.deref() == null) this.statements.delete(ref);
+        }
+        this.pruneAt = Math.max(256, 2 * this.statements.size);
+      }
+      return stmt;
     }
     close() {
-      this.connection().close();
+      const db = this.connection();
+      for (const ref of this.statements) {
+        try {
+          ref.deref()?.finalize();
+        } catch {}
+      }
+      this.statements.clear();
+      sqliteCall(() => db.close());
       this.db = null;
     }
   }

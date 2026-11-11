@@ -8,10 +8,18 @@ A pseudo-terminal: node-pty on Node, and Bun.Terminal on Bun (node-pty's native
 addon loads in Bun, but its shells hang up at once).  BunPty implements the part
 of node-pty's IPty that the terminal server uses: the "data" and "exit" events,
 write, resize, pause/resume, kill and destroy.
+
+When the process exits, BunPty waits for the terminal's end of output (EOF,
+after the last byte; at most EOF_WAIT_MS, since a background job can keep the
+terminal open), closes the terminal, and emits "exit" once any output that
+pause() held back has been delivered.
 */
 
 import { EventEmitter } from "node:events";
 import { constants } from "node:os";
+
+// how long to wait, after the process exits, for the end of its output
+export const EOF_WAIT_MS = 1000;
 
 export function spawn(file: string, args: string[] = [], options: any = {}) {
   if (process.versions.bun) {
@@ -32,6 +40,10 @@ export class BunPty extends EventEmitter {
   private paused = false;
   // Bun.Terminal has no backpressure: while paused, output waits here
   private queued: string[] = [];
+  private eof = false;
+  private onEof?: () => void;
+  private exitStatus?: { exitCode: number; signal: number };
+  private exitEmitted = false;
 
   constructor(file: string, args: string[], options: any) {
     super();
@@ -46,24 +58,55 @@ export class BunPty extends EventEmitter {
         cols: this.cols,
         rows: this.rows,
         data: (_terminal: unknown, bytes: Uint8Array) => this.onBytes(bytes),
+        // the end of output: called after the last data
+        exit: () => {
+          this.eof = true;
+          this.onEof?.();
+        },
       },
     });
     this.pid = this.proc.pid;
     this.process = file;
     this.terminal = this.proc.terminal;
-    this.proc.exited.then((exitCode: number | null) => {
+    this.proc.exited.then(async (exitCode: number | null) => {
       const name = this.proc.signalCode;
       const signal = name ? (constants.signals[name] ?? 0) : 0;
-      // let the last output through before the exit
-      setTimeout(() => {
-        this.flush();
-        this.emit("exit", exitCode ?? 0, signal);
-      }, 10);
+      if (!this.eof) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, EOF_WAIT_MS);
+          this.onEof = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+      }
+      this.onBytes(undefined); // the decoder's last partial character
+      this.closeTerminal();
+      this.exitStatus = { exitCode: exitCode ?? 0, signal };
+      this.maybeEmitExit();
     });
   }
 
-  private onBytes(bytes: Uint8Array) {
-    const text = this.decoder.decode(bytes, { stream: true });
+  private closeTerminal() {
+    try {
+      if (!this.terminal.closed) this.terminal.close();
+    } catch {}
+  }
+
+  // after the output, including any that pause() held back
+  private maybeEmitExit() {
+    if (this.exitStatus == null || this.exitEmitted || this.queued.length > 0) {
+      return;
+    }
+    this.exitEmitted = true;
+    this.emit("exit", this.exitStatus.exitCode, this.exitStatus.signal);
+  }
+
+  private onBytes(bytes: Uint8Array | undefined) {
+    const text =
+      bytes == null
+        ? this.decoder.decode()
+        : this.decoder.decode(bytes, { stream: true });
     if (!text) return;
     if (this.paused) {
       this.queued.push(text);
@@ -76,6 +119,7 @@ export class BunPty extends EventEmitter {
     while (!this.paused && this.queued.length > 0) {
       this.emit("data", this.queued.shift());
     }
+    this.maybeEmitExit();
   }
 
   onData(listener: (data: string) => void): { dispose: () => void } {
@@ -119,8 +163,6 @@ export class BunPty extends EventEmitter {
 
   destroy() {
     this.kill("SIGHUP");
-    try {
-      this.terminal.close();
-    } catch {}
+    this.closeTerminal();
   }
 }

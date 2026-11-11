@@ -33,10 +33,31 @@ const ro = new DatabaseSync(path, { readOnly: true });
 try {
   ro.exec("INSERT INTO t (name) VALUES ('c')");
   out.readOnly = "writable";
-} catch {
-  out.readOnly = "refused";
+} catch (err) {
+  // node:sqlite's error shape (sqlite-checkpoint reads errcode)
+  out.readOnly = { code: err.code, errcode: err.errcode, errstr: typeof err.errstr };
 }
 ro.close();
+// close() releases the connection: its locks and its open transaction, even
+// with a prepared statement still referenced, which close() finalizes
+const lockPath = path + "-lock";
+const a = new DatabaseSync(lockPath);
+a.exec("CREATE TABLE l (x)");
+a.exec("BEGIN EXCLUSIVE");
+a.exec("INSERT INTO l VALUES (1)");
+const retained = a.prepare("SELECT * FROM l");
+retained.all();
+a.close();
+const b = new DatabaseSync(lockPath);
+b.exec("INSERT INTO l VALUES (2)");
+out.afterClose = b.prepare("SELECT x FROM l").all();
+b.close();
+try {
+  retained.all();
+  out.retainedAfterClose = "usable";
+} catch {
+  out.retainedAfterClose = "finalized";
+}
 console.log(JSON.stringify(out));
 `;
 
@@ -51,7 +72,10 @@ const EXPECTED = {
   iterate: ["a", "b"],
   blob: "xy",
   isOpen: true,
-  readOnly: "refused",
+  readOnly: { code: "ERR_SQLITE_ERROR", errcode: 8, errstr: "string" },
+  // the open transaction was rolled back
+  afterClose: [{ x: 2 }],
+  retainedAfterClose: "finalized",
 };
 
 describe("@cocalc/backend/sqlite", () => {
