@@ -11,6 +11,9 @@ import {
   countCommits,
   getPersistWriteStats,
   logPersistWriteRate,
+  persistWriteCounter,
+  sqlClass,
+  sqlVerb,
 } from "@cocalc/backend/conat/persist-write-rate";
 
 const msg = (s: string) => ({
@@ -511,6 +514,112 @@ describe("persist write-rate counters", () => {
     expect(entry.disk_uncounted_connections_total).toBeGreaterThanOrEqual(1);
   });
 
+  it("survives a failing transaction-state read after a COMMIT; the next transaction counts only its own rows", () => {
+    // isTransaction is a non-configurable property of a real connection, so
+    // a Proxy over one stands in to make that read throw.
+    const real = new DatabaseSync(":memory:");
+    real.exec("CREATE TABLE t(a)");
+    let armed = false;
+    const proxy = new Proxy(real as any, {
+      get(target, prop) {
+        if (prop === "isTransaction" && armed && !target.isTransaction) {
+          throw Error("injected isTransaction failure");
+        }
+        const value = target[prop];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    let pending = { rows: 0, bytes: 0 };
+    const takeRows = () => {
+      const rows = pending;
+      pending = { rows: 0, bytes: 0 };
+      return rows;
+    };
+    const db: any = countCommits(proxy, "ephemeral", takeRows);
+    // like runTransaction: reset the row tally, BEGIN, write, COMMIT
+    const transaction = (rows: number, failAfterCommit: boolean) => {
+      pending = { rows: 0, bytes: 0 };
+      db.exec("BEGIN");
+      db.prepare("INSERT INTO t VALUES (1)").run();
+      pending = { rows, bytes: rows };
+      armed = failAfterCommit;
+      try {
+        db.exec("COMMIT");
+      } finally {
+        armed = false;
+      }
+    };
+    const before = getPersistWriteStats();
+    transaction(5, true);
+    expect(real.isTransaction).toBe(false);
+    expect((real.prepare("SELECT COUNT(*) AS n FROM t").get() as any).n).toBe(
+      1,
+    );
+    expect(delta(before, "ephemeral_count_errors_total")).toBe(1);
+    expect(delta(before, "ephemeral_txn_commits_total")).toBe(0);
+    transaction(1, false);
+    expect(delta(before, "ephemeral_txn_commits_total")).toBe(1);
+    expect(delta(before, "ephemeral_rows_total")).toBe(1);
+    real.close();
+  });
+
+  describe("the SQL classification takes linear time", () => {
+    const ms = (f: () => unknown) => {
+      const started = performance.now();
+      f();
+      return performance.now() - started;
+    };
+
+    it("on long runs of whitespace, comments and words", () => {
+      // First sizes an exponential regex needs seconds for (\s+ in the
+      // group; a lazy comment body), so a regression fails here instead of
+      // hanging on the large inputs below.
+      expect(ms(() => sqlVerb(" ".repeat(28) + "("))).toBeLessThan(100);
+      expect(ms(() => sqlVerb("/* c */".repeat(24) + "("))).toBeLessThan(100);
+      const inputs = [
+        " ".repeat(10_000) + "(",
+        " ".repeat(10_000),
+        "\n\t ".repeat(5_000) + "(",
+        "-- c\n".repeat(5_000) + "(",
+        "/* c */".repeat(5_000) + "(",
+        "/*" + " ".repeat(10_000),
+        "PRAGMA " + "a".repeat(40_000),
+        "PRAGMA " + " ".repeat(20_000) + ".",
+        "WITH " + "x".repeat(1_000_000),
+      ];
+      for (const sql of inputs) {
+        expect(ms(() => sqlClass(sql))).toBeLessThan(100);
+      }
+    });
+
+    it("and still finds the verb", () => {
+      expect(sqlVerb("  SELECT 1")).toBe("SELECT");
+      expect(sqlVerb("-- c\n INSERT x")).toBe("INSERT");
+      expect(sqlVerb("/* a */ BEGIN")).toBe("BEGIN");
+      expect(sqlVerb("/***/ /* * / ** */SELECT")).toBe("SELECT");
+      expect(sqlVerb("/* not closed SELECT")).toBe("");
+      expect(sqlVerb("\n\t -- x\n/* y */\n  delete from t")).toBe("DELETE");
+      // (small: the large inputs are timed above, after the guards)
+      expect(sqlVerb(" ".repeat(10) + "(")).toBe("");
+      expect(sqlClass("\n  pragma user_version = 3")).toBe("other-write");
+      expect(sqlClass("  PRAGMA busy_timeout=5")).toBeUndefined();
+    });
+  });
+
+  it("never throws from wrap: a connection it can't wrap counts as uncounted", () => {
+    const before = getPersistWriteStats();
+    const odd = {
+      isTransaction: false,
+      get prepare(): any {
+        throw Error("no prepare");
+      },
+    } as any;
+    expect(
+      persistWriteCounter.wrap(odd, "disk", () => ({ rows: 0, bytes: 0 })),
+    ).toBe(odd);
+    expect(delta(before, "disk_uncounted_connections_total")).toBe(1);
+  });
+
   describe("the sources", () => {
     const packages = join(__dirname, "../../../..");
     const source = readFileSync(
@@ -553,6 +662,12 @@ describe("persist write-rate counters", () => {
         const before = rest.slice(Math.max(0, call.index! - 40), call.index);
         expect(before).toMatch(/this\.db\s*$/);
       }
+    });
+
+    it("storage resets the row tally before every BEGIN", () => {
+      expect(source).toMatch(
+        /private runTransaction = [^\n]*\n\s*this\.pendingRows = 0;\n\s*this\.pendingBytes = 0;\n\s*this\.db\.exec\("BEGIN"\);/,
+      );
     });
 
     it("storage runs no multi-statement script through exec", () => {

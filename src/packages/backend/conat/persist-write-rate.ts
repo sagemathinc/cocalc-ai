@@ -39,8 +39,17 @@ type StreamStorageKind = PersistStorageKind;
 //   it wrote: DML that changed rows, DDL that changed the schema, a
 //   journal_mode change, and always VACUUM, REINDEX, ANALYZE,
 //   incremental_vacuum and setting user_version/application_id/
-//   schema_version.  A multi-statement exec counts each statement.
-//   Exception: a script with a trigger counts at most one (storage has none).
+//   schema_version.
+// - a multi-statement exec runs exactly as written, once.  Outside a
+//   transaction it counts as at most ONE autocommit, if it changed rows or the
+//   schema: a lower bound, since each of its writing statements commits by
+//   itself.  That includes a script that itself runs BEGIN ... COMMIT (its
+//   rows are not added).  A script that leaves a transaction open, or ends
+//   one that was open, counts like BEGIN or COMMIT.  Storage runs no such
+//   script (a test pins that).
+// - a failed counter read is counted in count_errors and never reaches the
+//   caller.  If the read after a COMMIT fails, that commit is not counted;
+//   its rows are dropped at the next BEGIN (runTransaction resets them).
 // rows/bytes: messages that insertMessage added in a counted transaction.
 //   Deletes, trims, config changes and checkpoint-only commits add none.
 // sqlite_commit_call_ms: wall time of the synchronous SQLite COMMIT call on
@@ -262,8 +271,17 @@ function startWriteRateLog(): void {
 }
 
 // The first word of a statement, after leading whitespace and comments.
-function sqlVerb(sql: string): string {
-  const m = /^(?:\s+|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*([A-Za-z]+)/.exec(sql);
+// Linear: the alternatives start with different characters and each can
+// match a given text in only one way.  The whitespace one takes exactly one
+// character, and a block comment can't contain "*/".  (\s+, or a lazy
+// /\*[\s\S]*?\*\/ that can run on through the next comment, backtracks
+// exponentially: e.g. on many spaces, or many comments, followed by "(".)
+// Exported for tests.
+export function sqlVerb(sql: string): string {
+  const m =
+    /^(?:\s|--[^\n]*(?:\n|$)|\/\*(?:[^*]|\*+[^*/])*\*+\/)*([A-Za-z]+)/.exec(
+      sql,
+    );
   return (m?.[1] ?? "").toUpperCase();
 }
 
@@ -285,7 +303,7 @@ type SqlClass =
   | "other-write"
   | undefined;
 
-function sqlClass(sql: string): SqlClass {
+export function sqlClass(sql: string): SqlClass {
   switch (sqlVerb(sql)) {
     case "BEGIN":
     case "SAVEPOINT":
@@ -565,7 +583,16 @@ export function countCommits(
 }
 
 export const persistWriteCounter: PersistWriteCounter = {
-  wrap: countCommits,
+  // never throws into storage's constructor (which opened db): a connection
+  // that can't be wrapped is counted as uncounted instead
+  wrap: (db, kind, takeRows) => {
+    try {
+      return countCommits(db, kind, takeRows);
+    } catch {
+      writeStats[kind].uncounted_connections_total += 1;
+      return db;
+    }
+  },
   streamOpened: (kind) => {
     if (kind === "disk") startWriteRateLog();
   },
