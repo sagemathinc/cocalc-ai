@@ -88,6 +88,92 @@ describe("guardHostSoftwareCalls", () => {
   });
 });
 
+describe("guardHostSoftwareCalls over a dynamic service client", () => {
+  // Like createServiceClient: a Proxy over {} whose methods are synthesized
+  // on access and are not own (or enumerable) properties.
+  function dynamicClient() {
+    const calls: Array<[string, any[]]> = [];
+    const conat = { ping: jest.fn(async () => undefined) };
+    const proxy = new Proxy(
+      {},
+      {
+        get: (_, prop) => {
+          if (typeof prop !== "string") return undefined;
+          if (prop === "then" || prop === "catch" || prop === "finally") {
+            return undefined;
+          }
+          if (prop === "conat") return conat;
+          return async (...args: any[]) => {
+            calls.push([prop, args]);
+            return { method: prop };
+          };
+        },
+      },
+    );
+    return { proxy, calls, conat };
+  }
+
+  it("keeps every other method and conat, which have no own keys", async () => {
+    const { guardHostSoftwareCalls } = await import("./client");
+    const { proxy, calls, conat } = dynamicClient();
+    expect(Object.keys(proxy)).toEqual([]);
+    const guarded: any = guardHostSoftwareCalls(proxy as any, "host-1");
+    await expect(guarded.getRuntimeLog({ lines: 5 })).resolves.toEqual({
+      method: "getRuntimeLog",
+    });
+    await expect(guarded.probePublicRouteOrigin()).resolves.toEqual({
+      method: "probePublicRouteOrigin",
+    });
+    await guarded.conat.ping();
+    expect(conat.ping).toHaveBeenCalledTimes(1);
+    expect(guarded.then).toBeUndefined();
+    expect(calls).toEqual([
+      ["getRuntimeLog", [{ lines: 5 }]],
+      ["probePublicRouteOrigin", []],
+    ]);
+  });
+
+  it("still checks the software calls, and sends the safe ones", async () => {
+    const { guardHostSoftwareCalls } = await import("./client");
+    const { proxy, calls } = dynamicClient();
+    const guarded: any = guardHostSoftwareCalls(proxy as any, "host-1");
+    await expect(
+      guarded.upgradeSoftware({
+        targets: [{ artifact: "tools", version: "../x" }],
+      }),
+    ).rejects.toThrow(UNSAFE);
+    await expect(
+      guarded.stageProjectHostArtifact({ version: "a/b" }),
+    ).rejects.toThrow(UNSAFE);
+    await expect(
+      guarded.rolloutManagedComponents({
+        components: [],
+        desired_version: "?",
+      }),
+    ).rejects.toThrow(UNSAFE);
+    expect(calls).toEqual([]);
+    await guarded.upgradeSoftware({
+      targets: [{ artifact: "tools", version: "tools-7" }],
+    });
+    expect(calls).toEqual([
+      [
+        "upgradeSoftware",
+        [{ targets: [{ artifact: "tools", version: "tools-7" }] }],
+      ],
+    ]);
+  });
+
+  it("survives being awaited, as getRoutedHostControlClient's result is", async () => {
+    const { guardHostSoftwareCalls } = await import("./client");
+    const { proxy, calls } = dynamicClient();
+    const guarded: any = await Promise.resolve(
+      guardHostSoftwareCalls(proxy as any, "host-1"),
+    );
+    await guarded.getRuntimeLog({});
+    expect(calls).toEqual([["getRuntimeLog", [{}]]]);
+  });
+});
+
 describe("getRoutedHostControlClient guards host software calls", () => {
   beforeEach(() => {
     createHostControlClientMock.mockReset();
