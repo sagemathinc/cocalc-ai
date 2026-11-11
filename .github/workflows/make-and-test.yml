@@ -227,6 +227,14 @@ jobs:
           cache: pnpm
           cache-dependency-path: src/packages/pnpm-lock.yaml
 
+      # Bun, for the suites that also run code under Bun (CoCalc Plus on Bun:
+      # backend/sqlite, sqlite-checkpoint, project/conat/terminal/pty); they
+      # skip without it.  The version CoCalc Plus is built with.
+      - name: Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: src/packages/plus/bun/.bun-version
+
       - name: Install system packages
         run: |
           APT_RETRY=(
