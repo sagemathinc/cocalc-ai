@@ -29,6 +29,23 @@ jest.mock("@cocalc/database/postgres/project-host-runtime-deployments", () => ({
   listProjectHostRuntimeDeployments: jest.fn(async () => []),
 }));
 
+// One test bypasses the trusted loader, to check the bootstrap sink's own
+// version check against an unsafe desired version.
+let bypassTrustedLoader = false;
+jest.mock("@cocalc/server/conat/api/host-software-admin", () => {
+  const actual = jest.requireActual(
+    "@cocalc/server/conat/api/host-software-admin",
+  );
+  return {
+    __esModule: true,
+    ...actual,
+    loadTrustedEffectiveRuntimeDeployments: async (opts: any) =>
+      bypassTrustedLoader
+        ? await loadEffectiveProjectHostRuntimeDeploymentsMock(opts)
+        : await actual.loadTrustedEffectiveRuntimeDeployments(opts),
+  };
+});
+
 // Host-scoped runtime deployments count only when an admin set them.
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -658,6 +675,38 @@ describe("bootstrap-host promoted artifact defaults", () => {
       `${softwareBaseUrl}/project-host/1777603320059/bundle-linux.tar.xz`,
     );
     expect(scripts.projectHostVersion).toBe("1777603320059");
+  });
+
+  it("ignores an unsafe desired version even if one reaches bootstrap", async () => {
+    bypassTrustedLoader = true;
+    try {
+      loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
+        {
+          scope_type: "global",
+          scope_id: "global",
+          requested_by: "admin-account",
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "../x",
+        },
+        {
+          scope_type: "global",
+          scope_id: "global",
+          requested_by: "admin-account",
+          target_type: "artifact",
+          target: "tools",
+          desired_version: "a/b",
+        },
+      ]);
+      const { buildBootstrapScripts } = await loadBootstrapHost();
+      const scripts = await buildBootstrapScripts(baseRow() as any);
+      expect(scripts.projectHostVersion).not.toBe("../x");
+      expect(scripts.projectHostBundleUrl).not.toContain("..");
+      expect(scripts.toolsVersion).not.toBe("a/b");
+      expect(scripts.toolsUrl).not.toContain("a/b");
+    } finally {
+      bypassTrustedLoader = false;
+    }
   });
 
   it("ignores an unsafe host-reported artifact version and bootstrap selector", async () => {
