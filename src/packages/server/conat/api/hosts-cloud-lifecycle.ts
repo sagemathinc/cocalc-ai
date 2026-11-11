@@ -24,6 +24,7 @@ What does not belong here:
 this module owns the side-effecting lifecycle transitions.
 */
 
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import type {
   Host,
   HostInterruptionRestorePolicy,
@@ -545,6 +546,13 @@ export async function createHostInternalHelper({
   });
 }
 
+// The bay-allocated reverse-tunnel port the connector install connects
+// through: an integer tunnel port, else none (a stored value is never used
+// as is).
+export function selfHostReversePort(metadata: any): number | undefined {
+  return safeTunnelPort(metadata?.self_host?.ssh_reverse_port);
+}
+
 export async function startHostInternalHelper({
   account_id,
   id,
@@ -624,10 +632,8 @@ export async function startHostInternalHelper({
         [row.id],
       );
       const updatedMetadata = metaRows[0]?.metadata ?? metadata;
-      const reversePort = Number(
-        updatedMetadata?.self_host?.ssh_reverse_port ?? 0,
-      );
-      if (!reversePort) {
+      const reversePort = selfHostReversePort(updatedMetadata);
+      if (reversePort == null) {
         throw new Error("self-host ssh reverse port missing");
       }
       await runConnectorInstallOverSsh({

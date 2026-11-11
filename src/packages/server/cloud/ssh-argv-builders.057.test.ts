@@ -172,3 +172,52 @@ describe("operator and admin scripts (S4-S7)", () => {
     }
   });
 });
+
+describe("smoke runner host requests (054 C A5)", () => {
+  it("go through the guarded project-host request", async () => {
+    const saved = process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+    delete process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+    try {
+      const { _test } = await import("./smoke-runner/project-host");
+      for (const url of [
+        "http://127.0.0.1:1/x",
+        "http://169.254.169.254/computeMetadata/v1/",
+        "http://localhost:9002/",
+      ]) {
+        await expect(
+          _test.fetchWithTimeout(url, { timeoutMs: 1000 }),
+        ).rejects.toThrow("not an allowed target");
+      }
+    } finally {
+      if (saved != null)
+        process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = saved;
+    }
+  });
+});
+
+describe("stored tunnel ports (054 C)", () => {
+  it("the connector install uses only an integer tunnel port", async () => {
+    const { selfHostReversePort } =
+      await import("../conat/api/hosts-cloud-lifecycle");
+    expect(
+      selfHostReversePort({ self_host: { ssh_reverse_port: 41000 } }),
+    ).toBe(41000);
+    expect(
+      selfHostReversePort({ self_host: { ssh_reverse_port: "41000" } }),
+    ).toBe(41000);
+    for (const bad of [
+      "22 -oProxyCommand=id",
+      "41000x",
+      22,
+      70000,
+      9.5,
+      "",
+      null,
+    ]) {
+      expect(
+        selfHostReversePort({ self_host: { ssh_reverse_port: bad } }),
+      ).toBeUndefined();
+    }
+    expect(selfHostReversePort(undefined)).toBeUndefined();
+  });
+});

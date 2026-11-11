@@ -20,6 +20,7 @@ Typical usage from a node REPL:
   await a.runSelfHostMultipassBackupSmoke({});
 */
 
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import { randomUUID } from "node:crypto";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
@@ -459,12 +460,8 @@ async function assertWorkspaceSshRouteMatchesLocalTunnel({
   if (!isLocalSelfHost) {
     return;
   }
-  const expectedPort = Number(metadata?.self_host?.ssh_tunnel_port);
-  if (
-    !Number.isInteger(expectedPort) ||
-    expectedPort <= 0 ||
-    expectedPort > 65535
-  ) {
+  const expectedPort = safeTunnelPort(metadata?.self_host?.ssh_tunnel_port);
+  if (expectedPort == null) {
     throw new Error(
       `self-host local tunnel is missing ssh_tunnel_port (host=${hostId})`,
     );

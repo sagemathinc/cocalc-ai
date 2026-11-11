@@ -537,7 +537,9 @@ describe("host-registry automatic convergence retry", () => {
               project_id: "project-1",
               users: {},
               runtime_lifecycle_revision: "1",
-              ...(sql.includes("AS content_epoch") ? { content_epoch: "3" } : {}),
+              ...(sql.includes("AS content_epoch")
+                ? { content_epoch: "3" }
+                : {}),
               updated_ms: "10",
             },
           ],
@@ -548,7 +550,9 @@ describe("host-registry automatic convergence retry", () => {
     const { initHostRegistryService } = await import("./host-registry");
     const service: any = await initHostRegistryService();
     const deltas = await service.listProjectUserDeltas({ host_id: "host-1" });
-    const reconcile = await service.listProjectUserReconcile({ host_id: "host-1" });
+    const reconcile = await service.listProjectUserReconcile({
+      host_id: "host-1",
+    });
     expect(deltas.rows[0].content_epoch).toBe("3");
     expect(reconcile.rows[0].content_epoch).toBe("3");
     expect(seen).toHaveLength(2);
@@ -1493,7 +1497,21 @@ describe("host-registry automatic convergence retry", () => {
 });
 
 describe("host report sanitizer (054 C containment)", () => {
-  const DENIED = ["self_host", "local", "provider", "cloud_provider", "machine"];
+  const DENIED = [
+    "self_host",
+    "local",
+    "provider",
+    "cloud_provider",
+    "machine",
+    "runtime",
+    "dns",
+    "cloudflare_tunnel",
+    "public_route",
+    "content_dns",
+    "public_url",
+    "public_ip",
+    "ip_address",
+  ];
   const STORED_URLS = {
     public_url: "https://host-1.cocalc.example",
     internal_url: "http://10.0.0.5:9002",
@@ -1533,13 +1551,11 @@ describe("host report sanitizer (054 C containment)", () => {
       host_id: "host-1",
       reason: "no_reconcile_needed",
     }));
-    ensureAutomaticHostArtifactDeploymentsReconcileMock = jest.fn(
-      async () => ({
-        queued: false,
-        host_id: "host-1",
-        reason: "no_reconcile_needed",
-      }),
-    );
+    ensureAutomaticHostArtifactDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
     // The bay-seeded row: a cloud host whose self_host the bay wrote.
     currentMetadata = {
       host_session_id: "session-1",
@@ -1664,7 +1680,18 @@ describe("host report sanitizer (054 C containment)", () => {
           local: true,
           provider: "star",
           cloud_provider: "star",
-          machine: { cloud: "self-host", metadata: { self_host_mode: "local" } },
+          machine: {
+            cloud: "self-host",
+            metadata: { self_host_mode: "local" },
+          },
+          runtime: { public_ip: "10.1.2.3", ssh_user: "-oX=y" },
+          dns: { record_id: "other-hosts-record" },
+          cloudflare_tunnel: { id: "other-tunnel", record_id: "r" },
+          public_route: { active_mode: "cloudflare-proxy" },
+          content_dns: { domain: "x", records: [] },
+          public_url: "https://elsewhere.example",
+          public_ip: "10.1.2.3",
+          ip_address: "10.1.2.3",
         },
       } as any);
       expect(upsertProjectHostMock).toHaveBeenCalledTimes(1);
@@ -1677,6 +1704,47 @@ describe("host report sanitizer (054 C containment)", () => {
       expect(written.public_url).toBe(STORED_URLS.public_url);
       expect(written.internal_url).toBe(STORED_URLS.internal_url);
       expect(storedUrlQueries).toBe(1);
+    });
+
+    it(`${method}: no accepted or refused URL text reaches the logger (R2)`, async () => {
+      const loggerModule: any = await import("@cocalc/backend/logger");
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      const texts = [
+        "accepted-host.cocalc.example",
+        "10.9.8.7",
+        "127.0.0.1:5432",
+        "169.254.169.254",
+        "secret-path-marker",
+      ];
+      for (const [public_url, internal_url] of [
+        [
+          "https://accepted-host.cocalc.example/secret-path-marker?q=1",
+          "http://10.9.8.7:9002",
+        ],
+        ["http://127.0.0.1:5432", "http://169.254.169.254/secret-path-marker"],
+      ]) {
+        await service[method]({
+          id: "host-1",
+          public_url,
+          internal_url,
+          metadata: { host_session_id: "session-1", host_boot_id: "boot-1" },
+        } as any);
+      }
+      const logged = loggerModule.getLogger.mock.results
+        .map((r: any) => r.value)
+        .flatMap((l: any) =>
+          ["info", "debug", "warn", "silly"].flatMap((level) =>
+            (l?.[level]?.mock?.calls ?? []).map((c: any[]) =>
+              JSON.stringify(c, (_k, v) => (v instanceof Error ? `${v}` : v)),
+            ),
+          ),
+        )
+        .join("\n");
+      expect(logged).toContain("register");
+      for (const text of texts) {
+        expect(logged).not.toContain(text);
+      }
     });
 
     it(`${method}: a clean report is passed through unchanged`, async () => {

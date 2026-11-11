@@ -8,6 +8,7 @@ import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
+  projectHostAgentFor,
   safeProjectHostUrl,
   safeTunnelPort,
 } from "@cocalc/backend/project-host-target";
@@ -117,6 +118,11 @@ export async function getProjectHostRedirectUrl({
   if (!host_id || !base || !account_id || isLocalProxyHost(host)) {
     return;
   }
+  // Never send a browser, with a token, to a refused address; fall back to
+  // the proxy instead.
+  if (safeProjectHostUrl(base) == null) {
+    return;
+  }
   const issued = issueProjectHostAuthToken({
     host_id,
     actor: "account",
@@ -131,24 +137,42 @@ export async function getProjectHostRedirectUrl({
   return target.toString();
 }
 
-// The proxy target for a host row. Every value that picks it may have come
-// from a host report, so each is checked and the request FAILS CLOSED (an error,
-// no value logged) instead of going somewhere unexpected: a tunnel port must be
-// an integer port, and a stored host URL must not name a loopback, link-local
-// or metadata address. A local self-host's own internal_url fallback is on this
-// machine by design and is only used on the local-proxy route.
-export function proxyTargetForHost(host: HostRow, what: string): string {
+// Where the proxy sends a request for a host row, and whether loopback may be
+// connected to. Every value that picks it may have come from a host report, so
+// each is checked and the request FAILS CLOSED (an error, no value logged)
+// instead of going somewhere unexpected: a tunnel port must be an integer port,
+// and a stored host URL must not name a loopback, link-local or metadata
+// address. Only the bay's own tunnel and a local-proxy host's internal_url may
+// be on this machine; even they never reach link-local or metadata addresses.
+// The connection itself goes through projectHostAgentFor, which checks the
+// resolved address as well (see @cocalc/backend/project-host-target).
+export interface ProxyTarget {
+  target: string;
+  allowLoopback: boolean;
+}
+
+export function proxyTargetForHost(host: HostRow, what: string): ProxyTarget {
   const rawTunnelPort = host.metadata?.self_host?.http_tunnel_port;
   if (rawTunnelPort) {
     const port = safeTunnelPort(rawTunnelPort);
     if (port == null) {
       throw new Error(`invalid tunnel port for ${what}`);
     }
-    return `http://127.0.0.1:${port}`;
+    return { target: `http://127.0.0.1:${port}`, allowLoopback: true };
   }
   if (isLocalProxyHost(host)) {
-    if (host.internal_url) return host.internal_url.replace(/\/+$/, "");
-    throw new Error(`local tunnel port missing for ${what}`);
+    if (!host.internal_url) {
+      throw new Error(`local tunnel port missing for ${what}`);
+    }
+    if (
+      safeProjectHostUrl(host.internal_url, { allowLoopback: true }) == null
+    ) {
+      throw new Error(`host url for ${what} is not an allowed target`);
+    }
+    return {
+      target: host.internal_url.replace(/\/+$/, ""),
+      allowLoopback: true,
+    };
   }
   const base = host.internal_url || host.public_url;
   if (!base) {
@@ -158,7 +182,33 @@ export function proxyTargetForHost(host: HostRow, what: string): string {
     throw new Error(`host url for ${what} is not an allowed target`);
   }
   // Let http-proxy append the incoming path; only provide the base.
-  return base.replace(/\/+$/, "");
+  return { target: base.replace(/\/+$/, ""), allowLoopback: false };
+}
+
+function proxyOptions({ target, allowLoopback }: ProxyTarget) {
+  return {
+    target,
+    prependPath: false,
+    agent: projectHostAgentFor(target, { allowLoopback }),
+  };
+}
+
+// An upstream connection that fails, including one the agent refused, ends
+// the client's request (502) or closes its upgrading socket, instead of
+// leaving it open.
+export function endProxyError(err, req, res?) {
+  logger.debug("proxy error", { err: `${err}`, url: req?.url });
+  if (res == null) return;
+  if (typeof res.writeHead === "function") {
+    if (!res.headersSent) {
+      res.statusCode = 502;
+      res.end("Host not available");
+    } else {
+      res.end();
+    }
+  } else if (typeof res.destroy === "function") {
+    res.destroy();
+  }
 }
 
 export async function createProjectHostProxyHandlers() {
@@ -171,9 +221,7 @@ export async function createProjectHostProxyHandlers() {
     changeOrigin: true,
   });
 
-  proxy.on("error", (err, req) => {
-    logger.debug("proxy error", { err: `${err}`, url: req?.url });
-  });
+  proxy.on("error", endProxyError);
 
   function rewriteConatPath(req, host_id: string) {
     const raw = req.url ?? "/";
@@ -207,7 +255,7 @@ export async function createProjectHostProxyHandlers() {
     req.url = `${rest}${u.search}`;
   }
 
-  async function targetForConatHost(host_id: string): Promise<string> {
+  async function targetForConatHost(host_id: string): Promise<ProxyTarget> {
     const host = await getHostById(host_id);
     if (!host) {
       throw Error(`host ${host_id} not found`);
@@ -215,7 +263,7 @@ export async function createProjectHostProxyHandlers() {
     return proxyTargetForHost(host, `host ${host_id}`);
   }
 
-  async function targetForProject(project_id: string): Promise<string> {
+  async function targetForProject(project_id: string): Promise<ProxyTarget> {
     const host = await getHost(project_id);
     if (!host) {
       throw Error(`project ${project_id} not found`);
@@ -248,7 +296,7 @@ export async function createProjectHostProxyHandlers() {
     req.headers.authorization = `Bearer ${issued.token}`;
   }
 
-  async function targetForConatRoute(routeId: string): Promise<string> {
+  async function targetForConatRoute(routeId: string): Promise<ProxyTarget> {
     try {
       return await targetForConatHost(routeId);
     } catch (err) {
@@ -272,6 +320,21 @@ export async function createProjectHostProxyHandlers() {
     );
   }
 
+  // Every proxied request and upgrade gets its target here, so each one goes
+  // through proxyTargetForHost.
+  async function selectTarget(
+    parsed: ReturnType<typeof parseReq>,
+    host: HostRow | undefined,
+  ): Promise<ProxyTarget> {
+    if (parsed.type === "conat" || parsed.type === "project-host-session") {
+      return await targetForConatRoute(parsed.project_id);
+    }
+    if (host) {
+      return proxyTargetForHost(host, `project ${parsed.project_id}`);
+    }
+    return await targetForProject(parsed.project_id);
+  }
+
   const handleRequest = async (req, res) => {
     try {
       const parsed = parseReq(req.url ?? "/");
@@ -282,15 +345,8 @@ export async function createProjectHostProxyHandlers() {
       }
       const host = await getHostForParsedRoute(parsed);
       setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
-      const target =
-        parsed.type === "conat" || parsed.type === "project-host-session"
-          ? await targetForConatRoute(parsed.project_id)
-          : (
-              host?.internal_url ||
-              host?.public_url ||
-              (await targetForProject(parsed.project_id))
-            ).replace(/\/+$/, "");
-      proxy.web(req, res, { target, prependPath: false });
+      const target = await selectTarget(parsed, host);
+      proxy.web(req, res, proxyOptions(target));
     } catch (err) {
       logger.debug("proxy request error", { err: `${err}`, url: req?.url });
       if (!res.headersSent) {
@@ -312,18 +368,11 @@ export async function createProjectHostProxyHandlers() {
       }
       const host = await getHostForParsedRoute(parsed);
       setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
-      const target =
-        parsed.type === "conat" || parsed.type === "project-host-session"
-          ? await targetForConatRoute(parsed.project_id)
-          : (
-              host?.internal_url ||
-              host?.public_url ||
-              (await targetForProject(parsed.project_id))
-            ).replace(/\/+$/, "");
+      const target = await selectTarget(parsed, host);
       // A client gone during the lookups must not open an upstream that
       // nothing will close (proxy.ws only cleans up on a later close).
       if (socket.destroyed) return;
-      proxy.ws(req, socket, head, { target, prependPath: false });
+      proxy.ws(req, socket, head, proxyOptions(target));
     } catch (err) {
       logger.debug("proxy upgrade error", { err: `${err}`, url: req?.url });
       try {

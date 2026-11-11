@@ -78,6 +78,7 @@ a = require('../../dist/cloud/smoke-runner/project-host'); await a.runProjectHos
 */
 import { execFile as execFileCb } from "node:child_process";
 import { safeSshDestination } from "@cocalc/backend/ssh-destination";
+import { projectHostRequest } from "@cocalc/server/hosts/public-route-probe";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1826,22 +1827,15 @@ function parseCookie(
   return `${cookieName}=${match[1]}`;
 }
 
+// Every request here goes to the host's stored URL (host_url), which a host
+// report could have written: through the guarded project-host request, which
+// checks the address connected to and never follows a redirect.
 async function fetchWithTimeout(
   input: string,
   opts: RequestInit & { timeoutMs?: number } = {},
 ): Promise<Response> {
-  const timeoutMs = opts.timeoutMs ?? 10000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const { timeoutMs: _ignore, signal, ...rest } = opts;
-    return await fetch(input, {
-      ...rest,
-      signal: signal ?? controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  const { timeoutMs = 10000, signal: _signal, ...rest } = opts;
+  return await projectHostRequest(input, rest, { timeout_ms: timeoutMs });
 }
 
 async function waitForCondition(
@@ -5520,3 +5514,5 @@ export async function runProjectHostGcpFlowSmoke({
     log,
   });
 }
+
+export const _test = { fetchWithTimeout };

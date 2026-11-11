@@ -74,15 +74,29 @@ export function authoritativeSshServer(
 
 // Top-level metadata keys a host report may never set. self_host holds the
 // reverse-tunnel ports the bay proxies to on its own machine; local, provider,
-// cloud_provider and machine switch a host onto that local-proxy route. Bay code
-// writes them (host create, tunnel registration, the Star seed, which calls
-// upsertProjectHost directly); a host report drops them. Hosts never send them.
+// cloud_provider and machine switch a host onto that local-proxy route. The
+// rest are the bay's own record of where the host is and what it owns at the
+// edge: runtime (the provider's view, incl. the IP and user the bay SSHes to),
+// dns, cloudflare_tunnel, public_route and content_dns (DNS records and
+// tunnels the bay creates and deletes), and public_url, public_ip and
+// ip_address (read as addresses). Bay code writes them (host create, provider
+// reconcile, tunnel registration, DNS work, the Star seed, which calls
+// upsertProjectHost directly); a host report drops them. Hosts never send them
+// (project-host/master.ts buildPayload).
 export const HOST_REPORT_DENIED_METADATA_KEYS = [
   "self_host",
   "local",
   "provider",
   "cloud_provider",
   "machine",
+  "runtime",
+  "dns",
+  "cloudflare_tunnel",
+  "public_route",
+  "content_dns",
+  "public_url",
+  "public_ip",
+  "ip_address",
 ] as const;
 
 export function stripHostReportedMetadata(metadata: unknown): unknown {
@@ -134,13 +148,16 @@ export function sanitizeHostReport<
   return { report, refusedUrlFields };
 }
 
-
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
 
 async function keepStoredUrlsForRefusedFields<
   T extends { public_url?: string; internal_url?: string },
->(host_id: string, report: T, refusedUrlFields: HostReportUrlField[]): Promise<T> {
+>(
+  host_id: string,
+  report: T,
+  refusedUrlFields: HostReportUrlField[],
+): Promise<T> {
   if (!refusedUrlFields.length) return report;
   const { rows } = await pool().query<{
     public_url?: string | null;
@@ -1534,16 +1551,16 @@ export async function initHostRegistryService() {
           ...info,
           metadata: stripHostReportedMetadata(info.metadata),
         } as HostRegistration);
-        const { report: cleaned, refusedUrlFields } = sanitizeHostReport(
-          info,
-          { isLocalSelfHost },
-        );
+        const { report: cleaned, refusedUrlFields } = sanitizeHostReport(info, {
+          isLocalSelfHost,
+        });
         warnRefusedHostReportUrls(info.id, "register", refusedUrlFields);
+        // Never the URL text: a host chooses it (presence only).
         logger.debug("register host urls", {
           id: info.id,
           isLocalSelfHost,
-          public_url: cleaned.public_url,
-          internal_url: cleaned.internal_url,
+          has_public_url: !!cleaned.public_url,
+          has_internal_url: !!cleaned.internal_url,
         });
         const { rows: previousRows } = await pool().query<{
           metadata: any;
@@ -1655,10 +1672,9 @@ export async function initHostRegistryService() {
           ...info,
           metadata: stripHostReportedMetadata(info.metadata),
         } as HostRegistration);
-        const { report: cleaned, refusedUrlFields } = sanitizeHostReport(
-          info,
-          { isLocalSelfHost },
-        );
+        const { report: cleaned, refusedUrlFields } = sanitizeHostReport(info, {
+          isLocalSelfHost,
+        });
         warnRefusedHostReportUrls(info.id, "heartbeat", refusedUrlFields);
         const { rows: previousRows } = await pool().query<{
           metadata: any;
