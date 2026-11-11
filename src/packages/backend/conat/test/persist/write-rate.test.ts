@@ -1,15 +1,17 @@
 import { readFileSync } from "node:fs";
+import { DatabaseSync, StatementSync } from "node:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { pstream } from "@cocalc/backend/conat/persist";
 import { DataEncoding } from "@cocalc/conat/core/client";
+import { getPersistentStreamDiagnostics } from "@cocalc/conat/persist/storage";
 import {
+  countCommits,
   getPersistWriteStats,
-  getPersistentStreamDiagnostics,
   logPersistWriteRate,
-} from "@cocalc/conat/persist/storage";
+} from "@cocalc/backend/conat/persist-write-rate";
 
 const msg = (s: string) => ({
   encoding: DataEncoding.JsonCodec,
@@ -244,13 +246,59 @@ describe("persist write-rate counters", () => {
       stream.close();
     });
 
-    it("counts each write statement of a multi-statement exec", () => {
+    it("runs a multi-statement exec as written and counts it once (a lower bound)", () => {
       const before = getPersistWriteStats();
       db.exec(
-        `${insert("m1")}; ${insert("m2")};\n CREATE TABLE t_multi(a); DROP TABLE t_multi; SELECT 1;`,
+        `${insert("m1")}; ${insert("m;2")};\n CREATE TABLE t_multi(a); DROP TABLE t_multi; SELECT 1;`,
       );
-      expect(delta(before, "disk_autocommits_total")).toBe(4);
+      expect(stream.getCheckpoint("m1")).toBeDefined();
+      expect(stream.getCheckpoint("m;2")).toBeDefined();
+      expect(delta(before, "disk_autocommits_total")).toBe(1);
       expect(delta(before, "disk_txn_commits_total")).toBe(0);
+      const none = getPersistWriteStats();
+      db.exec("SELECT 1; SELECT 2;");
+      expect(delta(none, "disk_commits_total")).toBe(0);
+    });
+
+    it("gives every script the same result or error as SQLite without it", () => {
+      const scripts = [
+        `${insert("p1")}; ${insert("p;2")}; SELECT 1`,
+        `${insert("p3")}; INSERT INTO stream_checkpoints(name, seq, time) VALUES ('p;4, 1, 1)`,
+        `${insert("p5")}; /* ; */ ${insert("p6")} -- ;`,
+        `${insert("p7")}; INSERT INTO nowhere VALUES (1); ${insert("p8")}`,
+        "BEGIN; " + insert("p9") + "; COMMIT;",
+      ];
+      const raw = new DatabaseSync(":memory:");
+      raw.exec(
+        "CREATE TABLE stream_checkpoints (name TEXT PRIMARY KEY, seq INTEGER NOT NULL, time INTEGER NOT NULL, data_json TEXT, revision INTEGER NOT NULL DEFAULT 0)",
+      );
+      const outcome = (d: any, sql: string) => {
+        try {
+          d.exec(sql);
+          return "ok";
+        } catch (err) {
+          return `${err}`;
+        }
+      };
+      const names = (d: any) =>
+        d
+          .prepare("SELECT name FROM stream_checkpoints ORDER BY name")
+          .all()
+          .map((r: any) => r.name);
+      for (const sql of scripts) {
+        expect(outcome(db, sql)).toBe(outcome(raw, sql));
+        expect(names(db)).toEqual(names(raw));
+      }
+      expect(names(db)).toEqual(["p1", "p3", "p5", "p6", "p7", "p9", "p;2"]);
+      raw.close();
+    });
+
+    it("does not count a WITH ... SELECT after a DELETE (run's changes is the last DML's)", () => {
+      db.exec(insert("w1"));
+      db.prepare("DELETE FROM stream_checkpoints WHERE name='w1'").run();
+      const before = getPersistWriteStats();
+      db.prepare("WITH c AS (SELECT 1) SELECT replace('a', 'a', 'b')").run();
+      expect(delta(before, "disk_commits_total")).toBe(0);
     });
 
     it("does not split at a semicolon inside a literal or a comment", () => {
@@ -343,33 +391,176 @@ describe("persist write-rate counters", () => {
     });
   });
 
-  describe("the source of storage.ts", () => {
+  describe("a failing read of the counter never fails the call", () => {
+    let stream: ReturnType<typeof pstream>;
+    let db: any;
+    const TOTAL_CHANGES = "SELECT total_changes() AS n";
+    const SCHEMA_VERSION = "PRAGMA schema_version";
+
+    // Make the counter's own read `sql` throw on the calls `fail` picks.
+    // (Write statements have their own get, so this reaches only reads.)
+    // (Each call replaces the previous injection.)
+    const get = StatementSync.prototype.get;
+    function failRead(sql: string, fail: (n: number) => boolean) {
+      let n = 0;
+      jest.spyOn(StatementSync.prototype, "get").mockImplementation(function (
+        this: any,
+        ...args: any[]
+      ) {
+        if (this.sourceSQL === sql && fail(++n)) {
+          throw Error("injected counter read failure");
+        }
+        return get.apply(this, args as any);
+      });
+    }
+
+    beforeEach(() => {
+      stream = pstream({ path: join(dir, "fail") });
+      db = (stream as any).db;
+    });
+
+    let output: jest.SpyInstance[];
+    beforeEach(() => {
+      output = [
+        jest.spyOn(console, "log"),
+        jest.spyOn(console, "info"),
+        jest.spyOn(console, "warn"),
+        jest.spyOn(console, "error"),
+        jest.spyOn(console, "debug"),
+        jest.spyOn(process.stderr, "write"),
+        jest.spyOn(process.stdout, "write"),
+      ];
+    });
+
+    afterEach(() => {
+      // nothing about the failure was printed or logged
+      for (const spy of output) {
+        expect(JSON.stringify(spy.mock.calls)).not.toContain("injected");
+      }
+      jest.restoreAllMocks();
+      stream.close();
+    });
+
+    it("after a successful COMMIT", () => {
+      const before = getPersistWriteStats();
+      // read 1 is BEGIN's start, read 2 the one after COMMIT
+      failRead(TOTAL_CHANGES, (n) => n === 2);
+      const { seq } = stream.set(msg("committed"));
+      expect(stream.get({ seq })).toBeDefined();
+      expect(db.isTransaction).toBe(false);
+      expect(delta(before, "disk_count_errors_total")).toBe(1);
+      expect(delta(before, "disk_commits_total")).toBe(0);
+    });
+
+    it("before a BEGIN", () => {
+      const before = getPersistWriteStats();
+      failRead(TOTAL_CHANGES, (n) => n === 1);
+      const { seq } = stream.set(msg("committed"));
+      expect(stream.get({ seq })).toBeDefined();
+      expect(delta(before, "disk_count_errors_total")).toBe(1);
+      // its start unknown, the transaction is counted as writing
+      expect(delta(before, "disk_txn_commits_total")).toBe(1);
+      expect(delta(before, "disk_rows_total")).toBe(1);
+    });
+
+    it("before and after an autocommit", () => {
+      const before = getPersistWriteStats();
+      failRead(SCHEMA_VERSION, (n) => n === 1);
+      db.exec("CREATE TABLE t_fail_before(a)");
+      // exec has no result, so the INSERT reads total_changes before (1)
+      // and after (2); the DELETE uses reads 3 and 4
+      failRead(TOTAL_CHANGES, (n) => n === 2);
+      db.exec(
+        "INSERT INTO stream_checkpoints(name, seq, time) VALUES ('f', 1, 1)",
+      );
+      expect(
+        db
+          .prepare("DELETE FROM stream_checkpoints WHERE name=? RETURNING name")
+          .get("f"),
+      ).toBeDefined();
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='t_fail_before'",
+          )
+          .get(),
+      ).toBeDefined();
+      expect(stream.getCheckpoint("f")).toBeUndefined();
+      expect(delta(before, "disk_count_errors_total")).toBe(2);
+      // the CREATE and the INSERT are not counted; the DELETE is
+      expect(delta(before, "disk_autocommits_total")).toBe(1);
+    });
+  });
+
+  it("counts a connection it cannot count, and says so in the log line", () => {
+    const before = getPersistWriteStats();
+    const fake = { prepare: () => {}, exec: () => {} } as any;
+    expect(countCommits(fake, "disk", () => ({ rows: 0, bytes: 0 }))).toBe(
+      fake,
+    );
+    expect(delta(before, "disk_uncounted_connections_total")).toBe(1);
+    const t = Date.now();
+    logPersistWriteRate(t);
+    const log = jest.fn();
+    const entry = logPersistWriteRate(t + 60_000, log);
+    expect(entry.disk_commits).toBe(0);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][1].disk_uncounted_connections_total).toBe(
+      getPersistWriteStats().disk_uncounted_connections_total,
+    );
+    expect(entry.disk_uncounted_connections_total).toBeGreaterThanOrEqual(1);
+  });
+
+  describe("the sources", () => {
+    const packages = join(__dirname, "../../../..");
     const source = readFileSync(
-      join(__dirname, "../../../../conat/persist/storage.ts"),
+      join(packages, "conat/persist/storage.ts"),
+      "utf8",
+    );
+    const counterSource = readFileSync(
+      join(packages, "backend/conat/persist-write-rate.ts"),
       "utf8",
     );
     // the SQL classification and countCommits itself
-    const start = source.indexOf("// The first word of a statement");
-    const end = source.indexOf(
+    const start = counterSource.indexOf("// The first word of a statement");
+    const end = counterSource.indexOf(
       "\n}\n",
-      source.indexOf("function countCommits("),
+      counterSource.indexOf("function countCommits("),
     );
-    const counter = source.slice(start, end);
+    const counter = counterSource.slice(start, end);
 
-    it("opens exactly one connection, and counts it", () => {
+    it("storage opens exactly one connection, and hands it to the counter", () => {
       expect(source.match(/createDatabase\(/g)).toHaveLength(1);
-      expect(source).toMatch(/countCommits\(\s*createDatabase\(/);
+      expect(source).toMatch(
+        /const db = createDatabase\([^)]*\);\s*(\/\/[^\n]*\s*)*this\.db = writeCounter\?\.wrap\(db, /,
+      );
       expect(source).not.toMatch(/DatabaseSync\(/);
+      // and the backend registers the counter with the persist context
+      expect(
+        readFileSync(join(packages, "backend/conat/persist.ts"), "utf8"),
+      ).toMatch(
+        /initContext\(\{[\s\S]*?\n  writeCounter: persistWriteCounter,\n\}\);/,
+      );
     });
 
-    it("runs every statement through this.db, i.e. through countCommits", () => {
+    it("storage runs every statement through this.db, i.e. through the counter", () => {
       expect(start).toBeGreaterThan(0);
-      const rest = source.slice(0, start) + source.slice(end);
+      expect(end).toBeGreaterThan(start);
+      const rest = source;
       const calls = [...rest.matchAll(/\.(prepare|exec)\(/g)];
       expect(calls.length).toBeGreaterThan(50);
       for (const call of calls) {
         const before = rest.slice(Math.max(0, call.index! - 40), call.index);
         expect(before).toMatch(/this\.db\s*$/);
+      }
+    });
+
+    it("storage runs no multi-statement script through exec", () => {
+      const rest = source;
+      const execs = [...rest.matchAll(/this\.db\s*\.exec\(([^)]*)\)/g)];
+      expect(execs.length).toBeGreaterThan(5);
+      for (const [, arg] of execs) {
+        expect(arg).not.toContain(";");
       }
     });
 
@@ -385,10 +576,12 @@ describe("persist write-rate counters", () => {
       "autocommits_total",
       "bytes_total",
       "commits_total",
+      "count_errors_total",
       "rows_total",
       "sqlite_commit_call_ms_max",
       "sqlite_commit_call_ms_total",
       "txn_commits_total",
+      "uncounted_connections_total",
     ];
     expect(Object.keys(diagnostics.write_stats).sort()).toEqual(
       ["disk", "ephemeral"]

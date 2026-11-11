@@ -63,6 +63,24 @@ export function setPrepareProjectStore(fn: PrepareProjectStore): void {
   prepareProjectStoreFn = fn;
 }
 
+// Counts the commits on each connection storage opens, to measure the write
+// rate of a host (backend/conat/persist-write-rate).  The backend sets it; by
+// default nothing is counted, and the persist diagnostics show write_stats
+// null.  It lives in the backend because storage is in the browser bundle.
+export type PersistStorageKind = "disk" | "ephemeral";
+export interface PersistWriteCounter {
+  // returns db (or db itself), counting its commits; takeRows returns the
+  // messages the transaction in progress added and resets them
+  wrap: (
+    db: Database,
+    kind: PersistStorageKind,
+    takeRows: () => { rows: number; bytes: number },
+  ) => Database;
+  streamOpened: (kind: PersistStorageKind) => void;
+  stats: () => Record<string, number>;
+}
+export let writeCounter: PersistWriteCounter | undefined = undefined;
+
 export let syncFiles = {
   local: "",
   localProjects: "",
@@ -108,6 +126,7 @@ export function initContext(opts: {
   ensureContainingDirectoryExists: (path: string) => Promise<void>;
   statSync: (path: string) => { mtimeMs: number; size?: number };
   copyFileSync: (src: string, desc: string) => void;
+  writeCounter?: PersistWriteCounter;
 }) {
   sqliteModule = opts.sqlite;
   compress = opts.compress;
@@ -122,6 +141,7 @@ export function initContext(opts: {
   ensureContainingDirectoryExists = opts.ensureContainingDirectoryExists;
   statSync = opts.statSync;
   copyFileSync = opts.copyFileSync;
+  writeCounter = opts.writeCounter;
 }
 
 export function createDatabase(...args): Database {

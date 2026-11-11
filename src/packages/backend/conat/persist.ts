@@ -25,6 +25,7 @@ import {
   assertSafePersistDatabasePath,
   projectRootForPersistPath,
 } from "./persist-path-safety";
+import { persistWriteCounter } from "./persist-write-rate";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
 
@@ -44,6 +45,7 @@ initContext({
   ensureContainingDirectoryExists,
   statSync,
   copyFileSync,
+  writeCounter: persistWriteCounter,
 });
 
 export { pstream } from "@cocalc/conat/persist/storage";
