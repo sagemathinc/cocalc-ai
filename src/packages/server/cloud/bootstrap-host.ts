@@ -54,7 +54,7 @@ import type {
 import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { resolveProjectContentDomain } from "./host-content-dns";
-import { loadEffectiveProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
+import { loadTrustedEffectiveRuntimeDeployments } from "@cocalc/server/conat/api/host-software-admin";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import getPool from "@cocalc/database/pool";
 import siteURL from "@cocalc/database/settings/site-url";
@@ -711,7 +711,7 @@ export function buildProjectIoPolicy({
 async function loadBootstrapArtifactDesiredVersions(
   host_id: string,
 ): Promise<Partial<Record<BootstrapManagedArtifact, string>>> {
-  const deployments = await loadEffectiveProjectHostRuntimeDeployments({
+  const deployments = await loadTrustedEffectiveRuntimeDeployments({
     host_id,
   });
   const versions: Partial<Record<BootstrapManagedArtifact, string>> = {};

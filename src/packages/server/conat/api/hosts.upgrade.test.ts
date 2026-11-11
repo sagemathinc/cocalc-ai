@@ -947,6 +947,7 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
   });
 
   it("uses the effective runtime deployment artifact target during software reconcile", async () => {
+    isAdminMock = jest.fn(async (id: string) => id === "admin-account");
     const initialRow = makeHostRow({
       version: "1776405602543",
       desiredProjectHostVersion: "1776405602543",
@@ -965,7 +966,8 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
         target_type: "artifact",
         target: "project-host",
         desired_version: "1776486535462",
-        requested_by: ACCOUNT_ID,
+        // Host-scoped deployments count only when an admin set them.
+        requested_by: "admin-account",
         requested_at: "2026-04-15T00:00:00.000Z",
         updated_at: "2026-04-15T00:00:00.000Z",
       },
