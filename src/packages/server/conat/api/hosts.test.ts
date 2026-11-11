@@ -1818,6 +1818,48 @@ describe("hosts.createHost", () => {
     expect(insertedMetadata.bootstrap_version).toBeUndefined();
   });
 
+  it("stores a self-host ssh target in canonical form (057)", async () => {
+    let insertedMetadata: any;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("INSERT INTO project_hosts")) {
+        insertedMetadata = params[4];
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO cloud_vm_work")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: insertedMetadata,
+              bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { createHost } = await import("./hosts");
+    await createHost({
+      account_id: ACCOUNT_ID,
+      name: "host-name",
+      region: "us-central1",
+      size: "small",
+      machine: {
+        cloud: "local",
+        metadata: { self_host_ssh_target: "  ubuntu@[2001:db8::1]:022 " },
+      },
+    });
+    expect(insertedMetadata.machine.metadata.self_host_ssh_target).toBe(
+      "ubuntu@[2001:db8::1]:22",
+    );
+  });
+
   it("preserves explicit per-host bootstrap overrides", async () => {
     let insertedMetadata: any;
     getServerSettingsMock = jest.fn(async () => ({
@@ -2352,6 +2394,51 @@ describe("hosts browser fresh auth gating", () => {
         cloud: "local",
       }),
     ).rejects.toThrow("local hosts are limited to admins");
+  });
+
+  it("stores an updated self-host ssh target in canonical form (057)", async () => {
+    isAdminMock = jest.fn(async () => true);
+    const seen: string[] = [];
+    let stored: any;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      seen.push(sql.replace(/\s+/g, " ").slice(0, 80));
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "self-host",
+                  metadata: { self_host_ssh_target: "old@10.0.0.1" },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (/UPDATE project_hosts/.test(sql)) {
+        for (const p of params ?? []) {
+          const m = typeof p === "string" ? safeJson(p) : p;
+          const t = m?.machine?.metadata?.self_host_ssh_target;
+          if (t != null) stored = t;
+        }
+      }
+      return { rows: [] };
+    });
+    const { updateHostMachine } = await import("./hosts");
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      self_host_ssh_target: "  ubuntu@[2001:db8::1]:022 ",
+    }).catch((err) => {
+      throw new Error(`${err}\n${seen.join("\n")}`);
+    });
+    expect(stored).toBe("ubuntu@[2001:db8::1]:22");
   });
 
   it("rejects a self-host ssh target that is not allowed (057)", async () => {
@@ -9859,3 +9946,11 @@ describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
     );
   });
 });
+
+function safeJson(value: string): any {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}

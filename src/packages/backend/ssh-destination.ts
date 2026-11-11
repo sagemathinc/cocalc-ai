@@ -134,6 +134,17 @@ export function parseSshTargetSpec(
   return { ...(user != null ? { user } : {}), host, ...(port ? { port } : {}) };
 }
 
+/** The canonical text of a parsed target: [user@]host[:port], with an IPv6
+ * host in brackets when there is a port. */
+export function formatSshTargetSpec({
+  user,
+  host,
+  port,
+}: SshTargetSpec): string {
+  const h = port != null && isIP(host) === 6 ? `[${host}]` : host;
+  return `${user != null ? `${user}@` : ""}${h}${port != null ? `:${port}` : ""}`;
+}
+
 /** "user@host" for a checked login name and host, else undefined. */
 export function safeSshDestination(
   user: unknown,

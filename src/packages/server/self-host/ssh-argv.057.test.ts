@@ -294,6 +294,30 @@ describe("S1 bootstrap reconcile target (057)", () => {
     expect(_test.cloudHostSshTarget(fallback)).toBeUndefined();
   });
 
+  it("refuses loopback even with the development loopback opt-in", async () => {
+    const { _test } = await import("../conat/api/hosts-bootstrap-reconcile");
+    const saved = process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+    process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = "1";
+    try {
+      for (const public_ip of ["127.0.0.1", "::1"]) {
+        const row = {
+          ...goodRow,
+          metadata: {
+            ...goodRow.metadata,
+            runtime: { public_ip, ssh_user: "ubuntu" },
+          },
+        };
+        expect(_test.cloudHostSshTarget(row)).toBeUndefined();
+      }
+    } finally {
+      if (saved == null) {
+        delete process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+      } else {
+        process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = saved;
+      }
+    }
+  });
+
   it("spawns ssh with -- right before the destination", async () => {
     const { _test } = await import("../conat/api/hosts-bootstrap-reconcile");
     await _test.runSshScript({

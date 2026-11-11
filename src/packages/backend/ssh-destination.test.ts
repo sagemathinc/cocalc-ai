@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  formatSshTargetSpec,
   parseSshTargetSpec,
   safeSshDestination,
   safeSshHost,
@@ -98,6 +99,8 @@ describe("safeSshHost", () => {
       "::ffff:127.0.0.1",
       "::127.0.0.1",
       "::7f00:1",
+      "::ffff:0:7f00:1",
+      "::ffff:0:a9fe:a9fe",
       "64:ff9b::a9fe:a9fe",
       "localhost",
       "foo.localhost",
@@ -127,6 +130,12 @@ describe("safeSshHost", () => {
       "1.2.3",
       "0x7f.1",
       "2130706433",
+      // leading-zero and short IPv4 forms (a resolver may read octal)
+      "0177.0.0.1",
+      "010.0.0.1",
+      "127.0.0.01",
+      "127.1",
+      "10.1",
       "1.2.3.4.5",
       "256.1.1.1",
       "a".repeat(64) + ".com",
@@ -254,6 +263,22 @@ describe("parseSshTargetSpec (self-host target grammar)", () => {
       { host: "x" },
     ]) {
       expect(parseSshTargetSpec(bad)).toBeUndefined();
+    }
+  });
+});
+
+describe("formatSshTargetSpec", () => {
+  it("gives the canonical text of each accepted form", () => {
+    for (const [raw, canonical] of [
+      ["  host.example.com ", "host.example.com"],
+      ["ubuntu@10.0.0.5:022", "ubuntu@10.0.0.5:22"],
+      ["[2001:db8::1]", "2001:db8::1"],
+      ["u@[2001:db8::1]:2200", "u@[2001:db8::1]:2200"],
+      ["2001:db8::1", "2001:db8::1"],
+    ]) {
+      expect(formatSshTargetSpec(parseSshTargetSpec(raw)!)).toBe(canonical);
+      // and the canonical text parses back to the same parts
+      expect(parseSshTargetSpec(canonical)).toEqual(parseSshTargetSpec(raw));
     }
   });
 });

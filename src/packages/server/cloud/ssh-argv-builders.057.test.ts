@@ -3,7 +3,12 @@
 sites that take a host-derived user or address check it first.
 */
 
-import { assertHostSshMetadataAllowed, hostSshUser } from "./host-ssh-metadata";
+import {
+  assertHostSshMetadataAllowed,
+  canonicalSelfHostSshTarget,
+  hostSshUser,
+  withCanonicalSshTarget,
+} from "./host-ssh-metadata";
 
 function expectDestinationAfterDashes(args: string[], destination: string) {
   const dash = args.indexOf("--");
@@ -36,6 +41,31 @@ describe("host ssh metadata checks", () => {
     ]) {
       expect(() => assertHostSshMetadataAllowed(bad)).toThrow();
     }
+  });
+
+  it("a self-host target is stored in canonical form", () => {
+    expect(canonicalSelfHostSshTarget(" ubuntu@[2001:db8::1]:022 ")).toBe(
+      "ubuntu@[2001:db8::1]:22",
+    );
+    expect(canonicalSelfHostSshTarget("myserver")).toBe("myserver");
+    for (const bad of [5, "-oX=y", "", ["user@h"]]) {
+      expect(() => canonicalSelfHostSshTarget(bad)).toThrow(
+        /^self_host_ssh_target must be/,
+      );
+    }
+    expect(
+      withCanonicalSshTarget({
+        cloud: "self-host",
+        metadata: { self_host_ssh_target: " u@10.0.0.5:0022", x: 1 },
+      }),
+    ).toEqual({
+      cloud: "self-host",
+      metadata: { self_host_ssh_target: "u@10.0.0.5:22", x: 1 },
+    });
+    expect(withCanonicalSshTarget({ metadata: { x: 1 } })).toEqual({
+      metadata: { x: 1 },
+    });
+    expect(withCanonicalSshTarget(undefined)).toBeUndefined();
   });
 
   it("hostSshUser falls back only for a missing value", () => {
@@ -114,6 +144,16 @@ describe("operator and admin scripts (S4-S7)", () => {
       expect(() => remotePythonSshArgs({ host, user, port: 22 })).toThrow(
         "not allowed",
       );
+    }
+    for (const sudo_user of ["-u", "x;id", "root more"]) {
+      expect(() =>
+        remotePythonSshArgs({
+          host: "10.0.0.5",
+          user: "ubuntu",
+          port: 22,
+          sudo_user,
+        }),
+      ).toThrow("sudo user is not allowed");
     }
   });
 

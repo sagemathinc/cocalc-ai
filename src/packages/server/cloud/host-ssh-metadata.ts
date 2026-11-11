@@ -7,6 +7,7 @@ are written, and again where they are used (see @cocalc/backend/ssh-destination)
 */
 
 import {
+  formatSshTargetSpec,
   parseSshTargetSpec,
   safeSshHost,
   safeSshLoginName,
@@ -43,4 +44,30 @@ export function hostSshUser(value: unknown, fallback = "ubuntu"): string {
     throw new Error("host ssh user is not a plain login name");
   }
   return user;
+}
+
+/** The canonical form of a self-host target, which is what gets stored. */
+export function canonicalSelfHostSshTarget(value: unknown): string {
+  const spec = parseSshTargetSpec(value);
+  if (spec == null) {
+    throw new Error(
+      "self_host_ssh_target must be [user@]host[:port] with a plain login name and an allowed host",
+    );
+  }
+  return formatSshTargetSpec(spec);
+}
+
+/** `machine` with its self_host_ssh_target, if any, in canonical form. */
+export function withCanonicalSshTarget<T extends { metadata?: any }>(
+  machine: T | undefined,
+): T | undefined {
+  const raw = machine?.metadata?.self_host_ssh_target;
+  if (machine == null || raw == null) return machine;
+  return {
+    ...machine,
+    metadata: {
+      ...machine.metadata,
+      self_host_ssh_target: canonicalSelfHostSshTarget(raw),
+    },
+  };
 }
