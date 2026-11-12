@@ -408,9 +408,9 @@ inside the repository.
 
 ## Let an agent work with GitHub
 
-On a site with the GitHub connector configured, you can give a named agent
-access to your GitHub repositories without pasting a token into its chat.
-The project needs internet access.
+On a site with the GitHub connector configured, you can give a named Codex or
+supported Claude Code agent access to your GitHub repositories without pasting
+a token into its chat. The project needs internet access.
 
 1. Open **Settings -> Connectors** and connect GitHub. Complete GitHub's
    sign-in and choose the repositories accessible to the site's GitHub App.
@@ -429,7 +429,9 @@ GitHub connection. The agent can run \`gh auth status\` to check that it reports
 as \`gh pr list --repo OWNER/REPO\`. GitHub SSH-style remotes work through
 HTTPS with this connector, without a separate SSH key.
 
-Use the connection from the agent chat. If the agent cannot read a repository,
+Use the connection from the agent chat. If its menu says **Codex and Claude
+only**, the selected agent runtime does not support the connector; choose a
+Codex or supported Claude Code agent. If the agent cannot read a repository,
 check the selected GitHub connection, the repositories selected for it, and the
 project's internet access. Ask the agent to report the connector status before
 trying a separate login or changing the project's Git setup.
