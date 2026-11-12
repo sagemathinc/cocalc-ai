@@ -314,8 +314,14 @@ export type AllowFunction = (opts: {
   forwardedCaller?: AuthenticatedCaller;
 }) => Promise<boolean>;
 
-// The host -> bay status service's subject (conat/project-host/api.ts).
+// The host -> bay status and registry services' subjects
+// (conat/project-host/api.ts).
 export const HOST_STATUS_SUBJECT = "project-hosts.status";
+export const HOST_REGISTRY_SUBJECT = "project-hosts.api";
+const HOST_BOUND_SUBJECTS = new Set([
+  HOST_STATUS_SUBJECT,
+  HOST_REGISTRY_SUBJECT,
+]);
 
 export interface Options {
   /** Called once when an authenticated socket goes away (with its user). */
@@ -1589,10 +1595,10 @@ export class ConatServer extends EventEmitter {
     // Hub API handlers derive fresh-auth policy from the caller's own session,
     // never from the request. Only the Hub API subject carries it, so other
     // subscribers never learn a session reference.
-    // Host-status updates come from a host principal: stamp its own id, which
-    // the status service binds every request to (finding 068).
+    // Host-status and registry requests come from a host principal: stamp its
+    // own id, which those services bind every request to (finding 068).
     if (
-      subject === HOST_STATUS_SUBJECT &&
+      HOST_BOUND_SUBJECTS.has(subject) &&
       !isHubUser(user) &&
       typeof user?.host_id === "string" &&
       user.host_id &&

@@ -543,8 +543,8 @@ export async function initHostStatusService() {
           public_key,
         });
         // the record of who registered a tunnel key (068): the host itself,
-        // by the binding; never the key
-        logger.info("on-prem tunnel key registered", { host_id });
+        // by the binding; never the key.  warn: info is not kept on a bay.
+        logger.warn("on-prem tunnel key registered", { host_id });
         const reversePort =
           sshTarget &&
           (safeTunnelPort(rows[0]?.metadata?.self_host?.ssh_reverse_port) ?? 0);

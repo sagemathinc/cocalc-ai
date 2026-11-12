@@ -120,42 +120,35 @@ describe("host-status requests are bound to the calling host (068)", () => {
     return { server, hub, hostA, account, service, calls };
   }
 
-  it.each(MODES)(
-    "%s: host A naming host B, or naming no host, acts as host A, for every method",
-    async (mode) => {
-      const { hostA, calls } = await setup(mode);
+  const CASES = MODES.flatMap((mode) =>
+    METHODS.map(([name, opts]) => [mode, name, opts] as const),
+  );
+
+  it.each(CASES)(
+    "%s: %s is bound to the calling host",
+    async (mode, name, opts) => {
+      const { hostA, account, hub, calls } = await setup(mode);
       const api = statusClient(hostA, mode);
-      for (const [name, opts] of METHODS) {
-        await api[name]({ ...opts, host_id: HOST_B });
-        await api[name]({ ...opts });
-      }
-      expect(calls).toHaveLength(METHODS.length * 2);
-      for (const [, opts] of calls) {
-        expect(opts.host_id).toBe(HOST_A);
-      }
-    },
-  );
-
-  it.each(MODES)(
-    "%s: a caller that is not a host is refused, for every method",
-    async (mode) => {
-      const { account, hub, calls } = await setup(mode);
+      // another host's id, or none: acts as the caller
+      await api[name]({ ...opts, host_id: HOST_B });
+      await api[name]({ ...opts });
       for (const client of [account, hub]) {
-        const api = statusClient(client, mode);
-        for (const [name, opts] of METHODS) {
-          await expect(api[name]({ ...opts, host_id: HOST_A })).rejects.toThrow(
-            /requires an authenticated host/,
-          );
-        }
+        await expect(
+          statusClient(client, mode)[name]({ ...opts, host_id: HOST_A }),
+        ).rejects.toThrow(/requires an authenticated host/);
       }
-      expect(calls).toHaveLength(0);
+      expect(calls).toEqual([
+        [name, { ...opts, host_id: HOST_A }],
+        [name, { ...opts, host_id: HOST_A }],
+      ]);
     },
   );
 
-  it("the server stamps a host's id into the caller ONLY on the host-status subject", async () => {
+  it("the server stamps a host's id into the caller ONLY on the host-status and registry subjects", async () => {
     const { hostA, hub } = await setup();
     for (const [subject, expected] of [
       ["project-hosts.status", { host_id: HOST_A }],
+      ["project-hosts.api", { host_id: HOST_A }],
       ["project-hosts.other", undefined],
     ] as const) {
       const subscription = await hub.subscribe(subject);
@@ -186,11 +179,13 @@ describe("host-status requests are bound to the calling host (068)", () => {
       const mixed = connect({ address: server.address(), noCache: true, auth });
       opened.push(mixed);
       await mixed.waitUntilSignedIn({ timeout: 5_000 });
-      const subscription = await hub.subscribe("project-hosts.status");
-      await mixed.publish("project-hosts.status", null);
-      const { value } = await subscription.next();
-      expect(value?.caller?.host_id).toBeUndefined();
-      subscription.close();
+      for (const subject of ["project-hosts.status", "project-hosts.api"]) {
+        const subscription = await hub.subscribe(subject);
+        await mixed.publish(subject, null);
+        const { value } = await subscription.next();
+        expect(value?.caller?.host_id).toBeUndefined();
+        subscription.close();
+      }
     }
   });
 

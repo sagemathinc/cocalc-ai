@@ -98,6 +98,27 @@ describe("host status project state ordering", () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
+  it("a state report for a project on another host writes nothing and tells the caller to delete (068)", async () => {
+    const ownership = await import("./host-project-ownership");
+    (
+      ownership.shouldDeleteHostProjectUpdate as jest.Mock
+    ).mockResolvedValueOnce(true);
+    const { initHostStatusService } = await import("./host-status");
+    const service = await initHostStatusService();
+    await expect(
+      service.reportProjectState({
+        host_id: "host-1",
+        project_id: "project-b",
+        state: { state: "off", time: new Date() },
+      }),
+    ).resolves.toEqual({ action: "delete" });
+    expect(ownership.shouldDeleteHostProjectUpdate).toHaveBeenCalledWith({
+      host_id: "host-1",
+      project_id: "project-b",
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("preserves event time and rejects reports older than authoritative state", async () => {
     const { initHostStatusService } = await import("./host-status");
     const service = await initHostStatusService();

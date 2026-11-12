@@ -760,6 +760,17 @@ describe("initHostStatusService registerOnPremTunnel", () => {
       host_id: "host-gcp",
       public_key: "ssh-ed25519 AAAA host",
     });
+    // the registration is a record a bay keeps (warn; info is not kept), and
+    // it never carries the key (068)
+    const { default: getLogger } =
+      (await import("@cocalc/backend/logger")) as any;
+    const loggers = getLogger.mock.results.map((r) => r.value);
+    const recorded = loggers.flatMap((l) =>
+      l.warn.mock.calls.filter(([m]) => m === "on-prem tunnel key registered"),
+    );
+    expect(recorded).toEqual([
+      ["on-prem tunnel key registered", { host_id: "host-gcp" }],
+    ]);
     expect(result).toMatchObject({
       sshd_host: "lite4b.cocalc.ai",
       sshd_port: 2201,
@@ -778,6 +789,33 @@ describe("initHostStatusService reportProjectProvisioned", () => {
     createHostStatusServiceMock = jest.fn(({ impl }) => impl);
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn(async () => ({ rows: [] }));
+  });
+
+  it("an inventory updates only the caller's own projects, with only the accepted ids (068)", async () => {
+    const ownership = await import("./host-project-ownership");
+    (
+      ownership.classifyHostProvisionedInventory as jest.Mock
+    ).mockResolvedValueOnce({
+      accepted_project_ids: ["p-own"],
+      delete_project_ids: ["p-other-host"],
+    });
+    const { initHostStatusService } = await import("./host-status");
+    const service = await initHostStatusService();
+    await expect(
+      service.reportHostProvisionedInventory({
+        host_id: "host-1",
+        project_ids: ["p-own", "p-other-host"],
+      }),
+    ).resolves.toEqual({ delete_project_ids: ["p-other-host"] });
+    expect(ownership.classifyHostProvisionedInventory).toHaveBeenCalledWith({
+      host_id: "host-1",
+      project_ids: ["p-own", "p-other-host"],
+    });
+    const update = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("UPDATE projects"),
+    );
+    expect(update[0]).toContain("WHERE projects.host_id = $1");
+    expect(update[1].slice(0, 2)).toEqual(["host-1", ["p-own"]]);
   });
 
   it("refuses a provisioned report without the calling host's id, before any database access (068)", async () => {
