@@ -45,3 +45,19 @@ export function setStaticFontCorsHeaders(
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
 }
+
+// The widget host loads its script (and the chunks and styles that script
+// loads) from /static.  From the frame's opaque origin those are cross-origin
+// requests, so on a server that sends Cross-Origin-Embedder-Policy:
+// require-corp (CoCalc Lite/Plus) the frame needs them to carry
+// Cross-Origin-Resource-Policy, or the browser blocks them and widgets never
+// render.  They are the webapp's public bundles.
+const SCRIPT_OR_STYLE_RE = /\.(?:m?js|css)$/i;
+
+export function setStaticScriptCorpHeaders(
+  res: { setHeader: (name: string, value: string) => unknown },
+  path: string,
+): void {
+  if (!SCRIPT_OR_STYLE_RE.test(path)) return;
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+}

@@ -1,5 +1,6 @@
 import { authFirstRequireAccount, declareHubApiPrincipalPolicy } from "./util";
 import type { Configuration } from "@cocalc/conat/persist/storage";
+import type { FreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 export type NotificationPriority = "low" | "normal" | "high";
 export type NotificationSeverity = "info" | "warning" | "error";
@@ -117,7 +118,7 @@ export interface StartCodexFreshAuthActionOptions {
   account_id?: string;
   source_project_id: string;
   browser_id: string;
-  duration?: "default" | "extended";
+  duration?: FreshAuthDuration;
   context: CodexFreshAuthAttentionContext;
 }
 

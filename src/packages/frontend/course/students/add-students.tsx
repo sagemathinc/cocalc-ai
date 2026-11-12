@@ -265,9 +265,13 @@ function StepTag({ n, text }: { n: number; text: string }) {
   );
 }
 
-function existingStudentEmails(students: StudentsMap): Set<string> {
+// Emails of students currently in the course. A deleted student stays in the
+// roster (so they can be undeleted) but must not block adding that email again,
+// e.g., to replace an entry linked to the wrong account.
+export function existingStudentEmails(students: StudentsMap): Set<string> {
   const existing = new Set<string>();
   students?.map((student) => {
+    if (student.get("deleted")) return;
     const email = lower_email_address(student.get("email_address"));
     if (email) {
       existing.add(email);
@@ -276,7 +280,10 @@ function existingStudentEmails(students: StudentsMap): Set<string> {
   return existing;
 }
 
-function parseRoster(input: string, existing: Set<string>): RosterParseResult {
+export function parseRoster(
+  input: string,
+  existing: Set<string>,
+): RosterParseResult {
   const students: ParsedStudent[] = [];
   const alreadyAdded: string[] = [];
   const duplicateEmails: string[] = [];

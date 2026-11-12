@@ -47,7 +47,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261102-r20"
+HELPER_SCHEMA_VERSION = "20261112-r21"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -17683,6 +17683,21 @@ acquire_bootstrap_lifecycle_lock() {
   fi
 }
 
+# Like acquire_bootstrap_lifecycle_lock, but never waits: returns 1 (and
+# holds nothing) if bootstrap holds the lock.
+try_acquire_bootstrap_lifecycle_lock() {
+  install -d -o "${BOOTSTRAP_USER}" -g "${BOOTSTRAP_USER}" -m 0700 \
+    "$(dirname "${BOOTSTRAP_LIFECYCLE_LOCK}")"
+  touch "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  chown "${BOOTSTRAP_USER}:${BOOTSTRAP_USER}" "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  chmod 0600 "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  exec 7>>"${BOOTSTRAP_LIFECYCLE_LOCK}"
+  if ! flock -x -n 7; then
+    exec 7>&-
+    return 1
+  fi
+}
+
 apply_project_host_sysctls() {
   rm -f \
     /etc/sysctl.d/60-cocalc-project-host-keyring.conf \
@@ -18181,9 +18196,75 @@ PY
   )
 }
 
+# A failed boot preparation (typically a disk too busy at boot for its Podman
+# calls) used to keep project-host down until someone restarted the prepare
+# unit by hand. The watchdog's ensure retries it here, at most once per
+# PODMAN_BOOT_PREPARE_RETRY_SECONDS. The caller already holds the daemon
+# control lock, and bootstrap takes the lifecycle lock before that one, so
+# never wait for the lifecycle lock here: if bootstrap holds it, skip this
+# attempt without spending the retry interval (bootstrap prepares the host
+# itself, and the watchdog comes back a minute later).
+# Only retry while the project-host daemon is NOT running: preparation removes
+# the rootless Podman runroot and migrates storage, which must never happen
+# under a live daemon. With the daemon up, ensure (and restart, which checks
+# before it stops the daemon) refuses exactly as before this retry existed and
+# the daemon keeps running; the next ensure after it is gone retries.
+# (prepare_podman_boot also refuses while project processes are active; this
+# check does not depend on process titles.)
+# A retrying ensure holds the daemon control lock for the whole preparation,
+# up to about 600 s (the watchdog unit's TimeoutStartSec): a start, stop,
+# restart or protect issued meanwhile waits for it.
+# Sets PODMAN_BOOT_PREPARE_RETRY_OK=1 on success. It reports through that
+# variable, not its status, because it must never run as a condition: bash
+# ignores errexit for everything inside one, even a subshell that sets -e, and
+# prepare_podman_boot relies on errexit to stop at its first failing step.
+retry_failed_podman_boot_preparation() {
+  # Fixed path: this runs as root, so the stamp location is not taken from
+  # the environment.
+  local stamp="/run/cocalc/podman-boot-prepare-retry"
+  local interval="${PODMAN_BOOT_PREPARE_RETRY_SECONDS:-300}"
+  local now last status
+  PODMAN_BOOT_PREPARE_RETRY_OK=0
+  if project_host_app_running; then
+    echo "project-host is running; not retrying Podman boot preparation under it" >&2
+    return 0
+  fi
+  now="$(date +%s)"
+  last="$(cat "${stamp}" 2>/dev/null || true)"
+  case "${last}" in
+    ""|*[!0-9]*) last=0 ;;
+  esac
+  if [ $((now - last)) -lt "${interval}" ]; then
+    return 0
+  fi
+  if ! try_acquire_bootstrap_lifecycle_lock; then
+    echo "bootstrap is running; not retrying Podman boot preparation now" >&2
+    return 0
+  fi
+  install -d -m 0700 "$(dirname "${stamp}")"
+  echo "${now}" > "${stamp}"
+  echo "Podman boot preparation failed earlier; retrying it" >&2
+  set +e
+  ( set -e; prepare_podman_boot )
+  status="$?"
+  set -e
+  exec 7>&-
+  if [ "${status}" -ne 0 ]; then
+    echo "Podman boot preparation retry failed (status ${status})" >&2
+    return 0
+  fi
+  systemctl reset-failed cocalc-project-host-prepare.service >/dev/null 2>&1 || true
+  echo "Podman boot preparation succeeded on retry" >&2
+  PODMAN_BOOT_PREPARE_RETRY_OK=1
+}
+
 require_podman_boot_preparation_not_failed() {
   if command -v systemctl >/dev/null 2>&1 && \
      systemctl is-failed --quiet cocalc-project-host-prepare.service; then
+    retry_failed_podman_boot_preparation
+    if [ "${PODMAN_BOOT_PREPARE_RETRY_OK}" = 1 ]; then
+      return 0
+    fi
     echo "Podman boot preparation failed; refusing to start project-host" >&2
     return 1
   fi
@@ -18259,7 +18340,9 @@ SH
   if [ -z "${cgroup_manager}" ]; then
     cgroup_manager="cgroupfs"
   fi
-  run_podman_as_runtime 60s "${runtime_dir}" "${cgroup_manager}" system migrate
+  # A disk busy at boot (btrfs cleanup after a crash or mass delete) can make
+  # these first Podman calls slow; a timeout here keeps project-host down.
+  run_podman_as_runtime 120s "${runtime_dir}" "${cgroup_manager}" system migrate
   # `system migrate` tears down the rootless pause process, and on Ubuntu the
   # next Podman invocation is transitioned into the unprivileged_userns
   # AppArmor profile, where re-executing /proc/self/exe is denied.  The
@@ -18273,7 +18356,7 @@ SH
   for _attempt in 1 2; do
     set +e
     reported_runroot="$(
-      run_podman_as_runtime 60s "${runtime_dir}" "${cgroup_manager}" \
+      run_podman_as_runtime 120s "${runtime_dir}" "${cgroup_manager}" \
         info --format '{{.Store.RunRoot}}' 2>"${probe_errors}"
     )"
     status="$?"
@@ -18830,15 +18913,17 @@ __HOST_INTRUSION_SNAPSHOT_HELPER__
 PY
 }
 
+# Lock order, everywhere: bootstrap lifecycle lock, then daemon control lock
+# (bootstrap holds the former while it stops and starts the daemon).
+if [ "${cmd}" = "prepare-podman-boot" ]; then
+  acquire_bootstrap_lifecycle_lock
+fi
+
 case "${cmd}" in
   start|ensure|restart|stop|protect|prepare-podman-boot)
     acquire_daemon_control_lock
     ;;
 esac
-
-if [ "${cmd}" = "prepare-podman-boot" ]; then
-  acquire_bootstrap_lifecycle_lock
-fi
 
 case "${cmd}" in
   start|ensure)
@@ -19105,7 +19190,8 @@ Group={cfg.ssh_user}
 WorkingDirectory=/
 ExecStart=/bin/bash -lc "{watchdog_command}"
 KillMode=process
-TimeoutStartSec=180
+# ensure may retry a failed boot preparation (see the rootctl).
+TimeoutStartSec=600
 """
     watchdog_timer = """[Unit]
 Description=Run CoCalc project-host watchdog every minute
@@ -19134,7 +19220,7 @@ User=root
 Group=root
 WorkingDirectory=/
 ExecStart={rootctl} prepare-podman-boot
-TimeoutStartSec=180
+TimeoutStartSec=600
 RemainAfterExit=yes
 
 [Install]

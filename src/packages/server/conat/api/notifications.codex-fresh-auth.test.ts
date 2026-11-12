@@ -119,7 +119,7 @@ describe("Codex fresh-auth action routing", () => {
     expect(startLocalMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       session_hash: "browser-session-hash",
-      duration: undefined,
+      duration: "default",
       context: CONTEXT,
     });
     expect(registerAttentionMock).toHaveBeenCalledWith({
@@ -140,7 +140,7 @@ describe("Codex fresh-auth action routing", () => {
     expect(startRemoteMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       browser_id: "browser-1",
-      duration: undefined,
+      duration: "default",
       context: CONTEXT,
     });
     expect(getBrowserSessionMock).not.toHaveBeenCalled();

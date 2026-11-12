@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import {
+  CLI_CONNECTOR_PATH_LINE,
   cliConnectorTurnContext,
   cloudflareScopes,
   sanitizeConnectionDescription,
@@ -111,4 +113,27 @@ test("a turn that could not get its tokens says so, with a fixed reason", () => 
   );
   expect(text).not.toContain("@octo");
   expect(text.match(/\[\/CLI connectors\]/g)).toHaveLength(1);
+});
+
+test("the context says where the signed-in commands are and when they work", () => {
+  const context = cliConnectorTurnContext([
+    { connector: "github", description: "@octo" },
+  ])!;
+  expect(context).toContain("git@github.com: ones, which go over https");
+  expect(context).toContain(
+    'run `export PATH="$COCALC_CONNECTOR_BIN:$PATH"` first',
+  );
+  expect(context).toContain("not in sensors or background jobs");
+});
+
+test("the PATH line puts the connector wrappers first, and only with a connector", () => {
+  const run = (env: Record<string, string>) =>
+    spawnSync("/bin/sh", ["-c", `${CLI_CONNECTOR_PATH_LINE}\necho "$PATH"`], {
+      env: { PATH: "/usr/bin:/bin", ...env },
+      encoding: "utf8",
+    }).stdout.trim();
+  expect(run({ COCALC_CONNECTOR_BIN: "/c/cli/bin" })).toBe(
+    "/c/cli/bin:/usr/bin:/bin",
+  );
+  expect(run({})).toBe("/usr/bin:/bin");
 });
