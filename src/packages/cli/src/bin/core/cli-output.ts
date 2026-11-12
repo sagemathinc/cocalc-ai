@@ -299,6 +299,10 @@ export function emitError(
 ): void {
   const message = error instanceof Error ? error.message : `${error}`;
   const code = errorCode(error, message);
+  const retryable =
+    error && typeof error === "object" && "retryable" in error
+      ? (error as { retryable?: unknown }).retryable === true
+      : undefined;
   const { retry_after_ms } = serviceErrorAttributes(error);
   const approval = agentGrantApprovalDetails(error);
   const details = approval ?? parseHardDeleteRateLimitDetails(code, message);
@@ -321,6 +325,9 @@ export function emitError(
     computeFundingHint(commandName, code, message) ??
     (code === "api_search_rate_limited" && retry_after_ms !== undefined
       ? `Wait at least ${Math.max(1, Math.ceil(retry_after_ms / 1000))} seconds before retrying this command.`
+      : undefined) ??
+    (retryable
+      ? "Nothing was submitted, so this command is safe to run again after a few seconds; retry a few times with growing delays."
       : undefined);
 
   if (ctx.globals?.json || ctx.globals?.output === "json") {
@@ -330,6 +337,7 @@ export function emitError(
       error: {
         code,
         message,
+        ...(retryable !== undefined ? { retryable } : undefined),
         ...(retry_after_ms !== undefined ? { retry_after_ms } : undefined),
         ...(details ? { details } : undefined),
         ...(hint ? { hint } : undefined),

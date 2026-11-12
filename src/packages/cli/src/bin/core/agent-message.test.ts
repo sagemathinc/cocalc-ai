@@ -4,7 +4,15 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
-import { rpcOutcome, type AgentRpcSend } from "@cocalc/conat/agents/rpc";
+import {
+  AGENT_RPC_ADMISSION_CAPACITY_CODE,
+  AGENT_RPC_ADMISSION_CAPACITY_MESSAGE,
+  agentRpcRetryable,
+  isAgentRpcAdmissionCapacityResponse,
+  rpcOutcome,
+  type AgentRpcOutcome,
+  type AgentRpcSend,
+} from "@cocalc/conat/agents/rpc";
 import {
   sendIdentityMessage,
   validateIdentityCredential,
@@ -259,4 +267,139 @@ test("network send uses one scoped request and reports a lost result as unknown"
     else process.env.COCALC_AGENT_IDENTITY_FILE = previous;
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("a hub at admission capacity is a definite, retryable rejection, never unknown", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-network-busy-"));
+  const previous = process.env.COCALC_AGENT_IDENTITY_FILE;
+  const credential = {
+    agent_id: randomUUID(),
+    run_id: randomUUID(),
+    token: "cocalc_agent_identity_test",
+    expires_at: Date.now() + 60_000,
+    api_url: "https://owner.invalid",
+  };
+  const marker = `private-body-marker-${randomUUID()}`;
+  const target = { agent_id: randomUUID(), project_id: randomUUID() };
+  const send: AgentRpcSend & { action: "send" } = {
+    version: 3,
+    action: "send",
+    attempt_id: randomUUID(),
+    agent_network_id: randomUUID(),
+    target,
+    body: marker,
+  };
+  // The current hub sends a code; an older one only the fixed message.
+  let reply: Record<string, string> = {
+    error: AGENT_RPC_ADMISSION_CAPACITY_MESSAGE,
+    code: AGENT_RPC_ADMISSION_CAPACITY_CODE,
+  };
+  let calls = 0;
+  const stub = mock.method(
+    require("@cocalc/conat/core/client"),
+    "connect",
+    () => ({
+      request: async () => {
+        calls++;
+        return { data: reply };
+      },
+      close: () => {},
+    }),
+  );
+  try {
+    process.env.COCALC_AGENT_IDENTITY_FILE = join(dir, "identity.json");
+    await writeFile(
+      process.env.COCALC_AGENT_IDENTITY_FILE,
+      JSON.stringify(credential),
+      { mode: 0o600 },
+    );
+    for (const legacy of [false, true]) {
+      if (legacy) reply = { error: AGENT_RPC_ADMISSION_CAPACITY_MESSAGE };
+      const outcome = await sendIdentityMessage(send);
+      assert.equal(outcome.outcome, "rejected");
+      assert.equal(outcome.code, "rpc_admission_capacity");
+      assert.equal(outcome.chat_effect, "none");
+      assert.equal(outcome.attempt_id, send.attempt_id);
+      assert.equal(agentRpcRetryable(outcome), true);
+      assert.doesNotMatch(JSON.stringify(outcome), new RegExp(marker));
+      // A broadcast never started: a coded error, safe to run again.
+      const error: any = await sendIdentityMessage({
+        version: 3,
+        action: "broadcast",
+        broadcast_id: randomUUID(),
+        agent_network_id: send.agent_network_id,
+        targets: [target],
+        body: marker,
+      }).then(
+        () => assert.fail("a refused broadcast must not look delivered"),
+        (error) => error,
+      );
+      assert.equal(error.code, "rpc_admission_capacity");
+      assert.equal(error.retryable, true);
+      assert.match(error.message, /^agent RPC admission capacity reached;/);
+      assert.doesNotMatch(error.message, new RegExp(marker));
+      // Inspect stays unknown: it says nothing about the original message.
+      const inspected = (await sendIdentityMessage({
+        version: 3,
+        action: "inspect",
+        attempt_id: send.attempt_id,
+        agent_network_id: send.agent_network_id,
+        target,
+      } as any)) as unknown as AgentRpcOutcome;
+      assert.equal(inspected.outcome, "unknown");
+      assert.equal(agentRpcRetryable(inspected), false);
+    }
+    assert.equal(calls, 6);
+  } finally {
+    stub.mock.restore();
+    if (previous === undefined) delete process.env.COCALC_AGENT_IDENTITY_FILE;
+    else process.env.COCALC_AGENT_IDENTITY_FILE = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("only busy rejections that saved nothing are retryable", () => {
+  const attempt = {
+    version: 3 as const,
+    attempt_id: randomUUID(),
+    agent_network_id: randomUUID(),
+    target: { agent_id: randomUUID(), project_id: randomUUID() },
+  };
+  const busy = [
+    "host_overloaded",
+    "project_overloaded",
+    "rpc_admission_capacity",
+  ];
+  for (const code of busy)
+    assert.equal(
+      agentRpcRetryable(
+        rpcOutcome(attempt, "rejected", {
+          code: code as any,
+          chat_effect: "none",
+        }),
+      ),
+      true,
+      code,
+    );
+  for (const outcome of [
+    rpcOutcome(attempt, "accepted"),
+    rpcOutcome(attempt, "unknown", { code: "host_overloaded" }),
+    rpcOutcome(attempt, "rejected", { code: "host_overloaded" }),
+    rpcOutcome(attempt, "rejected", {
+      code: "host_overloaded",
+      chat_effect: "saved",
+    }),
+    rpcOutcome(attempt, "rejected", {
+      code: "host_overloaded",
+      chat_effect: "unknown",
+    }),
+    rpcOutcome(attempt, "rejected", {
+      code: "autostart_disabled",
+      chat_effect: "none",
+    }),
+    rpcOutcome(attempt, "rejected", { chat_effect: "none" }),
+  ])
+    assert.equal(agentRpcRetryable(outcome), false, JSON.stringify(outcome));
+  assert.equal(isAgentRpcAdmissionCapacityResponse({ error: "other" }), false);
+  assert.equal(isAgentRpcAdmissionCapacityResponse(undefined), false);
 });
