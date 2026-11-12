@@ -1436,6 +1436,9 @@ describe("host-registry automatic convergence retry", () => {
   it("writes durable project log entries for pressure stops", async () => {
     currentMetadata = {};
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT host_id FROM projects WHERE project_id=$1")) {
+        return { rows: [{ host_id: "host-1" }] };
+      }
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
@@ -1497,6 +1500,35 @@ describe("host-registry automatic convergence retry", () => {
       },
     });
   });
+
+  it.each([
+    ["on another host", [{ host_id: "host-2" }]],
+    ["with no host", [{ host_id: null }]],
+    ["missing or deleted", []],
+  ])(
+    "refuses a pressure report for a project %s, and writes no log (068-2)",
+    async (_label, rows) => {
+      queryMock = jest.fn(async (sql: string, params: any[]) => {
+        if (sql.includes("SELECT host_id FROM projects WHERE project_id=$1")) {
+          expect(params).toEqual(["proj-b"]);
+          return { rows };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      await expect(
+        service.reportProjectPressureAction({
+          host_id: "host-1",
+          project_id: "proj-b",
+          action_status: "stopped",
+          pressure_zone: "pressure",
+          reason: "low_priority",
+        }),
+      ).rejects.toThrow("the project is not on the calling host");
+      expect(appendProjectLogRowBestEffortMock).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("host report sanitizer (054 C containment)", () => {

@@ -2126,6 +2126,18 @@ export async function initHostRegistryService() {
             "reportProjectPressureAction: host_id, project_id, pressure_zone, and reason are required",
           );
         }
+        // host_id is the caller's own (bindHostRegistryArgs); the project must
+        // be on that host now, or the report would write another host's
+        // project log (068-2).  No row, or another host: refused.
+        const { rows: owner } = await pool().query<{ host_id: string | null }>(
+          "SELECT host_id FROM projects WHERE project_id=$1 AND deleted IS NOT TRUE",
+          [project_id],
+        );
+        if (owner[0]?.host_id !== host_id) {
+          throw Error(
+            "reportProjectPressureAction: the project is not on the calling host",
+          );
+        }
         const occurred_at_ms =
           Math.max(0, Number(opts?.occurred_at_ms ?? 0)) || Date.now();
         const host_name = `${opts?.host_name ?? ""}`.trim() || undefined;

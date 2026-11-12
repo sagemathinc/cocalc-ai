@@ -7,7 +7,10 @@ import {
   type HostProjectMaintenanceSchedule,
 } from "@cocalc/conat/project-host/api";
 import getPool from "@cocalc/database/pool";
-import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
+import {
+  getLaunchpadLocalConfig,
+  isLaunchpadProduct,
+} from "@cocalc/server/launchpad/mode";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import {
   maybeStartLaunchpadOnPremServices,
@@ -470,6 +473,12 @@ export async function initHostStatusService() {
     client: await conat(),
     impl: {
       async registerOnPremTunnel({ host_id, public_key }) {
+        // Only a launchpad site has on-prem tunnels: refused before any
+        // database access or service start (finding 068).  host_id is the
+        // calling host's own (bindHostStatusArgs).
+        if (!isLaunchpadProduct()) {
+          throw Error("on-prem tunnels are only available on a launchpad site");
+        }
         if (!host_id || !public_key) {
           throw Error("host_id and public_key are required");
         }
@@ -533,10 +542,12 @@ export async function initHostStatusService() {
           host_id,
           public_key,
         });
+        // the record of who registered a tunnel key (068): the host itself,
+        // by the binding; never the key.  warn: info is not kept on a bay.
+        logger.warn("on-prem tunnel key registered", { host_id });
         const reversePort =
           sshTarget &&
-          (safeTunnelPort(rows[0]?.metadata?.self_host?.ssh_reverse_port) ??
-            0);
+          (safeTunnelPort(rows[0]?.metadata?.self_host?.ssh_reverse_port) ?? 0);
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
@@ -567,26 +578,26 @@ export async function initHostStatusService() {
         };
       },
       async reportProjectState({ project_id, state, host_id }) {
-        if (!project_id || !state) {
-          throw Error("project_id and state are required");
+        // host_id is the calling host's own (bindHostStatusArgs), and is
+        // required: the owner check below can never be skipped (068)
+        if (!project_id || !state || !host_id) {
+          throw Error("project_id, state and host_id are required");
         }
         const pool = getPool();
         // If the reporting host does not own this project, ignore the update
         // and tell the host to clean up its local copy. This prevents stale
         // hosts from flipping placement.
-        if (host_id) {
-          if (
-            await shouldDeleteHostProjectUpdate({
-              host_id,
-              project_id,
-            })
-          ) {
-            logger.debug("ignoring state from non-owner host", {
-              project_id,
-              host_id,
-            });
-            return { action: "delete" as const };
-          }
+        if (
+          await shouldDeleteHostProjectUpdate({
+            host_id,
+            project_id,
+          })
+        ) {
+          logger.debug("ignoring state from non-owner host", {
+            project_id,
+            host_id,
+          });
+          return { action: "delete" as const };
         }
         const stateTime = (() => {
           const value = typeof state === "string" ? undefined : state.time;
@@ -599,6 +610,8 @@ export async function initHostStatusService() {
         const stateObj = {
           ...(typeof state === "string" ? { state } : state),
           time: stateTime,
+          // who reported it (068): the owning host, by the binding
+          reporter_host_id: host_id,
         };
         // NOTE: Do not mutate host/placement here; host assignment is explicit
         // via move/start flows. Updating host_id/host from heartbeat reports
@@ -679,34 +692,40 @@ export async function initHostStatusService() {
         host_id,
         checked_at,
       }) {
-        if (!project_id || typeof provisioned !== "boolean") {
-          throw Error("project_id and provisioned are required");
+        // host_id is the calling host's own (bindHostStatusArgs), and is
+        // required: the owner check below can never be skipped (068)
+        if (!project_id || typeof provisioned !== "boolean" || !host_id) {
+          throw Error("project_id, provisioned and host_id are required");
         }
         const pool = getPool();
-        if (host_id) {
-          if (
-            await shouldDeleteHostProjectUpdate({
-              host_id,
-              project_id,
-            })
-          ) {
-            logger.debug("ignoring provisioned from non-owner host", {
-              project_id,
-              host_id,
-              provisioned,
-            });
-            // Only data the host has is worth deleting.  A host reporting
-            // that it has none is often the destination of a move whose
-            // placement hasn't switched yet (its pre-restore cleanup), and a
-            // delete then may run after the restore (a customer report, 2026-10-23).
-            return provisioned ? { action: "delete" as const } : undefined;
-          }
+        if (
+          await shouldDeleteHostProjectUpdate({
+            host_id,
+            project_id,
+          })
+        ) {
+          logger.debug("ignoring provisioned from non-owner host", {
+            project_id,
+            host_id,
+            provisioned,
+          });
+          // Only data the host has is worth deleting.  A host reporting
+          // that it has none is often the destination of a move whose
+          // placement hasn't switched yet (its pre-restore cleanup), and a
+          // delete then may run after the restore (a customer report, 2026-10-23).
+          return provisioned ? { action: "delete" as const } : undefined;
         }
         const checkedAt = checked_at ? new Date(checked_at) : new Date();
         await pool.query(
           "UPDATE projects SET provisioned=$2, provisioned_checked_at=$3 WHERE project_id=$1",
           [project_id, provisioned, checkedAt],
         );
+        // the record of who reported it (068): the owning host
+        logger.info("project provisioned reported", {
+          project_id,
+          host_id,
+          provisioned,
+        });
       },
       async reportHostProvisionedInventory({
         host_id,
