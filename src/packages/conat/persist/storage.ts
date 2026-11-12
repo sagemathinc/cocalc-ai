@@ -1843,13 +1843,10 @@ export class PersistentStream extends EventEmitter {
 
   // Every changefeed emit goes through here: only after the COMMIT that made
   // the change returned OK (durable), never inside a transaction (§3).
-  // A listener can write (a sync set, or another mutation), and that write
-  // commits and emits at once: its changes are appended here and delivered
-  // by the outermost call, after the ones already being delivered, so the
-  // changefeed stays in seq order (#139 B1-5).
   // All the changes of one commit are queued at once, before the first is
-  // delivered: a listener that writes (a sync set) commits its own change,
-  // which is queued after them, so the changefeed stays in seq order (B1-5).
+  // delivered; a listener that writes (a sync set, or another mutation)
+  // commits at once and its changes are queued after them, delivered by the
+  // outermost call, so the changefeed stays in seq order (#139 B1-5).
   private emitChange = (...changes: ChangefeedOperation[]): void => {
     if (this.db?.isTransaction) {
       throw Error("bug: a change emitted inside a transaction");

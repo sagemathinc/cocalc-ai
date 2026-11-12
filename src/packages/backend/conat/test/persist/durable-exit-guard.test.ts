@@ -116,8 +116,9 @@ describe("028 B-1 E-1: the exit guard (a natural exit must not close disk stream
   it("every entry point that serves disk streams opts in", () => {
     // the processes that open disk streams (pstream callers outside tests):
     // the hub and its forked persist nodes, lite, the project-host (its own
-    // persist server, and persist-storage) and its persist daemon.  The
-    // conat benchmark ends with process.exit.
+    // persist server, and persist-storage) and its persist daemon, and the
+    // backend's standalone persist server (bin/conat-persist.cjs, review
+    // B1-R9).  The conat benchmark ends with process.exit.
     const packages = join(__dirname, "..", "..", "..", "..");
     for (const file of [
       "server/conat/persist/index.ts",
@@ -125,6 +126,7 @@ describe("028 B-1 E-1: the exit guard (a natural exit must not close disk stream
       "lite/main.ts",
       "project-host/main.ts",
       "project-host/conat-persist-daemon.ts",
+      "backend/bin/conat-persist.cjs",
     ]) {
       const source = readFileSync(join(packages, file), "utf8");
       expect([file, source.includes("  installPersistExitGuard();\n")]).toEqual(
