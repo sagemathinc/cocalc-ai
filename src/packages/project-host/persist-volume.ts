@@ -1432,7 +1432,8 @@ export async function replaceProjectHome<T>({
         path: kept,
       });
     } catch (err) {
-      logger.warn(
+      // (an error: the staging sweep deletes it after a day)
+      logger.error(
         "unable to keep the replaced persist volume aside; it is still in the staging directory",
         { project_id, path: previous, err: `${err}` },
       );

@@ -3,13 +3,21 @@ const moves: string[][] = [];
 const forgotten: string[][] = [];
 const btrfsCalls: string[][] = [];
 const homeEntries = new Map<string, string[]>();
+// directories whose listing fails, with the error's code
+const readdirErrors = new Map<string, string>();
 const warnings: any[][] = [];
 
 jest.mock("@cocalc/backend/misc/async-utils-node", () => ({
   exists: jest.fn(async (path: string) => existing.has(path)),
 }));
 jest.mock("node:fs/promises", () => ({
-  readdir: jest.fn(async (path: string) => homeEntries.get(path) ?? []),
+  readdir: jest.fn(async (path: string) => {
+    const code = readdirErrors.get(path);
+    if (code != null) {
+      throw Object.assign(new Error(`${code}: ${path}`), { code });
+    }
+    return homeEntries.get(path) ?? [];
+  }),
   rm: jest.fn(async () => undefined),
   stat: jest.fn(async () => ({ mtimeMs: Date.now() })),
   writeFile: jest.fn(async () => undefined),
@@ -65,6 +73,7 @@ beforeEach(() => {
   forgotten.length = 0;
   btrfsCalls.length = 0;
   homeEntries.clear();
+  readdirErrors.clear();
   warnings.length = 0;
   existing.add(home);
   existing.add(stagingPath);
@@ -135,6 +144,32 @@ describe("finalizeRestoreStaging", () => {
       restore: "recover",
     } as any);
     expect(deletedPaths()).toEqual([]);
+  });
+
+  it("a home whose snapshots can't be listed is kept; one without a snapshot directory is not", async () => {
+    homeEntries.set(home, []);
+    readdirErrors.set(`${home}/.snapshots`, "EIO");
+    await finalizeRestoreStaging({
+      project_id: "p-1",
+      home,
+      stagingPath,
+      restore: "recover",
+    } as any);
+    expect(deletedPaths()).toEqual([]);
+    expect(warnings[0]).toEqual([
+      "unable to list the snapshots of a home; keeping it",
+      { path: `${home}/.snapshots`, err: `Error: EIO: ${home}/.snapshots` },
+    ]);
+    readdirErrors.set(`${home}/.snapshots`, "ENOENT");
+    existing.add(home);
+    existing.add(stagingPath);
+    await finalizeRestoreStaging({
+      project_id: "p-1",
+      home,
+      stagingPath,
+      restore: "recover",
+    } as any);
+    expect(deletedPaths()).not.toEqual([]);
   });
 
   it("a recover over a home with only an EMPTY snapshot directory deletes it as before", async () => {

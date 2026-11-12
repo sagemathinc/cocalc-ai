@@ -167,8 +167,17 @@ async function homeHasData(home: string): Promise<boolean> {
 // copy of what a user deleted).
 async function homeWorthKeeping(home: string): Promise<boolean> {
   if (await homeHasData(home)) return true;
-  const snapshots = await readdir(join(home, ".snapshots")).catch(() => []);
-  return snapshots.length > 0;
+  try {
+    return (await readdir(join(home, ".snapshots"))).length > 0;
+  } catch (err) {
+    // only a missing directory means no snapshots: otherwise keep the home
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+    logger.warn("unable to list the snapshots of a home; keeping it", {
+      path: join(home, ".snapshots"),
+      err: `${err}`,
+    });
+    return true;
+  }
 }
 
 export async function beginRestoreStaging(opts: {
