@@ -34,6 +34,14 @@ jest.mock("@cocalc/file-server/btrfs/util", () => ({
         moves.push(args);
         existing.delete(args[0]);
         existing.add(args[1]);
+        // the directory's contents move with it (so a decision made after
+        // the swap reads the RESTORED home, not the old one)
+        for (const [path, entries] of Array.from(homeEntries)) {
+          if (path === args[0] || path.startsWith(`${args[0]}/`)) {
+            homeEntries.delete(path);
+            homeEntries.set(args[1] + path.slice(args[0].length), entries);
+          }
+        }
       }
       return { stdout: "", stderr: "", exit_code: 0 };
     },
@@ -79,7 +87,8 @@ describe("finalizeRestoreStaging", () => {
 
   it("a recover over a home with data KEEPS the old home and its snapshots, and warns (068-DS)", async () => {
     homeEntries.set(home, [".snapshots", "work.ipynb"]);
-    await finalizeRestoreStaging({
+    homeEntries.set(stagingPath, ["from-backup.txt"]);
+    const result = await finalizeRestoreStaging({
       project_id: "p-1",
       home,
       stagingPath,
@@ -99,10 +108,38 @@ describe("finalizeRestoreStaging", () => {
         { project_id: "p-1", path: oldPath },
       ],
     ]);
+    // the caller keeps the old home's edit history too
+    expect(result).toEqual({ keptOldHome: oldPath });
   });
 
-  it("a recover over a home with only its snapshot directory deletes it as before", async () => {
+  it("decides from the OLD home before the swap: a populated home over an EMPTY backup is kept", async () => {
+    homeEntries.set(home, ["work.ipynb"]);
+    homeEntries.set(stagingPath, []);
+    const result = await finalizeRestoreStaging({
+      project_id: "p-1",
+      home,
+      stagingPath,
+      restore: "recover",
+    } as any);
+    expect(deletedPaths()).toEqual([]);
+    expect(result).toEqual({ keptOldHome: moves[0][1] });
+  });
+
+  it("a home whose only content is non-empty snapshots is kept (backups exclude .snapshots)", async () => {
     homeEntries.set(home, [".snapshots"]);
+    homeEntries.set(`${home}/.snapshots`, ["2026-11-01"]);
+    await finalizeRestoreStaging({
+      project_id: "p-1",
+      home,
+      stagingPath,
+      restore: "recover",
+    } as any);
+    expect(deletedPaths()).toEqual([]);
+  });
+
+  it("a recover over a home with only an EMPTY snapshot directory deletes it as before", async () => {
+    homeEntries.set(home, [".snapshots"]);
+    homeEntries.set(`${home}/.snapshots`, []);
     await finalizeRestoreStaging({
       project_id: "p-1",
       home,

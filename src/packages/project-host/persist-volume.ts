@@ -1342,6 +1342,7 @@ export async function replaceProjectHome<T>({
   reason,
   swap,
   historyInHome = true,
+  keepPrevious,
   env = process.env,
   ops = btrfsOps,
 }: {
@@ -1351,6 +1352,9 @@ export async function replaceProjectHome<T>({
   swap: () => Promise<T>;
   // without volumes: whether the home holds the project's persist files
   historyInHome?: boolean;
+  // asked after the swap: keep the replaced history instead of deleting it
+  // (a recover kept the old home aside, 068-DS)
+  keepPrevious?: () => boolean;
   env?: NodeJS.ProcessEnv;
   ops?: PersistVolumeOps;
 }): Promise<T> {
@@ -1417,7 +1421,23 @@ export async function replaceProjectHome<T>({
       await ops.removeTree(staged.path).catch(() => {});
     }
   }
-  if (previous != null) {
+  if (previous != null && keepPrevious?.()) {
+    // Customer data, like the kept home: out of the staging directory, whose
+    // leftovers are deleted after a day, to a name no sweep matches.
+    const kept = `${persistVolumePath(project_id, env)}.restore_old.${Date.now()}`;
+    try {
+      await moveVolume(previous, kept);
+      logger.warn("recover kept the replaced persist volume aside", {
+        project_id,
+        path: kept,
+      });
+    } catch (err) {
+      logger.warn(
+        "unable to keep the replaced persist volume aside; it is still in the staging directory",
+        { project_id, path: previous, err: `${err}` },
+      );
+    }
+  } else if (previous != null) {
     await ops.removeTree(previous).catch((err) => {
       logger.warn("unable to delete a replaced persist volume", {
         previous,

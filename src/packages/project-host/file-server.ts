@@ -4965,15 +4965,18 @@ async function finalizeRestoreStaging({
 }): Promise<void> {
   // The restored home and its edit history replace the project's together,
   // while nothing has either open (persist-volume.ts).
+  let keptOldHome: string | undefined;
   await replaceProjectHome({
     project_id: handle.project_id,
     replacement: handle.stagingPath,
     reason: "restore-staging",
     historyInHome: homeHoldsPersistFiles(handle.project_id),
     swap: async () => {
-      await finalizeRestoreStagingBtrfs(handle);
+      ({ keptOldHome } = await finalizeRestoreStagingBtrfs(handle));
       await joinHomeToQuotaGroup(handle.project_id);
     },
+    // a recover that kept the old home keeps its edit history too (068-DS)
+    keepPrevious: () => keptOldHome != null,
   });
   invalidateProjectFsServer(handle.project_id);
   void touchProjectLastEdited(handle.project_id, "restore-staging");

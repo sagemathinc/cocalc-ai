@@ -162,6 +162,15 @@ async function homeHasData(home: string): Promise<boolean> {
   return meaningful.length > 0;
 }
 
+// For a recover: whether the home holds anything a backup may not have,
+// including snapshots (backups exclude .snapshots, so they may be the only
+// copy of what a user deleted).
+async function homeWorthKeeping(home: string): Promise<boolean> {
+  if (await homeHasData(home)) return true;
+  const snapshots = await readdir(join(home, ".snapshots")).catch(() => []);
+  return snapshots.length > 0;
+}
+
 export async function beginRestoreStaging(opts: {
   project_id: string;
   home: string;
@@ -266,7 +275,7 @@ export async function ensureRestoreStaging(
 export async function finalizeRestoreStaging(
   handle: RestoreStagingHandle,
   opts: { onProgress?: RestoreProgressFn } = {},
-): Promise<void> {
+): Promise<{ keptOldHome?: string }> {
   const { home, stagingPath } = handle;
   const { onProgress } = opts;
   await reportProgress(onProgress, "finalize", "swapping staging into place");
@@ -281,7 +290,7 @@ export async function finalizeRestoreStaging(
     // also causes. Never delete that home: keep it, with its snapshots,
     // beside the restored one for an admin.
     const keepOldHome =
-      handle.restore === "recover" && (await homeHasData(home));
+      handle.restore === "recover" && (await homeWorthKeeping(home));
     const oldPath = `${home}.restore_old.${Date.now()}`;
     try {
       await sudo({ command: "mv", args: [home, oldPath] });
@@ -308,7 +317,7 @@ export async function finalizeRestoreStaging(
         project_id: handle.project_id,
         path: oldPath,
       });
-      return;
+      return { keptOldHome: oldPath };
     }
     await deleteSubvolumeTree({
       path: oldPath,
@@ -328,6 +337,7 @@ export async function finalizeRestoreStaging(
       forgetSubvolumePaths(home, stagingPath);
     }
   }
+  return {};
 }
 
 export async function releaseRestoreStaging(
