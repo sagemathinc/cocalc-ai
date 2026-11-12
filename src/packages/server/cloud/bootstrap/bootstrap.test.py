@@ -11276,6 +11276,7 @@ class BootstrapModesTest(unittest.TestCase):
         last_retry: str | None = None,
         tmp: Path | None = None,
         daemon_running: bool = False,
+        stamp_dir_mode: int | None = None,
     ) -> tuple[subprocess.CompletedProcess, str, Path]:
         body = Path(bootstrap.__file__).read_text(encoding="utf-8")
 
@@ -11292,8 +11293,11 @@ class BootstrapModesTest(unittest.TestCase):
         stamp = tmp / "run" / "retry-stamp"
         calls = tmp / "calls"
         pid_file = tmp / "daemon.pid"
-        if last_retry is not None:
+        if stamp_dir_mode is not None:
             stamp.parent.mkdir(parents=True)
+            os.chmod(stamp.parent, stamp_dir_mode)
+        if last_retry is not None:
+            stamp.parent.mkdir(parents=True, exist_ok=True)
             stamp.write_text(last_retry)
         script = (
             "set -euo pipefail\n"
@@ -11303,7 +11307,14 @@ class BootstrapModesTest(unittest.TestCase):
             + ("echo $$ > \"$PID_FILE\"\n" if daemon_running else "")
             + f"BOOTSTRAP_LIFECYCLE_LOCK='{tmp / 'lock' / 'bootstrap.lock'}'\n"
             f"BOOTSTRAP_USER='{__import__('getpass').getuser()}'\n"
-            "systemctl() { echo \"systemctl $*\" >> \"$CALLS\"; "
+            # as a non-root test user, `install -o root -g root` cannot chown:
+            # drop only the owner options, keep the mode (what these tests check)
+            + (
+                ""
+                if os.geteuid() == 0
+                else 'install() { local a=(); while [ "$#" -gt 0 ]; do case "$1" in -o|-g) shift 2;; *) a+=("$1"); shift;; esac; done; command install "${a[@]}"; }\n'
+            )
+            + "systemctl() { echo \"systemctl $*\" >> \"$CALLS\"; "
             + ("[ \"$1\" = is-failed ] && return 0; " if failed else "[ \"$1\" = is-failed ] && return 1; ")
             + "return 0; }\n"
             + function("read_pid_file")
@@ -11421,6 +11432,28 @@ class BootstrapModesTest(unittest.TestCase):
         self.assertIn("refusing to start project-host", result.stderr)
         # the retry slot is not spent: once the daemon is gone it retries
         self.assertFalse(stamp.exists())
+
+    def test_retry_keeps_the_stamp_dir_traversable(self) -> None:
+        # The stamp's dir is /run/cocalc, 0711 so the runtime user can reach
+        # its rootless runroot and the project views beneath it; the retry
+        # used to reset it to 0700 (install -d sets an existing dir's mode).
+        for existing in (0o711, None):
+            result, calls, stamp = self._run_boot_preparation_guard(
+                failed=True, prepare="return 0;", stamp_dir_mode=existing
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("prepare", calls.splitlines())
+            self.assertEqual(stat.S_IMODE(os.stat(stamp.parent).st_mode), 0o711)
+
+    def test_retry_stamp_dir_is_root_owned_0711_in_the_root_script(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        retry = body.split("retry_failed_podman_boot_preparation() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertIn(
+            'install -d -o root -g root -m 0711 "$(dirname "${stamp}")"', retry
+        )
+        self.assertNotIn("-m 0700", retry)
 
     def test_retry_stamp_path_is_fixed_in_the_root_script(self) -> None:
         body = Path(bootstrap.__file__).read_text(encoding="utf-8")

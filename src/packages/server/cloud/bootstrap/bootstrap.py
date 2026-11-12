@@ -18241,7 +18241,11 @@ retry_failed_podman_boot_preparation() {
     echo "bootstrap is running; not retrying Podman boot preparation now" >&2
     return 0
   fi
-  install -d -m 0700 "$(dirname "${stamp}")"
+  # The stamp's dir is /run/cocalc itself, which the runtime user must be able
+  # to traverse to its rootless runroot and the project views (0711, as
+  # ensure_podman_runroot makes it): never tighten it here (install -d sets the
+  # mode of an existing dir too).
+  install -d -o root -g root -m 0711 "$(dirname "${stamp}")"
   echo "${now}" > "${stamp}"
   echo "Podman boot preparation failed earlier; retrying it" >&2
   set +e
