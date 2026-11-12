@@ -1473,7 +1473,34 @@ export function createHostStatusService({
     description: "Project-host -> master status updates",
     client,
     impl,
+    bindArgs: bindHostStatusArgs,
   });
+}
+
+// Every host-status request acts for the host that sent it (finding 068):
+// the conat server stamps the authenticated host's id into the caller, and it
+// replaces any host_id in the request.  No caller host id (not a host
+// connection, or a server that does not stamp it): refused.
+export function bindHostStatusArgs(
+  name: string,
+  args: any[],
+  caller?: { host_id?: string },
+): any[] {
+  const host_id = caller?.host_id;
+  if (typeof host_id !== "string" || !host_id) {
+    const err: any = new Error(
+      `host status '${name}' requires an authenticated host`,
+    );
+    err.code = 403;
+    throw err;
+  }
+  const opts = args[0];
+  if (opts == null || typeof opts !== "object" || Array.isArray(opts)) {
+    const err: any = new Error(`host status '${name}' requires its options`);
+    err.code = 400;
+    throw err;
+  }
+  return [{ ...opts, host_id }, ...args.slice(1)];
 }
 
 export function createHostControlService({

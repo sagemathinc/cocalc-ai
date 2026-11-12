@@ -10,6 +10,7 @@ let maybeStartLaunchpadOnPremServicesMock: jest.Mock;
 let getLaunchpadRestPortMock: jest.Mock;
 let registerSelfHostTunnelKeyMock: jest.Mock;
 let resolveOnPremHostMock: jest.Mock;
+let isLaunchpadProductMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => {
   const getLogger = jest.fn(() => ({
@@ -47,6 +48,7 @@ jest.mock("@cocalc/server/launchpad/mode", () => ({
   __esModule: true,
   getLaunchpadLocalConfig: (...args: any[]) =>
     getLaunchpadLocalConfigMock(...args),
+  isLaunchpadProduct: (...args: any[]) => isLaunchpadProductMock(...args),
 }));
 
 jest.mock("@cocalc/server/onprem", () => ({
@@ -713,10 +715,27 @@ describe("initHostStatusService registerOnPremTunnel", () => {
       conat_router_port: 9102,
     }));
     resolveOnPremHostMock = jest.fn(() => "lite4b.cocalc.ai");
+    isLaunchpadProductMock = jest.fn(() => true);
     delete process.env.COCALC_DEV_GCP_REVERSE_TUNNEL;
   });
 
-  it("allows dev-only GCP hosts to register a reverse tunnel", async () => {
+  it("refuses every tunnel off a launchpad site, even with the dev flag, before any database access (068)", async () => {
+    process.env.COCALC_DEV_GCP_REVERSE_TUNNEL = "1";
+    isLaunchpadProductMock = jest.fn(() => false);
+    const { initHostStatusService } = await import("./host-status");
+    const service: any = await initHostStatusService();
+    await expect(
+      service.registerOnPremTunnel({
+        host_id: "host-gcp",
+        public_key: "ssh-ed25519 AAAA host",
+      }),
+    ).rejects.toThrow("on-prem tunnels are only available on a launchpad site");
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(maybeStartLaunchpadOnPremServicesMock).not.toHaveBeenCalled();
+    expect(registerSelfHostTunnelKeyMock).not.toHaveBeenCalled();
+  });
+
+  it("allows dev-only GCP hosts to register a reverse tunnel on a launchpad site", async () => {
     process.env.COCALC_DEV_GCP_REVERSE_TUNNEL = "1";
     queryMock
       .mockResolvedValueOnce({
@@ -759,6 +778,15 @@ describe("initHostStatusService reportProjectProvisioned", () => {
     createHostStatusServiceMock = jest.fn(({ impl }) => impl);
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn(async () => ({ rows: [] }));
+  });
+
+  it("refuses a provisioned report without the calling host's id, before any database access (068)", async () => {
+    const { initHostStatusService } = await import("./host-status");
+    const service: any = await initHostStatusService();
+    await expect(
+      service.reportProjectProvisioned({ project_id: "p", provisioned: false }),
+    ).rejects.toThrow("project_id, provisioned and host_id are required");
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("asks a non-owner host to delete only data it has, and never updates the owner's project", async () => {

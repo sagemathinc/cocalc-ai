@@ -178,17 +178,26 @@ export function createServiceClient<Api>(options: TypedServiceOptions) {
 
 export function createServiceHandler<Api>({
   impl,
+  bindArgs,
   ...options
 }: Omit<Options, "handler"> & {
   impl: Api;
   transport?: ServiceTransport;
+  // Called with every request's method name, arguments and the server's
+  // authenticated caller before the method runs: returns the arguments to use
+  // (e.g. the caller's own id in place of one in the request), or throws.
+  bindArgs?: (name: string, args: any[], caller?: AuthenticatedCaller) => any[];
 }): ConatService {
+  const bound = (name: string, args: any[], caller?: AuthenticatedCaller) =>
+    bindArgs ? bindArgs(name, args, caller) : args;
   if (serviceTransport(options) == "request") {
     return createConatService({
       ...options,
       handler: async (mesg, context) => {
         assertAuthenticatedSourceBayClaims(mesg.args, context?.caller);
-        return await impl[mesg.name](...mesg.args);
+        return await impl[mesg.name](
+          ...bound(mesg.name, mesg.args, context?.caller),
+        );
       },
     });
   }
@@ -249,8 +258,9 @@ export function createServiceHandler<Api>({
         throw Error(`unknown service method '${String(name)}'`);
       }
       assertAuthenticatedSourceBayClaims(args, context?.caller);
+      const boundArgs = bound(name, args, context?.caller);
       return {
-        raw: requireFastRpcSizedRaw(await impl[name](...args)),
+        raw: requireFastRpcSizedRaw(await impl[name](...boundArgs)),
       };
     } finally {
       activeFastRpcHandlers -= 1;
@@ -268,7 +278,9 @@ export function createServiceHandler<Api>({
     ...options,
     handler: async (mesg, context) => {
       assertAuthenticatedSourceBayClaims(mesg.args, context?.caller);
-      return await impl[mesg.name](...mesg.args);
+      return await impl[mesg.name](
+        ...bound(mesg.name, mesg.args, context?.caller),
+      );
     },
   });
 
