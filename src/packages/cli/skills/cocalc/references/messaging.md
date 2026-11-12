@@ -46,7 +46,7 @@ cocalc agent status [reviewer]                 # what peers are doing, how their
   accepted, 2 when one was rejected, 3 when one is unknown, 1 for an error.
   An error can come after the message was submitted (for example a timeout
   during a broadcast), so before sending again run the `agent rpc inspect`
-  command that send printed, or repeat the broadcast with the same
+  command that send printed, if one was printed, or repeat the broadcast with the same
   `--broadcast-id` (it sends only if the first attempt never started). Only
   an error marked `retryable: true` says nothing was submitted.
 - Check the exit status directly. When piped, as in
