@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import passwordHash from "@cocalc/backend/auth/password-hash";
+import { newPasswordHash } from "@cocalc/database/settings/password-kdf";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
 
@@ -20,13 +20,14 @@ export default async function setPasswordFromReset({
   if (!expectedEmail) {
     throw Error("Password reset no longer valid.");
   }
+  const password_hash = await newPasswordHash(password);
   await withAccountRehomeWriteFence({
     account_id,
     action: "redeem password reset",
     fn: async (db) => {
       const result = await db.query(
         "UPDATE accounts SET password_hash=$1 WHERE account_id=$2 AND lower(email_address)=$3",
-        [passwordHash(password), account_id, expectedEmail],
+        [password_hash, account_id, expectedEmail],
       );
       if (result.rowCount !== 1) {
         throw Error("Password reset no longer valid.");
