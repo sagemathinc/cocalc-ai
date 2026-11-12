@@ -358,6 +358,60 @@ test("a hub at admission capacity is a definite, retryable rejection, never unkn
   }
 });
 
+test("a broadcast that fails after submission never claims nothing was sent", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-network-lost-"));
+  const previous = process.env.COCALC_AGENT_IDENTITY_FILE;
+  const marker = `private-body-marker-${randomUUID()}`;
+  let calls = 0;
+  const stub = mock.method(
+    require("@cocalc/conat/core/client"),
+    "connect",
+    () => ({
+      request: async () => {
+        calls++;
+        // The hub got the request; its answer is lost (a timeout).
+        throw new Error("timeout");
+      },
+      close: () => {},
+    }),
+  );
+  try {
+    process.env.COCALC_AGENT_IDENTITY_FILE = join(dir, "identity.json");
+    await writeFile(
+      process.env.COCALC_AGENT_IDENTITY_FILE,
+      JSON.stringify({
+        agent_id: randomUUID(),
+        run_id: randomUUID(),
+        token: "cocalc_agent_identity_test",
+        expires_at: Date.now() + 60_000,
+        api_url: "https://owner.invalid",
+      }),
+      { mode: 0o600 },
+    );
+    const error: any = await sendIdentityMessage({
+      version: 3,
+      action: "broadcast",
+      broadcast_id: randomUUID(),
+      agent_network_id: randomUUID(),
+      targets: [{ agent_id: randomUUID(), project_id: randomUUID() }],
+      body: marker,
+    }).then(
+      () => assert.fail("a lost broadcast must not look delivered"),
+      (error) => error,
+    );
+    assert.equal(calls, 1);
+    assert.equal(error.retryable, undefined);
+    assert.notEqual(error.code, "rpc_admission_capacity");
+    assert.doesNotMatch(error.message, /nothing (was )?submitted/i);
+    assert.doesNotMatch(error.message, new RegExp(marker));
+  } finally {
+    stub.mock.restore();
+    if (previous === undefined) delete process.env.COCALC_AGENT_IDENTITY_FILE;
+    else process.env.COCALC_AGENT_IDENTITY_FILE = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("only busy rejections that saved nothing are retryable", () => {
   const attempt = {
     version: 3 as const,

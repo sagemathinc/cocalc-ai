@@ -43,16 +43,22 @@ cocalc agent status [reviewer]                 # what peers are doing, how their
   `agent rpc inspect` command in the summary instead of resending, and use a
   new `--attempt-id` for a deliberate retry.
 - Exit status, for `agent send` and `agent broadcast`: 0 when every recipient
-  accepted, 2 when one was rejected, 3 when one is unknown, 1 for an error
-  before anything was submitted. Check it directly: in `cocalc agent send ... |
-tail` the status is `tail`'s, so a failure looks like success (use
-  `set -o pipefail`, or read the result's `outcome`).
+  accepted, 2 when one was rejected, 3 when one is unknown, 1 for an error.
+  An error can come after the message was submitted (for example a timeout
+  during a broadcast), so before sending again run the `agent rpc inspect`
+  command that send printed, or repeat the broadcast with the same
+  `--broadcast-id` (it sends only if the first attempt never started). Only
+  an error marked `retryable: true` says nothing was submitted.
+- Check the exit status directly. When piped, as in
+  `cocalc agent send NAME --file m.md | tail`, the status is that of `tail`, so
+  a failure looks like success: use `set -o pipefail`, or read the result's
+  `outcome`.
 - `retryable: true` (in the result, in each broadcast `recipients` entry, or in
   an error) means the recipient side was busy and nothing was saved: send
   again after a few seconds, a few times with growing delays. Never retry an
-  `unknown` result automatically. Repeating a `--broadcast-id` returns the
-  stored result and sends nothing, so retry a busy broadcast recipient with
-  `agent send`.
+  `unknown` result automatically. Repeating the `--broadcast-id` of a
+  broadcast that ran returns its stored result and sends nothing, so retry a
+  busy broadcast recipient with `agent send`.
 - There are no group destinations such as `all`: list the peers with
   `agent broadcast --to a,b`.
 - A reply arrives as a new message in your thread. Do not poll for it.
