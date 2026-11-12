@@ -276,6 +276,12 @@ export async function finalizeRestoreStaging(
   const homeExists = await exists(home);
   if (homeExists) {
     await ensureHomeSubvolume(home);
+    // A recover over a home that has data (068-DS): the bay asked for it
+    // only because provisioned was not true, which a lost or late report
+    // also causes. Never delete that home: keep it, with its snapshots,
+    // beside the restored one for an admin.
+    const keepOldHome =
+      handle.restore === "recover" && (await homeHasData(home));
     const oldPath = `${home}.restore_old.${Date.now()}`;
     try {
       await sudo({ command: "mv", args: [home, oldPath] });
@@ -295,6 +301,14 @@ export async function finalizeRestoreStaging(
     } finally {
       // another subvolume at the home's path (qgroup-scan.ts)
       forgetSubvolumePaths(home, oldPath, stagingPath);
+    }
+    if (keepOldHome) {
+      // customer data: NOT yet removed by project or account deletion
+      logger.warn("recover kept the previous home aside", {
+        project_id: handle.project_id,
+        path: oldPath,
+      });
+      return;
     }
     await deleteSubvolumeTree({
       path: oldPath,
