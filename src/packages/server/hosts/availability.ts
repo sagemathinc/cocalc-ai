@@ -16,6 +16,7 @@ import adminAlert from "@cocalc/server/messages/admin-alert";
 import { byHostId, conditionAlert, conditionCleared } from "./condition-alert";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { runProjectHostRuntimeMaintenance } from "./runtime-maintenance";
+import { runSpotFallbackAlertCheck } from "./spot-fallback-alert";
 import {
   persistenceAlert,
   persistenceAlertDelivery,
@@ -1869,6 +1870,7 @@ export function startHostAvailabilityMaintenance({
       const persistProblems = await runConatPersistAlertCheck();
       const runtimeProblems = await runRuntimeDegradedHostAlertCheck();
       const acpWorkerProblems = await runAcpWorkerDegradedHostAlertCheck();
+      const spotFallbacks = await runSpotFallbackAlertCheck();
       void runProjectHostRuntimeMaintenance().catch((err) => {
         logger.warn("project-host runtime maintenance failed", {
           err: `${err}`,
@@ -1903,6 +1905,11 @@ export function startHostAvailabilityMaintenance({
       if (acpWorkerProblems) {
         logger.warn("project hosts have unstable ACP workers", {
           count: acpWorkerProblems,
+        });
+      }
+      if (spotFallbacks) {
+        logger.warn("spot hosts have been on a fallback for over 24 hours", {
+          count: spotFallbacks,
         });
       }
     } catch (err) {
