@@ -8,6 +8,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
+import {
+  buildHostBaseMetadata,
+  buildHostReportMetadata,
+} from "../../../project-host/host-report-payload";
 
 // Top-level metadata keys the bay writes. writtenProjectHostMetadataKeys()
 // below finds the ones written in the detected SQL forms (see
@@ -67,49 +71,143 @@ export const BAY_OWNED_METADATA_KEYS = [
   "storage_admission_mode",
 ] as const;
 
-// A report as a bd0131eb project-host sends it (project-host/master.ts
-// basePayload.metadata + buildPayload metadata), with representative values.
+// A report produced by the real project-host assembly
+// (project-host/host-report-payload.ts, which master.ts calls), from
+// deterministic inputs at the sizes the project-host code allows where it
+// bounds them (placement: at most 128 cached images, master.ts
+// PLACEMENT_ROOTFS_CACHE_LIMIT; cloudflared: at most 16 connections,
+// cloudflared-diagnostics.ts) and generous sizes where it does not. See the
+// PR's size table.
 export function hostReportFixture(): Record<string, unknown> {
-  return {
+  const base = buildHostBaseMetadata({
     runnerId: "runner-1",
-    host_session_id: "session-1",
-    host_boot_id: "boot-1",
+    host_session_id: "8d6f0c2e-1d4b-4a8e-9f7a-2c3b4d5e6f70",
+    host_boot_id: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
     host_session_started_at: "2026-11-13T00:00:00.000Z",
     host_boot_started_at: "2026-11-12T00:00:00.000Z",
-    host_cpu_count: 8,
-    host_ram_gb: 32,
-    host_uptime_s: 1234,
-    cloudflared_restart_supported: true,
-    cloudflared_diagnostics_supported: true,
-    cloudflared: { state: "ok", checked_at: "2026-11-13T00:00:00.000Z" },
-    metrics: {
-      current: {
-        collected_at: "2026-11-13T00:00:00.000Z",
-        memory_used_percent: 72.2,
-        memory_total_bytes: 34359738368,
-        io_containment: { policy_mode: "enforce", capabilities: ["io.max"] },
+    host_cpu_count: 64,
+    host_ram_gb: 256,
+  });
+  const iso = "2026-11-13T00:00:00.000Z";
+  return buildHostReportMetadata({
+    base,
+    cloudflared: {
+      captured_at: iso,
+      expected_version: "2026.10.0",
+      version: "2026.10.0",
+      version_drift: false,
+      pid: 1234,
+      process_elapsed_s: 86400,
+      ready_status: 200,
+      ready_connections: 4,
+      connector_id: "c0nnect0r-0000-0000-0000-000000000000",
+      configured_protocol: "quic",
+      observed_protocols: ["quic"],
+      protocols: ["quic"],
+      protocol_source: "observed",
+      edge_addresses: Array.from({ length: 16 }, (_, i) => `198.41.192.${i}`),
+    },
+    host_uptime_s: 86400,
+    currentMetrics: {
+      collected_at: iso,
+      cpu_percent: 97.5,
+      load_1: 63.1,
+      load_5: 60.2,
+      load_15: 58.9,
+      memory_total_bytes: 274877906944,
+      memory_used_bytes: 247390116249,
+      memory_available_bytes: 27487790695,
+      memory_used_percent: 90,
+      swap_total_bytes: 0,
+      swap_used_bytes: 0,
+      kernel_sysctls: Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [`fs.sysctl_${i}`, 1048576]),
+      ),
+      resource_pressure: {
+        zone: "pressure",
+        findings: Array.from({ length: 200 }, (_, i) => ({
+          project_id: `00000000-0000-4000-8000-${`${i}`.padStart(12, "0")}`,
+          reason: "inotify_watches",
+          value: 262144,
+          limit: 131072,
+        })),
       },
+      io_containment: {
+        policy_mode: "enforce",
+        capabilities: ["io.max", "io.weight", "io.pressure"],
+        projects: Array.from({ length: 200 }, (_, i) => ({
+          project_id: `00000000-0000-4000-8000-${`${i}`.padStart(12, "0")}`,
+          read_bps: 1048576,
+          write_bps: 1048576,
+          full_avg10: 1.5,
+        })),
+      },
+      storage_admission: { mode: "enforce", state: "normal", state_since: iso },
+      conat_persist: { streams: 5000, bytes: 1099511627776, open: 1200 },
     },
-    pressure: { zone: "normal", evaluated_at_ms: 1, candidate_count: 0 },
-    placement: {
-      observed_at: "2026-11-13T00:00:00.000Z",
-      cached_rootfs_images: ["img-a", "img-b"],
-      rootfs_cache_truncated: false,
+    pressureState: {
+      zone: "pressure",
+      reason: "memory_used_percent>=80",
+      evaluated_at_ms: 1794540000000,
+      candidate_count: 200,
+      recent_pressure_stop_count: 30,
+      last_action_status: "stopped",
+      last_action_reason: "memory_used_percent>=80,priority:0,idle_ms:1",
     },
-    bootstrap_lifecycle: { phase: "ready" },
-    host_agent: { project_host: { last_known_good_version: "v1" } },
-    runtime_health: { ready: true, status: "ok" },
-    acp_worker_health: { ok: true },
-    bees: { state: "running" },
-    host_integrity: { ok: true },
-    runtime_uid_mode: { mode: "keep-id" },
-    observed_components: [{ component: "acp-worker", state: "running" }],
-    rootfs_scanner: { state: "ready" },
-    software: { project_host: "v1", project_bundle: "b1", tools: "t1" },
-    software_inventory: [{ artifact: "project-host", current_version: "v1" }],
-    agent_rpc_report: { version: 1, project_host: "v1" },
-    content_origin_domain: null,
-  };
+    placementSnapshot: {
+      observed_at: iso,
+      cached_rootfs_images: Array.from(
+        { length: 128 },
+        (_, i) =>
+          `docker.io/sagemathinc/rootfs-image-${i}:2026.11.12-${"x".repeat(60)}`,
+      ),
+      rootfs_cache_truncated: true,
+    },
+    bootstrapLifecycle: {
+      phase: "ready",
+      updated_at: iso,
+      error: "e".repeat(4096),
+    },
+    host_agent: {
+      project_host: { last_known_good_version: "20261112T035749Z-bd0131eb" },
+      status: "ok",
+    },
+    runtime_health: { ready: true, status: "ok", error: "r".repeat(4096) },
+    acp_worker_health: { ok: true, oldest_queued_at: 1794540000000 },
+    bees: { state: "running", workers: 8 },
+    host_integrity: {
+      ok: true,
+      checks: Array.from({ length: 50 }, (_, i) => ({
+        name: `check-${i}`,
+        ok: true,
+      })),
+    },
+    runtime_uid_mode: {
+      mode: "separate",
+      reason: "configured",
+      sidecars: true,
+    },
+    observed_components: Array.from({ length: 20 }, (_, i) => ({
+      component: `component-${i}`,
+      state: "running",
+      version: "20261112T035749Z-bd0131eb",
+      detail: "d".repeat(512),
+    })),
+    rootfs_scanner: { state: "ready", version: "0.56.0" },
+    software: {
+      project_host: "20261112T035749Z-bd0131eb",
+      project_bundle: "20261112T035845Z-bd0131eb",
+      tools: "20261106T054333Z-a4ea4605",
+    },
+    software_inventory: Array.from({ length: 12 }, (_, i) => ({
+      artifact: `artifact-${i}`,
+      current_version: "20261112T035749Z-bd0131eb",
+      current_build_id: "b".repeat(40),
+      installed_versions: Array.from({ length: 20 }, (_, j) => `v${j}`),
+    })),
+    agent_rpc_report_version: 4,
+    content_origin_domain: "content.cocalc.example",
+  });
 }
 
 // Hub-written keys that are also host-owned by decision (ops0 2703): the host
@@ -254,61 +352,11 @@ export const REVIEWED_WHOLE_METADATA_WRITERS = [
   "server/self-host/ssh-target.ts",
 ] as const;
 
-function unwrap(node: ts.Expression): ts.Expression {
-  while (ts.isParenthesizedExpression(node)) node = node.expression;
-  return node;
-}
-
-function metadataKeysOf(object: ts.ObjectLiteralExpression): string[] {
-  const keys: string[] = [];
-  for (const property of object.properties) {
-    if (
-      (ts.isPropertyAssignment(property) ||
-        ts.isShorthandPropertyAssignment(property)) &&
-      ts.isIdentifier(property.name)
-    ) {
-      keys.push(property.name.text);
-    } else if (ts.isSpreadAssignment(property)) {
-      const spread = unwrap(property.expression);
-      if (ts.isConditionalExpression(spread)) {
-        for (const branch of [spread.whenTrue, spread.whenFalse]) {
-          const literal = unwrap(branch);
-          if (!ts.isObjectLiteralExpression(literal)) {
-            throw new Error(`unhandled spread branch: ${literal.getText()}`);
-          }
-          keys.push(...metadataKeysOf(literal));
-        }
-      } else if (/^\(?basePayload\.metadata\b/.test(spread.getText())) {
-        // basePayload.metadata's own keys are collected separately.
-      } else {
-        throw new Error(`unhandled spread: ${spread.getText()}`);
-      }
-    } else {
-      throw new Error(`unhandled property: ${property.getText()}`);
-    }
-  }
-  return keys;
-}
-
-function metadataLiteral(
-  object: ts.ObjectLiteralExpression,
-): ts.ObjectLiteralExpression | undefined {
-  for (const property of object.properties) {
-    if (
-      ts.isPropertyAssignment(property) &&
-      ts.isIdentifier(property.name) &&
-      property.name.text === "metadata"
-    ) {
-      const value = unwrap(property.initializer);
-      if (ts.isObjectLiteralExpression(value)) return value;
-    }
-  }
-  return undefined;
-}
-
-// The metadata keys project-host/master.ts actually sends: basePayload's
-// metadata plus the metadata buildPayload returns.
-export function hostReportedKeysFromSource(): string[] {
+// master.ts must assemble the report with the pure builders, so that the
+// fixture above is the real assembly: basePayload.metadata is a call to
+// buildHostBaseMetadata and buildPayload's returned metadata a call to
+// buildHostReportMetadata.
+export function masterUsesReportBuilders(): boolean {
   const path = join(__dirname, "..", "..", "..", "project-host", "master.ts");
   const source = ts.createSourceFile(
     path,
@@ -316,49 +364,58 @@ export function hostReportedKeysFromSource(): string[] {
     ts.ScriptTarget.Latest,
     true,
   );
-  const keys = new Set<string>();
-  let found = 0;
+  const calls = new Set<string>();
+  const metadataCall = (object: ts.ObjectLiteralExpression) => {
+    for (const property of object.properties) {
+      if (
+        ts.isPropertyAssignment(property) &&
+        ts.isIdentifier(property.name) &&
+        property.name.text === "metadata" &&
+        ts.isCallExpression(property.initializer) &&
+        ts.isIdentifier(property.initializer.expression)
+      ) {
+        return property.initializer.expression.text;
+      }
+    }
+    return undefined;
+  };
   const visit = (node: ts.Node) => {
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
       node.initializer
     ) {
-      const init = unwrap(node.initializer);
       if (
         node.name.text === "basePayload" &&
-        ts.isObjectLiteralExpression(init)
+        ts.isObjectLiteralExpression(node.initializer)
       ) {
-        const metadata = metadataLiteral(init);
-        if (metadata) {
-          metadataKeysOf(metadata).forEach((key) => keys.add(key));
-          found += 1;
-        }
+        const call = metadataCall(node.initializer);
+        if (call) calls.add(`basePayload:${call}`);
       }
-      if (node.name.text === "buildPayload" && ts.isArrowFunction(init)) {
+      if (
+        node.name.text === "buildPayload" &&
+        ts.isArrowFunction(node.initializer)
+      ) {
         const visitReturn = (inner: ts.Node) => {
-          if (ts.isReturnStatement(inner) && inner.expression) {
-            const value = unwrap(inner.expression);
-            const metadata = ts.isObjectLiteralExpression(value)
-              ? metadataLiteral(value)
-              : undefined;
-            if (metadata) {
-              metadataKeysOf(metadata).forEach((key) => keys.add(key));
-              found += 1;
-            }
+          if (
+            ts.isReturnStatement(inner) &&
+            inner.expression &&
+            ts.isObjectLiteralExpression(inner.expression)
+          ) {
+            const call = metadataCall(inner.expression);
+            if (call) calls.add(`buildPayload:${call}`);
           }
           ts.forEachChild(inner, visitReturn);
         };
-        visitReturn(init.body);
+        visitReturn(node.initializer.body);
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
-  if (found !== 2) {
-    throw new Error(
-      `expected basePayload and buildPayload metadata, found ${found}`,
-    );
-  }
-  return [...keys].sort();
+  return (
+    calls.size === 2 &&
+    calls.has("basePayload:buildHostBaseMetadata") &&
+    calls.has("buildPayload:buildHostReportMetadata")
+  );
 }

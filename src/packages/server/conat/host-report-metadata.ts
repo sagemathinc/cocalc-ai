@@ -20,7 +20,10 @@
 
 type Kind = "string" | "number" | "boolean" | "object" | "array";
 
-// key -> the JSON kinds its value may have (null is always allowed).
+// key -> the JSON kinds its value may have (null is always allowed). The
+// order is the order keys are checked and charged: identity and session keys
+// first, the large blobs last, so a big value can never cost a report its
+// identity (restart recovery and routing depend on it).
 const HOST_REPORTED_METADATA: Record<string, readonly Kind[]> = {
   runnerId: ["string"],
   host_session_id: ["string"],
@@ -30,25 +33,25 @@ const HOST_REPORTED_METADATA: Record<string, readonly Kind[]> = {
   host_cpu_count: ["number"],
   host_ram_gb: ["number"],
   host_uptime_s: ["number"],
-  cloudflared: ["object"],
   cloudflared_restart_supported: ["boolean"],
   cloudflared_diagnostics_supported: ["boolean"],
-  metrics: ["object"],
-  pressure: ["object"],
-  placement: ["object"],
-  bootstrap_lifecycle: ["object"],
-  host_agent: ["object"],
+  content_origin_domain: ["string"],
+  agent_rpc_report: ["object"],
+  software: ["object"],
+  runtime_uid_mode: ["object"],
+  host_integrity: ["object"],
   runtime_health: ["object"],
+  bootstrap_lifecycle: ["object"],
+  pressure: ["object"],
+  host_agent: ["object"],
   acp_worker_health: ["object"],
   bees: ["object"],
-  host_integrity: ["object"],
-  runtime_uid_mode: ["object"],
-  observed_components: ["array"],
   rootfs_scanner: ["object"],
-  software: ["object"],
+  observed_components: ["array"],
   software_inventory: ["array"],
-  agent_rpc_report: ["object"],
-  content_origin_domain: ["string"],
+  placement: ["object"],
+  cloudflared: ["object"],
+  metrics: ["object"],
 };
 
 export const HOST_REPORTED_METADATA_KEYS: readonly string[] = Object.freeze(
@@ -61,6 +64,9 @@ export const HOST_REPORT_METADATA_LIMITS = Object.freeze({
   // Budgets of the bounded walk over all kept values together.
   maxNodes: 50_000,
   maxBytes: 512 * 1024,
+  // A single value's share of those budgets, so one blob cannot use them up.
+  maxNodesPerKey: 20_000,
+  maxBytesPerKey: 256 * 1024,
   // Per value.
   maxDepth: 8,
   maxStringLength: 8 * 1024,
@@ -72,9 +78,9 @@ export const HOST_REPORT_METADATA_LIMITS = Object.freeze({
 export type HostReportMetadataDropReason =
   | "not_object"
   | "too_many_keys"
-  | "over_budget"
   | "unknown_key"
-  | "invalid_value";
+  | "invalid_value"
+  | "over_budget";
 
 const dropCounts = new Map<string, number>();
 
@@ -112,7 +118,13 @@ function kindOf(value: unknown): Kind | "null" | undefined {
   return undefined;
 }
 
-type Budget = { nodes: number; bytes: number };
+// Usage so far and the caps it may reach.
+type Budget = {
+  nodes: number;
+  bytes: number;
+  maxNodes: number;
+  maxBytes: number;
+};
 
 type Frame =
   | { kind: "array"; value: unknown[]; index: number; depth: number }
@@ -153,7 +165,7 @@ function withinBudget(root: unknown, budget: Budget): boolean {
   // Charges one value; a container gets a frame for its children.
   const enter = (value: unknown, depth: number): boolean => {
     budget.nodes += 1;
-    if (budget.nodes > limits.maxNodes) return false;
+    if (budget.nodes > budget.maxNodes) return false;
     const kind = kindOf(value);
     if (kind == null) return false;
     if (kind === "array" || kind === "object") {
@@ -177,7 +189,7 @@ function withinBudget(root: unknown, budget: Budget): boolean {
     } else {
       budget.bytes += 8;
     }
-    return budget.bytes <= limits.maxBytes;
+    return budget.bytes <= budget.maxBytes;
   };
   if (!enter(root, 0)) return false;
   while (stack.length > 0) {
@@ -199,7 +211,7 @@ function withinBudget(root: unknown, budget: Budget): boolean {
       const key = next.value;
       if (key.length > limits.maxKeyLength) return false;
       budget.bytes += key.length;
-      if (budget.bytes > limits.maxBytes) return false;
+      if (budget.bytes > budget.maxBytes) return false;
       child = frame.value[key];
     }
     if (!enter(child, frame.depth + 1)) return false;
@@ -218,55 +230,59 @@ function hasMoreKeysThan(value: Record<string, unknown>, max: number): boolean {
 }
 
 // The report's metadata reduced to the host-owned keys with valid values.
-// Anything that is not a plain object yields {} (nothing is merged).
+// Anything that is not a plain object, or has too many keys, yields {}
+// (nothing is merged). Otherwise the allow-listed keys are checked in their
+// fixed order, each within its own share of the budgets and what the earlier
+// keys left; a value that fails is dropped and counted, and the rest are
+// still checked (cheaply, once the budgets are used up).
 export function pickHostReportedMetadata(
   metadata: unknown,
 ): Record<string, unknown> {
+  const limits = HOST_REPORT_METADATA_LIMITS;
   if (metadata === undefined) return {};
   if (!isPlainObject(metadata)) {
     countDrop("not_object");
     return {};
   }
-  if (hasMoreKeysThan(metadata, HOST_REPORT_METADATA_LIMITS.maxTopLevelKeys)) {
+  if (hasMoreKeysThan(metadata, limits.maxTopLevelKeys)) {
     countDrop("too_many_keys");
     return {};
   }
-  const keys = Object.keys(metadata);
+  for (const key of Object.keys(metadata)) {
+    if (!hasOwn(HOST_REPORTED_METADATA, key)) countDrop("unknown_key");
+  }
   const picked: Record<string, unknown> = {};
-  const budget: Budget = { nodes: 0, bytes: 0 };
-  for (const key of keys) {
-    const kinds = Object.prototype.hasOwnProperty.call(
-      HOST_REPORTED_METADATA,
-      key,
-    )
-      ? HOST_REPORTED_METADATA[key]
-      : undefined;
-    if (kinds == null) {
-      countDrop("unknown_key");
-      continue;
-    }
+  let usedNodes = 0;
+  let usedBytes = 0;
+  for (const key of HOST_REPORTED_METADATA_KEYS) {
+    if (!hasOwn(metadata, key)) continue;
     const value = metadata[key];
     if (value === undefined) continue;
     const kind = kindOf(value);
-    if (kind == null || (kind !== "null" && !kinds.includes(kind))) {
+    if (
+      kind == null ||
+      (kind !== "null" && !HOST_REPORTED_METADATA[key].includes(kind))
+    ) {
       countDrop("invalid_value", key);
       continue;
     }
-    const before = { ...budget };
+    const budget: Budget = {
+      nodes: 0,
+      bytes: 0,
+      maxNodes: Math.min(limits.maxNodesPerKey, limits.maxNodes - usedNodes),
+      maxBytes: Math.min(limits.maxBytesPerKey, limits.maxBytes - usedBytes),
+    };
     if (!withinBudget(value, budget)) {
-      // The whole report is over budget: keep nothing from it.
-      if (
-        budget.nodes > HOST_REPORT_METADATA_LIMITS.maxNodes ||
-        budget.bytes > HOST_REPORT_METADATA_LIMITS.maxBytes
-      ) {
-        countDrop("over_budget");
-        return {};
-      }
-      budget.nodes = before.nodes;
-      budget.bytes = before.bytes;
-      countDrop("invalid_value", key);
+      countDrop(
+        budget.nodes > budget.maxNodes || budget.bytes > budget.maxBytes
+          ? "over_budget"
+          : "invalid_value",
+        key,
+      );
       continue;
     }
+    usedNodes += budget.nodes;
+    usedBytes += budget.bytes;
     picked[key] = value;
   }
   return picked;

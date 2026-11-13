@@ -16,7 +16,7 @@ import {
   REVIEWED_UNCLASSIFIED_METADATA_STATEMENTS,
   REVIEWED_WHOLE_METADATA_WRITERS,
   SHARED_HOST_OWNED_METADATA_KEYS,
-  hostReportedKeysFromSource,
+  masterUsesReportBuilders,
   hostReportFixture,
   metadataKeysWrittenIn,
   unclassifiedMetadataStatements,
@@ -33,9 +33,12 @@ function nested(depth: number): unknown {
 describe("pickHostReportedMetadata", () => {
   beforeEach(() => resetHostReportMetadataDropCountsForTests());
 
-  it("allows exactly the keys project-host/master.ts sends", () => {
+  it("allows exactly the keys the real project-host assembly sends", () => {
+    // master.ts builds the report with the pure builders, and the fixture is
+    // their output with every optional input present.
+    expect(masterUsesReportBuilders()).toBe(true);
     expect([...HOST_REPORTED_METADATA_KEYS].sort()).toEqual(
-      hostReportedKeysFromSource(),
+      Object.keys(hostReportFixture()).sort(),
     );
   });
 
@@ -87,9 +90,8 @@ describe("pickHostReportedMetadata", () => {
     ]);
   });
 
-  it("passes a real report through unchanged", () => {
+  it("passes a real report at the code-bound sizes through unchanged", () => {
     const report = hostReportFixture();
-    expect(Object.keys(report).sort()).toEqual(hostReportedKeysFromSource());
     expect(pickHostReportedMetadata(report)).toEqual(report);
     expect(getHostReportMetadataDropCounts()).toEqual({});
   });
@@ -190,25 +192,83 @@ describe("pickHostReportedMetadata", () => {
     });
   });
 
-  it("keeps nothing from a report over the node or byte budget", () => {
-    const { maxNodes, maxBytes, maxStringLength } = HOST_REPORT_METADATA_LIMITS;
-    expect(
-      pickHostReportedMetadata({
-        host_session_id: "s",
-        software_inventory: new Array(maxNodes + 1).fill(0),
-      }),
-    ).toEqual({});
+  it("drops only the value over its budget share and keeps the rest", () => {
+    const { maxNodesPerKey, maxBytesPerKey, maxStringLength } =
+      HOST_REPORT_METADATA_LIMITS;
+    const report = hostReportFixture();
+    const overNodes = {
+      ...report,
+      software_inventory: new Array(maxNodesPerKey + 1).fill(0),
+    };
+    const kept = pickHostReportedMetadata(overNodes);
+    expect(kept).not.toHaveProperty("software_inventory");
+    const { software_inventory: _dropped, ...rest } = report;
+    expect(kept).toEqual(rest);
     const chunk = "x".repeat(maxStringLength);
-    const many = new Array(Math.ceil(maxBytes / maxStringLength) + 1).fill(
-      chunk,
+    const overBytes = {
+      ...report,
+      metrics: {
+        current: new Array(
+          Math.ceil(maxBytesPerKey / maxStringLength) + 1,
+        ).fill(chunk),
+      },
+    };
+    const kept2 = pickHostReportedMetadata(overBytes);
+    expect(kept2).not.toHaveProperty("metrics");
+    expect(kept2.host_session_id).toBe(report.host_session_id);
+    expect(getHostReportMetadataDropCounts()).toEqual({
+      "over_budget:software_inventory": 1,
+      "over_budget:metrics": 1,
+    });
+  });
+
+  it("keeps identity keys whatever the report's key order and blob sizes", () => {
+    const { maxStringLength } = HOST_REPORT_METADATA_LIMITS;
+    const chunk = "x".repeat(maxStringLength);
+    const blob = () => new Array(40).fill(chunk);
+    // Big blobs first in the report's own order, identity keys last.
+    const hostile: Record<string, unknown> = {
+      metrics: { current: blob() },
+      cloudflared: { lines: blob() },
+      placement: { images: blob() },
+      software_inventory: blob(),
+      observed_components: blob(),
+      host_agent: { log: blob() },
+      runnerId: "runner-1",
+      host_session_id: "session-1",
+      host_boot_id: "boot-1",
+      host_session_started_at: "2026-11-13T00:00:00.000Z",
+      host_boot_started_at: "2026-11-12T00:00:00.000Z",
+    };
+    const kept = pickHostReportedMetadata(hostile);
+    for (const key of [
+      "runnerId",
+      "host_session_id",
+      "host_boot_id",
+      "host_session_started_at",
+      "host_boot_started_at",
+    ]) {
+      expect(kept[key]).toBe(hostile[key]);
+    }
+  });
+
+  it("keeps the total work bounded when every allowed key is large", () => {
+    const { maxNodes } = HOST_REPORT_METADATA_LIMITS;
+    let reads = 0;
+    const big = () =>
+      new Proxy(new Array(100_000).fill(0), {
+        get(obj, key, receiver) {
+          if (typeof key === "string" && key !== "length") reads += 1;
+          return Reflect.get(obj, key, receiver);
+        },
+      });
+    const report: Record<string, unknown> = {};
+    for (const key of HOST_REPORTED_METADATA_KEYS) report[key] = big();
+    pickHostReportedMetadata(report);
+    // Each allowed key reads at most one element past its remaining budget.
+    expect(reads).toBeLessThanOrEqual(
+      maxNodes + HOST_REPORTED_METADATA_KEYS.length,
     );
-    expect(
-      pickHostReportedMetadata({
-        host_session_id: "s",
-        observed_components: many,
-      }),
-    ).toEqual({});
-    expect(getHostReportMetadataDropCounts()).toEqual({ over_budget: 2 });
   });
 
   // A transparent proxy counts the property reads the walk makes: they must
