@@ -1,6 +1,13 @@
-# Agent Architecture in CoCalc
+# Codex agent architecture in CoCalc
 
-This document explains the current Codex/ACP architecture used by CoCalc.
+This document explains CoCalc's Codex/ACP runtime architecture. CoCalc also
+integrates Claude Code; the Codex implementation details below do not describe
+every agent runtime.
+
+For the user-facing runtime comparison, see
+[Agent features: Codex and Claude Code](https://cocalc.ai/docs/ai/agent-features).
+For Claude's setup, payment options, and execution boundaries, see
+[Work with Claude Code](https://cocalc.ai/docs/ai/claude-code).
 
 For the opt-in generic ACP v1 integration, see
 [Experimental ACP Harnesses](acp-harnesses.md). The native Codex path described

@@ -406,6 +406,40 @@ tools, or a clean release record.
 Store deploy keys and access tokens using project secrets or SSH keys, not
 inside the repository.
 
+## Let an agent work with GitHub
+
+On a site with the GitHub connector configured, you can give a named Codex or
+supported Claude Code agent access to your GitHub repositories without pasting
+a token into its chat. The project needs internet access.
+
+1. Open **Settings -> Connectors** and connect GitHub. Complete GitHub's
+   sign-in and choose the repositories accessible to the site's GitHub App.
+2. In the agent's message box, open **Connectors**, choose **GitHub**, select
+   your connection, turn it on for that agent, and choose **Save**. Connecting
+   your account alone does not enable it for every agent.
+3. Ask the agent to inspect a repository you can access. For example:
+   "Read OWNER/REPO and summarize its open pull requests. Do not change files
+   or publish anything."
+4. Review the repository and pull-request links in the response before asking
+   the agent to make changes.
+
+During that agent's turn, the supplied \`gh\` and \`git\` commands use your
+GitHub connection. The agent can run \`gh auth status\` to check that it reports
+"signed in via the CoCalc GitHub connector", then use ordinary commands such
+as \`gh pr list --repo OWNER/REPO\`. GitHub SSH-style remotes work through
+HTTPS with this connector, without a separate SSH key.
+
+Use the connection from the agent chat. If its menu says **Codex and Claude
+only**, the selected agent runtime does not support the connector; choose a
+Codex or supported Claude Code agent. If the agent cannot read a repository,
+check the selected GitHub connection, the repositories selected for it, and the
+project's internet access. Ask the agent to report the connector status before
+trying a separate login or changing the project's Git setup.
+
+When the connector is unavailable on your site, use the project's own Git
+credentials instead. In either case, review the diff and decide when the
+agent should push, create a pull request, or make other public changes.
+
 ## Set up and commit from a Codex thread
 
 Open the Codex thread's menu and choose **Git browser**. On phones, open
@@ -527,8 +561,14 @@ If the history changed while you decided, you are asked again.
 
 ## Boards
 
-A board's host is the only program that writes its \`.board.json\`, so the
-host rebuilds the board from that file automatically. You then see: "The edit
+This recovery applies to Sagebrush \`.board.json\` files on project hosts
+with board editing enabled. When board editing is unavailable, the chat card
+shows the saved file instead; it does not start a board-history rebuild.
+Changes made in that saved-file preview are not written back to the file.
+
+For an editable board, the host manages its saved file and rebuilds the board
+from that file automatically when its edit history cannot be loaded.
+You then see: "The edit
 history of the board could not be loaded. It was archived, and the board was
 rebuilt from its saved file; edits not yet saved to the file may be missing."
 
