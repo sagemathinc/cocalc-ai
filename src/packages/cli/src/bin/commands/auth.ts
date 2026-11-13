@@ -347,7 +347,7 @@ export function registerAuthCommand(
 Without --check this makes no request. recorded_session_expires_at,
 recorded_fresh_auth_until and the *_remaining_s fields come from the last
 auth login / auth elevate made by this CLI config on this machine
-(<config>.auth-grants.json next to the config file, timestamps only). The server may end
+(<config file name>.auth-grants.json next to it, timestamps only). The server may end
 access earlier; remaining seconds use the local clock; null means unknown.
 `,
     )

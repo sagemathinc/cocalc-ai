@@ -16,8 +16,8 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  lstatSync,
   rmSync,
-  statSync,
   writeSync,
 } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -47,25 +47,27 @@ type AuthGrantsFile = {
 };
 
 // One sidecar per config file (two configs in one directory never share
-// records): <config name without .json>.auth-grants.json.
+// records): the config file's full name plus ".auth-grants.json", so "a",
+// "a.json" and "a.JSON" each get their own.
 export function authGrantsPath(configPath: string): string {
-  const name = basename(configPath).replace(/\.json$/i, "");
-  return join(dirname(configPath), `${name}.auth-grants.json`);
+  return join(dirname(configPath), `${basename(configPath)}.auth-grants.json`);
 }
 
 const LOCK_WAIT_MS = 5_000;
-const LOCK_STALE_MS = 30_000;
 
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 // Serializes the whole read/patch/write across processes with an exclusive
-// lock file. A lock older than LOCK_STALE_MS (a crashed writer) is removed.
-// Returns false if the lock could not be taken in time; the caller then
-// skips the update (records are informational only).
-function withLock(path: string, fn: () => void): boolean {
+// lock file holding a random owner token. There is no time-based takeover: a
+// lock's age does not show that its owner is gone (it may be paused). If the
+// lock cannot be taken in time, the caller skips the update with a warning
+// naming the lock file (records are informational only). The owner removes
+// the lock only while it still holds its own token.
+function withLock(path: string, fn: () => void): "done" | "busy" {
   const lock = `${path}.lock`;
+  const token = randomBytes(16).toString("hex");
   const deadline = Date.now() + LOCK_WAIT_MS;
   let fd: number | undefined;
   while (fd === undefined) {
@@ -73,24 +75,25 @@ function withLock(path: string, fn: () => void): boolean {
       fd = openSync(lock, "wx", FILE_MODE);
     } catch (err: any) {
       if (err?.code !== "EEXIST") throw err;
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
-          rmSync(lock, { force: true });
-          continue;
-        }
-      } catch {
-        continue; // the lock went away meanwhile
-      }
-      if (Date.now() >= deadline) return false;
+      if (Date.now() >= deadline) return "busy";
       sleepSync(25);
     }
   }
   try {
-    fn();
-    return true;
+    writeSync(fd, token);
+    fsyncSync(fd);
   } finally {
     closeSync(fd);
-    rmSync(lock, { force: true });
+  }
+  try {
+    fn();
+    return "done";
+  } finally {
+    try {
+      if (readFileSync(lock, "utf8") === token) rmSync(lock, { force: true });
+    } catch {
+      // already gone
+    }
   }
 }
 
@@ -147,11 +150,36 @@ function readGrants(configPath: string): Record<string, AuthGrantRecord> {
   }
 }
 
+// True if nothing is at `path` or it is one of these sidecars. Anything else
+// (for example another CLI config file that happens to have this name) is
+// never replaced or removed.
+function safeToReplace(path: string): boolean {
+  if (!existsSync(path)) return true;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return (
+      !!parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      parsed.version === 1 &&
+      !!parsed.grants &&
+      typeof parsed.grants === "object" &&
+      !Array.isArray(parsed.grants) &&
+      Object.keys(parsed).every((k) => k === "version" || k === "grants")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function writeGrants(
   configPath: string,
   grants: Record<string, AuthGrantRecord>,
 ): void {
   const path = authGrantsPath(configPath);
+  if (!safeToReplace(path)) {
+    throw new Error("not a grant record file");
+  }
   if (Object.keys(grants).length === 0) {
     rmSync(path, { force: true });
     return;
@@ -190,11 +218,17 @@ function update(
   try {
     const path = authGrantsPath(configPath);
     mkdirSync(dirname(path), { recursive: true, mode: DIR_MODE });
-    const done = withLock(path, () => {
+    const result = withLock(path, () => {
       const grants = readGrants(configPath);
       if (fn(grants)) writeGrants(configPath, grants);
     });
-    if (!done) throw new Error("lock busy");
+    if (result === "busy") {
+      process.stderr.write(
+        `warning: could not update the local auth grant record: ${path}.lock is held ` +
+          "(another cocalc CLI is writing it; if none is running, remove that file). " +
+          "Informational only; auth itself is unaffected.\n",
+      );
+    }
   } catch {
     process.stderr.write(
       "warning: could not update the local auth grant record (informational only; auth itself is unaffected)\n",
@@ -291,7 +325,17 @@ export function renameAuthGrant(
 const RECORDED_NOTE =
   "last grant recorded by this CLI config on this machine; the server may end access earlier " +
   "(logout, revocation), and a login or elevate made elsewhere does not update it; " +
-  "remaining seconds use the local clock (skew not corrected); null means unknown";
+  "remaining seconds use the local clock (skew not corrected); null means unknown; " +
+  "if recorded_lock_present_since is set, the record may be stale (a writer holds or left the lock)";
+
+function lockSince(configPath: string): string | null {
+  try {
+    const { mtime } = lstatSync(`${authGrantsPath(configPath)}.lock`);
+    return mtime.toISOString();
+  } catch {
+    return null;
+  }
+}
 
 function remainingSeconds(iso: string | null, nowMs: number): number | null {
   if (!iso) return null;
@@ -324,6 +368,8 @@ export function recordedAuthStatus(
     fresh_auth_remaining_s: applies
       ? remainingSeconds(record.fresh_auth_until, nowMs)
       : null,
+    // A lock left by a crashed writer freezes the record: say so.
+    recorded_lock_present_since: lockSince(configPath),
     recorded_note: RECORDED_NOTE,
   };
 }

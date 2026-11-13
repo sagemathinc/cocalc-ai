@@ -231,7 +231,7 @@ test("the sidecar is 0600, written without leftovers, and holds timestamps only"
     );
     const path = authGrantsPath(configPath);
     assert.equal(statSync(path).mode & 0o777, 0o600);
-    assert.deepEqual(readdirSync(dir), ["config.auth-grants.json"]);
+    assert.deepEqual(readdirSync(dir), ["config.json.auth-grants.json"]);
     const text = readFileSync(path, "utf8");
     for (const key of [
       "cookie",
@@ -283,18 +283,23 @@ test("a corrupt or foreign sidecar reads as unknown and never throws", () => {
     assert.equal(odd.recorded_at, null);
     assert.equal(odd.recorded_session_expires_at, null);
     assert.equal(odd.recorded_fresh_auth_until, null);
-    // recording over a corrupt file works
+    // a file that is not a valid sidecar is never replaced: the write is
+    // skipped with a warning and the record stays unknown
     writeFileSync(authGrantsPath(configPath), "{not json");
-    recordFreshAuth(
-      configPath,
-      "prod",
-      { api: "https://cocalc.ai", fresh_auth_until: "2026-11-13T02:00:00Z" },
-      NOW,
+    const { text } = captureStderr(() =>
+      recordFreshAuth(
+        configPath,
+        "prod",
+        { api: "https://cocalc.ai", fresh_auth_until: "2026-11-13T02:00:00Z" },
+        NOW,
+      ),
     );
+    assert.match(text, /could not update/);
+    assert.equal(readFileSync(authGrantsPath(configPath), "utf8"), "{not json");
     assert.equal(
       recordedAuthStatus(configPath, "prod", "https://cocalc.ai", NOW)
         .fresh_auth_remaining_s,
-      3600,
+      null,
     );
   });
 });
@@ -345,6 +350,25 @@ test("two config files in the same directory never share records (review R1)", (
     const a = join(dir, "a.json");
     const b = join(dir, "b.json");
     assert.notEqual(authGrantsPath(a), authGrantsPath(b));
+    // extensionless and case-distinct names are distinct configs too
+    const paths = ["a", "a.json", "a.JSON", "A.json"].map((n) =>
+      authGrantsPath(join(dir, n)),
+    );
+    assert.equal(new Set(paths).size, paths.length);
+    recordSessionGrant(
+      join(dir, "a"),
+      "prod",
+      {
+        api: "https://cocalc.ai",
+        session_expires_at: null,
+        fresh_auth_until: null,
+      },
+      NOW,
+    );
+    assert.equal(
+      recordedAuthStatus(a, "prod", "https://cocalc.ai", NOW).recorded_at,
+      null,
+    );
     const grant = {
       api: "https://cocalc.ai",
       session_expires_at: "2026-11-20T01:00:00.000Z",
@@ -422,55 +446,95 @@ test("concurrent writer processes never lose each other's records (review R2)", 
   });
 });
 
-test("a held lock skips the update with a warning; a stale lock is removed", () => {
+function captureStderr<T>(fn: () => T): { result: T; text: string } {
+  const writes: string[] = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  (process.stderr as any).write = (chunk: any) => {
+    writes.push(`${chunk}`);
+    return true;
+  };
+  try {
+    return { result: fn(), text: writes.join("") };
+  } finally {
+    (process.stderr as any).write = orig;
+  }
+}
+
+const NO_TIMES = { session_expires_at: null, fresh_auth_until: null };
+
+test("a held lock is never taken over by age: the update is skipped with a warning naming it", () => {
   withConfigDir((configPath) => {
     const lock = `${authGrantsPath(configPath)}.lock`;
-    writeFileSync(lock, "");
-    const writes: string[] = [];
-    const orig = process.stderr.write.bind(process.stderr);
-    (process.stderr as any).write = (chunk: any) => {
-      writes.push(`${chunk}`);
-      return true;
-    };
-    try {
+    writeFileSync(lock, "someone-else");
+    const old = new Date(Date.now() - 3_600_000);
+    require("node:fs").utimesSync(lock, old, old);
+    const { text } = captureStderr(() =>
       recordSessionGrant(
         configPath,
         "prod",
-        {
-          api: "https://cocalc.ai",
-          session_expires_at: null,
-          fresh_auth_until: null,
-        },
+        { api: "https://cocalc.ai", ...NO_TIMES },
         NOW,
-      );
-    } finally {
-      (process.stderr as any).write = orig;
-    }
-    assert.ok(writes.some((w) => w.includes("could not update")));
+      ),
+    );
+    assert.match(text, /could not update/);
+    assert.ok(text.includes(lock), text);
     assert.equal(
       recordedAuthStatus(configPath, "prod", "https://cocalc.ai", NOW)
         .recorded_at,
       null,
     );
-    // a lock left by a crashed writer (old mtime) is taken over
-    const old = new Date(Date.now() - 60_000);
-    require("node:fs").utimesSync(lock, old, old);
-    recordSessionGrant(
+    // the other owner's lock is untouched
+    assert.equal(readFileSync(lock, "utf8"), "someone-else");
+  });
+});
+
+test("a paused live owner keeps its lock: a second writer skips instead of stealing (review R2 residual)", () => {
+  withConfigDir((configPath) => {
+    const lock = `${authGrantsPath(configPath)}.lock`;
+    let inner = "";
+    recordFreshAuth(
       configPath,
       "prod",
-      {
-        api: "https://cocalc.ai",
-        session_expires_at: null,
-        fresh_auth_until: null,
-      },
+      { api: "https://cocalc.ai", fresh_auth_until: "2026-11-13T02:00:00Z" },
       NOW,
+      () => {
+        // the owner is "paused" under its lock for a long time
+        const old = new Date(Date.now() - 3_600_000);
+        require("node:fs").utimesSync(lock, old, old);
+        inner = captureStderr(() =>
+          recordSessionGrant(
+            configPath,
+            "other",
+            { api: "https://cocalc.ai", ...NO_TIMES },
+            NOW,
+          ),
+        ).text;
+        return true;
+      },
     );
-    assert.equal(
-      recordedAuthStatus(configPath, "prod", "https://cocalc.ai", NOW)
-        .recorded_at,
-      NOW.toISOString(),
+    assert.match(inner, /could not update/);
+    const grants = JSON.parse(
+      readFileSync(authGrantsPath(configPath), "utf8"),
+    ).grants;
+    assert.deepEqual(Object.keys(grants), ["prod"]); // nothing overwritten, nothing silently lost
+    assert.throws(() => statSync(lock)); // the owner released its own lock
+  });
+});
+
+test("an owner never removes a lock that is no longer its own", () => {
+  withConfigDir((configPath) => {
+    const lock = `${authGrantsPath(configPath)}.lock`;
+    recordFreshAuth(
+      configPath,
+      "prod",
+      { api: "https://cocalc.ai", fresh_auth_until: null },
+      NOW,
+      () => {
+        writeFileSync(lock, "replaced-by-someone-else");
+        return true;
+      },
     );
-    assert.throws(() => statSync(lock));
+    assert.equal(readFileSync(lock, "utf8"), "replaced-by-someone-else");
   });
 });
 
@@ -536,5 +600,39 @@ test("recordFreshAuth writes nothing when the session is no longer current (revi
         .recorded_fresh_auth_until,
       null,
     );
+  });
+});
+
+test("a sidecar name that is another file (e.g. a config) is never replaced or removed (vanta)", () => {
+  withConfigDir((_configPath, dir) => {
+    const a = join(dir, "x.json");
+    const victim = authGrantsPath(a); // someone's COCALC_CLI_CONFIG has this name
+    const credentials = '{"profiles":{"p":{"cookie":"remember_me=keep"}}}\n';
+    writeFileSync(victim, credentials);
+    const { text } = captureStderr(() => {
+      recordSessionGrant(
+        a,
+        "prod",
+        { api: "https://cocalc.ai", ...NO_TIMES },
+        NOW,
+      );
+      clearAuthGrants(a, ["prod"]);
+    });
+    assert.match(text, /could not update/);
+    assert.equal(readFileSync(victim, "utf8"), credentials);
+  });
+});
+
+test("auth status shows a present lock so a frozen record is visible", () => {
+  withConfigDir((configPath) => {
+    assert.equal(
+      recordedAuthStatus(configPath, "prod", "https://cocalc.ai", NOW)
+        .recorded_lock_present_since,
+      null,
+    );
+    writeFileSync(`${authGrantsPath(configPath)}.lock`, "x");
+    const st = recordedAuthStatus(configPath, "prod", "https://cocalc.ai", NOW);
+    assert.match(`${st.recorded_lock_present_since}`, /^\d{4}-\d\d-\d\dT/);
+    assert.match(`${st.recorded_note}`, /may be stale/);
   });
 });
