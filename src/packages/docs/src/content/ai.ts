@@ -777,7 +777,11 @@ There are three kinds:
 - **Watchers**: CoCalc's own one-shot checks that an agent sets for itself
   (for example "wake me when the CI checks on this pull request finish", or
   "run this build in a terminal and wake me when it exits"). They need no
-  approval; they wake the agent once, or give up after a day.
+  approval. They send one wake when the condition is met or the wait expires.
+  Event watchers wait up to 24 hours by default; the agent can choose 1–72
+  hours. A reminder set for a particular time uses that time instead.
+  [Set a watcher](/docs/cli/scheduled-agents#wait-for-something-set-a-watcher)
+  explains the commands and delivery options.
 - **Scripts**: a small program the agent writes to watch something over time,
   such as new GitHub issues. You approve the exact script first.
 

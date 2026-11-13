@@ -424,10 +424,18 @@ default), \`failed\` (a turn ends without completing) or \`idle\` (a turn ends
 and nothing is running or waiting).
 
 Watchers are CoCalc's own one-shot checks, so they need no approval. The agent
-ends its turn and gets exactly one turn when it happens, or when the watcher
-gives up (after 24 hours unless \`--hours\` says otherwise). The membership
-sets how many watchers one person's agents may have at a time in total
-(unset: five) and, optionally, how many one agent may have. Watchers count
+can end its turn while it waits. A wake normally joins an already-running
+turn, or starts a turn if the agent is idle. Add \`--delivery queued\` to put
+the wake in a separate turn after the running one.
+
+CI, file, command-exit and agent watchers wait up to 24 hours by default;
+\`--hours\` accepts an integer from 1 to 72. A \`watch at\` reminder instead
+uses the future time you supply (up to 400 days ahead) and expires one hour
+after it. Set the example's date to a future time before running it.
+
+Your membership sets how many event watchers your agents may have at a time
+in total (unset: five) and, optionally, how many one agent may have. Time
+reminders have separate limits: 50 per agent and 200 per account. Watchers count
 toward the same daily wake budget as sensors. A paused watcher can never
 resume, so it no longer counts; delete watchers you no longer need with
 \`cocalc sensor delete <id>\`.
