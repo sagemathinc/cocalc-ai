@@ -458,7 +458,7 @@ function writeVersionInfo() {
   }
 }
 
-async function runCli() {
+export async function runCli() {
   configureProcessMaxListeners();
 
   if (process.argv.includes("--run-reflect-scheduler")) {

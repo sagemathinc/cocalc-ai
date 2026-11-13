@@ -1,6 +1,6 @@
 import { mkdirSync, existsSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import { performance } from "node:perf_hooks";
 import { data } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";

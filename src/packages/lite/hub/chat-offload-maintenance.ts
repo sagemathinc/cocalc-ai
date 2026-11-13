@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import getLogger from "@cocalc/backend/logger";
 import { rotateChatStore } from "./sqlite/chat-offload";
 
