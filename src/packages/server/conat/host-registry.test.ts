@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { BAY_OWNED_METADATA_KEYS } from "./__tests__/host-report-metadata-fixtures";
+
 let queryMock: jest.Mock;
 let connectMock: jest.Mock;
 let upsertProjectHostMock: jest.Mock;
@@ -1625,8 +1627,6 @@ describe("host report sanitizer (054 C containment)", () => {
   // is merged with jsonb `||`, so the report must not carry any of it.
   it("a report keeps no bay-owned key, and the old deny-list did (mutation check)", async () => {
     const { sanitizeHostReport } = await import("./host-registry");
-    const { BAY_OWNED_METADATA_KEYS } =
-      await import("./__tests__/host-report-metadata-fixtures");
     const report: Record<string, unknown> = { host_session_id: "s" };
     for (const key of BAY_OWNED_METADATA_KEYS) {
       report[key] = { quarantined: false, state: "ok" };
@@ -1729,16 +1729,17 @@ describe("host report sanitizer (054 C containment)", () => {
           public_url: "https://elsewhere.example",
           public_ip: "10.1.2.3",
           ip_address: "10.1.2.3",
-          // 076: bay-owned control state a host must not replace
-          billing: { enforcement: { state: "ok" }, funding_mode: "site" },
-          desired_state: "running",
-          runtime_synthetic_probe: { quarantined: false },
-          public_route_probe: { quarantined: false },
+          // 076: every bay-owned key a host must not set or replace
+          ...Object.fromEntries(
+            BAY_OWNED_METADATA_KEYS.filter(
+              (key) => !(DENIED as readonly string[]).includes(key),
+            ).map((key) => [key, { quarantined: false, state: "ok" }]),
+          ),
         },
       } as any);
       expect(upsertProjectHostMock).toHaveBeenCalledTimes(1);
       const written = upsertProjectHostMock.mock.calls[0][0];
-      for (const key of DENIED) {
+      for (const key of [...DENIED, ...BAY_OWNED_METADATA_KEYS]) {
         expect(written.metadata).not.toHaveProperty(key);
       }
       expect(written.metadata.software).toEqual({ project_host: "1.0.0" });

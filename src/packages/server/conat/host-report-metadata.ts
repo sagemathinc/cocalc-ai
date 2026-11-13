@@ -114,45 +114,100 @@ function kindOf(value: unknown): Kind | "null" | undefined {
 
 type Budget = { nodes: number; bytes: number };
 
-// Walks a value iteratively with explicit depth, node and byte budgets, so a
-// deep or huge value is rejected without recursion or serialization. Returns
-// false when the value is not plain JSON or exceeds a budget.
+type Frame =
+  | { kind: "array"; value: unknown[]; index: number; depth: number }
+  | {
+      kind: "object";
+      value: Record<string, unknown>;
+      keys: Iterator<string>;
+      depth: number;
+    };
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+// Own keys one at a time, so a wide object is never copied into a key or
+// entry array by this code.
+function* ownKeys(value: Record<string, unknown>): Generator<string> {
+  for (const key in value) {
+    if (hasOwn(value, key)) yield key;
+  }
+}
+
+// Walks a value with explicit depth, node and byte budgets: each child is
+// read and charged one at a time before anything below it is visited, the
+// stack holds at most maxDepth frames, and the walk stops at the first value
+// over a budget. So the work done is bounded by the budgets, not by the
+// width or depth a host chooses. Returns false when the value is not plain
+// JSON or exceeds a budget.
 function withinBudget(root: unknown, budget: Budget): boolean {
   const limits = HOST_REPORT_METADATA_LIMITS;
-  const stack: Array<{ value: unknown; depth: number }> = [
-    { value: root, depth: 0 },
-  ];
-  while (stack.length > 0) {
-    const { value, depth } = stack.pop()!;
+  const stack: Frame[] = [];
+  // Charges one value; a container gets a frame for its children.
+  const enter = (value: unknown, depth: number): boolean => {
     budget.nodes += 1;
     if (budget.nodes > limits.maxNodes) return false;
     const kind = kindOf(value);
     if (kind == null) return false;
+    if (kind === "array" || kind === "object") {
+      if (depth >= limits.maxDepth) return false;
+      stack.push(
+        kind === "array"
+          ? { kind, value: value as unknown[], index: 0, depth }
+          : {
+              kind,
+              value: value as Record<string, unknown>,
+              keys: ownKeys(value as Record<string, unknown>),
+              depth,
+            },
+      );
+      return true;
+    }
     if (kind === "string") {
       const length = (value as string).length;
       if (length > limits.maxStringLength) return false;
       budget.bytes += length;
-    } else if (kind === "array" || kind === "object") {
-      if (depth >= limits.maxDepth) return false;
-      if (kind === "array") {
-        for (const item of value as unknown[]) {
-          stack.push({ value: item, depth: depth + 1 });
-        }
-      } else {
-        for (const [key, item] of Object.entries(
-          value as Record<string, unknown>,
-        )) {
-          if (key.length > limits.maxKeyLength) return false;
-          budget.bytes += key.length;
-          stack.push({ value: item, depth: depth + 1 });
-        }
-      }
     } else {
       budget.bytes += 8;
     }
-    if (budget.bytes > limits.maxBytes) return false;
+    return budget.bytes <= limits.maxBytes;
+  };
+  if (!enter(root, 0)) return false;
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    let child: unknown;
+    if (frame.kind === "array") {
+      if (frame.index >= frame.value.length) {
+        stack.pop();
+        continue;
+      }
+      child = frame.value[frame.index];
+      frame.index += 1;
+    } else {
+      const next = frame.keys.next();
+      if (next.done) {
+        stack.pop();
+        continue;
+      }
+      const key = next.value;
+      if (key.length > limits.maxKeyLength) return false;
+      budget.bytes += key.length;
+      if (budget.bytes > limits.maxBytes) return false;
+      child = frame.value[key];
+    }
+    if (!enter(child, frame.depth + 1)) return false;
   }
   return true;
+}
+
+// Whether an object has more than `max` own keys, reading at most max + 1.
+function hasMoreKeysThan(value: Record<string, unknown>, max: number): boolean {
+  let count = 0;
+  for (const key in value) {
+    if (hasOwn(value, key) && ++count > max) return true;
+  }
+  return false;
 }
 
 // The report's metadata reduced to the host-owned keys with valid values.
@@ -165,11 +220,11 @@ export function pickHostReportedMetadata(
     countDrop("not_object");
     return {};
   }
-  const keys = Object.keys(metadata);
-  if (keys.length > HOST_REPORT_METADATA_LIMITS.maxTopLevelKeys) {
+  if (hasMoreKeysThan(metadata, HOST_REPORT_METADATA_LIMITS.maxTopLevelKeys)) {
     countDrop("too_many_keys");
     return {};
   }
+  const keys = Object.keys(metadata);
   const picked: Record<string, unknown> = {};
   const budget: Budget = { nodes: 0, bytes: 0 };
   for (const key of keys) {

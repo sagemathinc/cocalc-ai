@@ -5,19 +5,28 @@
 
 // Shared by host-report-metadata.test.ts and host-registry.test.ts.
 
-// Top-level metadata keys the bay writes (every jsonb path, `- 'key'` and
-// metadata.key assignment in server/database code that touches project_hosts,
-// plus the keys the bay writes through upsertProjectHost on host create and
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
+
+// Top-level metadata keys the bay writes. writtenProjectHostMetadataKeys()
+// below finds the ones written by jsonb_set paths, `- 'key'` and
+// `metadata.key =` in server/database code that touches project_hosts; the
+// enumeration test fails if it finds one that is not listed here. The rest
+// come from manual traces (security-audit's 076 reader trace, host create and
 // provider reconcile). None may come from a host report.
 export const BAY_OWNED_METADATA_KEYS = [
   "admin_reopen_reservation",
   "billing",
   "cloud_provider",
+  "desired_pricing_model",
   "cloudflare_tunnel",
   "content_dns",
   "desired_state",
   "dns",
   "dns_reconciliation",
+  "effective_pricing_model",
+  "interruption_restore_policy",
   "ip_address",
   "last_action",
   "last_action_at",
@@ -28,6 +37,7 @@ export const BAY_OWNED_METADATA_KEYS = [
   "machine",
   "machine_change_pending",
   "planned_project_host_transition",
+  "pricing_model",
   "provider",
   "public_ip",
   "public_route",
@@ -36,6 +46,7 @@ export const BAY_OWNED_METADATA_KEYS = [
   "public_route_probe",
   "public_url",
   "renewal_interval",
+  "resources",
   "restart_recovery",
   "runtime",
   "runtime_auto_recovery",
@@ -91,4 +102,161 @@ export function hostReportFixture(): Record<string, unknown> {
     agent_rpc_report: { version: 1, project_host: "v1" },
     content_origin_domain: null,
   };
+}
+
+// Hub-written keys that are also host-owned by decision (ops0 2703): the host
+// reports its observed software; the bay's rollback write is provisional.
+export const SHARED_HOST_OWNED_METADATA_KEYS = ["software"] as const;
+
+// Matches of the enumeration patterns that are not project_hosts.metadata keys.
+export const NOT_METADATA_KEY_MATCHES = ["key", "port"] as const;
+
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (["node_modules", "dist", "__tests__", "test"].includes(entry.name)) {
+        continue;
+      }
+      out.push(...sourceFiles(path));
+    } else if (
+      entry.name.endsWith(".ts") &&
+      !entry.name.endsWith(".d.ts") &&
+      !entry.name.includes(".test.")
+    ) {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
+// Top-level project_hosts.metadata keys written by server and database code.
+export function writtenProjectHostMetadataKeys(): Set<string> {
+  const packages = join(__dirname, "..", "..", "..");
+  const patterns = [
+    /jsonb_set\(\s*[^']*?'\{(\w+)/g,
+    /-\s*'(\w+)'/g,
+    /\bmetadata\.(\w+)\s*=(?!=)/g,
+  ];
+  const keys = new Set<string>();
+  for (const root of ["server", "database"]) {
+    for (const file of sourceFiles(join(packages, root))) {
+      const text = readFileSync(file, "utf8");
+      if (!text.includes("project_hosts")) continue;
+      for (const pattern of patterns) {
+        for (const match of text.matchAll(pattern)) keys.add(match[1]);
+      }
+    }
+  }
+  return keys;
+}
+
+function unwrap(node: ts.Expression): ts.Expression {
+  while (ts.isParenthesizedExpression(node)) node = node.expression;
+  return node;
+}
+
+function metadataKeysOf(object: ts.ObjectLiteralExpression): string[] {
+  const keys: string[] = [];
+  for (const property of object.properties) {
+    if (
+      (ts.isPropertyAssignment(property) ||
+        ts.isShorthandPropertyAssignment(property)) &&
+      ts.isIdentifier(property.name)
+    ) {
+      keys.push(property.name.text);
+    } else if (ts.isSpreadAssignment(property)) {
+      const spread = unwrap(property.expression);
+      if (ts.isConditionalExpression(spread)) {
+        for (const branch of [spread.whenTrue, spread.whenFalse]) {
+          const literal = unwrap(branch);
+          if (!ts.isObjectLiteralExpression(literal)) {
+            throw new Error(`unhandled spread branch: ${literal.getText()}`);
+          }
+          keys.push(...metadataKeysOf(literal));
+        }
+      } else if (/^\(?basePayload\.metadata\b/.test(spread.getText())) {
+        // basePayload.metadata's own keys are collected separately.
+      } else {
+        throw new Error(`unhandled spread: ${spread.getText()}`);
+      }
+    } else {
+      throw new Error(`unhandled property: ${property.getText()}`);
+    }
+  }
+  return keys;
+}
+
+function metadataLiteral(
+  object: ts.ObjectLiteralExpression,
+): ts.ObjectLiteralExpression | undefined {
+  for (const property of object.properties) {
+    if (
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === "metadata"
+    ) {
+      const value = unwrap(property.initializer);
+      if (ts.isObjectLiteralExpression(value)) return value;
+    }
+  }
+  return undefined;
+}
+
+// The metadata keys project-host/master.ts actually sends: basePayload's
+// metadata plus the metadata buildPayload returns.
+export function hostReportedKeysFromSource(): string[] {
+  const path = join(__dirname, "..", "..", "..", "project-host", "master.ts");
+  const source = ts.createSourceFile(
+    path,
+    readFileSync(path, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const keys = new Set<string>();
+  let found = 0;
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer
+    ) {
+      const init = unwrap(node.initializer);
+      if (
+        node.name.text === "basePayload" &&
+        ts.isObjectLiteralExpression(init)
+      ) {
+        const metadata = metadataLiteral(init);
+        if (metadata) {
+          metadataKeysOf(metadata).forEach((key) => keys.add(key));
+          found += 1;
+        }
+      }
+      if (node.name.text === "buildPayload" && ts.isArrowFunction(init)) {
+        const visitReturn = (inner: ts.Node) => {
+          if (ts.isReturnStatement(inner) && inner.expression) {
+            const value = unwrap(inner.expression);
+            const metadata = ts.isObjectLiteralExpression(value)
+              ? metadataLiteral(value)
+              : undefined;
+            if (metadata) {
+              metadataKeysOf(metadata).forEach((key) => keys.add(key));
+              found += 1;
+            }
+          }
+          ts.forEachChild(inner, visitReturn);
+        };
+        visitReturn(init.body);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (found !== 2) {
+    throw new Error(
+      `expected basePayload and buildPayload metadata, found ${found}`,
+    );
+  }
+  return [...keys].sort();
 }

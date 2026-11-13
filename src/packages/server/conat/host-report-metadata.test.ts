@@ -12,7 +12,11 @@ import {
 } from "./host-report-metadata";
 import {
   BAY_OWNED_METADATA_KEYS,
+  NOT_METADATA_KEY_MATCHES,
+  SHARED_HOST_OWNED_METADATA_KEYS,
+  hostReportedKeysFromSource,
   hostReportFixture,
+  writtenProjectHostMetadataKeys,
 } from "./__tests__/host-report-metadata-fixtures";
 
 function nested(depth: number): unknown {
@@ -24,11 +28,26 @@ function nested(depth: number): unknown {
 describe("pickHostReportedMetadata", () => {
   beforeEach(() => resetHostReportMetadataDropCountsForTests());
 
+  it("allows exactly the keys project-host/master.ts sends", () => {
+    expect([...HOST_REPORTED_METADATA_KEYS].sort()).toEqual(
+      hostReportedKeysFromSource(),
+    );
+  });
+
+  it("lists every metadata key the bay writes (fails on a new unlisted one)", () => {
+    const listed = new Set<string>([
+      ...BAY_OWNED_METADATA_KEYS,
+      ...SHARED_HOST_OWNED_METADATA_KEYS,
+      ...NOT_METADATA_KEY_MATCHES,
+    ]);
+    const written = writtenProjectHostMetadataKeys();
+    expect(written.size).toBeGreaterThan(10);
+    expect([...written].filter((key) => !listed.has(key))).toEqual([]);
+  });
+
   it("passes a real report through unchanged", () => {
     const report = hostReportFixture();
-    expect(Object.keys(report).sort()).toEqual(
-      [...HOST_REPORTED_METADATA_KEYS].sort(),
-    );
+    expect(Object.keys(report).sort()).toEqual(hostReportedKeysFromSource());
     expect(pickHostReportedMetadata(report)).toEqual(report);
     expect(getHostReportMetadataDropCounts()).toEqual({});
   });
@@ -148,5 +167,47 @@ describe("pickHostReportedMetadata", () => {
       }),
     ).toEqual({});
     expect(getHostReportMetadataDropCounts()).toEqual({ over_budget: 2 });
+  });
+
+  // A transparent proxy counts the reads the walk makes: the work must stay
+  // within the node budget however wide the value is.
+  function counted<T extends object>(
+    target: T,
+  ): { value: T; reads: () => number } {
+    let reads = 0;
+    const value = new Proxy(target, {
+      get(obj, key, receiver) {
+        if (typeof key === "string" && key !== "length") reads += 1;
+        return Reflect.get(obj, key, receiver);
+      },
+    });
+    return { value, reads: () => reads };
+  }
+
+  it("reads a bounded number of elements of a huge array", () => {
+    const { maxNodes } = HOST_REPORT_METADATA_LIMITS;
+    const wide = counted(new Array(200_000).fill(0));
+    expect(
+      pickHostReportedMetadata({ software_inventory: wide.value }),
+    ).toEqual({});
+    expect(wide.reads()).toBeLessThanOrEqual(maxNodes + 1);
+  });
+
+  it("reads a bounded number of entries of a huge object", () => {
+    const { maxNodes } = HOST_REPORT_METADATA_LIMITS;
+    const target: Record<string, number> = {};
+    for (let i = 0; i < 200_000; i++) target[`k${i}`] = i;
+    const wide = counted(target);
+    expect(pickHostReportedMetadata({ metrics: wide.value })).toEqual({});
+    expect(wide.reads()).toBeLessThanOrEqual(maxNodes + 1);
+  });
+
+  it("keeps the walk stack bounded for a deep value", () => {
+    let deep: unknown = 0;
+    for (let i = 0; i < 100_000; i++) deep = [deep];
+    expect(pickHostReportedMetadata({ software_inventory: deep })).toEqual({});
+    expect(getHostReportMetadataDropCounts()).toEqual({
+      "invalid_value:software_inventory": 1,
+    });
   });
 });
