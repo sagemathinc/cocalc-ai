@@ -33,9 +33,9 @@ export const AI_ENTRIES: DocsEntry[] = [
     slug: "ai/agent-features",
     status: "ready",
     searchKeywords:
-      "Codex Claude Code feature comparison matrix parity Agent Networks agent-to-agent messaging cross-project workbench artifacts goals schedules subagents",
+      "Codex Claude Code feature comparison matrix parity Agent Networks agent-to-agent messaging cross-project workbench artifacts goals schedules subagents build applications results compute connectors browser APIs",
     summary:
-      "Compare Codex and Claude Code workflows, payment methods, prerequisites, and current limitations.",
+      "Find a workflow, then compare Codex and Claude Code tools, access, coordination, and results.",
     title: "Agent features: Codex and Claude Code",
   },
   {
@@ -137,8 +137,10 @@ export const AI_ENTRIES: DocsEntry[] = [
     lastReviewed: "2026-09-07",
     slug: "ai/codex-chat",
     status: "ready",
+    searchKeywords:
+      "Codex agent task application analyze build artifact review results browser chat revise",
     summary:
-      "Use Codex inside a durable project workspace with files, terminals, and notebooks.",
+      "Start a task with Codex, review its results beside the chat, and continue with changes.",
     title: "Open Codex chat",
   },
   {

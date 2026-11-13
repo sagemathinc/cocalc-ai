@@ -4,34 +4,63 @@
  */
 
 export const DOCS_BROWSER_BODY = String.raw`
-## What the docs browser is for
+## Find the guide for your task
 
-The CoCalc-ai docs browser gives each running CoCalc instance its own built-in
-documentation. This matters because the docs should match the version of CoCalc
-you are actually using instead of sending you to stale external documentation.
+Open **Docs** from the public site or inside a project. Search for what you
+want to do, such as connecting an agent, choosing compute, or recovering a
+file. Open a result for instructions and links to related workflows.
 
-## Open docs
+Inside a project, docs can appear as a flyout or a full project tab. When an
+entry has an action button, use it to open the relevant project panel. Public
+docs use the same articles without project-scoped actions. Your account and
+the site's enabled features determine which entries and actions appear.
 
-1. Open the public **Docs** page, or open **Docs** inside a project.
-2. Search for a task, feature, or action id.
-3. Open the matching entry.
-4. Use any available action button when the docs can open the relevant UI for
-   you.
+Use the font size control to adjust the text. This preference is saved in the
+browser without changing the zoom level of the rest of CoCalc.
 
-Inside a project, the docs can appear as a flyout or a full project tab. Public
-docs use the same content but do not have project-scoped browser actions.
+## Keep your own notes
 
-## Adjust readability
+When signed in, you can save private information alongside an article:
 
-Use the docs font size control when you need larger or smaller text. The setting
-is saved locally in the browser so docs stay readable without zooming the whole
-CoCalc interface.
+- **Star** a page to find it again from the docs index.
+- Choose **Add private note** in the toolbar or **Add Note** below the article,
+  write a Markdown note, then select **Save note**.
+- Check **Done - I learned this page** to mark your progress.
 
-## Why this matters in CoCalc
+The index can filter starred pages, learned pages, and pages with notes. Its
+search also matches the text of your private notes. Notes and progress are
+stored with your account; they do not edit the published article or appear
+for collaborators. They are separate from [agent memory](/docs/ai/agent-memory).
 
-Docs are part of the product runtime. They can be searched by humans, consumed
-by agents, and verified against the current UI, which makes them less likely to
-drift away from reality.
+On the Docs page, **Export** downloads your notes, stars, and progress as a
+JSON file. **Import** merges a previous export into your account without
+duplicating notes. Keep an exported file private if its notes contain private
+information. Neither operation publishes your notes.
+
+## Find documentation from an agent or terminal
+
+With the [CoCalc CLI](/docs/cli/use-cocalc-cli) installed, search for a task,
+read a complete guide, or retrieve a short set of relevant excerpts:
+
+~~~sh
+cocalc docs search "agent networks" --site-profile cocalc-ai --json
+cocalc docs show ai/agent-features --site-profile cocalc-ai --json
+cocalc docs skill-context --query "agent networks" --site-profile cocalc-ai
+~~~
+
+Search returns matching entry IDs, slugs, summaries, and action IDs. Use
+\`show\` with an ID or slug to read the full body. \`skill-context\` returns
+compact excerpts for an agent; follow them with \`show\` before executing a
+workflow. These commands require no sign-in and do not include your private
+docs notes.
+
+The CLI reads documentation bundled with that CLI version. Setting \`--api\`
+does not fetch newer articles from a running site. \`--site-profile cocalc-ai\`
+includes CoCalc.ai-specific entries; it selects content, not credentials.
+For the documentation shipped with a running site, open that site's Docs page.
+
+Agents can also discover [executable docs actions](/docs/documentation/executable-actions)
+to open a documented panel in an authorized browser session.
 `;
 
 export const DOCS_ACTIONS_BODY = String.raw`
