@@ -2,7 +2,10 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
-  setupFiles: ["<rootDir>/../backend/test/setup.js"],
+  setupFiles: [
+    "<rootDir>/../backend/test/setup.js",
+    "<rootDir>/test/sqlite-isolation.js",
+  ],
   testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
   modulePathIgnorePatterns: ["<rootDir>/dist/"],
   // @sagemathinc/sagebrush-board is ESM only: compile it for jest's CommonJS

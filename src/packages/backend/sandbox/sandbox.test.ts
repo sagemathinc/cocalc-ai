@@ -3,6 +3,7 @@ import {
   SandboxedFilesystem,
 } from "@cocalc/backend/sandbox";
 import {
+  chmod,
   mkdtemp,
   mkdir,
   readdir,
@@ -433,6 +434,113 @@ describeIfLinux("baseline mutator parity behavior", () => {
     await fs.writeFile("tmp/z.txt", "z");
     await fs.rm("tmp", { recursive: true });
     expect(await fs.exists("tmp")).toBe(false);
+  });
+});
+
+describe("rm and rmdir never remove the sandbox root", () => {
+  // Each resolves to the home itself ("/" is the home when there is no rootfs).
+  const roots = ["", ".", "./", "/", "..", "a/..", "a/b/../..", "a/b/../../.."];
+  let home: string;
+  let fs: SandboxedFilesystem;
+  beforeEach(async () => {
+    home = await mkdtemp(join(tempDir, "rm-root-"));
+    await mkdir(join(home, "a", "b"), { recursive: true });
+    await writeFile(join(home, "a", "b", "f.txt"), "f");
+    await writeFile(join(home, "keep.txt"), "k");
+    fs = new SandboxedFilesystem(home);
+  });
+
+  it.each(roots)("refuses rm -r of %j and keeps the home", async (p) => {
+    await expect(fs.rm(p, { recursive: true, force: true })).rejects.toThrow(
+      /cannot remove the root/,
+    );
+    await expect(
+      fs.rm([p, "keep.txt"], { recursive: true, force: true }),
+    ).rejects.toThrow(/cannot remove the root/);
+    expect((await readdir(home)).sort()).toEqual(["a", "keep.txt"]);
+    expect(await readFile(join(home, "a", "b", "f.txt"), "utf8")).toBe("f");
+  });
+
+  it.each(roots)("refuses rmdir of %j", async (p) => {
+    await expect(fs.rmdir(p, { recursive: true })).rejects.toThrow(
+      /cannot remove the root/,
+    );
+    expect((await readdir(home)).sort()).toEqual(["a", "keep.txt"]);
+  });
+
+  it("checks the root before read-only, in rm and rmdir alike", async () => {
+    const ro = new SandboxedFilesystem(home, { readonly: true });
+    await expect(ro.rm("", { recursive: true })).rejects.toThrow(
+      /cannot remove the root/,
+    );
+    await expect(ro.rmdir("")).rejects.toThrow(/cannot remove the root/);
+    await expect(ro.rm("a", { recursive: true })).rejects.toThrow(/read only/);
+    await expect(ro.rmdir("a")).rejects.toThrow(/read only/);
+  });
+
+  it("refuses the rootfs, /tmp, /scratch and home-alias roots but not their children", async () => {
+    const base = await mkdtemp(join(tempDir, "rm-roots-"));
+    const dirs = {
+      rootfs: join(base, "rootfs"),
+      scratch: join(base, "scratch"),
+      sharedScratch: join(base, "shared"),
+    };
+    for (const d of Object.values(dirs)) {
+      await mkdir(join(d, "child"), { recursive: true });
+    }
+    await mkdir(join(home, "child"));
+    const fs = new SandboxedFilesystem(home, {
+      ...dirs,
+      homeAliases: ["/home/user"],
+    });
+    for (const p of [
+      "/",
+      "/tmp",
+      "/tmp/",
+      "/tmp/child/..",
+      "/scratch",
+      "/scratch/.",
+      "/home/user",
+      "/home/user/",
+      "/home/user/child/..",
+    ]) {
+      await expect(fs.rm(p, { recursive: true, force: true })).rejects.toThrow(
+        /cannot remove the root/,
+      );
+      await expect(fs.rmdir(p, { recursive: true })).rejects.toThrow(
+        /cannot remove the root/,
+      );
+    }
+    for (const d of Object.values(dirs)) {
+      expect(await readdir(d)).toEqual(["child"]);
+    }
+    expect(await readdir(home)).toContain("child");
+
+    await fs.rm("/child", { recursive: true });
+    await fs.rm("/tmp/child", { recursive: true });
+    await fs.rm("/scratch/child", { recursive: true });
+    await fs.rm("/home/user/child", { recursive: true });
+    for (const d of Object.values(dirs)) {
+      expect(await readdir(d)).toEqual([]);
+    }
+    expect(await readdir(home)).not.toContain("child");
+  });
+
+  it("still removes a subfolder, including one named with spaces", async () => {
+    await mkdir(join(home, "Lab 1 2026", "Student Notebooks"), {
+      recursive: true,
+    });
+    await fs.rm("Lab 1 2026/Student Notebooks", {
+      recursive: true,
+      force: true,
+    });
+    expect((await readdir(home)).sort()).toEqual([
+      "Lab 1 2026",
+      "a",
+      "keep.txt",
+    ]);
+    await fs.rm("a/b/", { recursive: true, force: true });
+    expect(await readdir(join(home, "a"))).toEqual([]);
   });
 });
 
@@ -1861,6 +1969,30 @@ describeIfLinux("rootfs option sandbox", () => {
     await fs.writeFile("relative-ok.txt", "ok");
     expect(await fs.readFile("/home/user/home-ok.txt", "utf8")).toBe("ok");
     expect(await fs.readFile("relative-ok.txt", "utf8")).toBe("ok");
+  });
+
+  it("says why when the host may not enter the rootfs (separate runtime uid)", async () => {
+    if (process.getuid?.() === 0) return; // root ignores the mode below
+    const homeDir = join(tempDir, "test-rootfs-sealed-home");
+    const sealed = join(tempDir, "test-rootfs-sealed");
+    await mkdir(homeDir);
+    await mkdir(join(sealed, "root"), { recursive: true });
+    await chmod(sealed, 0o000);
+    try {
+      const sealedFs = new SandboxedFilesystem(homeDir, {
+        rootfs: join(sealed, "root"),
+        homeAliases: ["/home/user"],
+      });
+      const err = await expectRejectsWithError(
+        sealedFs.readFile("/etc/os-release", "utf8"),
+      );
+      expect(err.message).toContain(
+        "files outside HOME (such as '/etc/os-release') are not available yet for projects that run with a separate runtime uid",
+      );
+      expect(err.message).not.toContain(sealed);
+    } finally {
+      await chmod(sealed, 0o700);
+    }
   });
 
   it("does not leak mount paths when scratch is missing", async () => {

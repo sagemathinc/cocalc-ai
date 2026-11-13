@@ -21,9 +21,8 @@ import passport from "passport";
 import { join as path_join } from "path";
 import safeJsonStringify from "safe-json-stringify";
 import { v4 as uuidv4, v4 } from "uuid";
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { checkPassword } from "@cocalc/backend/auth/password-hash";
+import { newPasswordHash } from "@cocalc/database/settings/password-kdf";
 import base_path from "@cocalc/backend/base-path";
 import { getLogger } from "@cocalc/backend/logger";
 import type { PostgreSQL } from "@cocalc/database/postgres/types";
@@ -109,6 +108,7 @@ import {
   ssoAuditProviderType,
 } from "@cocalc/server/auth/sso/audit";
 import siteUrl from "@cocalc/server/hub/site-url";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 const logger = getLogger("server:hub:auth");
 
@@ -193,7 +193,7 @@ function stringQueryValue(value: unknown): string | undefined {
 }
 
 function freshAuthDurationValue(value: unknown): FreshAuthDuration {
-  return value === "extended" ? "extended" : "default";
+  return parseFreshAuthDuration(value);
 }
 
 function googleOidcFreshAuthPopupHtml({
@@ -1425,10 +1425,6 @@ interface IsPasswordCorrect {
 // password is correct, opts.cb(error) on error (e.g., loading from
 // database), and opts.cb(undefined, false) if password is wrong.  You must
 // specify exactly one of password_hash, account_id, or email_address.
-// In case you specify password_hash, in addition to calling the
-// callback (if specified), this function also returns true if the
-// password is correct, and false otherwise; it can do this because
-// there is no async IO when the password_hash is specified.
 export async function is_password_correct(
   opts: IsPasswordCorrect,
 ): Promise<void> {
@@ -1449,8 +1445,14 @@ export async function is_password_correct(
   const { account_id, email_address } = opts;
 
   if (opts.password_hash != null) {
-    const r = verifyPassword(opts.password, opts.password_hash);
-    opts.cb(undefined, r);
+    try {
+      opts.cb(
+        undefined,
+        await checkPassword(opts.password, opts.password_hash),
+      );
+    } catch (error) {
+      opts.cb(error);
+    }
   } else if (account_id != null || email_address != null) {
     try {
       const account = await cb2(opts.database.get_account, {
@@ -1465,7 +1467,7 @@ export async function is_password_correct(
           // setting the email address and password at the same time.
           opts.database.change_password({
             account_id: opts.account_id,
-            password_hash: passwordHash(opts.password),
+            password_hash: await newPasswordHash(opts.password),
             invalidate_remember_me: false,
             cb: (err) => opts.cb(err, true),
           });
@@ -1475,7 +1477,7 @@ export async function is_password_correct(
       } else {
         opts.cb(
           undefined,
-          verifyPassword(opts.password, account.password_hash),
+          await checkPassword(opts.password, account.password_hash),
         );
       }
     } catch (error) {

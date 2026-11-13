@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details.
  */
 import getPool from "@cocalc/database/pool";
+import { computeCallerAccountId } from "@cocalc/util/compute-agent-auth";
 import type {
   ComputeVm,
   CreateComputeVmRequest,
@@ -27,10 +28,7 @@ import {
 
 type Create = CreateComputeVmRequest & { agent_auth?: ComputeAgentAuth };
 async function authority(opts: Create) {
-  const account_id = fundingId(
-    opts.agent_auth?.account_id ?? opts.account_id,
-    "Account",
-  );
+  const account_id = fundingId(computeCallerAccountId(opts), "Account");
   const { home_bay_id } = await resolveAccountHomeBay({
     account_id,
     user_account_id: account_id,
@@ -64,7 +62,8 @@ export async function routeVmToHomeVolume(
     account_home_bay: home_bay_id,
     opts: {
       ...opts,
-      account_id,
+      // an agent call carries its account in agent_auth, never also here
+      ...(opts.agent_auth ? {} : { account_id }),
       home_volume: volume.id,
       session_hash: resolveFreshAuthSessionHash({
         account_id,
@@ -110,7 +109,7 @@ export async function createVmWithVolumeOnBay(
   const result = await withLocalComputeResource(async () =>
     (await import("@cocalc/server/conat/api/compute")).createVm({
       ...request.opts,
-      account_id,
+      ...(request.opts.agent_auth ? {} : { account_id }),
     }),
   )
     .then((value) => ({ value }))

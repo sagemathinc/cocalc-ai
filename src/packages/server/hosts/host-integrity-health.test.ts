@@ -276,3 +276,1096 @@ describe("host integrity alert pass", () => {
     ]);
   });
 });
+
+describe("project runtime uid mode health", () => {
+  // with a watcher in the matching mode (its comparison is tested below)
+  const withMode = (id: string, mode: any): HostIntegrityRow => ({
+    ...host(id, {
+      detection: {
+        runtime_uid_mode:
+          mode?.effective === "separate" ? "separate" : "keep-id",
+        runtime_user_in_container:
+          mode?.effective === "separate" ? "partial" : "keep-id",
+        ranges_state: "ok",
+        exec_monitor: {
+          state: "available",
+          marked: 1,
+          lost: 0,
+          unattributed: 0,
+        },
+      },
+    }),
+    runtime_uid_mode: mode,
+  });
+  const report = (extra: any = {}) => ({
+    configured: "keep-id",
+    effective: "keep-id",
+    label: "keep-id",
+    reported_at: ago(0),
+    ...extra,
+  });
+  const kinds = (rows: HostIntegrityRow[]) =>
+    summarizeHostIntegrity(rows, NOW).conditions.map((c) => c.kind);
+
+  it("alerts when separate is configured but projects start as keep-id, for every reason", () => {
+    for (const reason of [
+      "helper-old",
+      "map-missing-block",
+      "map-unparsable",
+      "map-collision",
+      "host-unsafe",
+      "mode-invalid",
+    ]) {
+      const summary = summarizeHostIntegrity(
+        [
+          withMode(
+            "a",
+            report({
+              configured: "separate",
+              reason,
+              label: `keep-id (fallback: ${reason})`,
+            }),
+          ),
+        ],
+        NOW,
+      );
+      const fallback = summary.conditions.filter(
+        (c) => c.kind === "runtime-uid-fallback",
+      );
+      expect(fallback).toHaveLength(1);
+      expect(fallback[0].level).toBe("warning");
+      // alerted (current facts), with the reason
+      expect(fallback[0].facts.join("\n")).toContain(`reason: ${reason}`);
+      expect(summary.runtime_uid_modes).toEqual({
+        [`keep-id (fallback: ${reason})`]: 1,
+      });
+    }
+  });
+
+  it("(control) no alert for keep-id as configured, or separate in effect", () => {
+    expect(kinds([withMode("a", report())])).toEqual([]);
+    expect(
+      kinds([
+        withMode(
+          "b",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+          }),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("shows partial as partial (never plain separate), and undecided as undecided", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+          }),
+        ),
+        withMode(
+          "b",
+          report({
+            configured: "separate",
+            effective: "undecided",
+            label: "undecided",
+          }),
+        ),
+        withMode("c", report({ effective: "undecided", label: "undecided" })),
+      ],
+      NOW,
+    );
+    expect(summary.runtime_uid_modes).toEqual({
+      "separate (partial)": 1,
+      "undecided (configured separate)": 1,
+      undecided: 1,
+    });
+    // undecided is never an alert, and never counted as a mode
+    expect(summary.conditions).toEqual([]);
+    const health = hostIntegrityHealth({ status: "fulfilled", value: summary });
+    expect(health.details.join("\n")).toContain(
+      "Runtime uid mode: 1 separate (partial), 1 undecided, 1 undecided (configured separate)",
+    );
+    expect(health.details.join("\n")).toContain(
+      "the project user is not yet fully separated",
+    );
+  });
+
+  it("a fallback label from the host can't hide the fallback", () => {
+    // the comparison is configured vs effective, not the host's label
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            label: "keep-id",
+            reason: "host-unsafe",
+          }),
+        ),
+      ],
+      NOW,
+    );
+    expect(summary.conditions.map((c) => c.kind)).toEqual([
+      "runtime-uid-fallback",
+    ]);
+    expect(summary.runtime_uid_modes).toEqual({
+      "keep-id (fallback: host-unsafe)": 1,
+    });
+  });
+
+  it("reports the daemon state directory not being private after a separate start", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+            daemon_state: { ok: false, problem: "mode 0711", restored: true },
+          }),
+        ),
+        withMode(
+          "b",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+            daemon_state: { ok: true },
+          }),
+        ),
+      ],
+      NOW,
+    );
+    const state = summary.conditions.filter((c) => c.kind === "daemon-state");
+    expect(state).toHaveLength(1);
+    expect(state[0].host_id).toBe("a");
+    expect(state[0].facts[0]).toContain("mode 0711");
+    expect(state[0].facts[0]).toContain("restored");
+  });
+
+  it("ignores stale and malformed reports (merged heartbeat metadata)", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({ configured: "separate", reported_at: ago(60 * 60_000) }),
+        ),
+        withMode("b", { configured: "separate", effective: "nonsense" }),
+        withMode("c", "separate"),
+        host("d", {}),
+      ],
+      NOW,
+    );
+    expect(summary.conditions).toEqual([]);
+    expect(summary.runtime_uid_modes).toEqual({ unreported: 4 });
+  });
+
+  it("never takes the host's label: a host claiming plain separate is shown as partial", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate",
+          }),
+        ),
+        withMode(
+          "b",
+          report({
+            configured: "separate",
+            reason: "helper-old",
+            label: "keep-id",
+          }),
+        ),
+      ],
+      NOW,
+    );
+    expect(summary.runtime_uid_modes).toEqual({
+      "separate (partial)": 1,
+      "keep-id (fallback: helper-old)": 1,
+    });
+  });
+
+  it("alerts for a misspelled configured mode that falls back to keep-id", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "seperate",
+            reason: "mode-invalid",
+            label: "keep-id (fallback: mode-invalid)",
+          }),
+        ),
+      ],
+      NOW,
+    );
+    const fallback = summary.conditions.filter(
+      (c) => c.kind === "runtime-uid-fallback",
+    );
+    expect(fallback).toHaveLength(1);
+    expect(fallback[0].facts[0]).toContain("seperate");
+    expect(fallback[0].facts[0]).toContain("reason: mode-invalid");
+  });
+
+  it("counts a complete report with an unknown effective mode, or without a label, as unreported", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        withMode("a", report({ configured: "separate", effective: "garbage" })),
+        withMode("b", {
+          ...report({ configured: "separate" }),
+          label: undefined,
+        }),
+      ],
+      NOW,
+    );
+    expect(summary.conditions).toEqual([]);
+    expect(summary.runtime_uid_modes).toEqual({ unreported: 2 });
+    // not reporting: a fallback alert from before is not cleared by it
+    expect(
+      summary.reporting_subjects.filter(
+        (s) => s.includes("runtime uid") || s.includes("daemon state"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("treats a report stamped well in the future as stale (host clock ahead)", () => {
+    const ahead = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({ configured: "separate", reported_at: ago(-60 * 60_000) }),
+        ),
+      ],
+      NOW,
+    );
+    expect(ahead.conditions).toEqual([]);
+    expect(ahead.runtime_uid_modes).toEqual({ unreported: 1 });
+    // control: a little ahead (ordinary skew) still counts
+    const skew = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({ configured: "separate", reported_at: ago(-60_000) }),
+        ),
+      ],
+      NOW,
+    );
+    expect(skew.conditions.map((c) => c.kind)).toEqual([
+      "runtime-uid-fallback",
+    ]);
+  });
+
+  it("clears a fallback alert once the host reports separate in effect", async () => {
+    // reporting_subjects lets the alert pass clear it
+    const summary = summarizeHostIntegrity(
+      [
+        withMode(
+          "a",
+          report({
+            configured: "separate",
+            effective: "separate",
+            label: "separate (partial)",
+          }),
+        ),
+      ],
+      NOW,
+    );
+    expect(summary.reporting_subjects).toContain(
+      "Host integrity: a: separate runtime uid not in effect",
+    );
+  });
+});
+
+describe("integrity watcher detection settings", () => {
+  const modeReport = (extra: any = {}) => ({
+    configured: "separate",
+    effective: "separate",
+    label: "separate (partial)",
+    reported_at: ago(0),
+    ...extra,
+  });
+  const detection = (extra: any = {}) => ({
+    runtime_uid_mode: "separate",
+    runtime_user_in_container: "partial",
+    exec_monitor: { state: "available", marked: 40, lost: 0, unattributed: 0 },
+    ranges_state: "ok",
+    layout_problems: 0,
+    ...extra,
+  });
+  const row = (
+    id: string,
+    mode: any,
+    det: any,
+    started_at = ago(5 * 60_000),
+  ): HostIntegrityRow => ({
+    ...host(id, {
+      started_at,
+      ...(det === undefined ? {} : { detection: det }),
+    }),
+    runtime_uid_mode: mode,
+  });
+  const watcherMode = (rows: HostIntegrityRow[]) =>
+    summarizeHostIntegrity(rows, NOW).conditions.filter(
+      (c) => c.kind === "watcher-mode",
+    );
+
+  it("raises a condition when projects start separate but the watcher runs in keep-id mode", () => {
+    const found = watcherMode([
+      row(
+        "a",
+        modeReport(),
+        detection({
+          runtime_uid_mode: "keep-id",
+          exec_monitor: { state: "off", marked: 0, lost: 0, unattributed: 0 },
+        }),
+      ),
+    ]);
+    expect(found).toHaveLength(1);
+    expect(found[0].level).toBe("warning");
+    expect(found[0].facts[0]).toContain("runs in keep-id mode");
+  });
+
+  it("raises it when the watcher doesn't report its mode at all", () => {
+    const found = watcherMode([row("a", modeReport(), undefined)]);
+    expect(found).toHaveLength(1);
+    expect(found[0].facts[0]).toContain("runs in unreported mode");
+  });
+
+  it("raises it when projects start separate and the exec monitor is off", () => {
+    const found = watcherMode([
+      row(
+        "a",
+        modeReport(),
+        detection({
+          exec_monitor: { state: "off", marked: 0, lost: 0, unattributed: 0 },
+        }),
+      ),
+    ]);
+    expect(found).toHaveLength(1);
+    expect(found[0].facts[0]).toContain("exec monitor is off");
+  });
+
+  it("warns when an exec monitor runs but isn't available, on any host", () => {
+    const execConditions = (rows: HostIntegrityRow[]) =>
+      summarizeHostIntegrity(rows, NOW).conditions.filter(
+        (c) => c.kind === "exec-monitor",
+      );
+    const keepIdMode = modeReport({
+      configured: "keep-id",
+      effective: "keep-id",
+      label: "keep-id",
+    });
+    for (const state of ["degraded", "unavailable: Operation not permitted"]) {
+      for (const [mode, watcher] of [
+        [modeReport(), "separate"],
+        [keepIdMode, "keep-id"],
+      ] as const) {
+        const found = execConditions([
+          row(
+            "a",
+            mode,
+            detection({
+              runtime_uid_mode: watcher,
+              exec_monitor: { state, marked: 4, lost: 2, unattributed: 0 },
+            }),
+          ),
+        ]);
+        expect(found).toHaveLength(1);
+        expect(found[0].facts[0]).toContain(`the exec monitor is ${state}`);
+        expect(found[0].details[0]).toContain(
+          "watching 4 programs; 2 events lost",
+        );
+      }
+      // not repeated as a watcher-mode fact
+      expect(
+        watcherMode([
+          row(
+            "a",
+            modeReport(),
+            detection({
+              exec_monitor: { state, marked: 4, lost: 2, unattributed: 0 },
+            }),
+          ),
+        ]),
+      ).toEqual([]);
+    }
+    // controls: available, starting, off and older watchers say nothing here
+    for (const state of ["available", "starting", "off"]) {
+      expect(
+        execConditions([
+          row(
+            "a",
+            keepIdMode,
+            detection({
+              runtime_uid_mode: "keep-id",
+              exec_monitor: { state, marked: 0, lost: 0, unattributed: 0 },
+            }),
+          ),
+        ]),
+      ).toEqual([]);
+    }
+    expect(execConditions([row("a", keepIdMode, undefined)])).toEqual([]);
+    // a stopped watcher's report doesn't count, and can't clear it
+    const stopped = row(
+      "a",
+      modeReport(),
+      detection({
+        exec_monitor: {
+          state: "degraded",
+          marked: 1,
+          lost: 1,
+          unattributed: 0,
+        },
+      }),
+    );
+    stopped.integrity = { ...stopped.integrity!, watcher: "stale" } as any;
+    const summary = summarizeHostIntegrity([stopped], NOW);
+    expect(summary.conditions.filter((c) => c.kind === "exec-monitor")).toEqual(
+      [],
+    );
+    expect(summary.reporting_subjects).not.toContain(
+      "Host integrity: a: exec monitor not available",
+    );
+    // a running watcher reports the subject, so the alert can clear
+    expect(
+      summarizeHostIntegrity(
+        [row("b", keepIdMode, detection({ runtime_uid_mode: "keep-id" }))],
+        NOW,
+      ).reporting_subjects,
+    ).toContain("Host integrity: b: exec monitor not available");
+  });
+
+  it("raises it when the watcher runs separate on a host configured keep-id", () => {
+    const found = watcherMode([
+      row(
+        "a",
+        modeReport({
+          configured: "keep-id",
+          effective: "keep-id",
+          label: "keep-id",
+        }),
+        detection(),
+      ),
+    ]);
+    expect(found).toHaveLength(1);
+    expect(found[0].facts[0]).toContain("but keep-id is configured");
+  });
+
+  it("(controls) nothing when they agree, while starting, on a fallback, or while undecided", () => {
+    expect(watcherMode([row("a", modeReport(), detection())])).toEqual([]);
+    expect(
+      watcherMode([
+        row(
+          "a",
+          modeReport(),
+          detection({
+            exec_monitor: {
+              state: "starting",
+              marked: 0,
+              lost: 0,
+              unattributed: 0,
+            },
+          }),
+        ),
+      ]),
+    ).toEqual([]);
+    // configured separate, fell back to keep-id: the fallback alert covers it
+    expect(
+      watcherMode([
+        row(
+          "a",
+          modeReport({
+            effective: "keep-id",
+            reason: "host-unsafe",
+            label: "keep-id (fallback: host-unsafe)",
+          }),
+          detection(),
+        ),
+      ]),
+    ).toEqual([]);
+    expect(
+      watcherMode([
+        row(
+          "a",
+          modeReport({ effective: "undecided", label: "undecided" }),
+          detection({ runtime_uid_mode: "keep-id" }),
+        ),
+      ]),
+    ).toEqual([]);
+    // keep-id everywhere
+    expect(
+      watcherMode([
+        row(
+          "a",
+          modeReport({
+            configured: "keep-id",
+            effective: "keep-id",
+            label: "keep-id",
+          }),
+          detection({ runtime_uid_mode: "keep-id" }),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("raises it when the exec monitor stays starting long after the watcher started", () => {
+    const starting = detection({
+      exec_monitor: { state: "starting", marked: 0, lost: 0, unattributed: 0 },
+    });
+    expect(watcherMode([row("a", modeReport(), starting)])).toEqual([]);
+    const stuck = watcherMode([
+      row("a", modeReport(), starting, ago(2 * 60 * 60_000)),
+    ]);
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0].facts[0]).toContain("exec monitor is starting");
+    // no start time at all: not given the benefit of the doubt
+    expect(watcherMode([row("a", modeReport(), starting, "")])).toHaveLength(1);
+  });
+
+  it("raises it when the runtime user check in containers is weaker than separate", () => {
+    for (const value of ["keep-id", undefined]) {
+      const found = watcherMode([
+        row("a", modeReport(), detection({ runtime_user_in_container: value })),
+      ]);
+      expect(found).toHaveLength(1);
+      expect(found[0].facts[0]).toContain(
+        `runtime user check in containers is ${value ?? "unreported"}`,
+      );
+    }
+    // control: strict is fine too
+    expect(
+      watcherMode([
+        row(
+          "a",
+          modeReport(),
+          detection({ runtime_user_in_container: "strict" }),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("warns on stale or unavailable ranges on any host, whatever the mode", () => {
+    const ranges = (rows: HostIntegrityRow[]) =>
+      summarizeHostIntegrity(rows, NOW).conditions.filter(
+        (c) => c.kind === "ranges",
+      );
+    const keepIdMode = modeReport({
+      configured: "keep-id",
+      effective: "keep-id",
+      label: "keep-id",
+    });
+    for (const value of ["stale", "unavailable"]) {
+      for (const [mode, watcher] of [
+        [keepIdMode, "keep-id"],
+        [modeReport(), "separate"],
+        [undefined, "keep-id"],
+      ] as const) {
+        const found = ranges([
+          row(
+            "a",
+            mode,
+            detection({ runtime_uid_mode: watcher, ranges_state: value }),
+          ),
+        ]);
+        expect(found).toHaveLength(1);
+        expect(found[0].level).toBe("warning");
+        expect(found[0].facts[0]).toContain(
+          `subordinate uid ranges are ${value}`,
+        );
+      }
+      // separate hosts: not repeated as a watcher-mode fact
+      expect(
+        watcherMode([
+          row("a", modeReport(), detection({ ranges_state: value })),
+        ]),
+      ).toEqual([]);
+    }
+    // controls: ok, and an older watcher that doesn't report it (keep-id)
+    expect(
+      ranges([
+        row("a", keepIdMode, detection({ runtime_uid_mode: "keep-id" })),
+      ]),
+    ).toEqual([]);
+    expect(ranges([row("a", keepIdMode, undefined)])).toEqual([]);
+    // only a running watcher's report counts, and only then can it clear
+    const stopped = row(
+      "a",
+      keepIdMode,
+      detection({ runtime_uid_mode: "keep-id", ranges_state: "unavailable" }),
+    );
+    stopped.integrity = { ...stopped.integrity!, watcher: "stale" } as any;
+    const summary = summarizeHostIntegrity([stopped], NOW);
+    expect(summary.conditions.filter((c) => c.kind === "ranges")).toEqual([]);
+    expect(summary.reporting_subjects).not.toContain(
+      "Host integrity: a: subordinate uid ranges not current",
+    );
+    expect(
+      summarizeHostIntegrity(
+        [row("b", keepIdMode, detection({ runtime_uid_mode: "keep-id" }))],
+        NOW,
+      ).reporting_subjects,
+    ).toContain("Host integrity: b: subordinate uid ranges not current");
+  });
+
+  it("raises it on a separate host whose watcher doesn't report its ranges", () => {
+    const found = watcherMode([
+      row("a", modeReport(), detection({ ranges_state: undefined })),
+    ]);
+    expect(found).toHaveLength(1);
+    expect(found[0].facts[0]).toContain(
+      "subordinate uid ranges are unreported",
+    );
+    // every detail line shows the range state
+    const exec = watcherMode([
+      row(
+        "a",
+        modeReport(),
+        detection({
+          ranges_state: "stale",
+          exec_monitor: {
+            state: "off",
+            marked: 1,
+            lost: 1,
+            unattributed: 0,
+          },
+        }),
+      ),
+    ]);
+    expect(exec[0].details[0]).toContain("subordinate ranges: stale");
+  });
+
+  it("shows one detail line per fact", () => {
+    const found = watcherMode([
+      row(
+        "a",
+        modeReport(),
+        detection({
+          runtime_user_in_container: "keep-id",
+          exec_monitor: {
+            state: "off",
+            marked: 1,
+            lost: 1,
+            unattributed: 0,
+          },
+        }),
+      ),
+    ]);
+    expect(found).toHaveLength(1);
+    expect(found[0].facts).toHaveLength(2);
+    expect(found[0].details).toHaveLength(2);
+    expect(found[0].details[0]).toContain("exec monitor is off");
+    expect(found[0].details[1]).toContain(
+      "runtime user check in containers is keep-id",
+    );
+  });
+
+  it("shows a partial runtime user check in the details without raising it", () => {
+    const found = watcherMode([
+      row(
+        "a",
+        modeReport(),
+        detection({
+          exec_monitor: {
+            state: "off",
+            marked: 1,
+            lost: 1,
+            unattributed: 0,
+          },
+        }),
+      ),
+    ]);
+    expect(found).toHaveLength(1);
+    expect(found[0].facts.join("\n")).not.toContain("runtime user check");
+    expect(found[0].details[0]).toContain(
+      "runtime user in containers: partial",
+    );
+  });
+
+  it("compares only a running watcher's report", () => {
+    // a watcher whose status stopped updating: its last word doesn't count,
+    // so a watcher-mode alert can't clear on it (the watcher alert covers it)
+    const stale = {
+      ...row("a", modeReport(), detection()),
+    };
+    stale.integrity = { ...stale.integrity!, watcher: "stale" } as any;
+    const summary = summarizeHostIntegrity([stale], NOW);
+    expect(summary.reporting_subjects).not.toContain(
+      "Host integrity: a: integrity watcher mode differs",
+    );
+    expect(summary.conditions.map((c) => c.kind)).toEqual(["watcher"]);
+    const keepId = {
+      ...row("b", modeReport(), detection({ runtime_uid_mode: "keep-id" })),
+    };
+    keepId.integrity = { ...keepId.integrity!, watcher: "stale" } as any;
+    expect(
+      summarizeHostIntegrity([keepId], NOW).conditions.map((c) => c.kind),
+    ).toEqual(["watcher"]);
+  });
+
+  it("raises it for a keep-id configuration with a separate watcher, decided or not", () => {
+    // undecided, configured keep-id, but the watcher runs separate: still a
+    // mismatch of configuration
+    expect(
+      watcherMode([
+        row(
+          "a",
+          modeReport({
+            configured: "keep-id",
+            effective: "undecided",
+            label: "undecided",
+          }),
+          detection(),
+        ),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  it("compares only fresh reports, and only then lets the alert clear", () => {
+    const stale = row(
+      "a",
+      modeReport({ reported_at: ago(60 * 60_000) }),
+      detection({ runtime_uid_mode: "keep-id" }),
+    );
+    const summary = summarizeHostIntegrity([stale], NOW);
+    expect(summary.conditions.filter((c) => c.kind === "watcher-mode")).toEqual(
+      [],
+    );
+    expect(summary.reporting_subjects).not.toContain(
+      "Host integrity: a: integrity watcher mode differs",
+    );
+    const fresh = summarizeHostIntegrity(
+      [row("a", modeReport(), detection())],
+      NOW,
+    );
+    expect(fresh.reporting_subjects).toContain(
+      "Host integrity: a: integrity watcher mode differs",
+    );
+  });
+
+  it("names the uid class and unreadable facts of a finding", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", {
+          findings: [
+            finding({
+              uid_class: "project-runtime",
+              unreadable: ["cgroup", "root"],
+              uids: [1073741824],
+            }),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    const processes = summary.conditions.find((c) => c.kind === "processes")!;
+    expect(processes.facts[0]).toContain("uid 1073741824 [project-runtime]");
+    expect(processes.facts[0]).toContain("; unreadable: cgroup,root");
+    // an older watcher's finding reads as before
+    const old = summarizeHostIntegrity(
+      [host("b", { findings: [finding()] })],
+      NOW,
+    );
+    expect(old.conditions[0].facts[0]).not.toContain("[");
+    expect(old.conditions[0].facts[0]).not.toContain("unreadable");
+  });
+
+  it("counts exec monitor states and layout mismatches for health", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        row("a", undefined, detection()),
+        row(
+          "b",
+          undefined,
+          detection({
+            exec_monitor: { state: "off", marked: 0, lost: 0, unattributed: 0 },
+            layout_problems: 12,
+          }),
+        ),
+        row("c", undefined, undefined),
+      ],
+      NOW,
+    );
+    expect(summary.exec_monitor_states).toEqual({
+      available: 1,
+      off: 1,
+      unreported: 1,
+    });
+    expect(summary.layout_mismatch_hosts).toBe(1);
+    const health = hostIntegrityHealth({ status: "fulfilled", value: summary });
+    expect(health.details).toContain(
+      "Exec monitor: 1 available, 1 off, 1 unreported",
+    );
+    expect(health.details).toContain(
+      "Project data layout: mismatches counted on 1 host",
+    );
+    // keep-id everywhere (monitors off or unreported): no exec monitor line
+    const quiet = summarizeHostIntegrity(
+      [
+        row(
+          "b",
+          undefined,
+          detection({
+            exec_monitor: { state: "off", marked: 0, lost: 0, unattributed: 0 },
+          }),
+        ),
+        row("c", undefined, undefined),
+      ],
+      NOW,
+    );
+    expect(
+      hostIntegrityHealth({ status: "fulfilled", value: quiet }).details.some(
+        (d) => d.startsWith("Exec monitor"),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("project data layout and the watcher's own checks", () => {
+  const layoutFinding = (extra: any = {}) =>
+    finding({
+      rule: "hardening-project-homes",
+      severity: "high",
+      comm: "project-homes",
+      exe: "mode",
+      uids: [],
+      userns: "host",
+      parents: [],
+      affected: 12,
+      ...extra,
+    });
+
+  it("reports layout findings as their own kind, with check, problem and count", () => {
+    const summary = summarizeHostIntegrity(
+      [host("a", { findings: [layoutFinding(), finding()] })],
+      NOW,
+    );
+    const kinds = summary.conditions.map((c) => c.kind).sort();
+    expect(kinds).toEqual(["hardening", "processes"]);
+    const layout = summary.conditions.find((c) => c.kind === "hardening")!;
+    expect(layout.subject).toBe("Host integrity: a: project data layout");
+    expect(layout.level).toBe("warning");
+    expect(layout.facts).toEqual([
+      "host-a (a): project-homes: mode (12 affected)",
+    ]);
+    expect(layout.facts[0]).not.toContain("uid");
+    expect(layout.facts[0]).not.toContain("parents");
+    // never under process placement
+    const processes = summary.conditions.find((c) => c.kind === "processes")!;
+    expect(processes.facts.join("\n")).not.toContain("hardening");
+    expect(summary.reporting_subjects).toContain(
+      "Host integrity: a: project data layout",
+    );
+  });
+
+  it("takes the layout condition's level from the findings' severity", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", {
+          findings: [
+            layoutFinding({
+              rule: "hardening-daemon-state",
+              comm: "daemon-state",
+              severity: "critical",
+              affected: undefined,
+            }),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(summary.conditions[0].kind).toBe("hardening");
+    expect(summary.conditions[0].level).toBe("critical");
+    expect(summary.conditions[0].facts[0]).toBe(
+      "host-a (a): daemon-state: mode",
+    );
+  });
+
+  it("describes the watcher's own checks without process fields", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", {
+          findings: [
+            finding({
+              rule: "subuid-ranges-stale",
+              severity: "high",
+              comm: "subuid",
+              exe: "malformed",
+              uids: [],
+              parents: [],
+            }),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(summary.conditions[0].facts).toEqual([
+      "host-a (a): subuid-ranges-stale: malformed",
+    ]);
+  });
+
+  it("shows execs the monitors could not attribute, by program, over all hosts", () => {
+    const det = (programs: any) => ({
+      runtime_uid_mode: "separate",
+      exec_monitor: {
+        state: "available",
+        marked: 3,
+        lost: 0,
+        unattributed: 0,
+        unattributed_programs: programs,
+      },
+    });
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", { detection: det({ "/usr/bin/a": 3, "/usr/bin/b": 1 }) }),
+        host("b", { detection: det({ "/usr/bin/a": 2 }) }),
+      ],
+      NOW,
+    );
+    expect(summary.exec_unattributed).toEqual({
+      "/usr/bin/a": 5,
+      "/usr/bin/b": 1,
+    });
+    const health = hostIntegrityHealth({ status: "fulfilled", value: summary });
+    expect(health.details).toContain(
+      "Exec monitor, execs it could not attribute: 5 /usr/bin/a, 1 /usr/bin/b",
+    );
+  });
+});
+
+describe("the watcher's own findings", () => {
+  const own = (rule: string) =>
+    finding({
+      rule,
+      severity: "high",
+      comm: "x",
+      exe: "stale",
+      uids: [],
+      parents: [],
+    });
+
+  it("leaves them out of process placement when the watcher reports its detection", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", {
+          detection: {
+            runtime_uid_mode: "keep-id",
+            ranges_state: "stale",
+            exec_monitor: {
+              state: "degraded",
+              marked: 1,
+              lost: 1,
+              unattributed: 0,
+            },
+          },
+          findings: [
+            own("subuid-ranges-stale"),
+            own("exec-monitor-degraded"),
+            finding(),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    const processes = summary.conditions.find((c) => c.kind === "processes")!;
+    expect(processes.facts.join("\n")).not.toContain("subuid-ranges-stale");
+    expect(processes.facts.join("\n")).not.toContain("exec-monitor-degraded");
+    expect(processes.facts.join("\n")).toContain(
+      "project-uid-outside-container",
+    );
+    expect(summary.conditions.map((c) => c.kind).sort()).toEqual([
+      "exec-monitor",
+      "processes",
+      "ranges",
+    ]);
+  });
+
+  it("keeps each one when the status lacks the field its condition reads", () => {
+    // ranges reported, the exec monitor not: the exec finding stays
+    const noExec = summarizeHostIntegrity(
+      [
+        host("a", {
+          detection: { runtime_uid_mode: "keep-id", ranges_state: "stale" },
+          findings: [own("subuid-ranges-stale"), own("exec-monitor-degraded")],
+        }),
+      ],
+      NOW,
+    );
+    const p1 = noExec.conditions.find((c) => c.kind === "processes")!;
+    expect(p1.facts.join("\n")).toContain("exec-monitor-degraded");
+    expect(p1.facts.join("\n")).not.toContain("subuid-ranges-stale");
+    // the exec monitor reported, the ranges not (absent, or rejected as a
+    // label): the ranges finding stays
+    for (const ranges_state of [undefined, "ok"]) {
+      const noRanges = summarizeHostIntegrity(
+        [
+          host("a", {
+            detection: {
+              runtime_uid_mode: "keep-id",
+              ranges_state,
+              exec_monitor: {
+                state: "degraded",
+                marked: 1,
+                lost: 1,
+                unattributed: 0,
+              },
+            },
+            findings: [
+              own("subuid-ranges-stale"),
+              own("exec-monitor-degraded"),
+            ],
+          }),
+        ],
+        NOW,
+      );
+      expect(noRanges.conditions.map((c) => c.kind).sort()).toEqual([
+        "exec-monitor",
+        "processes",
+      ]);
+      const p2 = noRanges.conditions.find((c) => c.kind === "processes")!;
+      expect(p2.facts.join("\n")).toContain("subuid-ranges-stale");
+      expect(p2.facts.join("\n")).not.toContain("exec-monitor-degraded");
+    }
+    // an exec monitor reported available, with a degraded finding left over:
+    // the finding stays, since no condition reports it
+    const available = summarizeHostIntegrity(
+      [
+        host("a", {
+          detection: {
+            runtime_uid_mode: "keep-id",
+            exec_monitor: {
+              state: "available",
+              marked: 1,
+              lost: 0,
+              unattributed: 0,
+            },
+          },
+          findings: [own("exec-monitor-degraded")],
+        }),
+      ],
+      NOW,
+    );
+    expect(available.conditions.map((c) => c.kind)).toEqual(["processes"]);
+  });
+
+  it("keeps them for an older status without a detection block", () => {
+    const summary = summarizeHostIntegrity(
+      [host("a", { findings: [own("subuid-ranges-stale")] })],
+      NOW,
+    );
+    expect(summary.conditions.map((c) => c.kind)).toEqual(["processes"]);
+    expect(summary.conditions[0].facts[0]).toContain(
+      "subuid-ranges-stale: stale",
+    );
+  });
+});

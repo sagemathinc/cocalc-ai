@@ -128,7 +128,7 @@ export class JupyterSockets extends EventEmitter {
   private createSocket = async (name: JupyterSocketName) => {
     const zmqType = ZMQ_TYPE[name];
     let socket;
-    // (./transport.ts: the pure-JS ZMTP transport, or the native addon)
+    // (./transport.ts: the pure-JS ZMTP transport)
     const { Dealer, Subscriber } = transport();
     if (zmqType == "dealer") {
       socket = new Dealer({ routingId: this.identity });

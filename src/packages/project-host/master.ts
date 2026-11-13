@@ -1,5 +1,9 @@
 import getLogger from "@cocalc/backend/logger";
 import { AGENT_RPC_REPORT_VERSION } from "@cocalc/conat/agents/rpc-reports";
+import {
+  buildHostBaseMetadata,
+  buildHostReportMetadata,
+} from "./host-report-payload";
 import { getProjectContentDomain } from "./content-origin";
 import { randomUUID } from "crypto";
 import { readFileSync } from "node:fs";
@@ -51,6 +55,7 @@ import {
   releaseProjectArchiveFreeze,
 } from "./file-server";
 import { getHostIntegrity, refreshHostIntegrity } from "./host-integrity";
+import { runtimeUidModeHeartbeat } from "@cocalc/project-runner/run/runtime-hardening";
 import { getInstalledRuntimeArtifacts, getSoftwareVersions } from "./software";
 import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
@@ -2113,7 +2118,7 @@ export async function startMasterRegistration({
     internal_url,
     ssh_server,
     sshpiperd_public_key: sshpiperdKey.publicKey,
-    metadata: {
+    metadata: buildHostBaseMetadata({
       runnerId,
       host_session_id: randomUUID(),
       host_boot_id: readHostBootId(),
@@ -2123,7 +2128,7 @@ export async function startMasterRegistration({
       ).toISOString(),
       host_cpu_count: availableParallelism(),
       host_ram_gb: Math.max(1, Math.round(totalmem() / 1024 ** 3)),
-    },
+    }),
   };
 
   setMasterStatusClient({
@@ -2207,46 +2212,27 @@ export async function startMasterRegistration({
     return {
       ...basePayload,
       version: versions.project_host ?? basePayload.version,
-      metadata: {
-        ...(basePayload.metadata ?? {}),
-        cloudflared_restart_supported: true,
-        cloudflared_diagnostics_supported: true,
+      metadata: buildHostReportMetadata({
+        base: basePayload.metadata,
         cloudflared: cloudflaredHeartbeatSummary(latestCloudflaredDiagnostic),
         host_uptime_s: Math.max(0, Math.floor(uptime())),
-        ...(currentMetrics
-          ? {
-              metrics: {
-                current: currentMetrics,
-              },
-            }
-          : {}),
-        ...(pressureState ? { pressure: pressureState } : {}),
-        ...(placementSnapshot ? { placement: placementSnapshot } : {}),
-        ...(bootstrapLifecycle
-          ? {
-              bootstrap_lifecycle: bootstrapLifecycle,
-            }
-          : {}),
+        currentMetrics,
+        pressureState,
+        placementSnapshot,
+        bootstrapLifecycle,
         host_agent: hostAgentState,
         runtime_health: runtimeHealth.getSnapshot(),
         acp_worker_health: acpWorkerHealth,
         bees: fileServerStatus?.bees,
         host_integrity: getHostIntegrity(),
+        runtime_uid_mode: runtimeUidModeHeartbeat(),
         observed_components: observedComponents,
         rootfs_scanner: rootfsScanner,
         software: versions,
         software_inventory: softwareInventory,
-        // The delivery reports this host can render (the hub downgrades or
-        // holds others for it). Tied to this build: the hub merges heartbeat
-        // metadata, so after a rollback a stale value must not count.
-        agent_rpc_report: {
-          version: AGENT_RPC_REPORT_VERSION,
-          project_host: versions.project_host ?? null,
-        },
-        // The content domain this host actually serves (null when off), so
-        // the hub only issues content links the host will accept.
-        content_origin_domain: getProjectContentDomain() ?? null,
-      },
+        agent_rpc_report_version: AGENT_RPC_REPORT_VERSION,
+        content_origin_domain: getProjectContentDomain(),
+      }),
     };
   };
 

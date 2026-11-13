@@ -1,8 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { secureRandomString } from "@cocalc/backend/misc";
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { tokenHash, verifyToken } from "@cocalc/backend/auth/password-hash";
 
 const AUTH_COOKIE_NAME = "cocalc-lite-auth";
 const NINETY_DAYS_SECS = 90 * 24 * 60 * 60;
@@ -38,7 +36,7 @@ function getAuthCookieValue(AUTH_TOKEN?: string) {
   if (!AUTH_TOKEN) {
     return "";
   }
-  return passwordHash(AUTH_TOKEN);
+  return tokenHash(AUTH_TOKEN);
 }
 
 function makeAuthCookie(
@@ -77,7 +75,7 @@ export async function initAuth({ app, AUTH_TOKEN, isHttps }) {
 
     const cookies = parseCookies(req.headers.cookie);
     const cookieName = getAuthCookieName(req.headers.host);
-    const hasCookie = verifyPassword(AUTH_TOKEN, cookies[cookieName]);
+    const hasCookie = verifyToken(AUTH_TOKEN, cookies[cookieName]);
 
     // No cookie: check a one-time query token
     const u = new URL(req.url, "http://x"); // origin placeholder

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +23,15 @@ beforeEach(async () => {
   // Stand-ins for the real commands: print the token they were given.
   await fs.writeFile(
     join(realBin, "gh"),
-    '#!/bin/sh\necho "gh:${GH_TOKEN-unset}:$*"\n',
+    [
+      "#!/bin/sh",
+      '[ "$1" = fail ] && exit 4',
+      // For the signal tests: record our pid, then wait a long time.
+      '[ "$1" = sleep ] && { echo $$ > "$2"; exec sleep 30; }',
+      '[ "$1" = cat ] && exec cat',
+      'echo "gh:${GH_TOKEN-unset}:$*"',
+      "",
+    ].join("\n"),
     { mode: 0o755 },
   );
   await fs.writeFile(
@@ -66,11 +74,14 @@ const tokens = [
   },
 ];
 
-it("puts the wrappers first on PATH and leaves git config alone", () => {
+it("puts the wrappers first on PATH, names their directory, and leaves git config alone", () => {
   const e: Record<string, string> = { PATH: "/usr/bin" };
   applyCliConnectorEnv(e, "/c");
   expect(e.PATH).toBe("/c/cli/bin:/usr/bin");
-  expect(Object.keys(e)).toEqual(["PATH"]);
+  // Not a secret: a login shell's profile may reorder PATH, and commands
+  // put the wrappers first again from this.
+  expect(e.COCALC_CONNECTOR_BIN).toBe("/c/cli/bin");
+  expect(Object.keys(e).sort()).toEqual(["COCALC_CONNECTOR_BIN", "PATH"]);
   applyCliConnectorEnv(e, "/c");
   expect(e.PATH).toBe("/c/cli/bin:/usr/bin");
 });
@@ -125,6 +136,126 @@ it("says so when the real command is missing", () => {
   ).toThrow(/wrangler: not installed/);
 });
 
+describe("saying what is going on", () => {
+  const sh = (command: string, args: string[], cwd?: string) =>
+    spawnSync(command, args, { env: env(), encoding: "utf8", cwd });
+
+  it("gh auth status names the connector during a turn", async () => {
+    expect(sh("gh", ["auth", "status"]).stderr).toBe("");
+    await syncCliConnectorTokens(new BeneathDir(dir), tokens);
+    const status = sh("gh", ["auth", "status"]);
+    expect(status.stderr).toContain(
+      "signed in via the CoCalc GitHub connector for this agent turn",
+    );
+    expect(status.stdout.trim()).toBe("gh:gho_test:auth status");
+    // Only for the status command.
+    expect(sh("gh", ["pr", "list"]).stderr).toBe("");
+  });
+
+  it("a failure without a token says the connector is only active in a turn", async () => {
+    const failed = sh("gh", ["fail"]);
+    expect(failed.status).toBe(4);
+    expect(failed.stderr).toContain(
+      "the CoCalc GitHub connector is not active here",
+    );
+    expect(failed.stderr).toContain("not in sensors or background jobs");
+    // Success is quiet, and with a token there is nothing to explain.
+    expect(sh("gh", ["pr", "list"]).stderr).toBe("");
+    await syncCliConnectorTokens(new BeneathDir(dir), tokens);
+    const withToken = sh("gh", ["fail"]);
+    expect(withToken.status).toBe(4);
+    expect(withToken.stderr).toBe("");
+  });
+
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it.each(["SIGTERM", "SIGINT", "SIGHUP"] as const)(
+    "without a token, %s sent to the wrapper alone reaches the real command",
+    async (signal) => {
+      // timeout(1) or child.kill() signal only the process they started.
+      const pidFile = join(dir, `real-${signal}.pid`);
+      const wrapper = spawn("gh", ["sleep", pidFile], {
+        env: env(),
+        stdio: "ignore",
+      });
+      const exited = new Promise<number | null>((resolve) =>
+        wrapper.once("exit", (code) => resolve(code)),
+      );
+      let real = 0;
+      for (let i = 0; i < 100 && !real; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        real = parseInt(await fs.readFile(pidFile, "utf8").catch(() => ""));
+      }
+      expect(alive(real)).toBe(true);
+      wrapper.kill(signal);
+      const code = await exited;
+      expect(code).not.toBe(0);
+      for (let i = 0; i < 40 && alive(real); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(alive(real)).toBe(false);
+    },
+    15_000,
+  );
+
+  it("without a token, stdin still reaches the real command", () => {
+    const result = spawnSync("gh", ["cat"], {
+      env: env(),
+      input: "piped input\n",
+      encoding: "utf8",
+    });
+    expect(result.stdout).toBe("piped input\n");
+    expect(result.status).toBe(0);
+    // git too.
+    const hash = spawnSync("git", ["hash-object", "--stdin"], {
+      env: env(),
+      input: "x\n",
+      encoding: "utf8",
+    });
+    expect(hash.stdout.trim()).toBe(
+      spawnSync("/usr/bin/git", ["hash-object", "--stdin"], {
+        input: "x\n",
+        encoding: "utf8",
+      }).stdout.trim(),
+    );
+  });
+
+  it("git uses https for git@github.com: remotes, only during a turn", async () => {
+    const repo = join(dir, "repo");
+    await fs.mkdir(repo);
+    sh("git", ["init", "-q"], repo);
+    sh("git", ["remote", "add", "origin", "git@github.com:o/r.git"], repo);
+    sh("git", ["remote", "add", "other", "ssh://git@github.com/o/s.git"], repo);
+    const url = (remote: string) =>
+      sh("git", ["remote", "get-url", remote], repo).stdout.trim();
+    expect(url("origin")).toBe("git@github.com:o/r.git");
+    await syncCliConnectorTokens(new BeneathDir(dir), tokens);
+    expect(url("origin")).toBe("https://github.com/o/r.git");
+    expect(url("other")).toBe("https://github.com/o/s.git");
+    await syncCliConnectorTokens(new BeneathDir(dir), []);
+    expect(url("origin")).toBe("git@github.com:o/r.git");
+  });
+
+  it("a failed git remote command without a token says why; local ones do not", () => {
+    const missing = join(dir, "no-such-repo");
+    const remote = sh("git", ["-c", "core.askPass=true", "ls-remote", missing]);
+    expect(remote.status).not.toBe(0);
+    expect(remote.stderr).toContain(
+      "git: note: the CoCalc GitHub connector is not active here",
+    );
+    const local = sh("git", ["-C", missing, "status"]);
+    expect(local.status).not.toBe(0);
+    expect(local.stderr).not.toContain("CoCalc GitHub connector");
+  });
+});
+
 describe("git credential helper", () => {
   const helper = () => join(dir, "cli", "bin", "git-credential-cocalc");
 
@@ -142,6 +273,15 @@ describe("git credential helper", () => {
     expect(
       run(helper(), ["store"], "protocol=https\nhost=github.com\n\n"),
     ).toBe("");
+  });
+
+  it("reads all of its input before exiting, for store and erase too", async () => {
+    // more than a pipe buffer: a helper that exits without reading it makes
+    // the writer fail with EPIPE every time, not only under load
+    const big = `protocol=https\nhost=github.com\npassword=${"x".repeat(300_000)}\n\n`;
+    for (const action of ["store", "erase", "get"]) {
+      expect(run(helper(), [action], big)).toBe("");
+    }
   });
 
   it("is used by git itself, only during a turn", async () => {

@@ -1,5 +1,6 @@
 import {
   setStaticFontCorsHeaders,
+  setStaticScriptCorpHeaders,
   setWidgetHostHeaders,
   WIDGET_HOST_FILENAME,
 } from "@cocalc/util/jupyter/widget-host";
@@ -44,7 +45,7 @@ import {
   isLoopbackHost,
 } from "@cocalc/backend/network/policy";
 import { maybeHandleLiteStaticAppRequest } from "./static-apps";
-import { isApiV2Enabled } from "./api-v2";
+import { isApiV2Enabled, loadHttpApi } from "./api-v2";
 import {
   authorizeLiteSiteSettings,
   configureLiteSiteSettingsFreshAuth,
@@ -166,9 +167,21 @@ export async function initApp({
       }
     },
   );
+  let apiV2Router;
   if (isApiV2Enabled()) {
-    const { createApiV2Router } = await import("@cocalc/http-api");
-    app.use("/api/v2", createApiV2Router({ browserCors: "request-origin" }));
+    const httpApi = await loadHttpApi();
+    if (httpApi == null) {
+      logger.error(
+        "the v2 API is enabled, but this build doesn't include @cocalc/http-api; serving only the built-in local account",
+      );
+    } else {
+      apiV2Router = httpApi.createApiV2Router({
+        browserCors: "request-origin",
+      });
+    }
+  }
+  if (apiV2Router != null) {
+    app.use("/api/v2", apiV2Router);
   } else {
     // Lite/Plus has one built-in local account and does not need the control
     // plane auth API. Answer the frontend bootstrap probe directly so startup
@@ -203,6 +216,8 @@ export async function initApp({
       setHeaders: (res, path) => {
         if (basename(path) === WIDGET_HOST_FILENAME) setWidgetHostHeaders(res);
         setStaticFontCorsHeaders(res, path);
+        // the widget frame's script, under the COEP above
+        setStaticScriptCorpHeaders(res, path);
       },
     }),
   );

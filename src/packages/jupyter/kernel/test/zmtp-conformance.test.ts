@@ -4,8 +4,8 @@
  */
 
 /*
-A real ipykernel through cocalc's own Kernel class, on the transport
-COCALC_JUPYTER_ZMQ selects (js by default; CI runs it again with "native"):
+A real ipykernel through cocalc's own Kernel class, on the pure-JS ZMTP
+transport:
 outputs of at least 64 MiB on stdout and as display_data, an error output,
 stdin, an interrupt by SIGINT and one by interrupt_request on the control
 channel, and the process's resources (sockets and timers) back to their
@@ -14,7 +14,6 @@ baseline after a restart, a shutdown and a kernel that dies.
 pnpm test `pwd`/zmtp-conformance.test.ts
 */
 
-import { transport } from "../../zmq/transport";
 import { getPythonKernel, closeKernels } from "./util";
 
 const MIB64 = 2 ** 26;
@@ -49,17 +48,8 @@ async function run(k, code: string, opts: any = {}) {
   return out;
 }
 
-// the pure-JS transport's own sockets of a kernel (for its reconnect counters)
-const jsSockets = (k): any[] =>
-  transport().name === "js"
-    ? Object.values((k.sockets as any)?.sockets ?? {})
-    : [];
-
-describe("the transport", () => {
-  it("is the one COCALC_JUPYTER_ZMQ selects", () => {
-    expect(transport().name).toBe(process.env.COCALC_JUPYTER_ZMQ || "js");
-  });
-});
+// the transport's own sockets of a kernel (for its reconnect counters)
+const jsSockets = (k): any[] => Object.values((k.sockets as any)?.sockets ?? {});
 
 describe("an ipykernel on this transport", () => {
   let k;

@@ -13,6 +13,7 @@ import {
 import { deleteRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import type { AppearancePreference } from "@cocalc/util/appearance";
+import type { FreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 export type WrongBayAuthResponse = {
   wrong_bay: true;
@@ -30,7 +31,7 @@ export type MfaRequiredAuthResponse = {
 };
 
 export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
-export type FreshAuthDuration = "default" | "extended";
+export type { FreshAuthDuration };
 
 export type AuthBootstrapResponse = {
   openai_disabled?: boolean;

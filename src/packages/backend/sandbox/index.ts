@@ -944,8 +944,15 @@ export class SandboxedFilesystem {
         this.rootfsEnabled = true;
         return this.rootfs;
       }
-    } catch {
-      // handled below
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "EACCES") {
+        // A project with a separate runtime uid: its mounted rootfs is
+        // reachable only from inside its own namespace, not from the host.
+        throw new Error(
+          `files outside HOME (such as '${requestedAbsolutePath}') are not available yet for projects that run with a separate runtime uid`,
+        );
+      }
+      // otherwise handled below
     }
     throw new Error(
       `rootfs is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the project and try again.`,
@@ -2730,8 +2737,29 @@ export class SandboxedFilesystem {
     await move(srcPath, destPath, options);
   };
 
+  // Never remove a sandbox root itself (the home, /tmp, /scratch or the
+  // rootfs). A path that resolves to one ("", ".", "/", "a/..") has no
+  // openat2-relative form, so without this the recursive rm below would fall
+  // back to removing the whole base directory.
+  private assertNotSandboxRoot = async (path: string, syscall: string) => {
+    if (typeof path != "string") {
+      throw Error(`path must be a string but is of type ${typeof path}`);
+    }
+    const { pathInSandbox, sandboxBasePath } =
+      await this.resolvePathInSandbox(path);
+    if (nodePath.resolve(pathInSandbox) == nodePath.resolve(sandboxBasePath)) {
+      throw new SandboxError(
+        `EPERM: operation not permitted, cannot remove the root '${path}'`,
+        { errno: -1, code: "EPERM", syscall, path },
+      );
+    }
+  };
+
   rm = async (path: string | string[], options?: RemoveOptions) => {
     const paths = typeof path == "string" ? [path] : path;
+    for (const inputPath of paths) {
+      await this.assertNotSandboxRoot(inputPath, "rm");
+    }
     if (options?.sudo) {
       for (const inputPath of paths) {
         this.assertWritable(inputPath);
@@ -2852,6 +2880,7 @@ export class SandboxedFilesystem {
   };
 
   rmdir = async (path: string, options?: RemoveDirOptions) => {
+    await this.assertNotSandboxRoot(path, "rmdir");
     this.assertWritable(path);
     if (options?.sudo) {
       const target = await this.getPrivilegedDeleteTarget(path);

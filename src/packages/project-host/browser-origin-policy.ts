@@ -47,6 +47,7 @@ import fs from "node:fs";
 import type { IncomingMessage } from "node:http";
 import path from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { examHostnameFromPublicHostname } from "@cocalc/util/project-host-exam-hostname";
 import { getProjectContentDomain } from "./content-origin";
 
 const logger = getLogger("project-host:browser-origin-policy");
@@ -274,6 +275,32 @@ function ownAppOriginAllowed(req: Req): boolean {
   return isCanonicalHost(req) && !getProjectContentDomain();
 }
 
+// Whether the request is for this host's exam hostname (exam-<host>.<domain>,
+// derived from PROJECT_HOST_PUBLIC_URL and PROJECT_HOST_ID as the hub assigns
+// it).  Only the host's own exam pages are served there: the admission page
+// and the exam webapp, which signs the student in with the host session
+// cookie that admission sets.  The port must be the public URL's too: cookies
+// are not port-scoped, so a page on another port of that hostname is not ours.
+function isOwnExamHost(req: Req): boolean {
+  const host = header(req, "host").toLowerCase();
+  const publicUrl = `${process.env.PROJECT_HOST_PUBLIC_URL ?? ""}`.trim();
+  if (!host || !publicUrl) return false;
+  let expected: URL;
+  let requestHost: string;
+  try {
+    expected = new URL(publicUrl);
+    // Canonicalize so "host:443" matches "https://host".
+    requestHost = new URL(`${expected.protocol}//${host}`).host;
+  } catch {
+    return false;
+  }
+  const publicHostname = expected.hostname.toLowerCase();
+  const host_id = `${process.env.PROJECT_HOST_ID ?? ""}`.trim().toLowerCase();
+  if (!publicHostname.startsWith("host-") && !host_id) return false;
+  expected.hostname = examHostnameFromPublicHostname(publicHostname, host_id);
+  return requestHost === expected.host;
+}
+
 function isCanonicalHost(req: Req): boolean {
   const publicUrl = `${process.env.PROJECT_HOST_PUBLIC_URL ?? ""}`.trim();
   const host = header(req, "host").toLowerCase();
@@ -326,6 +353,10 @@ export function ambientCookieRejection(
     const origin = parseOrigin(originHeader);
     if (!origin) return "invalid or opaque origin";
     if (approved.has(origin)) return;
+    // The host's own exam pages, on its exam hostname: same-origin requests
+    // there, websockets included, are the exam webapp's (not in the approved
+    // list, which holds the site's and bays' origins only).
+    if (isOwnExamHost(req) && isOwnOrigin(origin, req)) return;
     if (
       ownOriginRoute(req, route) &&
       isOwnOrigin(origin, req) &&
@@ -353,6 +384,7 @@ export function ambientCookieRejection(
   ) {
     return;
   }
+  if (isOwnExamHost(req) && site === "same-origin") return;
   // A top-level page navigation (a new tab or window, a link, a redirect)
   // replaces the whole page, so whoever started it cannot read the result.
   // The app opens apps and files this way, often with noreferrer (no

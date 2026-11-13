@@ -1,5 +1,9 @@
 import { acceptAgentRpc, acceptExternalAgentRpc } from "./rpc";
 import {
+  AGENT_RPC_ADMISSION_CAPACITY_CODE,
+  AGENT_RPC_ADMISSION_CAPACITY_MESSAGE,
+} from "@cocalc/conat/agents/rpc";
+import {
   parseExternalAgentSubject,
   externalAgentInbox,
 } from "@cocalc/conat/agents/external";
@@ -137,8 +141,10 @@ export async function startAgentMessaging(
         const request = message.data;
         if (request?.version === 3) {
           if (activeRpc.size >= (binary ? 4 : 32)) {
+            // A fixed message and code only: callers may retry after a pause.
             await message.respond({
-              error: "agent RPC admission capacity reached",
+              error: AGENT_RPC_ADMISSION_CAPACITY_MESSAGE,
+              code: AGENT_RPC_ADMISSION_CAPACITY_CODE,
             });
             continue;
           }

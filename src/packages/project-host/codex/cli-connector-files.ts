@@ -12,6 +12,7 @@
 import { join } from "node:path";
 import { BeneathDir } from "../beneath-copy";
 import {
+  CLI_CONNECTOR_BIN_ENV,
   CLI_CONNECTORS,
   CLI_CONNECTOR_INFO,
   type CliConnector,
@@ -24,20 +25,57 @@ function tokenFile(connector: CliConnector): string {
   return `${connector}-token`;
 }
 
+// Said when a command fails without a token: agents otherwise take a plain
+// auth failure (in a sensor script, say) for something else entirely.
+function inactiveNote(command: string, connector: CliConnector): string {
+  const label = CLI_CONNECTOR_INFO[connector].label;
+  return `${command}: note: the CoCalc ${label} connector is not active here. It signs ${command} in only during a turn of an agent that has it turned on, not in sensors or background jobs.`;
+}
+
+// Runs the real command as a child (not exec, so a failure can be explained
+// after it) without changing how it behaves for callers: its stdin stays the
+// caller's (a background job's would be /dev/null, so pass it as fd 3), a
+// TERM, INT or HUP sent to the wrapper alone (timeout, child.kill()) reaches
+// it, and the wrapper waits until it has really exited, with its status.
+// A background job starts with INT and QUIT ignored, which sh cannot undo;
+// env --default-signal (coreutils 8.31+, uutils) restores them.
+const RUN_REAL_AS_CHILD = `exec 3<&0
+if env --default-signal=INT,QUIT true 2>/dev/null; then
+  env --default-signal=INT,QUIT "$real" "$@" <&3 3<&- &
+else
+  "$real" "$@" <&3 3<&- &
+fi
+child=$!
+exec 3<&-
+trap 'kill -TERM "$child" 2>/dev/null' TERM
+trap 'kill -INT "$child" 2>/dev/null' INT
+trap 'kill -HUP "$child" 2>/dev/null' HUP
+status=0
+wait "$child" || status=$?
+while kill -0 "$child" 2>/dev/null; do
+  status=0
+  wait "$child" || status=$?
+done
+trap - TERM INT HUP`;
+
 // The real command is the first one on PATH that is not this wrapper.
 function wrapperScript({
   command,
   envVar,
   connector,
   missing,
+  statusArgs,
 }: {
   command: string;
   envVar: string;
   connector: CliConnector;
   missing: string;
+  // The arguments that ask who is signed in, e.g. "auth status".
+  statusArgs: string;
 }): string {
+  const label = CLI_CONNECTOR_INFO[connector].label;
   return `#!/bin/sh
-# CoCalc ${CLI_CONNECTOR_INFO[connector].label} connector wrapper for ${command}.
+# CoCalc ${label} connector wrapper for ${command}.
 self_dir=$(cd "$(dirname "$0")" && pwd)
 real=""
 old_ifs=$IFS
@@ -55,14 +93,24 @@ token_file="$self_dir/../${tokenFile(connector)}"
 if [ -r "$token_file" ]; then
   ${envVar}=$(cat "$token_file")
   export ${envVar}
+  if [ "$*" = "${statusArgs}" ]; then
+    echo "${command}: signed in via the CoCalc ${label} connector for this agent turn (${envVar})." >&2
+  fi
+  exec "$real" "$@"
 fi
-exec "$real" "$@"
+${RUN_REAL_AS_CHILD}
+if [ "$status" -ne 0 ]; then
+  echo "${inactiveNote(command, connector)}" >&2
+fi
+exit "$status"
 `;
 }
 
 const GIT_CREDENTIAL_HELPER = `#!/bin/sh
 # CoCalc GitHub connector: git credentials for https://github.com only.
-[ "$1" = get ] || exit 0
+# Other actions (store, erase) get the credential on stdin too: read it all
+# before exiting, so the writer never meets a closed pipe.
+[ "$1" = get ] || { cat >/dev/null; exit 0; }
 token_file="$(cd "$(dirname "$0")" && pwd)/../${tokenFile("github")}"
 protocol=""
 host=""
@@ -83,12 +131,14 @@ const WRAPPERS: {
   connector: CliConnector;
   envVar: string;
   missing: string;
+  statusArgs: string;
 }[] = [
   {
     name: "gh",
     connector: "github",
     envVar: "GH_TOKEN",
     missing: "Install GitHub's gh CLI.",
+    statusArgs: "auth status",
   },
   {
     name: "cf",
@@ -96,6 +146,7 @@ const WRAPPERS: {
     envVar: "CLOUDFLARE_API_TOKEN",
     missing:
       "Install it with: npm install -g --prefix ~/.local cf (the project needs internet access)",
+    statusArgs: "whoami",
   },
   {
     name: "wrangler",
@@ -103,6 +154,7 @@ const WRAPPERS: {
     envVar: "CLOUDFLARE_API_TOKEN",
     missing:
       "Install it with: npm install -g --prefix ~/.local wrangler (the project needs internet access)",
+    statusArgs: "whoami",
   },
 ];
 
@@ -111,7 +163,9 @@ export const GIT_CREDENTIAL_HELPER_NAME = "git-credential-cocalc";
 // git with the GitHub connector: only while a token is present, github.com
 // credentials come from CoCalc alone. The empty helper resets every helper
 // configured before it, so no other helper (e.g. "store") is asked to save
-// the connector token. Without a token this runs git unchanged.
+// the connector token. git@github.com: and ssh:// remotes (a usual origin)
+// then go over https too: there is no SSH key for the connector. Without a
+// token this runs git unchanged, and a failed remote command says why.
 const GIT_WRAPPER = `#!/bin/sh
 # CoCalc GitHub connector wrapper for git.
 self_dir=$(cd "$(dirname "$0")" && pwd)
@@ -129,9 +183,29 @@ if [ -z "$real" ]; then
 fi
 if [ -r "$self_dir/../${tokenFile("github")}" ]; then
   exec "$real" -c credential.https://github.com.helper= \\
-    -c "credential.https://github.com.helper=$self_dir/${GIT_CREDENTIAL_HELPER_NAME}" "$@"
+    -c "credential.https://github.com.helper=$self_dir/${GIT_CREDENTIAL_HELPER_NAME}" \\
+    -c url.https://github.com/.insteadOf=git@github.com: \\
+    -c url.https://github.com/.insteadOf=ssh://git@github.com/ "$@"
 fi
-exec "$real" "$@"
+${RUN_REAL_AS_CHILD}
+if [ "$status" -ne 0 ]; then
+  # The subcommand: the first argument after git's own options.
+  sub=""
+  skip=""
+  for a in "$@"; do
+    if [ -n "$skip" ]; then skip=""; continue; fi
+    case "$a" in
+      -C|-c|--git-dir|--work-tree|--namespace) skip=1 ;;
+      -*) ;;
+      *) sub=$a; break ;;
+    esac
+  done
+  case "$sub" in
+    push|pull|fetch|clone|ls-remote)
+      echo "${inactiveNote("git", "github")}" >&2 ;;
+  esac
+fi
+exit "$status"
 `;
 
 /**
@@ -147,11 +221,11 @@ export async function writeCliConnectorTools(
   const bin = dir.child("bin");
   dir.mkdir(0o700);
   bin.mkdir(0o700);
-  for (const { name, connector, envVar, missing } of WRAPPERS) {
+  for (const { name, connector, envVar, missing, statusArgs } of WRAPPERS) {
     if (!connectors.includes(connector)) continue;
     bin.writeFile(
       name,
-      wrapperScript({ command: name, envVar, connector, missing }),
+      wrapperScript({ command: name, envVar, connector, missing, statusArgs }),
       0o700,
     );
   }
@@ -194,7 +268,9 @@ export function resetSiteCliConnectorsCache(): void {
   siteConnectorsCache = undefined;
 }
 
-// Puts the wrappers (gh, git, cf, wrangler) first on PATH.
+// Puts the wrappers (gh, git, cf, wrangler) first on PATH, and names their
+// directory in COCALC_CONNECTOR_BIN: a login shell's profile may reorder
+// PATH, and commands (and agents) put it first again from that variable.
 export function applyCliConnectorEnv(
   env: Record<string, string | undefined>,
   containerDir: string,
@@ -204,6 +280,7 @@ export function applyCliConnectorEnv(
     .split(":")
     .filter((part) => part && part !== bin);
   env.PATH = [bin, ...path].join(":");
+  env[CLI_CONNECTOR_BIN_ENV] = bin;
 }
 
 function validToken(token: string): boolean {

@@ -207,10 +207,13 @@ export function projectCgroupLimitsFromPodmanArgs(
     memory_max: memoryMax != null ? `${memoryMax}` : "max",
     memory_high: memoryHigh != null ? `${memoryHigh}` : "max",
     memory_low: memoryLow != null ? `${memoryLow}` : "0",
+    // No swap allowance (no --memory-swap, or no --memory at all) means no
+    // swap: "max" would let the project use all host swap and thrash other
+    // projects once a host has swap or zswap.
     memory_swap_max:
       memoryMax != null && memorySwapTotal != null
         ? `${Math.max(0, memorySwapTotal - memoryMax)}`
-        : "max",
+        : "0",
     pids_max: pidsMax != null ? `${pidsMax}` : "max",
     cpu_max_quota: cpuQuota != null ? `${cpuQuota}` : "max",
     cpu_max_period: `${CGROUP_CPU_PERIOD_US}`,

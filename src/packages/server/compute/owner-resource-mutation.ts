@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getPool from "@cocalc/database/pool";
+import { computeCallerAccountId } from "@cocalc/util/compute-agent-auth";
 import type {
   ComputeApi,
   ComputeVm,
@@ -118,10 +119,7 @@ export async function computeOwnerMutationOnBay(
 ): Promise<ComputeOwnerMutationResult> {
   if (!Object.hasOwn(kinds, request.method))
     throw Error("Unsupported compute resource operation.");
-  const account_id = fundingId(
-    request.opts.agent_auth?.account_id ?? request.opts.account_id,
-    "Account",
-  );
+  const account_id = fundingId(computeCallerAccountId(request.opts), "Account");
   if ((await home(account_id)) !== request.account_home_bay)
     throw Error("Compute account home changed; refresh and retry.");
   const id = fundingId(request.opts.id_or_name, "Resource");
@@ -195,10 +193,7 @@ export async function routeComputeOwnerMutation<
   knownResource?: ComputeVm | ComputeVolume,
 ): Promise<Awaited<ReturnType<ComputeApi[M]>> | undefined> {
   if (!routeComputeOwnerRead()) return;
-  const account_id = fundingId(
-    opts.agent_auth?.account_id ?? opts.account_id,
-    "Account",
-  );
+  const account_id = fundingId(computeCallerAccountId(opts), "Account");
   const account_home_bay = await home(account_id);
   if (account_home_bay !== getConfiguredBayId())
     throw Error("Compute account home changed; refresh and retry.");
@@ -226,7 +221,8 @@ export async function routeComputeOwnerMutation<
     account_home_bay,
     opts: {
       ...opts,
-      account_id,
+      // an agent call carries its account in agent_auth, never also here
+      ...(opts.agent_auth ? {} : { account_id }),
       id_or_name: resource.id,
       session_hash: resolveFreshAuthSessionHash({
         account_id,

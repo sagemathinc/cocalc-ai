@@ -144,9 +144,12 @@ describePglite("growth analytics pipeline", () => {
     // PostgreSQL timestamps have microsecond precision, while JavaScript Date
     // only has milliseconds. A text cursor must preserve all six digits or the
     // same final event remains perpetually greater than the saved watermark.
+    // Relative to now: a fixed date ages past the 90-day retention window,
+    // which then deletes the event before it is checked.
     await getPool().query(
       `UPDATE growth_event_log
-          SET received_at='2026-08-09 12:00:00.123456+00'::timestamptz
+          SET received_at=date_trunc('second', NOW() - INTERVAL '1 day')
+                          + INTERVAL '0.123456 second'
         WHERE event_id=$1`,
       [EVENT_ID],
     );

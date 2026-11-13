@@ -218,6 +218,28 @@ wait for a reset instead of starting a long run that will be cut off.
 
 Details: references/browser-and-terminal.md.
 
+## GitHub And Cloudflare: CLI Connectors
+
+When the turn context lists a CLI connector, `gh` and `git` (GitHub) or `cf`
+and `wrangler` (Cloudflare) are signed in as the user for that turn, through
+wrapper commands in `$COCALC_CONNECTOR_BIN`. That variable is not a secret:
+the wrappers read the turn's token themselves. Never read or copy token or
+key files.
+
+```bash
+gh auth status            # says "signed in via the CoCalc GitHub connector"
+export PATH="$COCALC_CONNECTOR_BIN:$PATH"   # if it does not: a shell profile reordered PATH
+```
+
+- Only during the turn: sensors, background jobs and anything still running
+  after the turn get no token (the wrappers say so when a command fails).
+  For a CI watcher, read public results without auth (the GitHub REST API
+  allows 60 unauthenticated requests an hour) or check again in a later turn.
+- `git@github.com:` remotes go over https while the connector is active; no
+  SSH key is needed.
+- The connector acts as the user: confirm destructive or public actions
+  first, as the turn context says.
+
 ## Safety Rules
 
 - Prefer `cocalc exec` over direct filesystem edits for live collaborative documents.

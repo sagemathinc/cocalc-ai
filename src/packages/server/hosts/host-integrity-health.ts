@@ -12,7 +12,10 @@
 // the conditions show in admin health and the bay log only.
 
 import getLogger from "@cocalc/backend/logger";
-import type { HostIntegrityStatus } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostIntegrityDetection,
+  HostIntegrityStatus,
+} from "@cocalc/conat/hub/api/hosts";
 import type { LaunchHealthLevel } from "@cocalc/conat/hub/api/system";
 import getPool, { withSessionAdvisoryLock } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -21,6 +24,8 @@ import {
   conditionAlert,
   conditionCleared,
 } from "@cocalc/server/hosts/condition-alert";
+import { runtimeUidModeLabel } from "@cocalc/project-runner/run/runtime-host";
+import type { RuntimeUidModeStatus } from "@cocalc/project-runner/run/runtime-identity";
 
 const logger = getLogger("server:hosts:host-integrity-health");
 
@@ -40,12 +45,24 @@ export type HostIntegrityRow = {
   id: string;
   name: string | null;
   integrity: HostIntegrityStatus | null;
+  // the project runtime uid mode report from the heartbeat; untrusted
+  runtime_uid_mode?: unknown;
 };
 
 export type HostIntegrityCondition = {
   host_id: string;
   host_name: string | null;
-  kind: "processes" | "config" | "watcher" | "reboot";
+  kind:
+    | "processes"
+    | "config"
+    | "watcher"
+    | "reboot"
+    | "runtime-uid-fallback"
+    | "daemon-state"
+    | "watcher-mode"
+    | "hardening"
+    | "ranges"
+    | "exec-monitor";
   level: "critical" | "warning";
   subject: string;
   // stable facts only (the alert dedupe compares bodies)
@@ -61,6 +78,15 @@ export interface HostIntegritySummary {
   conditions: HostIntegrityCondition[];
   // every alert subject of the hosts that report (whether raised or not)
   reporting_subjects: string[];
+  // hosts per runtime uid mode label ("keep-id", "separate (partial)",
+  // "keep-id (fallback: ...)", "undecided", "unreported")
+  runtime_uid_modes: Record<string, number>;
+  // hosts per exec monitor state ("available", "off", ...; "unreported" for
+  // watchers that predate it), and hosts with project data layout mismatches
+  exec_monitor_states: Record<string, number>;
+  layout_mismatch_hosts: number;
+  // execs the exec monitors could not attribute, by program, over all hosts
+  exec_unattributed: Record<string, number>;
 }
 
 const SUBJECTS: Record<HostIntegrityCondition["kind"], string> = {
@@ -68,7 +94,301 @@ const SUBJECTS: Record<HostIntegrityCondition["kind"], string> = {
   processes: "unexpected process placement",
   config: "host configuration changed",
   reboot: "reboot pending for updates",
+  "runtime-uid-fallback": "separate runtime uid not in effect",
+  "daemon-state": "daemon state not private",
+  "watcher-mode": "integrity watcher mode differs",
+  hardening: "project data layout",
+  ranges: "subordinate uid ranges not current",
+  "exec-monitor": "exec monitor not available",
 };
+// reported by the integrity watcher (the rest come from project-host)
+const WATCHER_KINDS: HostIntegrityCondition["kind"][] = [
+  "watcher",
+  "processes",
+  "hardening",
+  "config",
+  "reboot",
+];
+const RUNTIME_UID_KINDS: HostIntegrityCondition["kind"][] = [
+  "runtime-uid-fallback",
+  "daemon-state",
+];
+const MAX_REPORT_TEXT = 200;
+
+export interface RuntimeUidModeView {
+  configured: string;
+  effective: "keep-id" | "separate" | "undecided";
+  reason?: string;
+  detail?: string;
+  label: string;
+  reported_at: string;
+  daemon_state?: { ok: boolean; problem?: string; restored?: boolean };
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, MAX_REPORT_TEXT)
+    : undefined;
+}
+
+/** The heartbeat's runtime uid mode report, if well-formed. */
+export function normalizeRuntimeUidMode(
+  raw: unknown,
+): RuntimeUidModeView | undefined {
+  if (raw == null || typeof raw !== "object") return undefined;
+  const value = raw as Record<string, unknown>;
+  const effective = value.effective;
+  if (
+    effective !== "keep-id" &&
+    effective !== "separate" &&
+    effective !== "undecided"
+  ) {
+    return undefined;
+  }
+  const configured = text(value.configured);
+  const label = text(value.label);
+  const reported_at = text(value.reported_at);
+  if (!configured || !label || !reported_at) return undefined;
+  const state = value.daemon_state as Record<string, unknown> | undefined;
+  return {
+    configured,
+    effective,
+    ...(text(value.reason) ? { reason: text(value.reason) } : {}),
+    ...(text(value.detail) ? { detail: text(value.detail) } : {}),
+    label,
+    reported_at,
+    ...(state != null &&
+    typeof state === "object" &&
+    typeof state.ok === "boolean"
+      ? {
+          daemon_state: {
+            ok: state.ok,
+            ...(text(state.problem) ? { problem: text(state.problem) } : {}),
+            ...(typeof state.restored === "boolean"
+              ? { restored: state.restored }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+/** The label shown for a host: partial is never shown as separate, and an
+ * undecided host never as either mode. Derived here from the reported fields
+ * with project-runner's own labelling, never taken from the host's label. */
+function runtimeUidLabel(mode: RuntimeUidModeView): string {
+  if (mode.effective === "undecided") {
+    return mode.configured === "keep-id"
+      ? "undecided"
+      : `undecided (configured ${mode.configured})`;
+  }
+  return runtimeUidModeLabel({
+    configured: mode.configured,
+    effective: mode.effective,
+    reason: mode.reason as RuntimeUidModeStatus["reason"],
+  });
+}
+
+// How long an exec monitor may still be "starting" after the watcher started
+// before that counts as not available.
+const EXEC_MONITOR_START_MS = 30 * 60_000;
+
+/** The integrity watcher's configuration compared with how projects start:
+ * a watcher weaker than the host's effective mode (or one that doesn't say)
+ * leaves projects less watched than they should be. */
+function watcherModeCondition(
+  row: HostIntegrityRow,
+  mode: RuntimeUidModeView,
+  integrity: HostIntegrityStatus,
+  now: number,
+): HostIntegrityCondition | undefined {
+  const detection = integrity.detection;
+  const watcherMode = detection?.runtime_uid_mode ?? "unreported";
+  const exec = detection?.exec_monitor?.state ?? "unreported";
+  const inContainer = detection?.runtime_user_in_container ?? "unreported";
+  const ranges = detection?.ranges_state ?? "unreported";
+  const facts: string[] = [];
+  const label = hostLabel(row);
+  if (mode.effective === "separate") {
+    if (watcherMode !== "separate") {
+      facts.push(
+        `${label}: projects start separate, but the integrity watcher runs in ${watcherMode} mode`,
+      );
+    } else {
+      const started = ms(integrity.started_at);
+      const stillStarting =
+        exec === "starting" &&
+        started != null &&
+        now - started <= EXEC_MONITOR_START_MS;
+      // degraded or unavailable warn on every host (execMonitorCondition)
+      const reportedElsewhere = ![
+        "available",
+        "starting",
+        "off",
+        "unreported",
+      ].includes(exec);
+      if (exec !== "available" && !stillStarting && !reportedElsewhere) {
+        facts.push(
+          `${label}: projects start separate, but the exec monitor is ${exec}`,
+        );
+      }
+      if (inContainer !== "partial" && inContainer !== "strict") {
+        facts.push(
+          `${label}: projects start separate, but the runtime user check in containers is ${inContainer}`,
+        );
+      }
+      // stale or unavailable ranges warn on every host (rangesCondition)
+      if (ranges === "unreported") {
+        facts.push(
+          `${label}: projects start separate, but the subordinate uid ranges are ${ranges}`,
+        );
+      }
+    }
+  } else if (watcherMode === "separate" && mode.configured === "keep-id") {
+    facts.push(
+      `${label}: the integrity watcher runs in separate mode, but keep-id is configured`,
+    );
+  }
+  if (facts.length === 0) return undefined;
+  return {
+    host_id: row.id,
+    host_name: row.name,
+    kind: "watcher-mode",
+    level: "warning",
+    subject: subject(row, "watcher-mode"),
+    facts,
+    details: facts.map(
+      (fact) =>
+        `${fact} (runtime user in containers: ${inContainer}; exec monitor: ${exec}; subordinate ranges: ${ranges})`,
+    ),
+  };
+}
+
+/** The watcher classifies project uids with the subordinate ranges it read:
+ * stale (the last good ones kept) or unavailable (none) weakens that on any
+ * host, whatever the mode. Older watchers don't report it. */
+function rangesCondition(
+  row: HostIntegrityRow,
+  integrity: HostIntegrityStatus,
+): HostIntegrityCondition | undefined {
+  const ranges = integrity.detection?.ranges_state;
+  if (ranges == null || ranges === "ok") return undefined;
+  const label = hostLabel(row);
+  const fact = `${label}: the integrity watcher's subordinate uid ranges are ${ranges}`;
+  return {
+    host_id: row.id,
+    host_name: row.name,
+    kind: "ranges",
+    level: "warning",
+    subject: subject(row, "ranges"),
+    facts: [fact],
+    details: [
+      `${fact} (${ranges === "stale" ? "it keeps the last ranges it could read" : "it has no ranges"})`,
+    ],
+  };
+}
+
+/** An exec monitor that runs but isn't available (degraded, or unavailable:
+ * ...), on any host. Off, starting and older watchers say nothing here. */
+function execMonitorCondition(
+  row: HostIntegrityRow,
+  integrity: HostIntegrityStatus,
+): HostIntegrityCondition | undefined {
+  const exec = integrity.detection?.exec_monitor;
+  if (exec == null || ["available", "starting", "off"].includes(exec.state)) {
+    return undefined;
+  }
+  const fact = `${hostLabel(row)}: the exec monitor is ${exec.state}`;
+  return {
+    host_id: row.id,
+    host_name: row.name,
+    kind: "exec-monitor",
+    level: "warning",
+    subject: subject(row, "exec-monitor"),
+    facts: [fact],
+    details: [
+      `${fact} (watching ${exec.marked} programs; ${exec.lost} events lost)`,
+    ],
+  };
+}
+
+// The watcher's own checks that have a condition of their own above, each
+// with the detection field that condition reads: their findings would only
+// repeat it under process placement. Without that field they stay there.
+const DETECTION_FINDINGS: [string, (d: HostIntegrityDetection) => unknown][] = [
+  // only when that condition is raised from it: ranges not ok, an exec
+  // monitor that runs but isn't available
+  [
+    "subuid-ranges-",
+    (d) =>
+      d.ranges_state && d.ranges_state !== "ok" ? d.ranges_state : undefined,
+  ],
+  [
+    "exec-monitor-",
+    (d) =>
+      d.exec_monitor &&
+      !["available", "starting", "off"].includes(d.exec_monitor.state)
+        ? d.exec_monitor
+        : undefined,
+  ],
+];
+
+function describeFinding(
+  f: HostIntegrityStatus["findings"] extends (infer F)[] | undefined
+    ? F
+    : never,
+): string {
+  if (!f.uids?.length) {
+    // not a process: a check of the watcher's own (e.g. its uid ranges)
+    return `${f.rule}: ${f.exe || f.comm}`;
+  }
+  const kind = f.uid_class ? ` [${f.uid_class}]` : "";
+  const unreadable = f.unreadable?.length
+    ? `; unreadable: ${f.unreadable.join(",")}`
+    : "";
+  return `${f.rule}: ${f.exe || f.comm} uid ${f.uids?.[0]}${kind} in the ${f.userns} user namespace (parents ${(f.parents ?? []).join(" < ") || "none"})${unreadable}`;
+}
+
+function runtimeUidConditions(
+  row: HostIntegrityRow,
+  mode: RuntimeUidModeView,
+): HostIntegrityCondition[] {
+  const label = hostLabel(row);
+  const base = { host_id: row.id, host_name: row.name };
+  const conditions: HostIntegrityCondition[] = [];
+  // Configured separate but projects start as keep-id: never only a label.
+  if (mode.configured !== "keep-id" && mode.effective === "keep-id") {
+    const reason = mode.reason ?? "unknown";
+    conditions.push({
+      ...base,
+      kind: "runtime-uid-fallback",
+      level: "warning",
+      subject: subject(row, "runtime-uid-fallback"),
+      facts: [
+        `${label}: runtime uid mode ${mode.configured} is configured, but projects start as keep-id (reason: ${reason})`,
+      ],
+      details: [
+        `${label}: runtime uid mode ${mode.configured} configured, keep-id in effect (reason: ${reason}${mode.detail ? `; ${mode.detail}` : ""})`,
+      ],
+    });
+  }
+  if (mode.daemon_state && !mode.daemon_state.ok) {
+    const what = mode.daemon_state.problem ?? "unknown";
+    conditions.push({
+      ...base,
+      kind: "daemon-state",
+      level: "warning",
+      subject: subject(row, "daemon-state"),
+      facts: [
+        `${label}: the daemon state directory was not private after a separate start (${what})${mode.daemon_state.restored ? "; its mode was restored" : ""}`,
+      ],
+      details: [
+        `${label}: daemon state directory after a separate start: ${what}${mode.daemon_state.restored ? " (mode restored to 0700)" : ""}`,
+      ],
+    });
+  }
+  return conditions;
+}
 
 // Keyed on the host id, which never changes (a name can be renamed or
 // shared): alerts dedupe and clear by subject. The name is in the facts.
@@ -93,14 +413,48 @@ function seenWithin(value: unknown, window: number, now: number): boolean {
   return seen != null && now - seen <= window;
 }
 
+// A runtime uid report stamped more than this far in the future is stale: a
+// host clock running ahead must not keep an old report current forever.
+const MAX_REPORT_CLOCK_AHEAD_MS = 5 * 60_000;
+
+function freshReport(value: unknown, now: number): boolean {
+  const seen = ms(value);
+  return (
+    seen != null &&
+    seen - now <= MAX_REPORT_CLOCK_AHEAD_MS &&
+    now - seen <= HOST_ONLINE_WINDOW_MS
+  );
+}
+
 export function summarizeHostIntegrity(
   rows: HostIntegrityRow[],
   now = Date.now(),
 ): HostIntegritySummary {
   const conditions: HostIntegrityCondition[] = [];
   const reporting_subjects: string[] = [];
+  const runtime_uid_modes: Record<string, number> = {};
+  const exec_monitor_states: Record<string, number> = {};
+  const exec_unattributed: Record<string, number> = {};
+  let layout_mismatch_hosts = 0;
   let unreported = 0;
   for (const row of byHostId(rows)) {
+    // The runtime uid report comes from project-host itself, independent of
+    // the watcher's; only a fresh one counts (merged heartbeat metadata).
+    const reported = normalizeRuntimeUidMode(row.runtime_uid_mode);
+    const mode =
+      reported != null && freshReport(reported.reported_at, now)
+        ? reported
+        : undefined;
+    if (mode != null) {
+      const modeLabel = runtimeUidLabel(mode);
+      runtime_uid_modes[modeLabel] = (runtime_uid_modes[modeLabel] ?? 0) + 1;
+      for (const kind of RUNTIME_UID_KINDS) {
+        reporting_subjects.push(subject(row, kind));
+      }
+      conditions.push(...runtimeUidConditions(row, mode));
+    } else {
+      runtime_uid_modes.unreported = (runtime_uid_modes.unreported ?? 0) + 1;
+    }
     const integrity = row.integrity;
     // Heartbeat metadata is merged, so a host that went back to a build
     // without this report keeps the last one: only a fresh report counts.
@@ -114,8 +468,33 @@ export function summarizeHostIntegrity(
     }
     const label = hostLabel(row);
     const base = { host_id: row.id, host_name: row.name };
-    for (const kind of Object.keys(SUBJECTS)) {
-      reporting_subjects.push(subject(row, kind as keyof typeof SUBJECTS));
+    for (const kind of WATCHER_KINDS) {
+      reporting_subjects.push(subject(row, kind));
+    }
+    const detection = integrity.detection;
+    const execState = detection?.exec_monitor?.state ?? "unreported";
+    exec_monitor_states[execState] = (exec_monitor_states[execState] ?? 0) + 1;
+    if ((detection?.layout_problems ?? 0) > 0) layout_mismatch_hosts += 1;
+    for (const [program, n] of Object.entries(
+      detection?.exec_monitor?.unattributed_programs ?? {},
+    )) {
+      exec_unattributed[program] = (exec_unattributed[program] ?? 0) + n;
+    }
+    // only a running watcher's report is compared (a stale status must not
+    // clear the alert)
+    if (integrity.watcher === "running") {
+      reporting_subjects.push(subject(row, "ranges"));
+      const rangesNotCurrent = rangesCondition(row, integrity);
+      if (rangesNotCurrent) conditions.push(rangesNotCurrent);
+      reporting_subjects.push(subject(row, "exec-monitor"));
+      const execNotAvailable = execMonitorCondition(row, integrity);
+      if (execNotAvailable) conditions.push(execNotAvailable);
+    }
+    if (mode != null && integrity.watcher === "running") {
+      // both sides report: compare them
+      reporting_subjects.push(subject(row, "watcher-mode"));
+      const differs = watcherModeCondition(row, mode, integrity, now);
+      if (differs) conditions.push(differs);
     }
     if (integrity.watcher !== "running") {
       conditions.push({
@@ -129,9 +508,47 @@ export function summarizeHostIntegrity(
         ],
       });
     }
-    const recent = (integrity.findings ?? []).filter((f) =>
+    const seen = (integrity.findings ?? []).filter((f) =>
       seenWithin(f.last_seen, RECENT_FINDING_MS, now),
     );
+    // project data layout findings have their own condition
+    const layout = seen.filter((f) => f.rule.startsWith("hardening-"));
+    // the watcher's own checks are reported by their own conditions, but
+    // only when the status carries the field that condition reads (an older
+    // or partial status keeps them here)
+    const detected = integrity.detection;
+    const covered = (f: (typeof seen)[number]) =>
+      detected != null &&
+      DETECTION_FINDINGS.some(
+        ([prefix, field]) =>
+          f.rule.startsWith(prefix) && field(detected) != null,
+      );
+    const recent = seen.filter(
+      (f) => !f.rule.startsWith("hardening-") && !covered(f),
+    );
+    if (layout.length > 0) {
+      const current = layout.filter((f) =>
+        seenWithin(f.last_seen, CURRENT_FINDING_MS, now),
+      );
+      const critical = (current.length > 0 ? current : layout).some(
+        (f) => f.severity === "critical",
+      );
+      const describe = (f: (typeof layout)[number]) =>
+        `${f.comm || f.rule.slice("hardening-".length)}: ${f.exe || "mismatch"}${f.affected ? ` (${f.affected} affected)` : ""}`;
+      conditions.push({
+        ...base,
+        kind: "hardening",
+        level: critical ? "critical" : "warning",
+        subject: subject(row, "hardening"),
+        facts: current.map((f) => `${label}: ${describe(f)}`).sort(),
+        details: layout
+          .slice(0, MAX_DETAILS_PER_HOST)
+          .map(
+            (f) =>
+              `${label}: ${f.severity} project data layout ${describe(f)}; last ${f.last_seen}`,
+          ),
+      });
+    }
     if (recent.length > 0) {
       const current = recent.filter((f) =>
         seenWithin(f.last_seen, CURRENT_FINDING_MS, now),
@@ -141,8 +558,7 @@ export function summarizeHostIntegrity(
       const critical = (current.length > 0 ? current : recent).some(
         (f) => f.severity === "critical",
       );
-      const describe = (f: (typeof recent)[number]) =>
-        `${f.rule}: ${f.exe || f.comm} uid ${f.uids?.[0]} in the ${f.userns} user namespace (parents ${(f.parents ?? []).join(" < ") || "none"})`;
+      const describe = describeFinding;
       conditions.push({
         ...base,
         kind: "processes",
@@ -211,13 +627,18 @@ export function summarizeHostIntegrity(
     unreported_hosts: unreported,
     conditions,
     reporting_subjects,
+    runtime_uid_modes,
+    exec_monitor_states,
+    layout_mismatch_hosts,
+    exec_unattributed,
   };
 }
 
 export async function getHostIntegritySummary(): Promise<HostIntegritySummary> {
   const bayId = getConfiguredBayId();
   const { rows } = await getPool().query<HostIntegrityRow>(
-    `SELECT id, name, metadata->'host_integrity' AS integrity
+    `SELECT id, name, metadata->'host_integrity' AS integrity,
+            metadata->'runtime_uid_mode' AS runtime_uid_mode
      FROM project_hosts
      WHERE deleted IS NULL
        AND status = 'running'
@@ -239,7 +660,15 @@ export function hostIntegrityHealth(
       details: [`${result.reason}`],
     };
   }
-  const { active_hosts, unreported_hosts, conditions } = result.value;
+  const {
+    active_hosts,
+    unreported_hosts,
+    conditions,
+    runtime_uid_modes,
+    exec_monitor_states,
+    layout_mismatch_hosts,
+    exec_unattributed,
+  } = result.value;
   const reporting = active_hosts - unreported_hosts;
   const unreported = unreported_hosts
     ? ` ${unreported_hosts} host${unreported_hosts === 1 ? " does" : "s do"} not report it yet.`
@@ -258,8 +687,63 @@ export function hostIntegrityHealth(
       conditions.length > 0
         ? `${hosts}/${reporting} reporting hosts have integrity conditions (${alertMode() === "alert" ? "alerting" : "report-only"}).${unreported}`
         : `${reporting}/${active_hosts} active hosts report no integrity conditions.${unreported}`,
-    details: conditions.flatMap((c) => c.details),
+    details: [
+      ...conditions.flatMap((c) => c.details),
+      ...runtimeUidModeLine(runtime_uid_modes),
+      ...detectionLines(
+        exec_monitor_states,
+        layout_mismatch_hosts,
+        exec_unattributed,
+      ),
+    ],
   };
+}
+
+function detectionLines(
+  states: Record<string, number> | undefined,
+  layoutHosts: number | undefined,
+  unattributed?: Record<string, number>,
+): string[] {
+  const programs = Object.entries(unattributed ?? {})
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 10);
+  const entries = Object.entries(states ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  return [
+    ...(entries.some(([state]) => state !== "unreported" && state !== "off")
+      ? [
+          `Exec monitor: ${entries.map(([state, n]) => `${n} ${state}`).join(", ")}`,
+        ]
+      : []),
+    ...(programs.length > 0
+      ? [
+          `Exec monitor, execs it could not attribute: ${programs.map(([program, n]) => `${n} ${program}`).join(", ")}`,
+        ]
+      : []),
+    ...(layoutHosts
+      ? [
+          `Project data layout: mismatches counted on ${layoutHosts} host${layoutHosts === 1 ? "" : "s"}`,
+        ]
+      : []),
+  ];
+}
+
+function runtimeUidModeLine(
+  modes: Record<string, number> | undefined,
+): string[] {
+  const entries = Object.entries(modes ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  if (entries.length === 0) return [];
+  return [
+    `Runtime uid mode: ${entries.map(([label, n]) => `${n} ${label}`).join(", ")}`,
+    ...(entries.some(([label]) => label.startsWith("separate (partial)"))
+      ? [
+          "separate (partial): sidecar processes still run as the shared runtime uid, so the project user is not yet fully separated",
+        ]
+      : []),
+  ];
 }
 
 export function alertMode(): "alert" | "report" {

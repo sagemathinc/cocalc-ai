@@ -5,6 +5,7 @@
 
 import type { Request } from "express";
 
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import {
   withAccountRehomeWriteFence,
@@ -14,6 +15,14 @@ import { getRememberMeHashes } from "@cocalc/server/auth/remember-me";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import { renewSessionLifetime } from "@cocalc/server/auth/session-expiry";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  FRESH_AUTH_DEFAULT_MS,
+  FRESH_AUTH_EXTENDED_MS,
+  freshAuthDurationMs,
+  freshAuthDurationNeedsStrongFactor,
+  formatFreshAuthDuration,
+  type FreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
 
 export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
 export type PasswordFreshAuthFactorLevel = "none" | SecondFactorMethod;
@@ -29,10 +38,8 @@ export type AuthPrimaryMethod =
 export type AuthSessionFactorLevel =
   | PasswordFreshAuthFactorLevel
   | SsoFreshAuthMethod;
-export type FreshAuthDuration = "default" | "extended";
-
-export const FRESH_AUTH_DEFAULT_MS = 15 * 60_000;
-export const FRESH_AUTH_EXTENDED_MS = 8 * 60 * 60_000;
+export type { FreshAuthDuration };
+export { FRESH_AUTH_DEFAULT_MS, FRESH_AUTH_EXTENDED_MS };
 
 type Queryable = {
   query: <T = any>(
@@ -361,6 +368,8 @@ export async function getCurrentAuthSessionForSessionHash({
   return row;
 }
 
+const logger = getLogger("server:auth:auth-sessions");
+
 export async function setCurrentSessionFreshAuth({
   req,
   account_id,
@@ -415,6 +424,7 @@ export async function setSessionFreshAuth({
   if (!cleanedSessionHash) {
     throw new Error("session_hash is required");
   }
+  let client: { ip_address?: string | null; user_agent?: string | null } = {};
   await withAccountRehomeWriteFence({
     account_id,
     action: "set fresh auth",
@@ -424,7 +434,21 @@ export async function setSessionFreshAuth({
         account_id,
         action: "set fresh auth",
       });
-      const { rowCount } = await db.query(
+      const impersonation = await db.query(
+        "SELECT 1 FROM account_impersonation_sessions WHERE session_hash = $1::CHAR(127) LIMIT 1",
+        [cleanedSessionHash],
+      );
+      const isImpersonation = impersonation.rows.length > 0;
+      // The verifications longer than 8 hours are for an account owner's own
+      // sessions, never for an admin acting as someone else.
+      if (
+        isImpersonation &&
+        fresh_auth_until.valueOf() >
+          Date.now() + FRESH_AUTH_EXTENDED_MS + 60_000
+      ) {
+        throw new Error("an impersonation verification lasts at most 8 hours");
+      }
+      const { rows, rowCount } = await db.query(
         `
           UPDATE account_auth_sessions
              SET updated = NOW(),
@@ -451,6 +475,7 @@ export async function setSessionFreshAuth({
              AND account_id = $5::UUID
              AND revoked_at IS NULL
              AND expire > NOW()
+          RETURNING ip_address, user_agent
         `,
         [
           cleanedSessionHash,
@@ -465,15 +490,12 @@ export async function setSessionFreshAuth({
       if ((rowCount ?? 0) === 0) {
         throw new Error("current browser session not found");
       }
+      client = rows[0] ?? {};
       // Re-entering the password or second factor starts a new maximum
       // lifetime for this session, so an active person is never forced to
       // sign in again mid-use. An impersonation session keeps its own short
       // lifetime.
-      const impersonation = await db.query(
-        "SELECT 1 FROM account_impersonation_sessions WHERE session_hash = $1::CHAR(127) LIMIT 1",
-        [cleanedSessionHash],
-      );
-      if (impersonation.rows.length === 0) {
+      if (!isImpersonation) {
         await renewSessionLifetime({
           db,
           hash: cleanedSessionHash,
@@ -482,6 +504,145 @@ export async function setSessionFreshAuth({
       }
     },
   });
+  if (fresh_auth_until.valueOf() - Date.now() > FRESH_AUTH_EXTENDED_MS) {
+    // Not awaited: a slow mail backend must not slow the verification, and a
+    // failure is logged there, never undoing it. Loaded only here: the email
+    // code pulls in much of the server, and many modules import this one only
+    // for its session helpers.
+    void import("@cocalc/server/auth/fresh-auth-notice")
+      .then(async ({ isLongFreshAuthUntil, notifyLongFreshAuth }) => {
+        if (!isLongFreshAuthUntil(fresh_auth_until)) return;
+        await notifyLongFreshAuth({
+          account_id,
+          fresh_auth_until,
+          factor_level,
+          ip_address: client.ip_address,
+          user_agent: client.user_agent,
+        });
+      })
+      .catch((err) =>
+        logger.warn("could not load the long fresh auth notice", {
+          account_id,
+          err: `${err}`,
+        }),
+      );
+  }
+}
+
+// The id under which the browser sees a session with an active fresh auth: a
+// public, non-secret label derived from the session hash, so the hash itself
+// (what a cookie is looked up by) never leaves the server. It is computed in
+// SQL, the same way for listing and ending. The session hash is already the
+// stored hash of a random token, so this is not password hashing.
+const FRESH_AUTH_SESSION_ID_SQL = `left(encode(sha256(convert_to('fresh-auth-session:' || rtrim(session_hash), 'UTF8')), 'hex'), 32)`;
+
+export interface ActiveFreshAuthSession {
+  id: string;
+  current: boolean;
+  fresh_auth_until: Date;
+  factor_level: AuthSessionFactorLevel | null;
+  created: Date | null;
+  ip_address: string | null;
+  user_agent: string | null;
+}
+
+// Only for the list shown in the browser; ending is never bounded by it.
+const ACTIVE_FRESH_AUTH_LIST_LIMIT = 200;
+
+const ACTIVE_FRESH_AUTH_WHERE = `account_id = $1::UUID
+         AND revoked_at IS NULL
+         AND expire > NOW()
+         AND fresh_auth_until > NOW()`;
+
+// Every sign-in session (browser or CLI) of this account whose fresh auth is
+// still active, longest first.
+export async function listActiveFreshAuthSessions({
+  account_id,
+  current_session_hash,
+}: {
+  account_id: string;
+  current_session_hash?: string | null;
+}): Promise<ActiveFreshAuthSession[]> {
+  if (!isValidUUID(account_id)) throw new Error("invalid account_id");
+  const current = `${current_session_hash ?? ""}`.trim();
+  const { rows } = await getPool().query(
+    `
+      SELECT ${FRESH_AUTH_SESSION_ID_SQL} AS id,
+             (rtrim(session_hash) = $2::TEXT) AS current,
+             created, fresh_auth_until, factor_level, ip_address, user_agent
+        FROM account_auth_sessions
+       WHERE ${ACTIVE_FRESH_AUTH_WHERE}
+       ORDER BY fresh_auth_until DESC
+       LIMIT ${ACTIVE_FRESH_AUTH_LIST_LIMIT}
+    `,
+    [account_id, current],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    current: current.length > 0 && row.current === true,
+    fresh_auth_until: new Date(row.fresh_auth_until),
+    factor_level: row.factor_level ?? null,
+    created: row.created ? new Date(row.created) : null,
+    ip_address: row.ip_address ?? null,
+    user_agent: row.user_agent ?? null,
+  }));
+}
+
+// End the fresh auth of one session (its id from listActiveFreshAuthSessions),
+// of the session with this hash (the caller's own), or of every session of the
+// account. The sessions stay signed in; their next security action asks for
+// verification again. Ending only takes a privilege away, so it needs no fresh
+// auth itself.
+export async function endFreshAuth({
+  account_id,
+  id,
+  session_hash,
+  all = false,
+}: {
+  account_id: string;
+  id?: string | null;
+  session_hash?: string | null;
+  all?: boolean;
+}): Promise<{ ended: number }> {
+  if (!isValidUUID(account_id)) throw new Error("invalid account_id");
+  const wanted = `${id ?? ""}`.trim().toLowerCase();
+  const hash = `${session_hash ?? ""}`.trim();
+  let match: string;
+  const params: unknown[] = [account_id];
+  if (all) {
+    match = "";
+  } else if (hash) {
+    params.push(hash);
+    match = "AND rtrim(session_hash) = $2::TEXT";
+  } else if (/^[0-9a-f]{32}$/.test(wanted)) {
+    params.push(wanted);
+    match = `AND ${FRESH_AUTH_SESSION_ID_SQL} = $2::TEXT`;
+  } else {
+    throw new Error("a session id or all is required");
+  }
+  let ended = 0;
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "end fresh auth",
+    fn: async (db) => {
+      await assertAccountWriteOnHomeBay({
+        db,
+        account_id,
+        action: "end fresh auth",
+      });
+      const result = await db.query(
+        `
+          UPDATE account_auth_sessions
+             SET updated = NOW(), fresh_auth_until = NULL
+           WHERE ${ACTIVE_FRESH_AUTH_WHERE}
+             ${match}
+        `,
+        params,
+      );
+      ended = result.rowCount ?? 0;
+    },
+  });
+  return { ended };
 }
 
 // Ending sign-in sessions deletes their remember_me rows (the cookie stops
@@ -708,17 +869,16 @@ export function resolveFreshAuthDurationMs({
   duration?: FreshAuthDuration;
   factor_level: AuthSessionFactorLevel;
 }): number {
-  if (duration === "extended") {
+  if (freshAuthDurationNeedsStrongFactor(duration)) {
     if (
       factor_level !== "totp" &&
       factor_level !== "passkey" &&
       factor_level !== "google_oidc"
     ) {
       throw new Error(
-        "extended fresh auth requires a TOTP, passkey, or Google verification in this browser session",
+        `${duration === "extended" ? "extended" : `a ${formatFreshAuthDuration(duration)}`} fresh auth requires a TOTP, passkey, or Google verification in this browser session`,
       );
     }
-    return FRESH_AUTH_EXTENDED_MS;
   }
-  return FRESH_AUTH_DEFAULT_MS;
+  return freshAuthDurationMs(duration);
 }

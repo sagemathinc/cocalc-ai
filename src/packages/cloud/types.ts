@@ -133,7 +133,12 @@ export interface CloudProvider {
   startHost(
     runtime: HostRuntime,
     creds: any,
-    opts?: { allow_preemptible?: boolean },
+    opts?: {
+      allow_preemptible?: boolean;
+      // The pricing model the host must run with. A provider that can
+      // change it on a stopped instance applies it before starting.
+      pricing_model?: NonNullable<HostSpec["pricing_model"]>;
+    },
   ): Promise<void>;
   stopHost(runtime: HostRuntime, creds: any): Promise<void>;
   setPricingModel?(
