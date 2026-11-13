@@ -84,6 +84,7 @@ import {
   alternateMachineTypes,
   buildFallbackLadder,
   classifyStartFailure,
+  customMachineVcpus,
   exhaustedLadderRetryDelayMs,
   machineShape,
   MAX_TRANSIENT_RETRIES_PER_OPTION,
@@ -2143,6 +2144,8 @@ async function handleStart(row: any) {
       await entry.provider.startHost(runtimeForStart, creds, {
         // a billing rescue only takes final backups before a drain
         allow_preemptible: row.payload?.billing_rescue === true,
+        // the pricing the host is billed for, applied to a stopped instance
+        pricing_model: effectivePricingForStart,
       });
     };
     // When the attempted Spot start (or a return to Spot) fails for lack of
@@ -2287,6 +2290,7 @@ async function handleStart(row: any) {
         const key = rungKey(rung);
         const vcpus =
           vcpusByType.get(rung.machine_type) ??
+          customMachineVcpus(rung.machine_type) ??
           Number(machine.metadata?.cpu ?? 0);
         if (!rungFitsQuota({ rung, vcpus, headroom })) {
           tried.add(key);

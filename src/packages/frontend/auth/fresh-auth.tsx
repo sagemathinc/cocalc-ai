@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Checkbox, Input, Modal, Radio, Space } from "antd";
+import { Alert, Button, Input, Modal, Radio, Space } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -18,6 +18,12 @@ import {
   inferSecondFactorInputMethod,
 } from "@cocalc/frontend/auth/second-factor-input";
 import GoogleLogo from "@cocalc/frontend/components/google-logo";
+import {
+  FRESH_AUTH_DURATION_CHOICES,
+  formatFreshAuthDuration,
+  isLongFreshAuthDuration,
+  type FreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
 import { COLORS } from "@cocalc/util/theme";
 
 type FreshAuthStatus = {
@@ -83,12 +89,16 @@ export function isFreshAuthRequiredError(err: unknown): boolean {
 }
 
 export function FreshAuthModal({
+  defaultDuration,
   defaultExtended = false,
   open,
   onCancel,
   onSuccess,
   origin,
 }: {
+  // The duration selected when the dialog opens (e.g., what a CLI asked for).
+  defaultDuration?: FreshAuthDuration;
+  // Same as defaultDuration="extended"; kept for existing callers.
   defaultExtended?: boolean;
   open: boolean;
   onCancel: () => void;
@@ -99,7 +109,9 @@ export function FreshAuthModal({
   const [emailAddress, setEmailAddress] = useState("");
   const [code, setCode] = useState("");
   const [usePasskey, setUsePasskey] = useState(false);
-  const [extended, setExtended] = useState(false);
+  const [duration, setDuration] = useState<FreshAuthDuration>("default");
+  const initialDuration: FreshAuthDuration =
+    defaultDuration ?? (defaultExtended ? "extended" : "default");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [factorEnabled, setFactorEnabled] = useState<boolean | null>(null);
@@ -206,15 +218,21 @@ export function FreshAuthModal({
 
   useEffect(() => {
     if (!canUseExtended) {
-      setExtended(false);
+      setDuration("default");
     }
   }, [canUseExtended]);
 
+  // Each opening starts from this action's own duration: a longer one chosen
+  // earlier (then canceled, or for another action) never carries over.
   useEffect(() => {
-    if (open && defaultExtended && canUseExtended) {
-      setExtended(true);
+    setDuration("default");
+  }, [open, initialDuration]);
+
+  useEffect(() => {
+    if (open && initialDuration !== "default" && canUseExtended) {
+      setDuration(initialDuration);
     }
-  }, [canUseExtended, defaultExtended, open]);
+  }, [canUseExtended, initialDuration, open]);
 
   function getExpectedPopupOrigin(): string {
     if (authOrigin) {
@@ -234,7 +252,7 @@ export function FreshAuthModal({
     setError("");
     try {
       const { url } = await startGoogleFreshAuth({
-        duration: extended ? "extended" : "default",
+        duration,
         origin: authOrigin,
       });
       const expectedOrigin = getExpectedPopupOrigin();
@@ -279,7 +297,7 @@ export function FreshAuthModal({
       setCurrentPassword("");
       setCode("");
       setUsePasskey(false);
-      setExtended(false);
+      setDuration("default");
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -367,7 +385,7 @@ export function FreshAuthModal({
       const requireSecondFactor = factorEnabled === true;
       if (requireSecondFactor && usePasskey) {
         await freshAuthWithPasskey({
-          duration: extended ? "extended" : "default",
+          duration,
           origin: authOrigin,
         });
       } else {
@@ -379,7 +397,7 @@ export function FreshAuthModal({
             ...(requireSecondFactor
               ? { method: inferredMethod, code: code.trim() }
               : {}),
-            duration: requireSecondFactor && extended ? "extended" : "default",
+            duration: requireSecondFactor ? duration : "default",
           },
         });
       }
@@ -394,7 +412,7 @@ export function FreshAuthModal({
       setCurrentPassword("");
       setCode("");
       setUsePasskey(false);
-      setExtended(false);
+      setDuration("default");
       resetEmailFreshAuth();
     } catch (err) {
       setError(`${err}`);
@@ -572,22 +590,47 @@ export function FreshAuthModal({
             ) : undefined}
           </>
         ) : undefined}
-        <Checkbox
-          checked={extended}
-          disabled={!canUseExtended}
-          onChange={(e) => setExtended(e.target.checked)}
-        >
-          Keep this verification active for 8 hours on this browser
-        </Checkbox>
+        <div>
+          <div style={{ marginBottom: 4 }}>
+            Keep this verification active on this browser for
+          </div>
+          <Radio.Group
+            value={duration}
+            disabled={!canUseExtended}
+            onChange={(e) => setDuration(e.target.value)}
+            optionType="button"
+            size="small"
+            options={FRESH_AUTH_DURATION_CHOICES.map((value) => ({
+              value,
+              label: formatFreshAuthDuration(value),
+            }))}
+          />
+          {!canUseExtended ? (
+            <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
+              Longer than 15 minutes needs an authenticator code, a passkey, or
+              Google.
+            </div>
+          ) : isLongFreshAuthDuration(duration) ? (
+            <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
+              We email you when a verification longer than 8 hours starts. End
+              it any time in Account Settings, Profile, Security.
+            </div>
+          ) : undefined}
+        </div>
       </Space>
     </Modal>
   );
 }
 
 export function useFreshAuthAction({
+  defaultDuration,
   defaultExtended,
   origin,
-}: { defaultExtended?: boolean; origin?: string } = {}) {
+}: {
+  defaultDuration?: FreshAuthDuration;
+  defaultExtended?: boolean;
+  origin?: string;
+} = {}) {
   // Frontend counterpart to backend requireFreshAuth checks. Any browser UI
   // action that can hit a fresh-auth-protected HTTP route or Conat RPC should
   // run the mutation through runFreshAuthAction and render FreshAuthModal with
@@ -653,6 +696,7 @@ export function useFreshAuthAction({
   return {
     runFreshAuthAction,
     freshAuthModalProps: {
+      defaultDuration,
       defaultExtended,
       open,
       origin,

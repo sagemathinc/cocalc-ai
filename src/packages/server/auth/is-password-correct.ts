@@ -7,7 +7,7 @@ case this will always return false.
 */
 
 import getPool from "@cocalc/database/pool";
-import { verifyPassword } from "@cocalc/backend/auth/password-hash";
+import { checkPassword } from "@cocalc/backend/auth/password-hash";
 
 interface Options {
   account_id: string;
@@ -26,5 +26,5 @@ export default async function isPasswordCorrect({
   if (rows.length == 0) return false;
   const { password_hash } = rows[0];
   if (!password_hash) return false;
-  return verifyPassword(password, password_hash);
+  return await checkPassword(password, password_hash);
 }

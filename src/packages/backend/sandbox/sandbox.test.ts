@@ -437,6 +437,113 @@ describeIfLinux("baseline mutator parity behavior", () => {
   });
 });
 
+describe("rm and rmdir never remove the sandbox root", () => {
+  // Each resolves to the home itself ("/" is the home when there is no rootfs).
+  const roots = ["", ".", "./", "/", "..", "a/..", "a/b/../..", "a/b/../../.."];
+  let home: string;
+  let fs: SandboxedFilesystem;
+  beforeEach(async () => {
+    home = await mkdtemp(join(tempDir, "rm-root-"));
+    await mkdir(join(home, "a", "b"), { recursive: true });
+    await writeFile(join(home, "a", "b", "f.txt"), "f");
+    await writeFile(join(home, "keep.txt"), "k");
+    fs = new SandboxedFilesystem(home);
+  });
+
+  it.each(roots)("refuses rm -r of %j and keeps the home", async (p) => {
+    await expect(fs.rm(p, { recursive: true, force: true })).rejects.toThrow(
+      /cannot remove the root/,
+    );
+    await expect(
+      fs.rm([p, "keep.txt"], { recursive: true, force: true }),
+    ).rejects.toThrow(/cannot remove the root/);
+    expect((await readdir(home)).sort()).toEqual(["a", "keep.txt"]);
+    expect(await readFile(join(home, "a", "b", "f.txt"), "utf8")).toBe("f");
+  });
+
+  it.each(roots)("refuses rmdir of %j", async (p) => {
+    await expect(fs.rmdir(p, { recursive: true })).rejects.toThrow(
+      /cannot remove the root/,
+    );
+    expect((await readdir(home)).sort()).toEqual(["a", "keep.txt"]);
+  });
+
+  it("checks the root before read-only, in rm and rmdir alike", async () => {
+    const ro = new SandboxedFilesystem(home, { readonly: true });
+    await expect(ro.rm("", { recursive: true })).rejects.toThrow(
+      /cannot remove the root/,
+    );
+    await expect(ro.rmdir("")).rejects.toThrow(/cannot remove the root/);
+    await expect(ro.rm("a", { recursive: true })).rejects.toThrow(/read only/);
+    await expect(ro.rmdir("a")).rejects.toThrow(/read only/);
+  });
+
+  it("refuses the rootfs, /tmp, /scratch and home-alias roots but not their children", async () => {
+    const base = await mkdtemp(join(tempDir, "rm-roots-"));
+    const dirs = {
+      rootfs: join(base, "rootfs"),
+      scratch: join(base, "scratch"),
+      sharedScratch: join(base, "shared"),
+    };
+    for (const d of Object.values(dirs)) {
+      await mkdir(join(d, "child"), { recursive: true });
+    }
+    await mkdir(join(home, "child"));
+    const fs = new SandboxedFilesystem(home, {
+      ...dirs,
+      homeAliases: ["/home/user"],
+    });
+    for (const p of [
+      "/",
+      "/tmp",
+      "/tmp/",
+      "/tmp/child/..",
+      "/scratch",
+      "/scratch/.",
+      "/home/user",
+      "/home/user/",
+      "/home/user/child/..",
+    ]) {
+      await expect(fs.rm(p, { recursive: true, force: true })).rejects.toThrow(
+        /cannot remove the root/,
+      );
+      await expect(fs.rmdir(p, { recursive: true })).rejects.toThrow(
+        /cannot remove the root/,
+      );
+    }
+    for (const d of Object.values(dirs)) {
+      expect(await readdir(d)).toEqual(["child"]);
+    }
+    expect(await readdir(home)).toContain("child");
+
+    await fs.rm("/child", { recursive: true });
+    await fs.rm("/tmp/child", { recursive: true });
+    await fs.rm("/scratch/child", { recursive: true });
+    await fs.rm("/home/user/child", { recursive: true });
+    for (const d of Object.values(dirs)) {
+      expect(await readdir(d)).toEqual([]);
+    }
+    expect(await readdir(home)).not.toContain("child");
+  });
+
+  it("still removes a subfolder, including one named with spaces", async () => {
+    await mkdir(join(home, "Lab 1 2026", "Student Notebooks"), {
+      recursive: true,
+    });
+    await fs.rm("Lab 1 2026/Student Notebooks", {
+      recursive: true,
+      force: true,
+    });
+    expect((await readdir(home)).sort()).toEqual([
+      "Lab 1 2026",
+      "a",
+      "keep.txt",
+    ]);
+    await fs.rm("a/b/", { recursive: true, force: true });
+    expect(await readdir(join(home, "a"))).toEqual([]);
+  });
+});
+
 describeIfLinux("authorized read streams", () => {
   it("authorizes the canonical identity of the opened handle and preserves ranges", async () => {
     const home = join(tempDir, "authorized-read-stream");

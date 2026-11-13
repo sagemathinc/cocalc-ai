@@ -48,10 +48,14 @@ import {
   writeProjectHostAcpWorkerTarget,
 } from "./worker-target";
 import { recordUnexpectedAcpWorkerTermination } from "./worker-health";
+import { capAcpWorkerLog } from "./worker-log";
 
 const logger = getLogger("project-host:hub:acp:worker-manager");
 const ACP_WORKER_PID_FILE = path.join(data, "acp-worker.pid");
 const ACP_WORKER_LOG_FILE = path.join(data, "logs", "acp-worker.log");
+// Where the other project-host components archive their logs (daemon.ts).
+const ACP_WORKER_LOG_HISTORY_DIR = path.join(data, "log-history");
+const ACP_WORKER_LOG_CAP_MS = 60_000;
 const ACP_WORKER_SUPERVISOR_MS = 2000;
 const ACP_WORKER_SPAWN_BACKOFF_INITIAL_MS = Math.max(
   ACP_WORKER_SUPERVISOR_MS,
@@ -1621,6 +1625,38 @@ export function startProjectHostAcpWorkerSupervisor(): void {
     });
   }, ACP_WORKER_SUPERVISOR_MS);
   timer.unref?.();
+  // A worker runs for days and its log is never reopened: bound it.
+  let capping = false;
+  const logTimer = setInterval(() => {
+    if (capping) return;
+    capping = true;
+    capAcpWorkerLog({
+      logPath: ACP_WORKER_LOG_FILE,
+      historyDir: ACP_WORKER_LOG_HISTORY_DIR,
+    })
+      .then((cap) => {
+        if (cap?.outcome === "archived")
+          logger.info("capped the ACP worker log", {
+            log: ACP_WORKER_LOG_FILE,
+            archive: cap.archive,
+          });
+        else if (cap)
+          logger.warn("truncated the ACP worker log without an archive", {
+            log: ACP_WORKER_LOG_FILE,
+            err: cap.error,
+          });
+      })
+      .catch((err) => {
+        logger.warn("could not cap the ACP worker log", {
+          log: ACP_WORKER_LOG_FILE,
+          err: `${err}`,
+        });
+      })
+      .finally(() => {
+        capping = false;
+      });
+  }, ACP_WORKER_LOG_CAP_MS);
+  logTimer.unref?.();
 }
 
 export function projectHostAcpWorkerLogFile(): string {

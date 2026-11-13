@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
+import contextlib
+import fcntl
 import io
 import hashlib
 import inspect
 import json
 import os
 import pwd
+import re
 import shutil
 import signal
 import stat
@@ -22,6 +25,41 @@ from pathlib import Path
 from unittest import mock
 
 import bootstrap
+
+
+# Never touch a real data disk from the tests (/mnt/cocalc/data can exist on a
+# dev host): everything under DATA_ROOT goes to a throwaway dir.
+bootstrap.DATA_ROOT = tempfile.mkdtemp(prefix="bootstrap-test-data-")
+# Nor the root-only bootstrap state root (/var/lib can be writable on a dev host).
+bootstrap.BOOTSTRAP_STATE_ROOT = tempfile.mkdtemp(prefix="bootstrap-test-state-")
+# Nor the system manager of the machine running the tests (the mode tests run
+# whole reconciles): the real function is tested with systemctl stubbed.
+REAL_DISABLE_ROOT_PODMAN_UNITS = bootstrap.disable_root_podman_units
+bootstrap.disable_root_podman_units = lambda _cfg: None
+# r20 merge: public main's reconcile steps that write real system paths by
+# default (systemd units, /usr/local/libexec, /etc/fstab) run only when a test
+# hands them explicit temp paths; whole-reconcile tests get a no-op.
+REAL_CONFIGURE_HOST_INTEGRITY_WATCH = bootstrap.configure_host_integrity_watch
+REAL_CONFIGURE_BTRFS_SCRUB = bootstrap.configure_btrfs_scrub
+
+
+def _only_with_temp_paths(real, keys):
+    def guarded(cfg, **kwargs):
+        if keys <= set(kwargs):
+            return real(cfg, **kwargs)
+        return None
+    return guarded
+
+
+bootstrap.configure_host_integrity_watch = _only_with_temp_paths(
+    REAL_CONFIGURE_HOST_INTEGRITY_WATCH, {"script_path", "service_path"}
+)
+bootstrap.configure_btrfs_scrub = _only_with_temp_paths(
+    REAL_CONFIGURE_BTRFS_SCRUB, {"script_path", "service_path", "timer_path"}
+)
+# update_fstab always writes /etc/fstab (no path parameter): never from tests.
+REAL_UPDATE_FSTAB = bootstrap.update_fstab
+bootstrap.update_fstab = lambda *_args, **_kwargs: None
 
 
 def bootstrap_storage_wrapper_for(cfg) -> str:
@@ -152,6 +190,711 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
 
     def helper_run(self):
         return self.helper_namespace()["run"]
+
+    def own_owners(self):
+        return {"uid": [(os.getuid(), 1)], "gid": [(os.getgid(), 1)]}
+
+    def test_generic_verbs_keep_every_caller_working(self) -> None:
+        # The wrapper's callers: mkdir -p (always 0755), chmod 700 (bees),
+        # chown to the runtime user (staging, subvolumes, the mount root).
+        run = self.helper_run()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            roots = {str(root)}
+            run(["mkdir", "--root", str(root), "--path", "a/b", "--mode", "0755", "--recursive"], allowed_roots=roots)
+            self.assertEqual(stat.S_IMODE((root / "a" / "b").stat().st_mode) & 0o755, 0o755)
+            (root / "dat").write_bytes(b"")
+            run(["chmod", "--root", str(root), "--path", "dat", "--mode", "700"], allowed_roots=roots)
+            self.assertEqual(stat.S_IMODE((root / "dat").stat().st_mode), 0o700)
+            for path in ("a/b", ".", "dat"):
+                run(
+                    ["chown", "--root", str(root), "--path", path, "--uid", str(os.getuid()), "--gid", str(os.getgid())],
+                    allowed_roots=roots,
+                    owners=self.own_owners(),
+                )
+
+    def test_generic_modes_refuse_special_bits(self) -> None:
+        namespace = self.helper_namespace()
+        parse_mode = namespace["parse_mode"]
+        self.assertEqual(parse_mode("0755", "/mnt/cocalc"), 0o755)
+        self.assertEqual(parse_mode("700", "/mnt/cocalc"), 0o700)
+        self.assertEqual(parse_mode("1777", "/mnt/cocalc-scratch"), 0o1777)
+        for bad in ("4755", "2755", "6755", "7777", "04755", "1777", "17777", "0o755", "+x", "u+s",
+                    "755\n", " 755", "7_55", "-755", "", "75", "0x1ed", "٧٥٥"):
+            with self.subTest(mode=bad), self.assertRaises(ValueError):
+                parse_mode(bad, "/mnt/cocalc")
+        run = namespace["run"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "f").write_bytes(b"")
+            os.chmod(root / "f", 0o644)
+            for command, path in (("chmod", "f"), ("mkdir", "d")):
+                with self.subTest(command=command), self.assertRaises(ValueError):
+                    run([command, "--root", str(root), "--path", path, "--mode", "4755"], allowed_roots={str(root)})
+            self.assertEqual(stat.S_IMODE((root / "f").stat().st_mode), 0o644)
+            self.assertFalse((root / "d").exists())
+
+    def test_generic_chown_allows_only_listed_ids(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subuid = Path(tmpdir) / "subuid"
+            subgid = Path(tmpdir) / "subgid"
+            subuid.write_text("other:100000:65536\ncocalc-host:231072:65536\n2000:300000:10\nbad\n", encoding="utf-8")
+            subgid.write_text("cocalc-host:231072:65536\n", encoding="utf-8")
+            entry = mock.Mock(pw_uid=2000, pw_gid=2000)
+            with mock.patch.object(namespace["pwd"], "getpwnam", return_value=entry):
+                owners = namespace["owner_policy"]("cocalc-host", (str(subuid), str(subgid)))
+        parse_owner_id = namespace["parse_owner_id"]
+        for uid in ("2000", "231072", "296607", "300009", "1073741824", "1073807359"):
+            self.assertEqual(parse_owner_id(uid, "uid", owners["uid"]), int(uid))
+        for uid in ("0", "1", "1999", "2001", "100000", "231071", "296608", "300010", "1073741823",
+                    "1073807360", "4294967295", "-1", "2000 ", " 2000", "2000\n", "٢٠٠٠", ""):
+            with self.subTest(uid=uid), self.assertRaises(ValueError):
+                parse_owner_id(uid, "uid", owners["uid"])
+        with self.assertRaises(ValueError):
+            parse_owner_id("300000", "gid", owners["gid"])
+        root_entry = mock.Mock(pw_uid=0, pw_gid=0)
+        with mock.patch.object(namespace["pwd"], "getpwnam", return_value=root_entry):
+            with self.assertRaises(ValueError):
+                namespace["owner_policy"]("root")
+        run = namespace["run"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "d").mkdir()
+            for uid, gid in (("0", "0"), (str(os.getuid()), "0"), ("0", str(os.getgid()))):
+                with self.subTest(uid=uid, gid=gid), self.assertRaises(ValueError):
+                    run(
+                        ["chown", "--root", str(root), "--path", "d", "--uid", uid, "--gid", gid],
+                        allowed_roots={str(root)},
+                        owners=self.own_owners(),
+                    )
+
+    def test_generic_verbs_never_reach_rustic_secrets(self) -> None:
+        namespace = self.helper_namespace()
+        run = namespace["run"]
+        allowed = namespace["ALLOWED_ROOTS"]
+        secrets = "/var/lib/cocalc/star/project-host/0/secrets/rustic"
+        self.assertIn(secrets, allowed)
+        generic = [
+            ["chmod", "--path", "x.toml", "--mode", "600"],
+            ["chown", "--path", "x.toml", "--uid", "1", "--gid", "1"],
+            ["chattr-cow", "--path", "x"],
+            ["mkdir", "--path", "x", "--mode", "0755"],
+            ["rename", "--path", "x", "--dest", "y"],
+            ["rm", "--path", "x"],
+            ["rmdir", "--path", "x"],
+            ["truncate", "--path", "x", "--length", "0"],
+        ]
+        for args in generic:
+            with self.subTest(args=args), self.assertRaisesRegex(ValueError, "root is not allowed"):
+                run([args[0], "--root", secrets, *args[1:]], owners=self.own_owners())
+        with self.assertRaisesRegex(ValueError, "root is not allowed"):
+            run(["copy-tree-reflink", "--root", "/mnt/cocalc", "--path", "project-1",
+                 "--dest-root", secrets, "--dest", "x"])
+        check = namespace["check_generic_path"]
+        generic_roots = allowed - namespace["SECRET_ROOTS"]
+        # The same secrets as seen from /mnt/cocalc, and from /var/lib/cocalc.
+        for command, path in (
+            ("chmod", "data/secrets"),
+            ("chown", "data/secrets/rustic/project-1.toml"),
+            ("truncate", "data/secrets/rustic/x"),
+            ("mkdir", "data/secrets/rustic/x"),
+            ("rm", "data"),
+            ("rm", "."),
+            ("rename", "data"),
+            ("copy-tree-preserve", "."),
+            ("copy-tree-reflink", "data"),
+        ):
+            with self.subTest(command=command, path=path), self.assertRaises(ValueError):
+                check("/mnt/cocalc", path, command, generic_roots)
+        for path in ("star/project-host/0/secrets/rustic/x.toml", "star", ".", "other.img"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                check("/var/lib/cocalc", path, "truncate", generic_roots)
+        # Owning or opening up the image behind /mnt/cocalc is raw access.
+        for command in ("chown", "chmod", "chattr-cow", "rename", "rm", "mkdir", "copy-tree-reflink"):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                check("/var/lib/cocalc", "cocalc.img", command, generic_roots)
+        # The data filesystem's root itself stays root's (BEES, R1).
+        for command in ("chown", "chmod", "chattr-cow", "truncate"):
+            with self.subTest(command=command), self.assertRaisesRegex(ValueError, "itself"):
+                check("/mnt/cocalc", ".", command, generic_roots)
+        # Callers that stay allowed.
+        check("/mnt/cocalc", "project-1", "chown", generic_roots)
+        check("/mnt/cocalc", "data", "chmod", generic_roots)
+        check("/mnt/cocalc", "data/secrets-other", "rm", generic_roots)
+        check("/mnt/cocalc", "project-1", "rm", generic_roots)
+        check("/var/lib/cocalc", "cocalc.img", "truncate", generic_roots)
+        check("/var/lib/cocalc", "btrfs.img", "truncate", generic_roots)
+        # Rustic verbs keep reading profiles from the secrets root.
+        self.assertIn(secrets, allowed)
+
+    def test_generic_chown_chmod_refuse_path_tricks(self) -> None:
+        run = self.helper_run()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "root"
+            outside = base / "outside"
+            root.mkdir()
+            outside.mkdir()
+            target = outside / "target"
+            target.write_bytes(b"")
+            os.chmod(target, 0o600)
+            (root / "link").symlink_to(target)
+            (root / "dirlink").symlink_to(outside, target_is_directory=True)
+            roots = {str(root)}
+            owners = self.own_owners()
+            ids = ["--uid", str(os.getuid()), "--gid", str(os.getgid())]
+            for path in ("link", "dirlink/target", "../outside/target", "./link", "a//b", "/etc/passwd", ""):
+                for args in (["chmod", "--mode", "644"], ["chown", *ids]):
+                    with self.subTest(path=path, command=args[0]), self.assertRaises((OSError, ValueError)):
+                        run([args[0], "--root", str(root), "--path", path, *args[1:]],
+                            allowed_roots=roots, owners=owners)
+            for bad_root in (str(outside), str(root) + "/", str(root) + "/.", str(base / "root" / ".." / "outside")):
+                with self.subTest(root=bad_root), self.assertRaises(ValueError):
+                    run(["chmod", "--root", bad_root, "--path", "target", "--mode", "644"],
+                        allowed_roots=roots)
+            # A second hard link would reach an inode from outside its subtree.
+            os.link(target, root / "hardlink")
+            for args in (["chmod", "--mode", "644"], ["chown", *ids]):
+                with self.subTest(command=args[0]), self.assertRaisesRegex(ValueError, "hard link"):
+                    run([args[0], "--root", str(root), "--path", "hardlink", *args[1:]],
+                        allowed_roots=roots, owners=owners)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+
+    def test_storage_wrapper_has_no_loop_device_verbs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        self.assertNotIn("losetup", script)
+        self.assertNotIn("\n  losetup)", script)
+        # An unknown verb, such as losetup now, is denied.
+        self.assertIn('deny "unsupported-command" "$cmd"', script)
+        chown = script.split("\n  chown)\n", 1)[1].split("\n    ;;\n", 1)[0]
+        self.assertNotIn("/dev/loop", chown)
+        self.assertNotIn("/bin/chown", chown)
+        self.assertIn('path_helper chown --root "$ALLOWED_PATH_ROOT"', chown)
+
+        def function(name):
+            return name + "() {" + script.split(name + "() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+
+        harness = (
+            function("lexical_absolute_path_is_safe")
+            + function("set_allowed_path_parts")
+            + 'for p in "$@"; do if set_allowed_path_parts "$p"; then echo "allow $p $ALLOWED_PATH_ROOT"; '
+            + 'else echo "deny $p"; fi; done\n'
+        )
+        paths = ["/dev/loop0", "/dev/loop12", "/dev/sda", "/dev/loop-control", "/mnt/cocalc/x", "/var/lib/cocalc/cocalc.img"]
+        out = subprocess.run(
+            ["bash", "-c", harness, "_", *paths], check=True, capture_output=True, text=True
+        ).stdout.splitlines()
+        self.assertEqual(
+            out,
+            [
+                "deny /dev/loop0",
+                "deny /dev/loop12",
+                "deny /dev/sda",
+                "deny /dev/loop-control",
+                "allow /mnt/cocalc/x /mnt/cocalc",
+                "allow /var/lib/cocalc/cocalc.img /var/lib/cocalc",
+            ],
+        )
+        # mknod keeps its own loop-device check.
+        mknod = script.split("\n  mknod)\n", 1)[1].split("\n    ;;\n", 1)[0]
+        self.assertIn("^/dev/loop[0-9]+$", mknod)
+
+    # Every btrfs command line a caller sends (file-server/btrfs, project-host).
+    BTRFS_CALLER_SHAPES = [
+        ["subvolume", "create", "/mnt/cocalc/project-1"],
+        ["subvolume", "snapshot", "-r", "/mnt/cocalc/project-1", "/mnt/cocalc/project-1/.snapshots/s"],
+        ["subvolume", "snapshot", "/mnt/cocalc/a", "/mnt/cocalc/b"],
+        ["subvolume", "delete", "/mnt/cocalc/project-1/.snapshots/s"],
+        ["subvolume", "show", "/mnt/cocalc/project-1"],
+        ["subvolume", "list", "/mnt/cocalc"],
+        ["subvolume", "list", "-o", "/mnt/cocalc/project-1"],
+        ["subvolume", "list", "-u", "/mnt/cocalc"],
+        ["property", "get", "-ts", "/mnt/cocalc/s", "ro"],
+        ["property", "set", "-ts", "/mnt/cocalc/s", "ro", "true"],
+        ["property", "set", "-ts", "/mnt/cocalc/s", "ro", "false"],
+        ["filesystem", "show", "/mnt/cocalc"],
+        ["filesystem", "sync", "/mnt/cocalc"],
+        ["filesystem", "usage", "-b", "/mnt/cocalc"],
+        ["filesystem", "du", "-s", "/mnt/cocalc/project-1"],
+        ["qgroup", "show", "-prc", "--raw", "/mnt/cocalc"],
+        ["qgroup", "show", "-pcre", "/mnt/cocalc"],
+        ["qgroup", "show", "--sync", "-reF", "/mnt/cocalc"],
+        ["qgroup", "create", "1/7", "/mnt/cocalc"],
+        ["qgroup", "destroy", "1/7", "/mnt/cocalc"],
+        ["qgroup", "assign", "--no-rescan", "/mnt/cocalc/project-1", "1/7", "/mnt/cocalc"],
+        ["qgroup", "limit", "10G", "1/7", "/mnt/cocalc"],
+        ["qgroup", "limit", "1073741824", "/mnt/cocalc/v", "/mnt/cocalc"],
+        ["qgroup", "limit", "none", "1/7", "/mnt/cocalc"],
+        ["quota", "enable", "--simple", "/mnt/cocalc"],
+        ["quota", "disable", "/mnt/cocalc"],
+    ]
+
+    def test_btrfs_allows_only_caller_shapes(self) -> None:
+        parse_btrfs = self.helper_namespace()["parse_btrfs"]
+        for args in self.BTRFS_CALLER_SHAPES:
+            with self.subTest(args=args):
+                parse_btrfs(args)
+        for args in [
+            ["device", "add", "/mnt/cocalc/x", "/mnt/cocalc"],
+            ["device", "add", "-f", "/dev/sda", "/mnt/cocalc"],
+            ["device", "remove", "1", "/mnt/cocalc"],
+            ["replace", "start", "1", "/mnt/cocalc/x", "/mnt/cocalc"],
+            ["rescue", "zero-log", "/mnt/cocalc/x"],
+            ["check", "--repair", "/mnt/cocalc/x"],
+            ["restore", "/mnt/cocalc/img", "/mnt/cocalc/out"],
+            ["send", "-f", "/mnt/cocalc/out", "/mnt/cocalc/s"],
+            ["receive", "-f", "/mnt/cocalc/in", "/mnt/cocalc"],
+            ["balance", "start", "/mnt/cocalc"],
+            ["scrub", "start", "/mnt/cocalc"],
+            ["inspect-internal", "dump-tree", "/mnt/cocalc/x"],
+            ["filesystem", "resize", "1G", "/mnt/cocalc"],
+            ["filesystem", "defragment", "-r", "/mnt/cocalc"],
+            ["filesystem", "label", "/mnt/cocalc", "x"],
+            ["filesystem", "du", "/mnt/cocalc"],
+            ["subvolume", "set-default", "5", "/mnt/cocalc"],
+            ["subvolume", "delete", "-R", "/mnt/cocalc/x"],
+            ["subvolume", "delete", "--commit-after", "/mnt/cocalc/x"],
+            ["subvolume", "delete", "/mnt/cocalc/a", "/mnt/cocalc/b"],
+            ["subvolume", "create", "-i", "1/7", "/mnt/cocalc/x"],
+            ["subvolume", "snapshot", "-i", "1/7", "/mnt/cocalc/a", "/mnt/cocalc/b"],
+            ["property", "set", "-ts", "/mnt/cocalc/s", "compression", "zstd"],
+            ["property", "set", "/mnt/cocalc/s", "ro", "true"],
+            ["property", "set", "-ts", "/mnt/cocalc/s", "ro", "true", "-f"],
+            ["qgroup", "show", "-prc", "--raw", "--sync", "-x", "/mnt/cocalc"],
+            ["qgroup", "limit", "-e", "1/7", "/mnt/cocalc"],
+            ["qgroup", "limit", "10G;x", "1/7", "/mnt/cocalc"],
+            ["quota", "enable", "/mnt/cocalc"],
+            ["quota", "rescan", "/mnt/cocalc"],
+            ["--version"],
+            [],
+        ]:
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                parse_btrfs(args)
+
+    def btrfs_tree(self, root: Path) -> Path:
+        """A fake btrfs-progs that records its arguments, resolving pinned
+        /proc/self/fd paths to what they point at."""
+        fake = root / "fake-btrfs"
+        fake.write_text(
+            "#!/bin/sh\n"
+            'out="$FAKE_BTRFS_OUT"\n'
+            ': > "$out"\n'
+            'for a in "$@"; do case "$a" in /proc/self/fd/*) echo "fd:$(readlink "$a")" >> "$out" ;; '
+            '*) echo "$a" >> "$out" ;; esac; done\n',
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        return fake
+
+    def test_btrfs_pins_paths_without_symlinks(self) -> None:
+        namespace = self.helper_namespace()
+        namespace["require_btrfs"] = lambda _fd, _path: None
+        run_btrfs = namespace["run_btrfs"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "mnt"
+            outside = base / "outside"
+            (root / "project-1").mkdir(parents=True)
+            outside.mkdir()
+            (root / "link").symlink_to(outside, target_is_directory=True)
+            (root / "project-1" / "sub").symlink_to(outside, target_is_directory=True)
+            fake = self.btrfs_tree(base)
+            out = base / "out"
+            roots = (str(root),)
+            with mock.patch.dict(os.environ, {"FAKE_BTRFS_OUT": str(out)}):
+                code = run_btrfs(["qgroup", "assign", "--no-rescan", f"{root}/project-1", "1/7", str(root)],
+                                 roots=roots, executable=str(fake))
+                self.assertEqual(code, 0)
+                self.assertEqual(
+                    out.read_text().splitlines(),
+                    ["qgroup", "assign", "--no-rescan", f"fd:{root}/project-1", "1/7", f"fd:{root}"],
+                )
+                code = run_btrfs(["filesystem", "usage", "-b", str(root)], roots=roots, executable=str(fake))
+                self.assertEqual(out.read_text().splitlines(), ["filesystem", "usage", "-b", f"fd:{root}"])
+                out.unlink()
+                for path in (f"{root}/link", f"{root}/project-1/sub", f"{root}/project-1/sub/x", f"{root}/link/x"):
+                    for args in (["subvolume", "show", path], ["filesystem", "du", "-s", path]):
+                        with self.subTest(args=args), self.assertRaises(OSError):
+                            run_btrfs(args, roots=roots, executable=str(fake))
+                for path in (str(outside), "/etc", f"{root}/../outside", f"{root}/./project-1", "relative", f"{root}x"):
+                    with self.subTest(path=path), self.assertRaises(ValueError):
+                        run_btrfs(["subvolume", "show", path], roots=roots, executable=str(fake))
+                self.assertFalse(out.exists())
+
+    def test_btrfs_ioctls_use_the_pinned_parent(self) -> None:
+        namespace = self.helper_namespace()
+        namespace["require_btrfs"] = lambda _fd, _path: None
+        namespace["require_subvolume"] = lambda info, path: (
+            None if stat.S_ISDIR(info.st_mode) else namespace["fail"](f"Not a Btrfs subvolume: {path!r}")
+        )
+        run_btrfs = namespace["run_btrfs"]
+        calls = []
+
+        def ioctl(fd, request, arg):
+            name = bytes(arg[56:] if request == namespace["BTRFS_IOC_SNAP_CREATE_V2"] else arg[8:]).split(b"\0")[0]
+            calls.append((os.readlink(f"/proc/self/fd/{fd}"), request, name.decode()))
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "mnt"
+            outside = base / "outside"
+            (root / "p" / ".snapshots").mkdir(parents=True)
+            (outside / "victim").mkdir(parents=True)
+            (root / "plink").symlink_to(outside, target_is_directory=True)
+            (root / "p" / ".snapshots" / "slink").symlink_to(outside / "victim", target_is_directory=True)
+            roots = (str(root),)
+            with mock.patch.object(namespace["fcntl"], "ioctl", side_effect=ioctl), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO):
+                run_btrfs(["subvolume", "create", f"{root}/p/new"], roots=roots)
+                run_btrfs(["subvolume", "snapshot", "-r", f"{root}/p", f"{root}/p/.snapshots/s1"], roots=roots)
+                # An existing directory receives the snapshot under the source's name.
+                run_btrfs(["subvolume", "snapshot", f"{root}/p", f"{root}/p/.snapshots"], roots=roots)
+                (root / "p" / ".snapshots" / "old").mkdir()
+                run_btrfs(["subvolume", "delete", f"{root}/p/.snapshots/old"], roots=roots)
+                self.assertEqual(
+                    calls,
+                    [
+                        (f"{root}/p", namespace["BTRFS_IOC_SUBVOL_CREATE"], "new"),
+                        (f"{root}/p/.snapshots", namespace["BTRFS_IOC_SNAP_CREATE_V2"], "s1"),
+                        (f"{root}/p/.snapshots", namespace["BTRFS_IOC_SNAP_CREATE_V2"], "p"),
+                        (f"{root}/p/.snapshots", namespace["BTRFS_IOC_SNAP_DESTROY"], "old"),
+                    ],
+                )
+                calls.clear()
+                for args, error in [
+                    (["subvolume", "create", f"{root}/plink/x"], OSError),
+                    (["subvolume", "snapshot", f"{root}/plink", f"{root}/p/.snapshots/s2"], OSError),
+                    (["subvolume", "snapshot", f"{root}/p", f"{root}/plink/s2"], OSError),
+                    (["subvolume", "delete", f"{root}/plink/victim"], OSError),
+                    # A symlink as the name itself is not a subvolume.
+                    (["subvolume", "delete", f"{root}/p/.snapshots/slink"], ValueError),
+                    (["subvolume", "snapshot", f"{root}/p", f"{root}/p/.snapshots/slink"], ValueError),
+                    (["subvolume", "delete", str(root)], ValueError),
+                    (["property", "set", "-ts", f"{root}/plink", "ro", "true"], OSError),
+                ]:
+                    with self.subTest(args=args), self.assertRaises(error):
+                        run_btrfs(args, roots=roots)
+                self.assertEqual(calls, [])
+            self.assertTrue((outside / "victim").is_dir())
+
+    def test_btrfs_requires_a_btrfs_subvolume(self) -> None:
+        namespace = self.helper_namespace()
+        require_subvolume = namespace["require_subvolume"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plain = Path(tmpdir) / "plain"
+            plain.mkdir()
+            (Path(tmpdir) / "link").symlink_to(plain, target_is_directory=True)
+            for path in (plain, Path(tmpdir) / "link"):
+                with self.subTest(path=path), self.assertRaisesRegex(ValueError, "Not a Btrfs subvolume"):
+                    require_subvolume(os.lstat(path), str(path))
+        fake_subvolume = os.stat_result((stat.S_IFDIR | 0o755, 256, 0, 1, 0, 0, 0, 0, 0, 0))
+        require_subvolume(fake_subvolume, "/mnt/cocalc/x")
+        # procfs is never btrfs (overlayfs, which passes btrfs ioctls through
+        # to its upper layer, is refused the same way).
+        fd = os.open("/proc", os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with self.assertRaisesRegex(ValueError, "Not a Btrfs filesystem"):
+                namespace["require_btrfs"](fd, "/proc")
+        finally:
+            os.close(fd)
+
+    @unittest.skipUnless(os.environ.get("COCALC_TEST_BTRFS_DIR"), "needs a btrfs directory")
+    def test_btrfs_ioctls_on_real_btrfs(self) -> None:
+        namespace = self.helper_namespace()
+        run_btrfs = namespace["run_btrfs"]
+        with tempfile.TemporaryDirectory(dir=os.environ["COCALC_TEST_BTRFS_DIR"]) as tmpdir:
+            root = str(Path(tmpdir).resolve())
+            roots = (root,)
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                run_btrfs(["subvolume", "create", f"{root}/sv"], roots=roots)
+                run_btrfs(["subvolume", "snapshot", "-r", f"{root}/sv", f"{root}/ro"], roots=roots)
+                run_btrfs(["subvolume", "snapshot", f"{root}/sv", f"{root}/rw"], roots=roots)
+                run_btrfs(["property", "get", "-ts", f"{root}/ro", "ro"], roots=roots)
+                run_btrfs(["property", "get", "-ts", f"{root}/rw", "ro"], roots=roots)
+                run_btrfs(["property", "set", "-ts", f"{root}/rw", "ro", "true"], roots=roots)
+                run_btrfs(["property", "get", "-ts", f"{root}/rw", "ro"], roots=roots)
+                run_btrfs(["property", "set", "-ts", f"{root}/rw", "ro", "false"], roots=roots)
+                with self.assertRaises(FileExistsError):
+                    run_btrfs(["subvolume", "create", f"{root}/sv"], roots=roots)
+            self.assertEqual(
+                [line for line in out.getvalue().splitlines() if line.startswith("ro=")],
+                ["ro=true", "ro=false", "ro=true"],
+            )
+            self.assertEqual(Path(f"{root}/sv").stat().st_ino, 256)
+            os.mkdir(f"{root}/plain")
+            with self.assertRaisesRegex(ValueError, "Not a Btrfs subvolume"):
+                run_btrfs(["subvolume", "delete", f"{root}/plain"], roots=roots)
+            for name in ("ro", "rw", "sv"):
+                subprocess.run(["btrfs", "property", "set", "-ts", f"{root}/{name}", "ro", "false"],
+                               capture_output=True)
+                subprocess.run(["btrfs", "subvolume", "delete", f"{root}/{name}"], capture_output=True)
+
+    def test_mkfs_btrfs_refuses_a_concurrent_run(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with open(root / "cocalc.img", "wb") as f:
+                f.truncate(1 << 20)
+            held = os.open(root / "cocalc.img", os.O_RDWR)
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                with self.assertRaisesRegex(ValueError, "already running"):
+                    namespace["run_mkfs_btrfs"](
+                        ["mkfs-btrfs", "--root", str(root), "--path", "cocalc.img"],
+                        image_root=str(root), owner_uid=os.getuid(), executable="/bin/false",
+                    )
+            finally:
+                os.close(held)
+
+    def test_mkfs_btrfs_only_on_a_new_image(self) -> None:
+        namespace = self.helper_namespace()
+        run_mkfs = namespace["run_mkfs_btrfs"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "lib"
+            root.mkdir()
+            fake = self.btrfs_tree(base)
+            out = base / "out"
+            image = root / "cocalc.img"
+            kwargs = {"image_root": str(root), "owner_uid": os.getuid(), "executable": str(fake)}
+            args = ["mkfs-btrfs", "--root", str(root), "--path", "cocalc.img"]
+            with open(image, "wb") as f:
+                f.truncate(1 << 20)
+            with mock.patch.dict(os.environ, {"FAKE_BTRFS_OUT": str(out)}):
+                self.assertEqual(run_mkfs(args, **kwargs), 0)
+                self.assertEqual(out.read_text().splitlines(), [f"fd:{image}"])
+                out.unlink()
+                refused = []
+                # An image with data (an existing filesystem) is never formatted.
+                image.write_bytes(b"x" * 8192)
+                refused.append(("data", args))
+                for label, argv in refused:
+                    with self.subTest(label), self.assertRaises(ValueError):
+                        run_mkfs(argv, **kwargs)
+                image.unlink()
+                outside = base / "victim"
+                with open(outside, "wb") as f:
+                    f.truncate(1 << 20)
+                image.symlink_to(outside)
+                with self.assertRaises(OSError):
+                    run_mkfs(args, **kwargs)
+                image.unlink()
+                os.link(outside, image)
+                with self.assertRaisesRegex(ValueError, "new, empty image"):
+                    run_mkfs(args, **kwargs)
+                image.unlink()
+                image.mkdir()
+                with self.assertRaises(OSError):
+                    run_mkfs(args, **kwargs)
+                image.rmdir()
+                with open(image, "wb") as f:
+                    f.truncate(1 << 20)
+                with self.assertRaisesRegex(ValueError, "new, empty image"):
+                    run_mkfs(args, **{**kwargs, "owner_uid": os.getuid() + 1})
+                for argv in (
+                    ["mkfs-btrfs", "--root", str(root), "--path", "other.img"],
+                    ["mkfs-btrfs", "--root", str(base), "--path", "lib/cocalc.img"],
+                    ["mkfs-btrfs", "--root", str(root), "--path", "cocalc.img", "--force", "x"],
+                    ["mkfs-btrfs", "--root", str(root)],
+                ):
+                    with self.subTest(argv=argv), self.assertRaises(ValueError):
+                        run_mkfs(argv, **kwargs)
+                self.assertFalse(out.exists())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        branch = script.split("\n  mkfs.btrfs)\n", 1)[1].split("\n    ;;\n", 1)[0]
+        self.assertIn('[ "$#" -ne 1 ]', branch)
+        self.assertIn("cocalc-runtime-storage-path-helper mkfs-btrfs", branch)
+        self.assertNotIn("exec /usr/sbin/mkfs.btrfs", branch)
+
+    def wrapper_function(self, script: str, name: str) -> str:
+        return name + "() {" + script.split("\n" + name + "() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+
+    def test_pin_exec_reenters_with_a_pinned_tree(self) -> None:
+        namespace = self.helper_namespace()
+        run_pin_exec = namespace["run_pin_exec"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "mnt"
+            (root / "tree").mkdir(parents=True)
+            (base / "outside").mkdir()
+            (root / "link").symlink_to(base / "outside", target_is_directory=True)
+            out = base / "out"
+            fake = base / "fake-wrapper"
+            fake.write_text(
+                "#!/bin/sh\n"
+                f'echo "$1 $(readlink "$2") sudo=${{SUDO_UID:-none}}" > {out}\n',
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {"SUDO_UID": "2000", "SUDO_USER": "cocalc-host"}):
+                for verb in ("du-bytes", "rootfs-manifest", "tar-sha256-tree"):
+                    args = ["pin-exec", "--root", str(root), "--path", "tree", "--verb", verb]
+                    self.assertEqual(run_pin_exec(args, allowed_roots={str(root)}, wrapper=str(fake)), 0)
+                    self.assertEqual(out.read_text().split(), [f"_{verb}-pinned", f"{root}/tree", "sudo=none"])
+                out.unlink()
+                for path, verb, error in [
+                    ("link", "du-bytes", OSError),
+                    ("link/x", "rootfs-manifest", OSError),
+                    ("../outside", "du-bytes", ValueError),
+                    ("tree", "chown", ValueError),
+                    ("tree", "_du-bytes-pinned", ValueError),
+                ]:
+                    with self.subTest(path=path, verb=verb), self.assertRaises(error):
+                        run_pin_exec(["pin-exec", "--root", str(root), "--path", path, "--verb", verb],
+                                     allowed_roots={str(root)}, wrapper=str(fake))
+                with self.assertRaises(ValueError):
+                    run_pin_exec(["pin-exec", "--root", str(base), "--path", "outside", "--verb", "du-bytes"],
+                                 allowed_roots={str(root)}, wrapper=str(fake))
+                self.assertFalse(out.exists())
+
+    def test_pinned_verbs_refuse_sudo_and_unpinned_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        harness = (
+            'deny() { echo "DENY $1"; exit 2; }\ncmd=_du-bytes-pinned\n'
+            + self.wrapper_function(script, "enter_pinned_tree")
+            + 'enter_pinned_tree "$1"; echo "OK $(pwd -P)"\n'
+        )
+
+        def enter(path, env=None, fd_dir=None):
+            fds = ()
+            if fd_dir is not None:
+                fd = os.open(fd_dir, os.O_PATH | os.O_DIRECTORY)
+                fds = (fd,)
+                path = path.format(fd=fd)
+            try:
+                clean = {k: v for k, v in os.environ.items() if not k.startswith("SUDO_")}
+                return subprocess.run(
+                    ["bash", "-c", harness, "_", path], capture_output=True, text=True,
+                    env={**clean, **(env or {})}, pass_fds=fds,
+                ).stdout.strip()
+            finally:
+                for fd in fds:
+                    os.close(fd)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real = str(Path(tmpdir).resolve())
+            self.assertEqual(enter("/proc/self/fd/{fd}", fd_dir=tmpdir), f"OK {real}")
+            self.assertEqual(enter("/proc/self/fd/{fd}", {"SUDO_UID": "2000"}, fd_dir=tmpdir), "DENY pinned-verb-not-allowed")
+            self.assertEqual(enter("/proc/self/fd/{fd}", {"SUDO_COMMAND": "x"}, fd_dir=tmpdir), "DENY pinned-verb-not-allowed")
+            for path in ("/proc/self/fd/0", "/proc/self/fd/2", tmpdir, "/proc/self/fd/3/..", "/proc/1/fd/3", "/proc/self/fd/99"):
+                with self.subTest(path=path):
+                    self.assertTrue(enter(path).startswith("DENY pinned-path-invalid"), enter(path))
+        for verb in ("du-bytes", "rootfs-manifest", "tar-sha256-tree"):
+            branch = script.split(f"\n  {verb}|_{verb}-pinned)\n", 1)[1].split("\n    ;;\n", 1)[0]
+            with self.subTest(verb=verb):
+                self.assertIn(f'if [ "$cmd" = "{verb}" ]; then\n      pin_tree_and_reenter "$1"', branch)
+                self.assertLess(branch.index("pin_tree_and_reenter"), branch.index('enter_pinned_tree "$1"'))
+                self.assertNotIn("check_args", branch)
+        self.assertIn("exec /usr/bin/du -sb .", script)
+
+    def test_bees_verbs_take_only_the_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        bees = script.split("\n  bees)\n", 1)[1].split('    require_bees_mountpoint "$mountpoint"', 1)[0]
+        harness = 'deny() { echo "DENY $1"; exit 2; }\n' + bees + 'echo "OK $mountpoint"\n'
+
+        def check(*args):
+            return subprocess.run(["bash", "-c", harness, "_", *args], capture_output=True, text=True).stdout.strip()
+
+        self.assertEqual(check("-v", "6", "/mnt/cocalc"), "OK /mnt/cocalc")
+        self.assertEqual(check("-v", "6", "-c", "4", "/mnt/cocalc"), "OK /mnt/cocalc")
+        for args in (
+            ["/mnt/cocalc"],
+            ["-v", "6"],
+            ["-v", "x", "/mnt/cocalc"],
+            ["-v", "6", "-c", "0", "/mnt/cocalc"],
+            ["-v", "6", "--strip-paths", "/mnt/cocalc"],
+            ["-v", "6", "-c", "4", "-x", "1", "/mnt/cocalc"],
+            ["-v", "6", "-c", "4", "/mnt/cocalc", "/etc"],
+        ):
+            with self.subTest(args=args):
+                self.assertEqual(check(*args), "DENY bees-args-invalid")
+        functions = (
+            self.wrapper_function(script, "root_only_directory")
+            + self.wrapper_function(script, "require_bees_mountpoint")
+            + self.wrapper_function(script, "require_bees_home")
+        )
+        # As root would see it: owner 0 and a given mode.
+        fake_stat = 'stat() { case "$2" in %u) echo 0 ;; %a) echo "$FAKE_MODE" ;; esac; }\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / ".beeshome").mkdir()
+            for mode, expected in (("755", "OK"), ("700", "OK"), ("775", "DENY"), ("757", "DENY"), ("1777", "DENY")):
+                with self.subTest(mode=mode):
+                    out = subprocess.run(
+                        ["bash", "-c", 'deny() { echo "DENY $1"; exit 2; }\n' + fake_stat + functions
+                         + 'require_bees_home "$1"; echo OK', "_", tmpdir],
+                        capture_output=True, text=True, env={**os.environ, "FAKE_MODE": mode},
+                    ).stdout.strip()
+                    self.assertTrue(out.startswith(expected), out)
+        harness = 'deny() { echo "DENY $1"; exit 2; }\n' + functions + '"$1" "$2"; echo OK\n'
+
+        def require(name, path):
+            return subprocess.run(["bash", "-c", harness, "_", name, path], capture_output=True, text=True).stdout.strip()
+
+        for path in ("/mnt/cocalc/x", "/mnt/cocalc/", "/tmp", "/mnt/cocalc-scratch"):
+            with self.subTest(path=path):
+                self.assertEqual(require("require_bees_mountpoint", path), "DENY bees-mountpoint-not-allowed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Not root-owned (the tests do not run as root), or a symlink.
+            (Path(tmpdir) / ".beeshome").mkdir()
+            self.assertEqual(require("require_bees_home", tmpdir), "DENY bees-home-invalid")
+            other = Path(tmpdir) / "other"
+            (other).mkdir()
+            (other / ".beeshome").symlink_to("/", target_is_directory=True)
+            self.assertEqual(require("require_bees_home", str(other)), "DENY bees-home-invalid")
+        self.assertEqual(require("require_bees_home", "/"), "DENY bees-home-invalid")
+        for verb in ("reconcile-bees", "bees-status", "bees-gate", "bees"):
+            branch = script.split(f"\n  {verb})\n", 1)[1].split("\n    ;;\n", 1)[0]
+            with self.subTest(verb=verb):
+                self.assertIn('require_bees_mountpoint "$mountpoint"', branch)
+                self.assertNotIn("check_args", branch)
+                self.assertNotIn("/mnt/cocalc/*", branch)
+
+    def test_wrapper_check_args_only_for_lexical_uses(self) -> None:
+        # After 010, check_args no longer guards a root tool that opens the
+        # path: what is left are lexical uses (sandbox roots, df's statfs).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        users = []
+        branch = None
+        for line in script.splitlines():
+            if re.match(r"^  [a-z_|.-]+\)$", line):
+                branch = line.strip()
+            if branch and re.search(r"\bcheck_(qgroup_)?args \"", line):
+                users.append(branch)
+        self.assertEqual(sorted(set(users)), ["df)", "sandbox-rm)", "sandbox-rmdir)"])
+
+    def test_image_truncate_only_creates(self) -> None:
+        namespace = self.helper_namespace()
+        run = namespace["run"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            namespace["CREATE_ONLY_ROOTS"] = {str(root)}
+            namespace["GENERIC_ONLY_PATHS"] = {str(root): ({"cocalc.img"}, {"truncate"})}
+            args = ["truncate", "--root", str(root), "--path", "cocalc.img", "--length"]
+            run([*args, "4096"], allowed_roots={str(root)})
+            self.assertEqual((root / "cocalc.img").stat().st_size, 4096)
+            # An existing (possibly mounted) image can't be shrunk or regrown.
+            with self.assertRaises(FileExistsError):
+                run([*args, "0"], allowed_roots={str(root)})
+            self.assertEqual((root / "cocalc.img").stat().st_size, 4096)
+            for command in (["chmod", "--mode", "666"], ["chown", "--uid", str(os.getuid()), "--gid", str(os.getgid())]):
+                with self.subTest(command=command[0]), self.assertRaises(ValueError):
+                    run([command[0], "--root", str(root), "--path", "cocalc.img", *command[1:]],
+                        allowed_roots={str(root)}, owners=self.own_owners())
+
+    def test_path_helper_install_names_the_runtime_user(self) -> None:
+        self.assertIn('RUNTIME_USER = "__RUNTIME_USER__"', bootstrap.RUNTIME_STORAGE_PATH_HELPER)
+        source = inspect.getsource(bootstrap)
+        self.assertRegex(
+            source,
+            r'storage_path_helper = RUNTIME_STORAGE_PATH_HELPER\.replace\([^)]*\)\.replace\("__RUNTIME_USER__", cfg\.ssh_user\)',
+        )
 
     def test_rustic_no_cache_is_restricted_to_project_restore(self) -> None:
         parse_rustic = self.helper_namespace()["parse_rustic"]
@@ -525,6 +1268,10 @@ secret_access_key = "secret"
             self.assertEqual(lines[0], str(source))
             self.assertIn("backup", lines)
             self.assertIn("--host", lines)
+            # root's cache is pinned by the argv, not only by the env and HOME
+            self.assertEqual(
+                lines[lines.index("--cache-dir") + 1], "/root/.cache/rustic"
+            )
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
             run_rustic(
@@ -545,7 +1292,11 @@ secret_access_key = "secret"
             restore_args = invocation.read_text(encoding="utf-8").splitlines()
             self.assertIn("restore", restore_args)
             self.assertIn("--no-cache", restore_args)
+            # rustic rejects --cache-dir together with --no-cache
+            self.assertNotIn("--cache-dir", restore_args)
             self.assertIn("backup-id:data", restore_args)
+            # Existing files are read, never trusted by size and mtime.
+            self.assertEqual(restore_args[restore_args.index("restore") + 1], "--verify-existing")
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
             outside = root / "outside-profile.toml"
@@ -1480,6 +2231,1301 @@ class BootstrapSharedScratchTest(unittest.TestCase):
                 best_effort_calls,
             )
             self.assertEqual(chmod_calls, [(str(mount), 0o1777)])
+
+
+def bootstrap_runtime_helper_names() -> list[str]:
+    return [
+        "ctl",
+        "start-project-host",
+        "logs",
+        "acp-status",
+        "acp-logs",
+        "logs-cf",
+        "ctl-cf",
+    ]
+
+
+
+class BootstrapStateRootTest(unittest.TestCase):
+    """Finding 017: bootstrap state is root's alone; the old state dir under
+    the runtime user's data dir is retired only if it looks untouched."""
+
+    def setUp(self) -> None:
+        self.state = tempfile.mkdtemp(prefix="bootstrap-state-test-")
+        self.data = tempfile.mkdtemp(prefix="bootstrap-data-test-")
+        self.saved = (bootstrap.BOOTSTRAP_STATE_ROOT, bootstrap.DATA_ROOT)
+        bootstrap.BOOTSTRAP_STATE_ROOT = self.state
+        bootstrap.DATA_ROOT = self.data
+        self.logged: list[str] = []
+        self.log_patch = mock.patch.object(
+            bootstrap, "log_line", lambda _cfg, line: self.logged.append(line)
+        )
+        self.log_patch.start()
+
+    def tearDown(self) -> None:
+        self.log_patch.stop()
+        bootstrap.BOOTSTRAP_STATE_ROOT, bootstrap.DATA_ROOT = self.saved
+        shutil.rmtree(self.state, ignore_errors=True)
+        shutil.rmtree(self.data, ignore_errors=True)
+
+    def cfg(self, tmpdir: str, *, new_root: bool = True):
+        cfg = make_cfg(tmpdir)
+        if new_root:
+            cfg = replace(cfg, bootstrap_dir=os.path.join(self.state, "bootstrap"))
+        return cfg
+
+    def old_tree(self) -> Path:
+        old = Path(self.data) / ".host-bootstrap"
+        (old / "bootstrap").mkdir(parents=True)
+        (old / "tmp").mkdir()
+        (old / "bootstrap" / "bootstrap.py").write_text("print()\n")
+        (old / "bootstrap" / "bootstrap-desired-state.json").write_text("{}")
+        for d in (old, old / "bootstrap", old / "tmp"):
+            d.chmod(0o755)
+        return old
+
+    def as_root(self):
+        return mock.patch.object(bootstrap.os, "geteuid", lambda: 0)
+
+    def test_root_only_state_paths(self) -> None:
+        self.assertTrue(bootstrap.in_root_only_bootstrap_state(self.state))
+        self.assertTrue(
+            bootstrap.in_root_only_bootstrap_state(os.path.join(self.state, "bootstrap"))
+        )
+        self.assertFalse(bootstrap.in_root_only_bootstrap_state(self.state + "-x"))
+        self.assertFalse(
+            bootstrap.in_root_only_bootstrap_state("/mnt/cocalc/data/.host-bootstrap")
+        )
+
+    def test_state_in_the_root_only_root_is_not_handed_to_the_bootstrap_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                self.cfg(tmpdir),
+                bootstrap_tmp=os.path.join(self.state, "tmp"),
+                log_file=os.path.join(self.state, "bootstrap", "bootstrap.log"),
+            )
+            chowned: list[list[str]] = []
+            with mock.patch.object(
+                bootstrap,
+                "chown_paths_best_effort",
+                lambda _cfg, _owner, paths, _desc, **_kw: chowned.append(list(paths)),
+            ):
+                bootstrap.ensure_bootstrap_paths(cfg)
+            self.assertEqual(chowned, [[cfg.bootstrap_root]])
+
+    def test_old_style_state_is_still_handed_over(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self.cfg(tmpdir, new_root=False)
+            chowned: list[list[str]] = []
+            with mock.patch.object(
+                bootstrap,
+                "chown_paths_best_effort",
+                lambda _cfg, _owner, paths, _desc, **_kw: chowned.append(list(paths)),
+            ):
+                bootstrap.ensure_bootstrap_paths(cfg)
+            self.assertIn(cfg.bootstrap_dir, chowned[0])
+
+    def test_writes_the_root_only_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shutil.rmtree(self.state)
+            with self.as_root(), mock.patch.object(bootstrap.os, "fchown"):
+                bootstrap.ensure_root_bootstrap_done_marker(self.cfg(tmpdir))
+            marker = Path(self.state) / ".bootstrap_done"
+            self.assertTrue(marker.is_file())
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(Path(self.state).stat().st_mode), 0o700)
+
+    def test_marker_refuses_a_symlinked_state_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            elsewhere = Path(tmpdir) / "elsewhere"
+            elsewhere.mkdir()
+            shutil.rmtree(self.state)
+            os.symlink(elsewhere, self.state)
+            with self.as_root(), self.assertRaises(bootstrap.UnsafeRuntimePath):
+                bootstrap.ensure_root_bootstrap_done_marker(self.cfg(tmpdir))
+            self.assertEqual(list(elsewhere.iterdir()), [])
+            os.unlink(self.state)
+
+    def test_first_boot_writes_only_the_root_only_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy = os.path.join(tmpdir, "var-lib-cocalc", ".bootstrap_done")
+            in_data = os.path.join(self.data, ".bootstrap_done")
+            cfg = replace(self.cfg(tmpdir), bootstrap_done_paths=[in_data, legacy])
+            with mock.patch.object(bootstrap, "ensure_root_bootstrap_done_marker") as root_marker:
+                bootstrap.mark_bootstrap_done(cfg)
+            root_marker.assert_called_once()
+            self.assertFalse(os.path.exists(legacy))
+            self.assertFalse(os.path.exists(in_data))
+
+    def problem(
+        self,
+        *,
+        runtime_uid: int = -1,
+        runtime_gid: int = -1,
+        admin: set[int] | None = None,
+    ):
+        fd = os.open(
+            os.path.join(self.data, ".host-bootstrap"),
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            return bootstrap.old_bootstrap_state_problem(
+                fd,
+                runtime_uid,
+                runtime_gid,
+                admin if admin is not None else {os.getuid()},
+            )
+        finally:
+            os.close(fd)
+
+    def test_old_tree_shape(self) -> None:
+        old = self.old_tree()
+        self.assertIsNone(self.problem())
+        self.assertIn("runtime user", self.problem(runtime_uid=os.getuid()))
+        self.assertIn("owned by uid", self.problem(admin={0}))
+        # the top's own group counts, not only its children's
+        self.assertEqual(
+            self.problem(runtime_gid=os.getgid()), "its group is the runtime user's"
+        )
+        old.chmod(0o775)
+        self.assertEqual(self.problem(), "writable by group or others")
+        old.chmod(0o755)
+        (old / "tmp").chmod(0o777)
+        self.assertIn("tmp is writable by group or others", self.problem())
+        (old / "tmp").chmod(0o755)
+        (old / "bootstrap" / "json.py").write_text("x")
+        self.assertEqual(self.problem(), "unexpected entry bootstrap/json.py")
+        (old / "bootstrap" / "json.py").unlink()
+        (old / "bootstrap" / "__pycache__").mkdir()
+        self.assertEqual(self.problem(), "unexpected entry bootstrap/__pycache__")
+        (old / "bootstrap" / "__pycache__").rmdir()
+        os.symlink("/etc/hostname", old / "bootstrap" / "bootstrap.log")
+        self.assertEqual(self.problem(), "bootstrap/bootstrap.log is not a regular file")
+        (old / "bootstrap" / "bootstrap.log").unlink()
+        # an interrupted atomic write is still bootstrap's own
+        (old / "bootstrap" / ".bootstrap-state.json.ab12_xyz.tmp").write_text("{}")
+        self.assertIsNone(self.problem())
+
+    def test_the_layout_found_on_prod_passes(self) -> None:
+        # names and modes from us-south-1 (finding-008/host-bootstrap-names-20261101.txt)
+        old = Path(self.data) / ".host-bootstrap"
+        (old / "bootstrap").mkdir(parents=True)
+        (old / "tmp").mkdir()
+        for name, mode in (
+            ("bootstrap-desired-state.json", 0o644),
+            ("bootstrap-host-facts.json", 0o644),
+            ("bootstrap-state.json", 0o644),
+            ("bootstrap.lock", 0o600),
+            ("bootstrap.log", 0o644),
+            ("bootstrap.payload.sh", 0o700),
+            ("bootstrap.py", 0o755),
+            ("bootstrap.py.sha256", 0o644),
+        ):
+            (old / "bootstrap" / name).write_text("x")
+            (old / "bootstrap" / name).chmod(mode)
+        old.chmod(0o755)
+        (old / "bootstrap").chmod(0o700)
+        (old / "tmp").chmod(0o755)
+        self.assertIsNone(self.problem())
+
+    def test_only_the_old_bootstrap_layout_passes(self) -> None:
+        old = self.old_tree()
+        (old / "private-release-r1").mkdir()
+        self.assertEqual(self.problem(), "unexpected entries ['private-release-r1']")
+        (old / "private-release-r1").rmdir()
+        (old / "tmp" / "download.tar.xz").write_text("x")
+        self.assertEqual(self.problem(), "unexpected entry tmp/download.tar.xz")
+        (old / "tmp" / "download.tar.xz").unlink()
+        (old / "bootstrap" / "bootstrap.py").unlink()
+        self.assertEqual(self.problem(), "no bootstrap/bootstrap.py")
+
+    def test_a_tree_moved_in_before_the_run_is_left_intact(self) -> None:
+        # the data dir's owner moves an unrelated admin-owned tree (no runtime
+        # ids, nothing writable, no python) to the old name before the run
+        other = Path(self.data) / ".host-bootstrap"
+        (other / "docs").mkdir(parents=True)
+        (other / "docs" / "precious.txt").write_text("keep")
+        for d in (other, other / "docs"):
+            d.chmod(0o755)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.remove(self.cfg(tmpdir))
+        self.assertEqual((other / "docs" / "precious.txt").read_text(), "keep")
+        self.assertTrue(
+            any("unexpected entries ['docs']" in line for line in self.logged)
+        )
+        # also one that mimics the layout but lacks bootstrap.py
+        shutil.rmtree(other)
+        (other / "bootstrap").mkdir(parents=True)
+        (other / "bootstrap" / "bootstrap.log").write_text("keep")
+        for d in (other, other / "bootstrap"):
+            d.chmod(0o755)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.remove(self.cfg(tmpdir))
+        self.assertEqual((other / "bootstrap" / "bootstrap.log").read_text(), "keep")
+
+    def remove(self, cfg) -> None:
+        user = pwd.struct_passwd(
+            (cfg.bootstrap_user, "x", os.getuid(), os.getgid(), "", "/", "/bin/sh")
+        )
+        with self.as_root(), mock.patch.object(
+            bootstrap, "runtime_file_owner", lambda _cfg: (99999, 99999)
+        ), mock.patch.object(bootstrap.pwd, "getpwnam", lambda _name: user):
+            bootstrap.remove_old_bootstrap_state(cfg)
+
+    def test_removes_an_untouched_old_state_dir(self) -> None:
+        old = self.old_tree()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.remove(self.cfg(tmpdir))
+        self.assertFalse(old.exists())
+        self.assertTrue(any("removed old bootstrap dir" in line for line in self.logged))
+
+    def test_keeps_a_tampered_old_state_dir_and_says_so(self) -> None:
+        old = self.old_tree()
+        victim = Path(tempfile.mkdtemp()) / "victim"
+        victim.write_text("keep")
+        os.symlink(victim, old / "bootstrap" / "bootstrap.log")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.remove(self.cfg(tmpdir))
+        self.assertTrue(old.is_dir())
+        self.assertEqual(victim.read_text(), "keep")
+        self.assertTrue(
+            any("refusing to remove old bootstrap dir" in line for line in self.logged)
+        )
+
+    def test_refuses_a_symlinked_or_non_directory_old_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            elsewhere = Path(tmpdir) / "elsewhere"
+            elsewhere.mkdir()
+            (elsewhere / "precious").write_text("keep")
+            os.symlink(elsewhere, Path(self.data) / ".host-bootstrap")
+            self.remove(self.cfg(tmpdir))
+            self.assertEqual((elsewhere / "precious").read_text(), "keep")
+            os.unlink(Path(self.data) / ".host-bootstrap")
+            (Path(self.data) / ".host-bootstrap").write_text("a file")
+            self.remove(self.cfg(tmpdir))
+            self.assertTrue((Path(self.data) / ".host-bootstrap").is_file())
+        self.assertEqual(
+            sum("refusing to remove old bootstrap dir" in line for line in self.logged), 2
+        )
+
+    def test_a_swap_after_the_check_deletes_nothing_outside_the_checked_tree(self) -> None:
+        old = self.old_tree()
+        moved = Path(self.data) / "moved-aside"
+        real_check = bootstrap.old_bootstrap_state_problem
+
+        def check_then_swap(*args):
+            problem = real_check(*args)
+            # the runtime user swaps another directory in under the name
+            old.rename(moved)
+            old.mkdir()
+            (old / "precious").write_text("keep")
+            return problem
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "old_bootstrap_state_problem", check_then_swap
+        ):
+            self.remove(self.cfg(tmpdir))
+        # the swapped-in directory is untouched; only the checked tree was emptied
+        self.assertEqual((old / "precious").read_text(), "keep")
+        self.assertEqual(list(moved.iterdir()), [])
+        self.assertTrue(
+            any("replaced while being removed" in line for line in self.logged)
+        )
+
+    def test_entries_appearing_during_removal_are_unlinked_not_followed(self) -> None:
+        old = self.old_tree()
+        victim_dir = Path(tempfile.mkdtemp())
+        (victim_dir / "precious").write_text("keep")
+        real_remove = bootstrap.remove_dir_contents_at
+        injected = []
+
+        def remove_with_injection(fd, dev):
+            # after the check passed: entries appear while the tree is removed
+            if not injected:
+                injected.append(True)
+                os.symlink(victim_dir, old / "bootstrap" / "injected-link")
+                os.symlink(victim_dir / "precious", old / "tmp" / "injected-file-link")
+            return real_remove(fd, dev)
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "remove_dir_contents_at", remove_with_injection
+        ):
+            self.remove(self.cfg(tmpdir))
+        self.assertTrue(injected)
+        self.assertEqual((victim_dir / "precious").read_text(), "keep")
+        self.assertFalse(old.exists())
+
+    def test_keeps_the_old_state_dir_while_it_is_still_in_use(self) -> None:
+        old = self.old_tree()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                self.cfg(tmpdir, new_root=False),
+                bootstrap_dir=str(old / "bootstrap"),
+            )
+            self.remove(cfg)
+        self.assertTrue(old.is_dir())
+
+    def test_finish_never_fails_the_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "ensure_root_bootstrap_done_marker", side_effect=OSError("boom")
+        ), mock.patch.object(
+            bootstrap, "remove_old_bootstrap_state", side_effect=RuntimeError("bang")
+        ):
+            bootstrap.finish_successful_run(self.cfg(tmpdir))
+        self.assertEqual(
+            sum("failed (ignored)" in line for line in self.logged), 2
+        )
+
+
+class FetchToolsAreAdminOnlyTest(unittest.TestCase):
+    def test_fetch_tools_run_bootstrap_as_root_and_not_from_runtime_bin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            bin_dir = Path(tmpdir) / "runtime-root" / "bin"
+            bin_dir.mkdir(parents=True)
+            (bin_dir / "fetch-tools.sh").write_text("old runtime copy\n")
+            RuntimeTreeWriteTest().write_runtime_files(tmpdir, cfg)
+            self.assertEqual(sorted(p.name for p in bin_dir.glob("fetch-*")), [])
+            admin_bin = Path(cfg.bootstrap_root) / "bin"
+            for name, only in (
+                ("fetch-project-bundle.sh", "project_bundle"),
+                ("fetch-project-host.sh", "project_host_bundle"),
+                ("fetch-tools.sh", "tools_bundle"),
+            ):
+                script = (admin_bin / name).read_text()
+                self.assertIn('exec sudo -n "$0" "$@"', script)
+                self.assertIn(
+                    f'exec python3 -I "{cfg.bootstrap_dir}/bootstrap.py" --bootstrap-dir "{cfg.bootstrap_dir}" --only {only}',
+                    script,
+                )
+                self.assertNotIn("RUNTIME_SCRIPT", script)
+
+
+class FirstBootKeepsExistingDisksTest(unittest.TestCase):
+    """First boot is also what a host with a recreated boot disk and its old
+    data disk runs: it must not format or replace existing filesystems."""
+
+    def run_setup_btrfs(self, cfg, fstype: str, *, image_exists: bool = True):
+        commands: list[list[str]] = []
+
+        def check_output(args, **_kwargs):
+            if args[:3] == ["lsblk", "-no", "FSTYPE"]:
+                return fstype + "\n"
+            if args[0] == "blkid":
+                return "1234-uuid\n"
+            raise AssertionError(args)
+
+        with mock.patch.object(
+            bootstrap, "run_cmd", lambda _cfg, args, *_a, **_k: commands.append(args)
+        ), mock.patch.object(bootstrap, "run_best_effort", lambda *_a, **_k: None), \
+            mock.patch.object(bootstrap.subprocess, "check_output", check_output), \
+            mock.patch.object(bootstrap, "pick_data_disk", lambda _cfg, devices: devices[0] if devices else None), \
+            mock.patch.object(bootstrap, "update_fstab", lambda _line: None), \
+            mock.patch.object(bootstrap, "ensure_legacy_btrfs_link", lambda _cfg: None), \
+            mock.patch.object(bootstrap.Path, "is_mount", autospec=True, return_value=True), \
+            mock.patch.object(bootstrap.Path, "mkdir", autospec=True), \
+            mock.patch.object(bootstrap.Path, "exists", autospec=True, return_value=image_exists), \
+            mock.patch.object(bootstrap, "log_line", lambda *_a: None):
+            bootstrap.setup_btrfs(cfg, 10)
+        return commands
+
+    def test_an_existing_btrfs_data_disk_is_not_formatted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), data_disk_devices="/dev/sdb")
+            commands = self.run_setup_btrfs(cfg, "btrfs")
+            self.assertFalse(any(c[0].startswith("mkfs") for c in commands))
+
+    def test_a_data_disk_with_another_filesystem_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), data_disk_devices="/dev/sdb")
+            with self.assertRaisesRegex(RuntimeError, "refusing to format"):
+                self.run_setup_btrfs(cfg, "ext4")
+
+    def test_a_blank_data_disk_is_formatted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), data_disk_devices="/dev/sdb")
+            commands = self.run_setup_btrfs(cfg, "")
+            self.assertIn(["mkfs.btrfs", "-f", "/dev/sdb"], commands)
+
+    def test_an_existing_loop_image_is_not_recreated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), data_disk_devices="")
+            commands = self.run_setup_btrfs(cfg, "", image_exists=True)
+            self.assertFalse(
+                any(c[0] in ("truncate", "mkfs.btrfs") for c in commands), commands
+            )
+
+    def run_setup_scratch(self, tmpdir: str, fstype: str):
+        cfg = replace(
+            make_cfg(tmpdir),
+            shared_scratch_enabled=True,
+            shared_scratch_devices="/dev/sdc",
+            shared_scratch_mount=os.path.join(tmpdir, "scratch"),
+        )
+        commands: list[list[str]] = []
+        with mock.patch.object(
+            bootstrap, "run_cmd", lambda _cfg, args, *_a, **_k: commands.append(args)
+        ), mock.patch.object(
+            bootstrap, "pick_unmounted_or_target_disk", lambda *_a, **_k: "/dev/sdc"
+        ), mock.patch.object(
+            bootstrap.subprocess, "check_output", lambda *_a, **_k: fstype + "\n"
+        ), mock.patch.object(
+            bootstrap.Path, "is_mount", autospec=True, return_value=True
+        ), mock.patch.object(bootstrap, "log_line", lambda *_a: None):
+            try:
+                bootstrap.setup_shared_scratch(cfg)
+            except RuntimeError as err:
+                return commands, err
+        return commands, None
+
+    def test_existing_shared_scratch_is_not_formatted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            commands, err = self.run_setup_scratch(tmpdir, "ext4")
+            self.assertFalse(any(c[0].startswith("mkfs") for c in commands))
+            commands, err = self.run_setup_scratch(tmpdir, "xfs")
+            self.assertIsNotNone(err)
+            self.assertFalse(any(c[0].startswith("mkfs") for c in commands))
+
+
+class RuntimeTreeWriteTest(unittest.TestCase):
+    """Root writes into runtime-owned trees go through descriptors, so a
+    symlink the runtime user planted is replaced, never written through."""
+
+    def write_runtime_files(self, tmpdir: str, cfg) -> list[str]:
+        logged: list[str] = []
+        with mock.patch.object(
+            bootstrap, "project_host_runtime_root", lambda _cfg: Path(tmpdir) / "runtime-root"
+        ), mock.patch.object(
+            bootstrap,
+            "project_host_rootctl_path",
+            lambda _cfg=None: Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl",
+        ), mock.patch.object(
+            bootstrap, "run_best_effort", lambda *_args, **_kwargs: None
+        ), mock.patch.object(
+            bootstrap, "log_line", lambda _cfg, line: logged.append(line)
+        ):
+            bootstrap.write_wrapper(cfg)
+            bootstrap.write_helpers(cfg)
+        return logged
+
+    def victim(self, tmpdir: str) -> Path:
+        victim = Path(tmpdir) / "victim"
+        victim.write_text("victim\n", encoding="utf-8")
+        victim.chmod(0o600)
+        return victim
+
+    def test_a_symlink_at_a_helper_name_is_replaced_not_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            victim = self.victim(tmpdir)
+            bin_dir = Path(tmpdir) / "runtime-root" / "bin"
+            bin_dir.mkdir(parents=True)
+            names = ["project-host", *bootstrap_runtime_helper_names()]
+            for name in names:
+                (bin_dir / name).symlink_to(victim)
+            self.write_runtime_files(tmpdir, cfg)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "victim\n")
+            self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o600)
+            for name in names:
+                info = (bin_dir / name).lstat()
+                self.assertTrue(stat.S_ISREG(info.st_mode), name)
+                self.assertEqual(stat.S_IMODE(info.st_mode), 0o755, name)
+            # no temporary files left behind
+            self.assertEqual(sorted(p.name for p in bin_dir.iterdir()), sorted(names))
+
+    def test_a_symlinked_bin_dir_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            elsewhere = Path(tmpdir) / "elsewhere"
+            elsewhere.mkdir()
+            root = Path(tmpdir) / "runtime-root"
+            root.mkdir()
+            (root / "bin").symlink_to(elsewhere, target_is_directory=True)
+            logged = self.write_runtime_files(tmpdir, cfg)
+            self.assertEqual(list(elsewhere.iterdir()), [])
+            self.assertTrue(any("refusing to write the project-host wrapper" in l for l in logged))
+            self.assertTrue(any("refusing to write runtime helper scripts" in l for l in logged))
+            # the root-owned helpers outside the runtime tree are still written
+            self.assertTrue(
+                (Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl").exists()
+            )
+
+    def test_a_symlinked_runtime_root_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            elsewhere = Path(tmpdir) / "elsewhere"
+            (elsewhere / "bin").mkdir(parents=True)
+            (Path(tmpdir) / "runtime-root").symlink_to(elsewhere, target_is_directory=True)
+            logged = self.write_runtime_files(tmpdir, cfg)
+            self.assertEqual(list((elsewhere / "bin").iterdir()), [])
+            self.assertTrue(any("refusing" in l for l in logged))
+
+    def test_a_runtime_dir_with_another_owner_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fd = os.open(tmpdir, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                bootstrap.require_dir_owner(fd, tmpdir, {os.getuid()})
+                with self.assertRaises(bootstrap.UnsafeRuntimePath):
+                    bootstrap.require_dir_owner(fd, tmpdir, {os.getuid() + 12345})
+            finally:
+                os.close(fd)
+
+    def test_runtime_files_are_owned_through_their_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            owner = (os.getuid(), os.getgid())
+            chowned: list[object] = []
+            real_fchown = os.fchown
+
+            def fchown(fd, uid, gid):
+                chowned.append(fd)
+                return real_fchown(fd, uid, gid)
+
+            with mock.patch.object(
+                bootstrap, "runtime_file_owner", lambda _cfg: owner
+            ), mock.patch.object(bootstrap.os, "fchown", fchown):
+                self.write_runtime_files(tmpdir, cfg)
+            # bin, the wrapper and every helper (once per write_* call for bin)
+            self.assertEqual(len(chowned), 2 + 1 + len(bootstrap_runtime_helper_names()))
+            self.assertTrue(all(isinstance(fd, int) for fd in chowned))
+
+    def test_as_root_the_bashrc_is_edited_by_the_runtime_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            home = Path(cfg.bootstrap_home)
+            home.mkdir(parents=True, exist_ok=True)
+            bashrc = home / ".bashrc"
+            bashrc.write_text("# existing line\n", encoding="utf-8")
+            me = pwd.getpwuid(os.getuid())
+            runs: list[tuple[list[str], dict]] = []
+            commands: list[list[str]] = []
+            real_run = subprocess.run
+
+            def run(argv, **kwargs):
+                if argv[:2] == [sys.executable, "-I"]:
+                    runs.append((argv, dict(kwargs)))
+                # the test can't switch users; run the same child as itself
+                for key in ("user", "group", "extra_groups"):
+                    kwargs.pop(key, None)
+                return real_run(argv, **kwargs)
+
+            def in_process(*_args, **_kwargs):
+                raise AssertionError("root must not edit the runtime user's .bashrc itself")
+
+            with mock.patch.object(bootstrap.os, "geteuid", lambda: 0), mock.patch.object(
+                bootstrap.pwd, "getpwnam", lambda _name: me
+            ), mock.patch.object(bootstrap.subprocess, "run", run), mock.patch.object(
+                bootstrap, "upsert_managed_bashrc_block", in_process
+            ), mock.patch.object(
+                bootstrap, "runtime_podman_env_lines", lambda _cfg: ["export X=1"]
+            ), mock.patch.object(
+                bootstrap, "runtime_home", lambda _cfg: str(home)
+            ), mock.patch.object(
+                bootstrap, "run_best_effort", lambda _cfg, args, desc: commands.append(args)
+            ):
+                bootstrap.configure_runtime_shell_env(cfg)
+            self.assertEqual(len(runs), 1)
+            argv, kwargs = runs[0]
+            self.assertEqual(argv[:3], [sys.executable, "-I", "-c"])
+            self.assertEqual(kwargs["user"], me.pw_uid)
+            self.assertEqual(kwargs["group"], me.pw_gid)
+            self.assertEqual(kwargs["extra_groups"], [])
+            self.assertEqual(kwargs["cwd"], "/")
+            self.assertEqual(kwargs["env"]["HOME"], me.pw_dir)
+            self.assertNotIn("SUDO_USER", kwargs["env"])
+            self.assertEqual(commands, [])  # no chown of the path
+            text = bashrc.read_text(encoding="utf-8")
+            self.assertIn("# existing line\n", text)
+            self.assertIn(
+                f"{bootstrap.PODMAN_BASHRC_BLOCK_START}\n{bootstrap.PODMAN_BASHRC_COMMENT}\nexport X=1\n{bootstrap.PODMAN_BASHRC_BLOCK_END}\n",
+                text,
+            )
+
+    def test_the_child_and_in_process_bashrc_edits_agree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            a = Path(tmpdir) / "a"
+            b = Path(tmpdir) / "b"
+            for path in (a, b):
+                path.write_text(
+                    f"x\n{bootstrap.PODMAN_BASHRC_BLOCK_START}\nold\n{bootstrap.PODMAN_BASHRC_BLOCK_END}\ny\n",
+                    encoding="utf-8",
+                )
+            bootstrap.upsert_managed_bashrc_block(a, ["new"])
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    bootstrap.BASHRC_BLOCK_UPSERT
+                    + "\nimport json, sys\nupsert_bashrc_block(**json.load(sys.stdin))\n",
+                ],
+                input=json.dumps(bootstrap.bashrc_block_args(b, ["new"])),
+                text=True,
+                check=True,
+            )
+            self.assertEqual(a.read_text(encoding="utf-8"), b.read_text(encoding="utf-8"))
+            self.assertNotIn("old", a.read_text(encoding="utf-8"))
+
+    def test_runtime_owned_dirs_are_set_up_through_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            victim_dir = Path(tmpdir) / "victim-dir"
+            victim_dir.mkdir()
+            victim_dir.chmod(0o700)
+            root = Path(tmpdir) / "rootless" / "user"
+            root.mkdir(parents=True)
+            (root / "storage").symlink_to(victim_dir, target_is_directory=True)
+            chowned: list[object] = []
+            logged: list[str] = []
+            with mock.patch.object(
+                bootstrap, "runtime_file_owner", lambda _cfg: (os.getuid(), os.getgid())
+            ), mock.patch.object(
+                bootstrap.os, "fchown", lambda fd, *_ids: chowned.append(fd)
+            ), mock.patch.object(bootstrap, "log_line", lambda _cfg, line: logged.append(line)):
+                bootstrap.ensure_runtime_owned_dirs(cfg, root, ["storage", "other"])
+            self.assertTrue((root / "storage").is_symlink())  # left alone
+            self.assertEqual(stat.S_IMODE(victim_dir.stat().st_mode), 0o700)
+            self.assertTrue((root / "other").is_dir())
+            self.assertEqual(len(chowned), 2)  # the root and "other", by descriptor
+            self.assertTrue(all(isinstance(fd, int) for fd in chowned))
+            self.assertTrue(any("refusing to set up" in line for line in logged))
+            # a symlinked root itself: nothing set up
+            linked = Path(tmpdir) / "linked"
+            linked.symlink_to(victim_dir, target_is_directory=True)
+            with mock.patch.object(bootstrap, "log_line", lambda _cfg, line: logged.append(line)):
+                bootstrap.ensure_runtime_owned_dirs(cfg, linked, ["storage"])
+            self.assertEqual(list(victim_dir.iterdir()), [])
+
+    def test_as_root_the_podman_user_config_is_written_by_the_runtime_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            home = Path(tmpdir) / "home"
+            (home / ".config").mkdir(parents=True)
+            victim = self.victim(tmpdir)
+            # a planted symlink where root used to write and chown
+            (home / ".config" / "containers").symlink_to(Path(tmpdir), target_is_directory=True)
+            calls: list[tuple] = []
+            commands: list[list[str]] = []
+            with mock.patch.object(bootstrap.os, "geteuid", lambda: 0), mock.patch.object(
+                bootstrap, "runtime_home", lambda _cfg: str(home)
+            ), mock.patch.object(
+                bootstrap, "resolve_runtime_user_identity", lambda _cfg: (2000, 2000)
+            ), mock.patch.object(
+                bootstrap, "ensure_runtime_owned_dirs", lambda *_args: None
+            ), mock.patch.object(
+                bootstrap,
+                "run_python_as_user",
+                lambda _cfg, user, source, call, args, desc: calls.append((user, call, args)) or True,
+            ), mock.patch.object(
+                bootstrap, "run_best_effort", lambda _cfg, args, desc: commands.append(args)
+            ), mock.patch.object(Path, "write_text", lambda self, *_a, **_k: None), mock.patch.object(
+                Path, "mkdir", lambda self, *_a, **_k: None
+            ):
+                bootstrap.configure_podman(cfg)
+            self.assertEqual(len(calls), 1)
+            user, call, args = calls[0]
+            self.assertEqual((user, call), (cfg.ssh_user, "write_user_files"))
+            self.assertEqual(
+                sorted(args["files"]),
+                sorted(str(home / ".config" / "containers" / n) for n in ("containers.conf", "storage.conf")),
+            )
+            self.assertEqual(victim.read_text(encoding="utf-8"), "victim\n")
+            for args in commands:
+                self.assertFalse(any(str(home) in str(a) for a in args), args)
+
+    def test_the_podman_runroot_reader_does_not_follow_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "secret"
+            target.write_text('runroot = "/leaked"\n', encoding="utf-8")
+            link = Path(tmpdir) / "storage.conf"
+            link.symlink_to(target)
+            self.assertIsNone(bootstrap.configured_podman_runroot(link))
+            regular = Path(tmpdir) / "regular.conf"
+            regular.write_text('runroot = "/run/x"\n', encoding="utf-8")
+            self.assertEqual(bootstrap.configured_podman_runroot(regular), "/run/x")
+
+    def rendered_rootctl(self, tmpdir: str, cfg) -> str:
+        self.write_runtime_files(tmpdir, cfg)
+        path = Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl"
+        subprocess.run(["bash", "-n", str(path)], check=True)
+        return path.read_text(encoding="utf-8")
+
+    def shell_function(self, script: str, name: str) -> str:
+        start = script.index(f"\n{name}() {{\n") + 1
+        return script[start : script.index("\n}\n", start) + 3]
+
+    def test_rootctl_owns_runtime_dirs_without_following_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            function = self.shell_function(
+                self.rendered_rootctl(tmpdir, cfg), "ensure_owned_runtime_dir"
+            )
+            program = (
+                "set -euo pipefail\n"
+                "runtime_uid() { id -u; }\n"
+                "runtime_gid() { id -g; }\n"
+                f"{function}\n"
+                'ensure_owned_runtime_dir "$1"\n'
+            )
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            victim.chmod(0o755)
+            run_dir = Path(tmpdir) / "run-user"
+            run_dir.mkdir()
+            (run_dir / "containers").symlink_to(victim, target_is_directory=True)
+            result = subprocess.run(
+                ["bash", "-c", program, "bash", str(run_dir / "containers")],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("refusing runtime dir", result.stderr)
+            self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o755)
+            fresh = run_dir / "new" / "dir"
+            subprocess.run(["bash", "-c", program, "bash", str(fresh)], check=True)
+            self.assertEqual(stat.S_IMODE(fresh.stat().st_mode), 0o700)
+
+    def test_rootctl_podman_boot_writes_storage_conf_as_the_runtime_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            function = self.shell_function(
+                self.rendered_rootctl(tmpdir, cfg), "prepare_podman_boot"
+            )
+            self.assertNotIn('install -d -o "${RUNTIME_USER}"', function)
+            self.assertNotIn('chown "${RUNTIME_USER}', function)
+            self.assertNotIn('mv -f "${tmp}" "${storage_conf}"', function)
+            self.assertIn('sudo -n -u "${RUNTIME_USER}" -H /bin/sh -s --', function)
+            self.assertIn('sudo -n -u "${RUNTIME_USER}" -H sed -n', function)
+            script = function.split("<<'SH'\n", 1)[1].split("\nSH\n", 1)[0]
+            config_dir = Path(tmpdir) / "home" / ".config" / "containers"
+            subprocess.run(
+                ["sh", "-s", "--", str(config_dir), "/run/rr", "/mnt/gr"],
+                input=script,
+                text=True,
+                check=True,
+            )
+            conf = config_dir / "storage.conf"
+            self.assertEqual(
+                conf.read_text(encoding="utf-8"),
+                '[storage]\ndriver = "overlay"\nrunroot = "/run/rr"\ngraphroot = "/mnt/gr"\n',
+            )
+            self.assertEqual(stat.S_IMODE(conf.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(config_dir.stat().st_mode), 0o700)
+            self.assertEqual(sorted(p.name for p in config_dir.iterdir()), ["storage.conf"])
+
+    def test_rootctl_daemon_control_lock_is_in_a_root_owned_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            rootctl = self.rendered_rootctl(tmpdir, cfg)
+            function = self.shell_function(rootctl, "acquire_daemon_control_lock")
+            self.assertIn('DAEMON_CONTROL_LOCK="/run/cocalc/project-host-daemon-control.lock"', rootctl)
+            self.assertIn('exec 8>>"${DAEMON_CONTROL_LOCK}"', function)
+            self.assertIn('install -d -o root -g root -m 0711 "${lock_dir}"', function)
+            self.assertIn('!= "0:0 711 directory"', function)
+            self.assertIn("umask 077", function)
+            self.assertIn('chmod 0600 "${DAEMON_CONTROL_LOCK}"', function)
+            # never opened (truncating, following a symlink) in the runtime user's tmp
+            self.assertNotIn("/mnt/cocalc/data/tmp/project-host-daemon-control.lock", rootctl)
+            self.assertNotIn('exec 8>"', rootctl)
+
+    def test_runtime_dirs_on_the_data_disk_are_owned_through_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            victim.chmod(0o755)
+            tmp = Path(tmpdir) / "tmp"
+            tmp.mkdir()
+            (tmp / "final").symlink_to(victim, target_is_directory=True)
+            (tmp / "hop").symlink_to(victim, target_is_directory=True)
+            me = (os.getuid(), os.getgid())
+            for path in (tmp / "final", tmp / "hop" / "runtime"):
+                with self.assertRaises(bootstrap.UnsafeRuntimePath):
+                    bootstrap.ensure_owned_runtime_dir(path, *me)
+            self.assertEqual(list(victim.iterdir()), [])
+            self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o755)
+            fresh = tmp / "cocalc-podman-runtime-1" / "x"
+            bootstrap.ensure_owned_runtime_dir(fresh, *me)
+            self.assertEqual(stat.S_IMODE(fresh.stat().st_mode), 0o700)
+
+    def test_stale_boot_state_is_removed_through_the_parent_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            (victim / "keep-me").write_text("x")
+            libpod = Path(tmpdir) / "runtime" / "libpod"
+            libpod.mkdir(parents=True)
+            (libpod / "tmp").symlink_to(victim, target_is_directory=True)
+            unused = lambda argv: self.fail(argv)
+            with self.assertRaises(bootstrap.UnsafeRuntimePath):
+                bootstrap.remove_runtime_tree(libpod / "tmp", unused)
+            self.assertTrue((victim / "keep-me").exists())
+            (libpod / "tmp").unlink()
+            # an empty directory: root removes it, nothing else runs
+            (libpod / "tmp").mkdir()
+            bootstrap.remove_runtime_tree(libpod / "tmp", unused)
+            self.assertFalse((libpod / "tmp").exists())
+            # a symlinked parent: refused, nothing removed
+            (Path(tmpdir) / "hop").symlink_to(victim, target_is_directory=True)
+            with self.assertRaises(bootstrap.UnsafeRuntimePath):
+                bootstrap.remove_runtime_tree(Path(tmpdir) / "hop" / "keep-me", unused)
+            self.assertTrue((victim / "keep-me").exists())
+
+    def test_the_refusal_residue_is_a_bounded_top_level_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree = Path(tmpdir) / "tree"
+            (tree / "d" / "deep").mkdir(parents=True)
+            for i in range(1000):
+                (tree / f"f{i}").write_text("")
+            (tree / ("\x1b[31m" + "n" * 200)).write_text("")
+            statted: list[str] = []
+            real_stat = os.stat
+
+            def counting_stat(path, *args, **kwargs):
+                statted.append(str(path))
+                return real_stat(path, *args, **kwargs)
+
+            with mock.patch.object(bootstrap.os, "stat", counting_stat), mock.patch.object(
+                bootstrap.os, "listdir", lambda *_a: self.fail("listdir")
+            ), mock.patch.object(bootstrap.os, "walk", lambda *_a, **_k: self.fail("walk")):
+                residue = bootstrap.runtime_tree_residue(tree, limit=2)
+            # two entries statted, no child opened, nothing past the bound
+            self.assertEqual(len(statted), 2)
+            self.assertNotIn("deep", " ".join(statted))
+            self.assertEqual(residue.count(f"({os.getuid()}:{os.getgid()})"), 2)
+            self.assertEqual(len(bootstrap.runtime_tree_residue(tree).split(", ")), 3)
+            self.assertNotIn("\x1b", bootstrap.runtime_tree_residue(tree, limit=2000))
+            self.assertLess(len(bootstrap.runtime_tree_residue(tree, limit=2000)), 1002 * 90)
+            self.assertEqual(bootstrap.runtime_tree_residue(Path(tmpdir) / "missing"), "unknown")
+
+    def test_root_never_walks_into_a_runtime_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree = Path(tmpdir) / "runtime" / "libpod" / "tmp"
+            (tree / "sub").mkdir(parents=True)
+            (tree / "sub" / "keep-me").write_text("x")
+            ran: list[list[str]] = []
+            # the runtime user can't empty it: nothing is removed by root
+            me = f"{os.getuid()}:{os.getgid()}"
+            with self.assertRaises(RuntimeError) as refused:
+                bootstrap.remove_runtime_tree(
+                    tree, ran.append, ["podman", "unshare"], runtime_ids=(2000, 2001)
+                )
+            self.assertEqual(
+                str(refused.exception),
+                f"could not empty {tree} as runtime uid:gid 2000:2001 (left: "
+                f"'sub' ({me})); refusing root fallback (#94)",
+            )
+            self.assertTrue((tree / "sub" / "keep-me").exists())
+            rm = ["rm", "-rf", "--one-file-system", "--", str(tree)]
+            self.assertEqual(ran, [rm, ["podman", "unshare", *rm]])
+            # without podman, only the plain attempt
+            ran.clear()
+            with self.assertRaises(RuntimeError):
+                bootstrap.remove_runtime_tree(tree, ran.append)
+            self.assertEqual(ran, [rm])
+
+            # files of subordinate ids: only `podman unshare` empties it
+            def unshare_only(argv: list[str]) -> None:
+                ran.append(argv)
+                if argv[0] == "podman":
+                    shutil.rmtree(tree / "sub")
+
+            ran.clear()
+            bootstrap.remove_runtime_tree(tree, unshare_only, ["podman", "unshare"])
+            self.assertFalse(tree.exists())
+            self.assertEqual(len(ran), 2)
+
+            # the runtime user empties it but can't remove it (a root-owned
+            # parent): root removes the empty directory
+            (tree / "sub").mkdir(parents=True)
+            ran.clear()
+            bootstrap.remove_runtime_tree(
+                tree,
+                lambda argv: (ran.append(argv), shutil.rmtree(tree / "sub")),
+                ["podman", "unshare"],
+            )
+            self.assertFalse(tree.exists())
+            self.assertEqual(ran, [rm])
+
+    def test_write_env_refuses_a_symlinked_podman_runtime_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            me = pwd.getpwuid(os.getuid()).pw_name
+            cfg = replace(make_cfg(tmpdir), ssh_user=me)
+            Path(cfg.env_file).parent.mkdir(parents=True, exist_ok=True)
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            (Path(tmpdir) / "data-tmp").symlink_to(victim, target_is_directory=True)
+            runtime_dir = str(Path(tmpdir) / "data-tmp" / "cocalc-podman-runtime-1")
+            logged: list[str] = []
+            with mock.patch.object(
+                bootstrap, "default_podman_runtime_dir", lambda _uid: runtime_dir
+            ), mock.patch.object(
+                bootstrap, "runtime_file_owner", lambda _cfg: (os.getuid(), os.getgid())
+            ), mock.patch.object(bootstrap, "log_line", lambda _cfg, line: logged.append(line)):
+                bootstrap.write_env(cfg, 10)
+            self.assertEqual(list(victim.iterdir()), [])
+            self.assertTrue(any("refusing podman runtime dir" in line for line in logged))
+
+    def test_the_migration_marker_replaces_a_planted_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            data = Path(tmpdir) / "data"
+            (data / "containers").mkdir(parents=True)
+            victim = self.victim(tmpdir)
+            (data / "containers" / "runroot-migration-pending").symlink_to(victim)
+            home = Path(tmpdir) / "home"
+            conf = home / ".config" / "containers" / "storage.conf"
+            conf.parent.mkdir(parents=True)
+            conf.write_text('[storage]\nrunroot = "/somewhere/else"\n', encoding="utf-8")
+            with mock.patch.object(bootstrap, "DATA_ROOT", str(data)), mock.patch.object(
+                bootstrap, "runtime_home", lambda _cfg: str(home)
+            ), mock.patch.object(bootstrap, "project_host_runtime_is_active", lambda: True):
+                bootstrap.configure_podman(cfg)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "victim\n")
+            marker = data / "containers" / "runroot-migration-pending"
+            self.assertFalse(marker.is_symlink())
+            self.assertIn("current=/somewhere/else", marker.read_text(encoding="utf-8"))
+
+    def test_the_restart_fingerprint_reads_bin_through_descriptors_and_caps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            root = Path(tmpdir) / "runtime-root"
+            (root / "bin").mkdir(parents=True)
+            (root / "bin" / "ctl").write_text("#!/bin/sh\n")
+            with open(root / "bin" / "big", "wb") as f:
+                f.write(b"x" * (bootstrap.FINGERPRINT_MAX_FILE_BYTES + 1))
+            with mock.patch.object(bootstrap, "project_host_runtime_root", lambda _cfg: root):
+                parts = bootstrap.project_host_restart_fingerprint(cfg)
+            self.assertIn("bin:ctl", parts)
+            self.assertTrue(parts["bin:big"].startswith("too-large:"))
+            # stable: the same big file is not a change
+            with mock.patch.object(bootstrap, "project_host_runtime_root", lambda _cfg: root):
+                again = bootstrap.project_host_restart_fingerprint(cfg)
+            self.assertEqual(again["bin:big"], parts["bin:big"])
+            # a symlinked bin is not read through
+            elsewhere = Path(tmpdir) / "elsewhere"
+            elsewhere.mkdir()
+            (elsewhere / "secret").write_text("x")
+            shutil.rmtree(root / "bin")
+            (root / "bin").symlink_to(elsewhere, target_is_directory=True)
+            with mock.patch.object(bootstrap, "project_host_runtime_root", lambda _cfg: root):
+                parts = bootstrap.project_host_restart_fingerprint(cfg)
+            self.assertNotIn("bin:secret", parts)
+            self.assertEqual(parts["bin"], "unsafe")
+
+    def test_rootctl_reads_pid_files_bounded_and_digits_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            rootctl = self.rendered_rootctl(tmpdir, cfg)
+            function = self.shell_function(rootctl, "read_pid_file")
+            secret = Path(tmpdir) / "secret"
+            secret.write_text("12345\n")
+            cases = {
+                "good": ("123\n", "123"),
+                "words": ("root:x:0\n", ""),
+            }
+            for name, (content, expected) in cases.items():
+                path = Path(tmpdir) / name
+                path.write_text(content)
+                out = subprocess.run(
+                    ["bash", "-c", f'{function}\nread_pid_file "$1"', "bash", str(path)],
+                    capture_output=True, text=True, check=True,
+                ).stdout
+                self.assertEqual(out, expected, name)
+            link = Path(tmpdir) / "link"
+            link.symlink_to(secret)
+            out = subprocess.run(
+                ["bash", "-c", f'{function}\nread_pid_file "$1"', "bash", str(link)],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            self.assertEqual(out, "")
+            lock = self.shell_function(rootctl, "acquire_daemon_control_lock")
+            self.assertIn("ensure_owned_runtime_dir /mnt/cocalc/data/tmp", lock)
+            self.assertNotIn("install -d -o \"${RUNTIME_USER}\"", lock)
+
+    def test_the_master_conat_token_is_written_through_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), conat_url="https://example.invalid/token", bootstrap_token="t")
+            data = Path(tmpdir) / "data"
+            (data / "secrets").mkdir(parents=True)
+            victim = self.victim(tmpdir)
+            token = data / "secrets" / "master-conat-token"
+            token.symlink_to(victim)
+            commands: list[list[str]] = []
+            with mock.patch.object(bootstrap, "DATA_ROOT", str(data)), mock.patch.object(
+                bootstrap, "fetch_master_conat_token", lambda _cfg: b"secret-token"
+            ), mock.patch.object(
+                bootstrap, "run_best_effort", lambda _cfg, args, desc: commands.append(args)
+            ):
+                bootstrap.setup_master_conat_token(cfg)
+                self.assertEqual(victim.read_text(encoding="utf-8"), "victim\n")
+                self.assertFalse(token.is_symlink())
+                self.assertEqual(token.read_bytes(), b"secret-token")
+                self.assertEqual(stat.S_IMODE(token.stat().st_mode), 0o600)
+                # present: only its mode/owner are repaired, through the descriptor
+                token.chmod(0o644)
+                with mock.patch.object(
+                    bootstrap, "fetch_master_conat_token", side_effect=AssertionError("no fetch")
+                ):
+                    bootstrap.setup_master_conat_token(cfg)
+                self.assertEqual(stat.S_IMODE(token.stat().st_mode), 0o600)
+            self.assertEqual(commands, [])
+
+    def test_storage_helper_writes_the_shutdown_intent_through_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            script = bootstrap_storage_wrapper_for(cfg)
+            self.assertIn('write_data_dir_file host-shutdown-intent "exam-deadline:${run_id}"', script)
+            self.assertNotIn("> /mnt/cocalc/data/host-shutdown-intent", script)
+            function = self.shell_function(script, "write_data_dir_file")
+            program = function.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+            data = Path(tmpdir) / "mnt" / "cocalc" / "data"
+            data.mkdir(parents=True)
+            parts = tuple(p for p in data.parts if p != "/")
+            program = program.replace('("mnt", "cocalc", "data")', repr(parts))
+            victim = self.victim(tmpdir)
+            (data / "host-shutdown-intent").symlink_to(victim)
+            subprocess.run(
+                [sys.executable, "-I", "-", "host-shutdown-intent", "exam-deadline:x"],
+                input=program, text=True, check=True,
+            )
+            self.assertEqual(victim.read_text(encoding="utf-8"), "victim\n")
+            self.assertEqual((data / "host-shutdown-intent").read_text(), "exam-deadline:x\n")
+            # a symlinked data dir is never written through
+            other = Path(tmpdir) / "other"
+            shutil.rmtree(data)
+            (Path(tmpdir) / "elsewhere").mkdir()
+            data.symlink_to(Path(tmpdir) / "elsewhere", target_is_directory=True)
+            result = subprocess.run(
+                [sys.executable, "-I", "-", "host-shutdown-intent", "x"],
+                input=program, text=True, capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(list((Path(tmpdir) / "elsewhere").iterdir()), [])
+
+    def test_core_dumps_go_to_a_root_owned_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            self.write_runtime_files(tmpdir, cfg)
+            handler = (
+                Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-core-handler"
+            ).read_text(encoding="utf-8")
+            subprocess.run(["bash", "-n", "-c", handler], check=True)
+            self.assertIn('core_dir="/var/lib/cocalc-project-host-core-dumps"', handler)
+            self.assertNotIn("/mnt/cocalc/data/forensics/core-dumps", handler)
+            self.assertIn('if [ -L "${core_dir}" ]', handler)
+            self.assertIn('head -c 32 -- "${pid_file}"', handler)
+
+    REMOVE_RUNTIME_PATH_STUBS = """RUNTIME_USER=u
+runtime_uid() { echo 2000; }
+runtime_gid() { echo 2001; }
+read_env_value() { :; }
+podman_runtime_dir() { echo /nonexistent; }
+run_as_runtime_user() {
+  echo "user $*" >> "$LOG"
+  if [ "$RUNTIME_RM" = 1 ]; then (cd / && "$@"); fi
+}
+run_podman_as_runtime() {
+  echo "podman $*" >> "$LOG"
+  shift 3
+  if [ "$PODMAN_RM" = 1 ]; then shift; "$@"; fi
+}
+"""
+
+    def run_remove_runtime_path(
+        self,
+        functions: str,
+        path: Path,
+        *,
+        runtime_rm: bool = True,
+        podman_rm: bool = False,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess:
+        log = Path(self.remove_log)
+        log.write_text("")
+        return subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'set -euo pipefail\n{self.REMOVE_RUNTIME_PATH_STUBS}{functions}\nremove_runtime_path "$1"',
+                "bash",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=check,
+            env={
+                **os.environ,
+                "LOG": str(log),
+                "RUNTIME_RM": "1" if runtime_rm else "0",
+                "PODMAN_RM": "1" if podman_rm else "0",
+            },
+        )
+
+    def remove_runtime_path_functions(self, rootctl: str) -> str:
+        return "".join(
+            self.shell_function(rootctl, name)
+            for name in ("remove_runtime_path", "remove_runtime_path_entry")
+        )
+
+    def test_rootctl_removes_runtime_paths_without_following_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            rootctl = self.rendered_rootctl(tmpdir, cfg)
+            self.assertIn("run_as_runtime_user() {\n  (cd / && sudo -n -u \"${RUNTIME_USER}\" -H \"$@\")\n}", rootctl)
+            function = self.remove_runtime_path_functions(rootctl)
+            self.remove_log = str(Path(tmpdir) / "runtime-user.log")
+            for name in ("remove_safe_runtime_dir", "cleanup_podman_runtime_state", "prepare_podman_boot"):
+                body = self.shell_function(rootctl, name)
+                self.assertNotIn("rm -rf", body, name)
+                self.assertIn("remove_runtime_path", body, name)
+            self.assertNotIn("rm -f /mnt/cocalc/data/containers/runroot-migration-pending", rootctl)
+            data = Path(tmpdir) / "data"
+            data.mkdir()
+            outside = Path(tmpdir) / "outside"
+            log = Path(self.remove_log)
+
+            def plant(rel: str) -> Path:
+                target = outside / rel
+                target.mkdir(parents=True, exist_ok=True)
+                (target / "keep-me").write_text("x")
+                return target
+
+            # (a) the legacy runtime tmp, through a symlinked tmp/
+            kept_a = plant("tmp/cocalc-podman-runtime-1")
+            (data / "tmp").symlink_to(outside / "tmp", target_is_directory=True)
+            result = self.run_remove_runtime_path(function, data / "tmp" / "cocalc-podman-runtime-1")
+            self.assertIn("refusing to remove", result.stderr)
+            self.assertTrue((kept_a / "keep-me").exists())
+            self.assertEqual(log.read_text(), "")
+            # (b) the legacy rootless runroot, through a symlinked containers/
+            kept_b = plant("containers/rootless/u/run")
+            (outside / "containers" / "runroot-migration-pending").write_text("x")
+            (data / "containers").symlink_to(outside / "containers", target_is_directory=True)
+            self.run_remove_runtime_path(function, data / "containers" / "rootless" / "u" / "run")
+            self.assertTrue((kept_b / "keep-me").exists())
+            self.assertEqual(log.read_text(), "")
+            # (c) the migration marker, through the same symlinked containers/
+            self.run_remove_runtime_path(function, data / "containers" / "runroot-migration-pending")
+            self.assertTrue((outside / "containers" / "runroot-migration-pending").exists())
+            # real paths: emptied as the runtime user; a symlink or file at the
+            # path itself is removed by root as an entry
+            real = Path(tmpdir) / "real" / "run"
+            (real / "sub").mkdir(parents=True)
+            (real / "sub" / "f").write_text("x")
+            self.run_remove_runtime_path(function, real)
+            self.assertFalse(real.exists())
+            self.assertEqual(log.read_text(), f"user rm -rf --one-file-system -- {real}\n")
+            link = Path(tmpdir) / "real" / "link"
+            link.symlink_to(kept_b, target_is_directory=True)
+            self.run_remove_runtime_path(function, link)
+            self.assertFalse(link.is_symlink())
+            self.assertTrue((kept_b / "keep-me").exists())
+            marker = Path(tmpdir) / "real" / "runroot-migration-pending"
+            marker.write_text("x")
+            self.run_remove_runtime_path(function, marker)
+            self.assertFalse(marker.exists())
+            self.assertEqual(log.read_text(), "")
+            # an empty directory: root removes it
+            (Path(tmpdir) / "real" / "empty").mkdir()
+            self.run_remove_runtime_path(function, Path(tmpdir) / "real" / "empty")
+            self.assertFalse((Path(tmpdir) / "real" / "empty").exists())
+            self.assertEqual(log.read_text(), "")
+            # missing: nothing to do
+            self.run_remove_runtime_path(function, Path(tmpdir) / "missing" / "x")
+
+    def test_rootctl_never_removes_a_runtime_tree_as_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            function = self.remove_runtime_path_functions(self.rendered_rootctl(tmpdir, cfg))
+            self.remove_log = str(Path(tmpdir) / "runtime-user.log")
+            log = Path(self.remove_log)
+            tree = Path(tmpdir) / "data" / "containers" / "rootless" / "u" / "run"
+            (tree / "sub").mkdir(parents=True)
+            (tree / "sub" / "keep-me").write_text("x")
+            # neither the runtime user nor `podman unshare` can empty it
+            result = self.run_remove_runtime_path(
+                function, tree, runtime_rm=False, check=False
+            )
+            self.assertEqual(result.returncode, 1)
+            me = f"{os.getuid()}:{os.getgid()}"
+            self.assertEqual(
+                result.stderr,
+                f"could not empty {tree} as runtime uid:gid 2000:2001 (left: "
+                f"'sub' ({me})); refusing root fallback (#94)\n",
+            )
+            # a large residue: at most 3 entries, names escaped and truncated
+            for i in range(500):
+                (tree / f"f{i}").write_text("")
+            (tree / ("x\n" * 50)).write_text("")
+            result = self.run_remove_runtime_path(
+                function, tree, runtime_rm=False, check=False
+            )
+            line = result.stderr.splitlines()
+            self.assertEqual(len(line), 1)
+            self.assertIn("refusing root fallback (#94)", line[0])
+            self.assertEqual(line[0].count(f"({me})"), 3)
+            self.assertTrue((tree / "sub" / "keep-me").exists())
+            self.assertEqual(
+                log.read_text(),
+                f"user rm -rf --one-file-system -- {tree}\n"
+                f"podman 60s /nonexistent cgroupfs unshare rm -rf --one-file-system -- {tree}\n",
+            )
+            # files of subordinate ids: `podman unshare` empties it
+            self.run_remove_runtime_path(function, tree, runtime_rm=False, podman_rm=True)
+            self.assertFalse(tree.exists())
+
+    def test_the_distribution_root_podman_units_are_stopped_and_masked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            commands: list[list[str]] = []
+            with mock.patch.object(bootstrap.shutil, "which", lambda name: f"/usr/bin/{name}"), mock.patch.object(
+                bootstrap, "run_best_effort", lambda _cfg, args, desc: commands.append(args)
+            ):
+                REAL_DISABLE_ROOT_PODMAN_UNITS(cfg)
+            self.assertEqual(
+                commands,
+                [
+                    ["systemctl", "disable", "--now", "podman-auto-update.timer", "podman.socket"],
+                    [
+                        "systemctl",
+                        "mask",
+                        "podman-auto-update.timer",
+                        "podman-auto-update.service",
+                        "podman.service",
+                        "podman.socket",
+                        "podman-clean-transient.service",
+                    ],
+                ],
+            )
+            # both reconcile modes do it
+            for mode in (bootstrap.run_reconcile, bootstrap.run_reconcile_helpers):
+                self.assertIn("disable_root_podman_units(cfg)", inspect.getsource(mode))
+            # stopped before root's podman config is rewritten
+            source = inspect.getsource(bootstrap.run_reconcile)
+            self.assertLess(
+                source.index("disable_root_podman_units(cfg)"), source.index("configure_podman(cfg)")
+            )
+
+    def test_root_podman_storage_is_not_on_the_data_disk(self) -> None:
+        source = inspect.getsource(bootstrap.configure_podman)
+        self.assertIn('graphroot = "/var/lib/containers/storage"', source)
+        self.assertNotIn('"containers" / "root" / "storage"', source)
+        self.assertNotIn("/mnt/cocalc/data/containers/root/storage", source)
+
+    def test_the_restart_fingerprint_does_not_follow_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            victim = self.victim(tmpdir)
+            bin_dir = Path(tmpdir) / "runtime-root" / "bin"
+            bin_dir.mkdir(parents=True)
+            (bin_dir / "ctl").write_text("#!/bin/sh\n", encoding="utf-8")
+            (bin_dir / "evil").symlink_to(victim)
+            with mock.patch.object(
+                bootstrap, "project_host_runtime_root", lambda _cfg: Path(tmpdir) / "runtime-root"
+            ):
+                parts = bootstrap.project_host_restart_fingerprint(cfg)
+            self.assertIn("bin:ctl", parts)
+            self.assertNotIn("bin:evil", parts)
 
 
 class BootstrapRuntimeShellEnvTest(unittest.TestCase):
@@ -2469,12 +4515,22 @@ class CocalcInstallRootTest(unittest.TestCase):
             mock.patch.object(bootstrap.os, "chown", chown), \
             mock.patch.object(bootstrap, "run_best_effort") as commands:
             if prepare:
-                bootstrap.prepare_dirs(cfg)
+                state = self.base / "state"
+                state.mkdir()
+                state.chmod(0o775)
+                owners[state] = runtime_owner
+                (state / "keep").write_text("state")
+                owners[state / "keep"] = runtime_owner
+                with mock.patch.object(bootstrap, "COCALC_STATE_ROOT", state), \
+                        mock.patch.object(bootstrap.os, "geteuid", return_value=0):
+                    bootstrap.prepare_dirs(cfg)
                 self.assertEqual(owners[self.base], (0, 0))
-                commands.assert_called_once_with(
-                    cfg, ["chown", "cocalc-host:cocalc-host", "/var/lib/cocalc"],
-                    "chown cocalc dirs",
-                )
+                # /var/lib/cocalc is root's now; only that inode migrates.
+                self.assertEqual(owners[state], (0, 0))
+                self.assertEqual(state.stat().st_mode & 0o777, 0o755)
+                self.assertEqual(owners[state / "keep"], runtime_owner)
+                commands.assert_not_called()
+                migrations.remove((state, 0, 0))
             bootstrap.ensure_cocalc_install_root()
             self.assertEqual(owners[self.base], (0, 0))
             self.assertEqual(self.base.stat().st_mode & 0o777, 0o755)
@@ -2602,14 +4658,21 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
                 kwargs
             )
             contract = bootstrap.read_current_runtime_user_contract(cfg)
+            self.assertEqual(len(calls), 3)
+            repairs[0]["run_as_runtime_user"](["rm", "-rf", "--", "/a b"])
+            self.assertEqual(
+                calls[-1][0][-3:],
+                ["bash", "-lc", 'cd "$HOME" && exec rm -rf -- \'/a b\''],
+            )
+            self.assertEqual(calls[-1][1], bootstrap.RUNTIME_TREE_REMOVE_TIMEOUT_S)
         finally:
             bootstrap.shutil.which = original_which
             bootstrap.run_bounded_capture = original_probe
             bootstrap.repair_stale_podman_boot_state = original_repair
 
-        self.assertEqual(len(calls), 3)
         self.assertEqual(len(repairs), 1)
         self.assertEqual(repairs[0]["uid"], os.getuid())
+        self.assertEqual(repairs[0]["podman_unshare"][-2:], ["/usr/bin/podman", "unshare"])
         self.assertIn("fingerprint", contract)
         self.assertNotIn("probe_error", contract)
 
@@ -2643,6 +4706,7 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
                     uid=2000,
                     gid=2000,
                     runtime_dir=bootstrap.default_podman_runtime_dir(2000),
+                    run_as_runtime_user=lambda argv: self.fail(argv),
                 )
         finally:
             bootstrap.project_host_runtime_is_active = original_active
@@ -2655,13 +4719,16 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
         original_active = bootstrap.project_host_runtime_is_active
         original_exists = Path.exists
         original_is_symlink = Path.is_symlink
-        original_rmtree = bootstrap.shutil.rmtree
+        original_remove = bootstrap.remove_runtime_tree
         original_ensure_owned = bootstrap.ensure_owned_runtime_dir
+        runner = lambda argv: None
         try:
             bootstrap.project_host_runtime_is_active = lambda: False
             Path.exists = lambda _self: True  # type: ignore[method-assign]
             Path.is_symlink = lambda _self: False  # type: ignore[method-assign]
-            bootstrap.shutil.rmtree = lambda path: removed.append(str(path))
+            bootstrap.remove_runtime_tree = lambda path, run, unshare, runtime_ids: removed.append(
+                (str(path), run, unshare, runtime_ids)
+            )
             bootstrap.ensure_owned_runtime_dir = (
                 lambda path, uid, gid: owned.append((str(path), uid, gid))
             )
@@ -2670,19 +4737,32 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
                 uid=2000,
                 gid=2000,
                 runtime_dir=bootstrap.default_podman_runtime_dir(2000),
+                run_as_runtime_user=runner,
+                podman_unshare=["podman", "unshare"],
             )
         finally:
             bootstrap.project_host_runtime_is_active = original_active
             Path.exists = original_exists  # type: ignore[method-assign]
             Path.is_symlink = original_is_symlink  # type: ignore[method-assign]
-            bootstrap.shutil.rmtree = original_rmtree
+            bootstrap.remove_runtime_tree = original_remove
             bootstrap.ensure_owned_runtime_dir = original_ensure_owned
 
+        # the stale pause state first, so that `podman unshare` can work
         self.assertEqual(
             removed,
             [
-                "/run/cocalc/containers/rootless/cocalc-host",
-                "/mnt/cocalc/data/tmp/cocalc-podman-runtime-2000/libpod/tmp",
+                (
+                    "/mnt/cocalc/data/tmp/cocalc-podman-runtime-2000/libpod/tmp",
+                    runner,
+                    ["podman", "unshare"],
+                    (2000, 2000),
+                ),
+                (
+                    "/run/cocalc/containers/rootless/cocalc-host",
+                    runner,
+                    ["podman", "unshare"],
+                    (2000, 2000),
+                ),
             ],
         )
         self.assertEqual(
@@ -2838,6 +4918,7 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
     def test_configure_podman_defers_live_runroot_migration(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
+            owned_dirs: list[tuple[str, list[str]]] = []
             home = Path(tmpdir) / "home"
             storage_conf = home / ".config" / "containers" / "storage.conf"
             storage_conf.parent.mkdir(parents=True)
@@ -2857,28 +4938,34 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
                 Path.write_text = lambda self, text, encoding="utf-8": writes.append(  # type: ignore[method-assign]
                     (str(self), text)
                 )
-                bootstrap.configure_podman(cfg)
+                # never the real /mnt: record what would be set up
+                with mock.patch.object(
+                    bootstrap,
+                    "ensure_runtime_owned_dirs",
+                    lambda _cfg, root, children: owned_dirs.append((str(root), children)),
+                ):
+                    bootstrap.configure_podman(cfg)
             finally:
                 bootstrap.runtime_home = original_runtime_home
                 bootstrap.project_host_runtime_is_active = original_runtime_active
                 Path.mkdir = original_mkdir  # type: ignore[method-assign]
                 Path.write_text = original_write_text  # type: ignore[method-assign]
 
-            self.assertEqual(1, len(writes))
-            self.assertEqual(
-                "/mnt/cocalc/data/containers/runroot-migration-pending",
-                writes[0][0],
-            )
+            # written through a descriptor of the data dir, not by path
+            self.assertEqual(writes, [])
+            marker = Path(bootstrap.DATA_ROOT) / "containers" / "runroot-migration-pending"
             self.assertIn(
                 "desired=/run/cocalc/containers/rootless/missing-runtime-user",
-                writes[0][1],
+                marker.read_text(encoding="utf-8"),
             )
+            marker.unlink()
 
     def test_configure_podman_does_not_clear_rootless_state_on_subuid_ownership(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
+            owned_dirs: list[tuple[str, list[str]]] = []
             recorded = []
             removed = []
             writes = []
@@ -2902,7 +4989,13 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
                 bootstrap.shutil.rmtree = lambda path, ignore_errors=False: removed.append(
                     (str(path), ignore_errors)
                 )
-                bootstrap.configure_podman(cfg)
+                # never the real /mnt: record what would be set up
+                with mock.patch.object(
+                    bootstrap,
+                    "ensure_runtime_owned_dirs",
+                    lambda _cfg, root, children: owned_dirs.append((str(root), children)),
+                ):
+                    bootstrap.configure_podman(cfg)
             finally:
                 bootstrap.run_best_effort = original_run_best_effort
                 bootstrap.runtime_home = original_runtime_home
@@ -2919,43 +5012,21 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
                 ),
                 writes,
             )
-            self.assertIn(
-                (
-                    str(
-                        Path(tmpdir)
-                        / "home"
-                        / ".config"
-                        / "containers"
-                        / "containers.conf"
-                    ),
-                    '[engine]\ncgroup_manager = "cgroupfs"\n',
-                ),
-                writes,
+            containers = Path(tmpdir) / "home" / ".config" / "containers"
+            self.assertEqual(
+                (containers / "containers.conf").read_text(encoding="utf-8"),
+                '[engine]\ncgroup_manager = "cgroupfs"\n',
+            )
+            self.assertEqual(
+                (containers / "storage.conf").read_text(encoding="utf-8"),
+                '[storage]\ndriver = "overlay"\nrunroot = "/run/cocalc/containers/rootless/missing-runtime-user"\ngraphroot = "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage"\n',
             )
             self.assertIn(
                 (
-                    str(
-                        Path(tmpdir)
-                        / "home"
-                        / ".config"
-                        / "containers"
-                        / "storage.conf"
-                    ),
-                    '[storage]\ndriver = "overlay"\nrunroot = "/run/cocalc/containers/rootless/missing-runtime-user"\ngraphroot = "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage"\n',
+                    "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
+                    ["storage"],
                 ),
-                writes,
-            )
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
-                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
-                    ],
-                    "chown rootless podman persistent paths",
-                ),
-                recorded,
+                owned_dirs,
             )
             self.assertIn(
                 (
@@ -2989,23 +5060,6 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
                         "/run/cocalc/containers/rootless/missing-runtime-user",
                     ],
                     "restrict rootless Podman runroot",
-                ),
-                recorded,
-            )
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        str(
-                            Path(tmpdir)
-                            / "home"
-                            / ".config"
-                            / "containers"
-                            / "containers.conf"
-                        ),
-                    ],
-                    "chown containers.conf",
                 ),
                 recorded,
             )
@@ -3195,6 +5249,455 @@ class BootstrapBundleFallbackManifestTest(unittest.TestCase):
                     bootstrap.extract_bundle_unlocked(cfg, bundle)
 
 
+class RootNodeBindServiceCapabilityTest(unittest.TestCase):
+    """The root-owned node (#1526): resolved under NODE_ROOT, opened without
+    following a symlink, root's own regular file, not group/other-writable."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "node"
+        self.version = self.root / "v24.1.0"
+        (self.version / "bin").mkdir(parents=True)
+        self.node = self.version / "bin" / "node"
+        self.node.write_text("node\n", encoding="utf-8")
+        self.node.chmod(0o755)
+        (self.root / "current").symlink_to(self.version, target_is_directory=True)
+        self.cfg = replace(make_cfg(tmp.name), env_lines=["COCALC_PROJECT_HOST_DIRECT_HTTPS_PORT=443"])
+        self.set_calls: list = []
+        self.logged: list[str] = []
+        self.nvm_calls: list = []
+        for name, value in (
+            ("NODE_ROOT", self.root),
+            ("log_line", lambda _cfg, line: self.logged.append(line)),
+            ("set_nvm_node_bind_service_capability", lambda cfg: self.nvm_calls.append(cfg)),
+        ):
+            p = mock.patch.object(bootstrap, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.object(bootstrap.os, "setxattr", lambda fd, name, value: self.set_calls.append((os.fstat(fd), name, value)))
+        p.start()
+        self.addCleanup(p.stop)
+        # the tests can't chown to root: the owner check is against the test uid
+        real_fstat = os.fstat
+
+        def fstat_as_root(fd):
+            st = real_fstat(fd)
+            if st.st_uid == os.getuid():
+                return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, 0, 0, st.st_size, int(st.st_atime), int(st.st_mtime), int(st.st_ctime)))
+            return st
+        self.fstat_as_root = fstat_as_root
+
+    def run_it(self, as_root=True):
+        with mock.patch.object(bootstrap.os, "fstat", self.fstat_as_root if as_root else os.fstat):
+            bootstrap.configure_node_bind_service_capability(self.cfg)
+
+    def test_root_node_is_chosen_and_set_by_descriptor(self) -> None:
+        self.run_it()
+        self.assertEqual(self.nvm_calls, [])
+        self.assertEqual(len(self.set_calls), 1)
+        st, name, value = self.set_calls[0]
+        self.assertEqual(st.st_ino, self.node.stat().st_ino)
+        self.assertEqual(name, "security.capability")
+        self.assertEqual(value.hex(), "0100000200040000" + "00" * 12)
+        self.assertFalse(any("refusing" in l for l in self.logged))
+
+    def test_symlinked_root_node_binary_is_refused(self) -> None:
+        real = self.version / "bin" / "node-real"
+        self.node.rename(real)
+        self.node.symlink_to(real)
+        self.run_it()
+        self.assertEqual(self.set_calls, [])
+        self.assertTrue(any("refusing to set the node bind capability" in l for l in self.logged))
+
+    def test_root_node_not_owned_by_root_is_refused(self) -> None:
+        self.run_it(as_root=False)
+        self.assertEqual(self.set_calls, [])
+        self.assertTrue(any("is owned by uid" in l for l in self.logged))
+
+    def test_group_writable_root_node_is_refused(self) -> None:
+        self.node.chmod(0o775)
+        self.run_it()
+        self.assertEqual(self.set_calls, [])
+        self.assertTrue(any("group/other-writable" in l for l in self.logged))
+
+    def test_current_pointing_outside_node_root_is_refused(self) -> None:
+        outside = self.root.parent / "outside"
+        (outside / "bin").mkdir(parents=True)
+        (outside / "bin" / "node").write_text("x\n", encoding="utf-8")
+        (outside / "bin" / "node").chmod(0o755)
+        (self.root / "current").unlink()
+        (self.root / "current").symlink_to(outside, target_is_directory=True)
+        self.run_it()
+        self.assertEqual(self.set_calls, [])
+        self.assertTrue(any("unable to resolve" in l for l in self.logged))
+
+    def test_no_executable_root_node_falls_back_to_nvm(self) -> None:
+        self.node.chmod(0o644)
+        self.run_it()
+        self.assertEqual(len(self.nvm_calls), 1)
+        self.assertEqual(self.set_calls, [])
+
+
+class NodeBindServiceCapabilityTest(unittest.TestCase):
+    """The HTTPS bind capability goes on the binary the wrapper runs: the
+    root-owned node under NODE_ROOT (#1526) when it is executable, else the
+    runtime user's nvm node, in both cases through a descriptor. Any failure
+    skips only the capability, never the rest of the reconcile. These tests
+    use a NODE_ROOT without a node, i.e. the nvm fallback; RootNodeBind...
+    covers the root node."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = mock.patch.object(bootstrap, "NODE_ROOT", Path(tmp.name) / "no-node")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def setup_node(self, tmpdir: str) -> Path:
+        node = Path(tmpdir) / "home" / ".nvm" / "versions" / "node" / "v20.1.0" / "bin" / "node"
+        node.parent.mkdir(parents=True)
+        node.write_text("node\n", encoding="utf-8")
+        return node
+
+    def port_cfg(self, tmpdir: str):
+        return replace(
+            make_cfg(tmpdir), env_lines=["COCALC_PROJECT_HOST_DIRECT_HTTPS_PORT=443"]
+        )
+
+    def configure(self, tmpdir: str, node_path: str, *, uid: int | None = None, on_set=None, run_cmd=None, getpwnam=None):
+        cfg = self.port_cfg(tmpdir)
+        user = pwd.struct_passwd(
+            (
+                cfg.ssh_user,
+                "x",
+                os.getuid() if uid is None else uid,
+                os.getgid(),
+                "",
+                str(Path(tmpdir) / "home"),
+                "/bin/bash",
+            )
+        )
+        commands: list[list[str]] = []
+        set_calls: list[tuple[os.stat_result, str, bytes]] = []
+        logged: list[str] = []
+
+        def fake_run_cmd(_cfg, args, _desc, **_kwargs):
+            commands.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout=f"{node_path}\n")
+
+        def fake_setxattr(fd, name, value):
+            if on_set is not None:
+                on_set()
+            set_calls.append((os.fstat(fd), name, value))
+
+        with mock.patch.object(
+            bootstrap, "run_cmd", run_cmd or fake_run_cmd
+        ), mock.patch.object(
+            bootstrap.pwd, "getpwnam", getpwnam or (lambda _name: user)
+        ), mock.patch.object(bootstrap.os, "setxattr", fake_setxattr), mock.patch.object(
+            bootstrap, "log_line", lambda _cfg, line: logged.append(line)
+        ):
+            bootstrap.configure_node_bind_service_capability(cfg)
+        return commands, set_calls, logged
+
+    def assert_skipped(self, set_calls, logged) -> None:
+        self.assertEqual(set_calls, [])
+        self.assertTrue(
+            any("refusing to set the node bind capability" in line for line in logged),
+            logged,
+        )
+
+    def test_sets_the_capability_on_the_node_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            commands, set_calls, logged = self.configure(tmpdir, str(node))
+            # only `nvm which` runs; no setcap by path
+            self.assertEqual(len(commands), 1)
+            self.assertIn("nvm which default", commands[0][-1])
+            self.assertEqual(len(set_calls), 1)
+            st, name, value = set_calls[0]
+            self.assertEqual((st.st_dev, st.st_ino), (node.stat().st_dev, node.stat().st_ino))
+            self.assertEqual(name, "security.capability")
+            # what `setcap cap_net_bind_service=+ep` writes (getfattr -e hex)
+            self.assertEqual(value.hex(), "0100000200040000" + "00" * 12)
+            self.assertFalse(any("refusing" in line for line in logged))
+
+    def test_a_path_swapped_after_the_checks_is_not_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            victim = Path(tmpdir) / "victim"
+            victim.write_text("victim\n", encoding="utf-8")
+            original = (node.stat().st_dev, node.stat().st_ino)
+
+            def swap() -> None:
+                node.rename(node.with_name("node.old"))
+                node.symlink_to(victim)
+
+            _, set_calls, _ = self.configure(tmpdir, str(node), on_set=swap)
+            self.assertEqual(len(set_calls), 1)
+            self.assertEqual((set_calls[0][0].st_dev, set_calls[0][0].st_ino), original)
+
+    def test_a_symlinked_binary_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            victim = node.with_name("node-real")
+            victim.write_text("victim\n", encoding="utf-8")
+            node.unlink()
+            node.symlink_to(victim)
+            _, set_calls, logged = self.configure(tmpdir, str(node))
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_symlinked_directory_on_the_path_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            elsewhere = Path(tmpdir) / "elsewhere"
+            node.parent.rename(elsewhere)
+            node.parent.symlink_to(elsewhere, target_is_directory=True)
+            _, set_calls, logged = self.configure(tmpdir, str(node))
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_binary_that_is_not_a_regular_file_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            node.unlink()
+            os.mkfifo(node)  # must not block on open either
+            _, set_calls, logged = self.configure(tmpdir, str(node))
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_binary_not_owned_by_the_runtime_user_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            _, set_calls, logged = self.configure(tmpdir, str(node), uid=os.getuid() + 1)
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_missing_binary_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            node.unlink()
+            _, set_calls, logged = self.configure(tmpdir, str(node))
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_binary_outside_the_nvm_versions_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            for path in ("/usr/bin/ping", f"{node.parents[2]}/../../../../victim", ""):
+                with self.subTest(path=path):
+                    _, set_calls, logged = self.configure(tmpdir, path)
+                    self.assert_skipped(set_calls, logged)
+                    self.assertTrue(any("unable to resolve" in line for line in logged))
+
+    def test_a_failing_nvm_is_skipped(self) -> None:
+        def failing(_cfg, _args, desc, **_kwargs):
+            raise RuntimeError(f"{desc} failed with exit code 3")
+
+        def hanging(_cfg, args, _desc, **kwargs):
+            self.assertEqual(kwargs.get("timeout"), 120)
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for run_cmd in (failing, hanging):
+                with self.subTest(run_cmd=run_cmd.__name__):
+                    _, set_calls, logged = self.configure(tmpdir, "", run_cmd=run_cmd)
+                    self.assert_skipped(set_calls, logged)
+
+    def test_a_missing_runtime_user_is_skipped(self) -> None:
+        def missing(name):
+            raise KeyError(name)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            with mock.patch.object(bootstrap, "runtime_home", lambda _cfg: str(Path(tmpdir) / "home")):
+                _, set_calls, logged = self.configure(tmpdir, str(node), getpwnam=missing)
+            self.assert_skipped(set_calls, logged)
+
+    def test_the_reconcile_continues_after_a_refusal(self) -> None:
+        # the steps after it (wrapper, helpers, sudoers) still run
+        steps = (
+            "ensure_runtime_user ensure_bootstrap_paths "
+            "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
+            "configure_kernel_key_limits "
+            "configure_inotify_limits configure_journald_limits "
+            "configure_rsyslog_limits install_btrfs_helper "
+            "install_privileged_wrappers reconcile_storage_and_containment "
+            "ensure_subuids ensure_runtime_user_manager configure_podman "
+            "verify_runtime_user_contract write_env configure_runtime_shell_env "
+            "setup_master_conat_token install_privileged_tool_binaries "
+            "install_node install_node_runtime_libs write_wrapper "
+            "configure_host_integrity_watch configure_btrfs_scrub ensure_cocalc_state_root "
+            "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
+            "configure_cloudflared_with_options "
+            "configure_critical_service_oom_protection configure_autostart "
+            "reconcile_project_network_limits "
+            "record_operation_start record_operation_success "
+            "record_operation_failure report_bootstrap_status log_line"
+        ).split()
+        called: list[str] = []
+
+        def refuse(_cfg):
+            called.append("set_node_bind_service_capability")
+            raise bootstrap.UnsafeRuntimePath("node is a symlink")
+
+        with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
+            cfg = self.port_cfg(tmpdir)
+            for name in steps:
+                stack.enter_context(
+                    mock.patch.object(
+                        bootstrap, name, lambda *a, _name=name, **k: called.append(_name)
+                    )
+                )
+            stack.enter_context(mock.patch.object(bootstrap, "set_node_bind_service_capability", refuse))
+            stack.enter_context(mock.patch.object(bootstrap, "compute_image_size", return_value=10))
+            stack.enter_context(mock.patch.object(bootstrap, "extract_bundle", return_value=None))
+            stack.enter_context(
+                mock.patch.object(bootstrap, "project_host_restart_fingerprint", return_value={})
+            )
+            stack.enter_context(mock.patch.object(bootstrap, "project_host_running", return_value=True))
+            stack.enter_context(mock.patch.object(bootstrap, "start_project_host"))
+            self.assertEqual(bootstrap.run_reconcile(cfg), 0)
+        self.assertIn("set_node_bind_service_capability", called)
+        after = called[called.index("set_node_bind_service_capability") + 1 :]
+        for name in ("write_wrapper", "write_helpers", "configure_runtime_sudoers", "verify_runtime_sudoers"):
+            self.assertIn(name, after)
+        self.assertNotIn("record_operation_failure", called)
+
+    def test_nothing_without_the_direct_https_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "run_cmd"
+        ) as run_cmd, mock.patch.object(bootstrap.os, "setxattr") as setxattr:
+            bootstrap.configure_node_bind_service_capability(make_cfg(tmpdir))
+            run_cmd.assert_not_called()
+            setxattr.assert_not_called()
+
+
+class BootstrapBundleExtractionTest(unittest.TestCase):
+    """Extraction into a runtime-owned bundle root goes through descriptors."""
+
+    def make_bundle(self, tmpdir: str, *, root=None, current=None, mode=0o644):
+        cfg = make_cfg(tmpdir)
+        root = Path(root or Path(tmpdir) / "bundles")
+        root.mkdir(parents=True, exist_ok=True)
+        tarball = Path(tmpdir) / "bundle.tar.xz"
+        with tarfile.open(tarball, mode="w:xz") as archive:
+            directory = tarfile.TarInfo("bundle/shared")
+            directory.type = tarfile.DIRTYPE
+            directory.mode = 0o2775
+            archive.addfile(directory)
+            for name, payload, member_mode in (
+                ("bundle/marker", b"ok\n", 0o644),
+                ("bundle/bin/tool", b"#!/bin/sh\n", mode),
+            ):
+                member = tarfile.TarInfo(name)
+                member.size = len(payload)
+                member.mode = member_mode
+                member.uid = 0
+                archive.addfile(member, io.BytesIO(payload))
+        bundle = bootstrap.BundleSpec(
+            url="https://example.invalid/software/tools/v2/tools.tar.xz",
+            sha256=hashlib.sha256(tarball.read_bytes()).hexdigest(),
+            remote=str(Path(tmpdir) / "download.tar.xz"),
+            root=str(root),
+            dir=str(root / "v2"),
+            current=str(current or root / "current"),
+            version="v2",
+        )
+        return cfg, bundle, root, tarball
+
+    def extract(self, cfg, bundle, tarball):
+        def fake_download(_cfg, _url, dest):
+            Path(dest).write_bytes(tarball.read_bytes())
+
+        with mock.patch.object(bootstrap, "download_file", side_effect=fake_download), mock.patch.object(
+            bootstrap, "prune_bundle_versions"
+        ), mock.patch.object(bootstrap, "run_best_effort"):
+            return bootstrap.extract_bundle_unlocked(cfg, bundle)
+
+    def test_extracts_into_place_and_points_current(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, tarball = self.make_bundle(tmpdir)
+            self.extract(cfg, bundle, tarball)
+            self.assertEqual((root / "v2" / "marker").read_text(), "ok\n")
+            self.assertEqual(os.readlink(root / "current"), str(root / "v2"))
+            self.assertEqual(stat.S_IMODE((root / "v2").stat().st_mode), 0o755)
+            # nothing left of the staging dir or temporary links
+            self.assertEqual(sorted(p.name for p in root.iterdir()), ["current", "v2"])
+
+    def test_no_setuid_or_setgid_bit_survives(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, tarball = self.make_bundle(tmpdir, mode=0o6755)
+            self.extract(cfg, bundle, tarball)
+            for path in (root / "v2").rglob("*"):
+                if not path.is_symlink():
+                    self.assertEqual(path.stat().st_mode & 0o6000, 0, path)
+            self.assertTrue((root / "v2" / "shared").is_dir())
+            self.assertEqual(stat.S_IMODE((root / "v2" / "bin" / "tool").stat().st_mode), 0o755)
+
+    def test_a_symlinked_bundle_root_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            linked = Path(tmpdir) / "linked"
+            linked.symlink_to(victim, target_is_directory=True)
+            cfg, bundle, _root, tarball = self.make_bundle(tmpdir)
+            bundle = replace(bundle, root=str(linked), dir=str(linked / "v2"), current=str(linked / "current"))
+            with self.assertRaises(bootstrap.UnsafeRuntimePath):
+                self.extract(cfg, bundle, tarball)
+            self.assertEqual(list(victim.iterdir()), [])
+
+    def test_a_symlink_at_the_version_or_current_name_is_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, tarball = self.make_bundle(tmpdir)
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            (victim / "keep-me").write_text("x")
+            (root / "v2").symlink_to(victim, target_is_directory=True)
+            self.extract(cfg, bundle, tarball)
+            self.assertFalse((root / "v2").is_symlink())
+            self.assertTrue((root / "v2" / "marker").exists())
+            self.assertEqual(sorted(p.name for p in victim.iterdir()), ["keep-me"])
+            # a real directory at current (an old layout) becomes the link
+            shutil.rmtree(root / "v2")
+            os.unlink(root / "current")
+            (root / "current").mkdir()
+            (root / "current" / "old").write_text("x")
+            self.extract(cfg, bundle, tarball)
+            self.assertEqual(os.readlink(root / "current"), str(root / "v2"))
+
+    def test_current_outside_the_root_like_project_host(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            host = Path(tmpdir) / "project-host"
+            cfg, bundle, root, tarball = self.make_bundle(
+                tmpdir, root=host / "bundles", current=host / "current"
+            )
+            self.extract(cfg, bundle, tarball)
+            self.assertEqual(os.readlink(host / "current"), str(root / "v2"))
+            # and reused (already current) without re-downloading
+            with mock.patch.object(bootstrap, "download_file") as download, mock.patch.object(
+                bootstrap, "prune_bundle_versions"
+            ):
+                bootstrap.extract_bundle_unlocked(cfg, bundle)
+            download.assert_not_called()
+
+    def test_files_are_handed_to_the_runtime_user_through_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, tarball = self.make_bundle(tmpdir)
+            chowned: list[tuple] = []
+            fchowned: list[int] = []
+            real_chown = os.chown
+            with mock.patch.object(
+                bootstrap, "runtime_file_owner", lambda _cfg: (os.getuid(), os.getgid())
+            ), mock.patch.object(
+                bootstrap.os, "chown", lambda name, uid, gid, **kw: chowned.append((name, kw))
+            ), mock.patch.object(bootstrap.os, "fchown", lambda fd, *_ids: fchowned.append(fd)):
+                self.extract(cfg, bundle, tarball)
+            self.assertTrue(chowned)
+            for _name, kw in chowned:
+                self.assertIn("dir_fd", kw)
+                self.assertIs(kw.get("follow_symlinks"), False)
+            self.assertEqual(len(fchowned), 1)  # the version dir itself
+
+
 class BootstrapBundleRetentionTest(unittest.TestCase):
     def setUp(self) -> None:
         repair = mock.patch.object(bootstrap, "run_best_effort")
@@ -3230,6 +5733,79 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
             child.name for child in root.iterdir()
             if child.is_dir() and not child.is_symlink()
         )
+
+    def test_a_symlinked_bundle_root_is_not_pruned_through(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
+            linked = Path(tmpdir) / "linked-bundles"
+            linked.symlink_to(root, target_is_directory=True)
+            bundle = replace(bundle, root=str(linked))
+            logged: list[str] = []
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root), mock.patch.object(
+                bootstrap, "log_line", lambda _cfg, line: logged.append(line)
+            ):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=1)
+            self.assertEqual(self.remaining(root), [f"v{i}" for i in range(1, 10)])
+            self.assertTrue(any("refusing to prune" in line for line in logged))
+
+    def test_a_symlink_named_like_a_version_is_not_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            (victim / "keep-me").write_text("x", encoding="utf-8")
+            (root / "v0").symlink_to(victim, target_is_directory=True)
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=2)
+            self.assertTrue((victim / "keep-me").exists())
+            self.assertTrue((root / "v0").is_symlink())
+            self.assertIn("v9", self.remaining(root))
+
+    def test_runtime_bundle_roots_are_handed_over_through_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, _proc_root, _ = self.make_fixture(tmpdir)
+            other = Path(tmpdir) / "other-root"
+            other.mkdir()
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            linked = Path(tmpdir) / "linked-root"
+            linked.symlink_to(victim, target_is_directory=True)
+            cfg = replace(
+                cfg,
+                project_host_bundle=replace(bundle, root=str(root)),
+                project_bundle=replace(bundle, root=str(other)),
+                tools_bundle=replace(bundle, root=str(linked)),
+            )
+            chowned: list[int] = []
+            commands: list[list[str]] = []
+            logged: list[str] = []
+            with mock.patch.object(bootstrap.os, "geteuid", lambda: 0), mock.patch.object(
+                bootstrap, "runtime_file_owner", lambda _cfg: (os.getuid(), os.getgid())
+            ), mock.patch.object(
+                bootstrap.os, "fchown", lambda fd, *_ids: chowned.append(fd)
+            ), mock.patch.object(
+                bootstrap, "run_best_effort", lambda _cfg, args, desc: commands.append(args)
+            ), mock.patch.object(bootstrap, "log_line", lambda _cfg, line: logged.append(line)):
+                bootstrap.chown_runtime_bundle_roots(cfg)
+            self.assertEqual(len(chowned), 2)  # root and other; not the symlinked one
+            self.assertEqual(commands, [])  # no chown by path
+            self.assertTrue(any("not handing over" in line and str(linked) in line for line in logged))
+
+    def test_without_root_no_privileged_chown_by_path_is_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, _proc_root, _ = self.make_fixture(tmpdir)
+            # an intermediate symlink: chown -h would still follow it
+            elsewhere = Path(tmpdir) / "elsewhere"
+            (elsewhere / "bundles").mkdir(parents=True)
+            hop = Path(tmpdir) / "hop"
+            hop.symlink_to(elsewhere, target_is_directory=True)
+            cfg = replace(cfg, tools_bundle=replace(bundle, root=str(hop / "bundles")))
+            commands: list[list[str]] = []
+            with mock.patch.object(bootstrap.os, "geteuid", lambda: 1000), mock.patch.object(
+                bootstrap, "run_best_effort", lambda _cfg, args, desc: commands.append(args)
+            ), mock.patch.object(bootstrap, "log_line", lambda *_a: None):
+                bootstrap.chown_runtime_bundle_roots(cfg)
+            self.assertEqual(commands, [])
 
     def test_tools_pruning_is_delegated_to_project_host(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3467,11 +6043,11 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
                         mock.patch.object(Path, "open", checked_open), \
                         mock.patch.object(Path, "iterdir", checked_iterdir), \
                         mock.patch.object(os, "readlink", checked_readlink), \
-                        mock.patch.object(bootstrap, "run_best_effort") as repair:
+                        mock.patch.object(bootstrap, "chown_runtime_bundle_roots") as repair:
                     bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
                 self.assertEqual(self.remaining(root), [f"v{i}" for i in range(1, 10)])
                 self.assertIn("skipping bundle pruning", Path(cfg.log_file).read_text())
-                self.assertTrue(any(str(root) in call.args[1] for call in repair.call_args_list))
+                repair.assert_called_once_with(cfg)
 
     def test_missing_proc_root_skips_pruning(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3574,144 +6150,118 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 recorded,
             )
 
-    def test_ensure_btrfs_data_does_not_recurse_over_entire_tree(self) -> None:
+    def test_ensure_btrfs_data_sets_up_entries_through_descriptors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
-            recorded = []
-
-            original_run_best_effort = bootstrap.run_best_effort
-            original_run_cmd = bootstrap.run_cmd
-            try:
-                bootstrap.run_best_effort = (
-                    lambda _cfg, args, desc: recorded.append((args, desc))
-                )
-                bootstrap.run_cmd = lambda *args, **kwargs: None
-                # The function targets absolute paths, so just assert on the commands
-                # it would have run rather than trying to mount a fake tree.
-                original_exists = Path.exists
-                original_mkdir = Path.mkdir
-                original_chmod = bootstrap.os.chmod
-                Path.exists = lambda self: True  # type: ignore[method-assign]
-                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
-                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+            data = Path(tmpdir) / "data"
+            data.mkdir()
+            victim = Path(tmpdir) / "victim-dir"
+            victim.mkdir()
+            victim.chmod(0o700)
+            (data / "secrets").symlink_to(victim, target_is_directory=True)
+            commands: list[list[str]] = []
+            fchowned: list[int] = []
+            logged: list[str] = []
+            with mock.patch.object(bootstrap, "DATA_ROOT", str(data)), mock.patch.object(
+                bootstrap, "run_cmd", lambda *_a, **_k: None
+            ), mock.patch.object(
+                bootstrap, "run_best_effort", lambda _cfg, args, desc: commands.append(args)
+            ), mock.patch.object(
+                bootstrap, "runtime_file_owner", lambda _cfg: (os.getuid(), os.getgid())
+            ), mock.patch.object(
+                bootstrap.os, "fchown", lambda fd, *_ids: fchowned.append(fd)
+            ), mock.patch.object(
+                bootstrap, "repair_host_data_ownership", lambda _cfg: None
+            ), mock.patch.object(bootstrap, "log_line", lambda _cfg, line: logged.append(line)):
                 bootstrap.ensure_btrfs_data(cfg)
-            finally:
-                bootstrap.run_best_effort = original_run_best_effort
-                bootstrap.run_cmd = original_run_cmd
-                Path.exists = original_exists  # type: ignore[method-assign]
-                Path.mkdir = original_mkdir  # type: ignore[method-assign]
-                bootstrap.os.chmod = original_chmod
+            self.assertEqual(commands, [])  # no chown or chmod by path
+            self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o700)
+            self.assertTrue((data / "secrets").is_symlink())
+            self.assertTrue(any("refusing" in line and "secrets" in line for line in logged))
+            self.assertEqual(stat.S_IMODE((data / "tmp").stat().st_mode), 0o1777)
+            self.assertEqual(len(fchowned), 2)  # the data dir and tmp
 
-            self.assertTrue(recorded)
-            for args, _desc in recorded:
-                self.assertNotIn("-R", args)
-            self.assertIn(
-                (["chown", "missing-runtime-user:missing-runtime-user", "/mnt/cocalc/data"], "chown /mnt/cocalc/data"),
-                recorded,
-            )
-
-    def test_ensure_btrfs_data_repairs_host_owned_entries_with_drift(self) -> None:
+    def test_repair_host_data_ownership_never_traverses_a_symlinked_tree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
-            recorded = []
+            data = Path(tmpdir) / "data"
+            data.mkdir()
+            elsewhere = Path(tmpdir) / "elsewhere"
+            (elsewhere / "deep").mkdir(parents=True)
+            (data / "logs").symlink_to(elsewhere, target_is_directory=True)
+            me = (os.getuid(), os.getgid())
+            listed: list[object] = []
+            real_listdir = os.listdir
+            real_scandir = os.scandir
 
-            original_run_best_effort = bootstrap.run_best_effort
-            original_run_cmd = bootstrap.run_cmd
-            original_exists = Path.exists
-            original_mkdir = Path.mkdir
-            original_chmod = bootstrap.os.chmod
-            original_iterdir = Path.iterdir
-            original_is_file = Path.is_file
-            original_has_unexpected = bootstrap.tree_has_unexpected_ownership
-            original_path_has_unexpected = bootstrap.path_has_unexpected_ownership
-            try:
-                bootstrap.run_best_effort = (
-                    lambda _cfg, args, desc: recorded.append((args, desc))
-                )
-                bootstrap.run_cmd = lambda *args, **kwargs: None
-                Path.exists = lambda self: True  # type: ignore[method-assign]
-                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
-                bootstrap.os.chmod = lambda *_args, **_kwargs: None
-                Path.iterdir = lambda self: iter(
-                    [
-                        Path("/mnt/cocalc/data/sync-fs.sqlite"),
-                        Path("/mnt/cocalc/data/sync-fs-snapshots.sqlite"),
-                        Path("/mnt/cocalc/data/sync-fs-snapshots.sqlite-wal"),
-                        Path("/mnt/cocalc/data/daemon.pid"),
-                    ]
-                )  # type: ignore[method-assign]
-                Path.is_file = lambda self: str(self) in {  # type: ignore[method-assign]
-                    "/mnt/cocalc/data/sync-fs.sqlite",
-                    "/mnt/cocalc/data/sync-fs-snapshots.sqlite",
-                    "/mnt/cocalc/data/sync-fs-snapshots.sqlite-wal",
-                    "/mnt/cocalc/data/daemon.pid",
-                }
+            def listdir(path=".", *a, **k):
+                listed.append(path)
+                return real_listdir(path, *a, **k)
 
-                def fake_has_unexpected(path: Path, _uid: int, _gid: int) -> bool:
-                    return str(path) in {
-                        "/mnt/cocalc/data/cache",
-                        "/mnt/cocalc/data/logs",
-                        "/mnt/cocalc/data/sync-fs.sqlite",
-                        "/mnt/cocalc/data/sync-fs-snapshots.sqlite",
-                        "/mnt/cocalc/data/sync-fs-snapshots.sqlite-wal",
-                        "/mnt/cocalc/data/daemon.pid",
-                    }
+            def scandir(path=".", *a, **k):
+                listed.append(path)
+                return real_scandir(path, *a, **k)
 
-                bootstrap.tree_has_unexpected_ownership = fake_has_unexpected
-                bootstrap.path_has_unexpected_ownership = fake_has_unexpected
-                bootstrap.ensure_btrfs_data(cfg)
-            finally:
-                bootstrap.run_best_effort = original_run_best_effort
-                bootstrap.run_cmd = original_run_cmd
-                Path.exists = original_exists  # type: ignore[method-assign]
-                Path.mkdir = original_mkdir  # type: ignore[method-assign]
-                bootstrap.os.chmod = original_chmod
-                Path.iterdir = original_iterdir  # type: ignore[method-assign]
-                Path.is_file = original_is_file  # type: ignore[method-assign]
-                bootstrap.tree_has_unexpected_ownership = original_has_unexpected
-                bootstrap.path_has_unexpected_ownership = original_path_has_unexpected
+            with mock.patch.object(bootstrap, "DATA_ROOT", str(data)), mock.patch.object(
+                bootstrap, "resolve_runtime_user_identity", lambda _cfg: (me[0] + 1, me[1] + 1)
+            ), mock.patch.object(bootstrap.os, "chown", lambda *a, **k: None), mock.patch.object(
+                bootstrap.os, "fchown", lambda *a, **k: None
+            ), mock.patch.object(bootstrap.os, "scandir", scandir), mock.patch.object(
+                bootstrap, "log_line", lambda *_a: None
+            ):
+                bootstrap.repair_host_data_ownership(cfg)
+            self.assertFalse(any(str(elsewhere) in str(p) for p in listed), listed)
 
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "-R",
-                        "missing-runtime-user:missing-runtime-user",
-                        "/mnt/cocalc/data/logs",
-                    ],
-                    "repair host data dir ownership",
-                ),
-                recorded,
-            )
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        "/mnt/cocalc/data/cache",
-                    ],
-                    "repair host data top-level dir ownership",
-                ),
-                recorded,
-            )
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        "/mnt/cocalc/data/sync-fs.sqlite",
-                        "/mnt/cocalc/data/sync-fs-snapshots.sqlite",
-                        "/mnt/cocalc/data/sync-fs-snapshots.sqlite-wal",
-                        "/mnt/cocalc/data/daemon.pid",
-                    ],
-                    "repair host data file ownership",
-                ),
-                recorded,
-            )
+    def test_repair_host_data_ownership_walks_without_following(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            data = Path(tmpdir) / "data"
+            (data / "logs" / "sub").mkdir(parents=True)
+            (data / "cache").mkdir()
+            victim_file = Path(tmpdir) / "victim-file"
+            victim_file.write_text("x")
+            victim_dir = Path(tmpdir) / "victim-dir"
+            victim_dir.mkdir()
+            (data / "logs" / "a.log").write_text("x")
+            (data / "logs" / "hardlinked").write_text("x")
+            os.link(data / "logs" / "hardlinked", Path(tmpdir) / "other-link")
+            (data / "logs" / "evil").symlink_to(victim_dir, target_is_directory=True)
+            (data / "sync-fs.sqlite").write_text("x")
+            (data / "daemon.pid").symlink_to(victim_file)
+            chowned: list[tuple] = []
+            fchowned: list[tuple] = []
+            commands: list[list[str]] = []
+            me = (os.getuid(), os.getgid())
+            other = (me[0] + 1, me[1] + 1)
+            with mock.patch.object(bootstrap, "DATA_ROOT", str(data)), mock.patch.object(
+                bootstrap, "resolve_runtime_user_identity", lambda _cfg: other
+            ), mock.patch.object(
+                bootstrap, "tree_has_unexpected_ownership",
+                side_effect=AssertionError("no walk by path"),
+            ), mock.patch.object(
+                bootstrap.os, "chown", lambda name, uid, gid, **kw: chowned.append((name, kw))
+            ), mock.patch.object(
+                bootstrap.os, "fchown", lambda fd, *ids: fchowned.append((os.fstat(fd).st_ino, ids))
+            ), mock.patch.object(
+                bootstrap, "run_best_effort", lambda _cfg, args, desc: commands.append(args)
+            ):
+                bootstrap.repair_host_data_ownership(cfg)
+            self.assertEqual(commands, [])
+            names = sorted(name for name, _kw in chowned)
+            self.assertEqual(names, ["a.log", "evil", "sub"])  # not the hard-linked file
+            for _name, kw in chowned:
+                self.assertIn("dir_fd", kw)
+                self.assertIs(kw.get("follow_symlinks"), False)
+            inodes = {ino for ino, _ids in fchowned}
+            self.assertIn((data / "logs").stat().st_ino, inodes)
+            self.assertIn((data / "cache").stat().st_ino, inodes)
+            self.assertIn((data / "sync-fs.sqlite").stat().st_ino, inodes)
+            self.assertNotIn(victim_file.stat().st_ino, inodes)  # the symlinked pid file
 
     def test_configure_podman_chowns_rootless_storage_children(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
+            owned_dirs: list[tuple[str, list[str]]] = []
             recorded = []
             writes = []
 
@@ -3728,7 +6278,13 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 Path.write_text = lambda self, text, encoding="utf-8": writes.append(  # type: ignore[method-assign]
                     (str(self), text)
                 )
-                bootstrap.configure_podman(cfg)
+                # never the real /mnt: record what would be set up
+                with mock.patch.object(
+                    bootstrap,
+                    "ensure_runtime_owned_dirs",
+                    lambda _cfg, root, children: owned_dirs.append((str(root), children)),
+                ):
+                    bootstrap.configure_podman(cfg)
             finally:
                 bootstrap.run_best_effort = original_run_best_effort
                 bootstrap.runtime_home = original_runtime_home
@@ -3742,52 +6298,20 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 ),
                 writes,
             )
-            self.assertIn(
-                (
-                    str(Path(tmpdir) / "home" / ".config" / "containers" / "containers.conf"),
-                    '[engine]\ncgroup_manager = "cgroupfs"\n',
-                ),
-                writes,
+            containers = Path(tmpdir) / "home" / ".config" / "containers"
+            self.assertEqual(
+                (containers / "containers.conf").read_text(encoding="utf-8"),
+                '[engine]\ncgroup_manager = "cgroupfs"\n',
             )
+            # nothing in the runtime home is chowned by path
+            for args, _desc in recorded:
+                self.assertFalse(any(str(Path(tmpdir) / "home") in str(a) for a in args), args)
             self.assertIn(
                 (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        str(Path(tmpdir) / "home" / ".config" / "containers"),
-                    ],
-                    "chown rootless podman config",
+                    "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
+                    ["storage"],
                 ),
-                recorded,
-            )
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        str(
-                            Path(tmpdir)
-                            / "home"
-                            / ".config"
-                            / "containers"
-                            / "containers.conf"
-                        ),
-                    ],
-                    "chown containers.conf",
-                ),
-                recorded,
-            )
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
-                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
-                    ],
-                    "chown rootless podman persistent paths",
-                ),
-                recorded,
+                owned_dirs,
             )
             self.assertIn(
                 (
@@ -4875,59 +7399,32 @@ normalize_project_io_class_state
                 )
 
     def test_btrfs_qgroup_commands_take_only_project_quota_groups(self) -> None:
+        namespace = {"__name__": "runtime_storage_path_helper_test"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, namespace)
+        parse_btrfs = namespace["parse_btrfs"]
         with tempfile.TemporaryDirectory() as tmpdir:
             script = self._storage_wrapper_for(make_cfg(tmpdir))
-        functions = "".join(
-            name + "() {" + script.split("\n" + name + "() {", 1)[1].split(
-                "\n}\n", 1
-            )[0] + "\n}\n"
-            for name in ("check_args", "check_qgroup_args")
-        )
-        stubs = (
-            'deny() { echo "DENY $1 $2"; exit 2; }\n'
-            'allow_path() { [[ "$1" == /mnt/cocalc || "$1" == /mnt/cocalc/* ]]; }\n'
-        )
-        branch = script.split("  btrfs|btrfs-maintenance)", 1)[1].split(
-            "\n    ;;", 1
-        )[0]
-        self.assertIn('check_qgroup_args "$@"', branch)
-
-        def check(*args: str) -> str:
-            return subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    "set -euo pipefail\n" + stubs + functions
-                    + 'check_qgroup_args "$@"; echo OK',
-                    "_",
-                    *args,
-                ],
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-
+        branch = script.split("  btrfs|btrfs-maintenance)", 1)[1].split("\n    ;;", 1)[0]
+        self.assertIn('cocalc-runtime-storage-path-helper btrfs "$@"', branch)
+        self.assertNotIn("/usr/bin/btrfs", branch)
         for args in [
             ["qgroup", "create", "1/162710717947708", "/mnt/cocalc"],
             ["qgroup", "destroy", "1/7", "/mnt/cocalc"],
-            [
-                "qgroup", "assign", "--no-rescan",
-                "/mnt/cocalc/project-x", "1/7", "/mnt/cocalc",
-            ],
+            ["qgroup", "assign", "--no-rescan", "/mnt/cocalc/project-x", "1/7", "/mnt/cocalc"],
             ["qgroup", "limit", "1073741824", "1/7", "/mnt/cocalc"],
             ["qgroup", "show", "-prcF", "--raw", "/mnt/cocalc/project-x"],
         ]:
             with self.subTest(args=args):
-                self.assertEqual(check(*args), "OK")
-        for args, denied in [
+                parse_btrfs(args)
+        for args in [
             # a subvolume's own quota group
-            (["qgroup", "remove", "0/256", "1/7", "/mnt/cocalc"], "0/256"),
-            (["qgroup", "create", "1/7", "/etc"], "/etc"),
-            (["qgroup", "create", "1/7/../x", "/mnt/cocalc"], "1/7/../x"),
-            (["qgroup", "create", "2/7", "/mnt/cocalc"], "2/7"),
+            ["qgroup", "remove", "0/256", "1/7", "/mnt/cocalc"],
+            ["qgroup", "create", "1/7/../x", "/mnt/cocalc"],
+            ["qgroup", "create", "2/7", "/mnt/cocalc"],
+            ["qgroup", "create", "0/256", "/mnt/cocalc"],
         ]:
-            with self.subTest(args=args):
-                self.assertIn(denied, check(*args))
-                self.assertTrue(check(*args).startswith("DENY"))
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                parse_btrfs(args)
 
     def test_project_egress_conat_port_accepts_what_project_host_accepts(self) -> None:
         # Values project-host runs with even though they are not plain digits.
@@ -6180,50 +8677,28 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
                     lambda _cfg=None: Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl"
                 )
                 bootstrap.os.geteuid = lambda: 0
-                bootstrap.write_helpers(cfg)
+                # euid is faked as root; the test user owns the dirs
+                with mock.patch.object(bootstrap, "require_dir_owner", lambda *_a: None):
+                    bootstrap.write_helpers(cfg)
             finally:
                 bootstrap.run_best_effort = original_run_best_effort
                 bootstrap.project_host_runtime_root = original_runtime_root
                 bootstrap.project_host_rootctl_path = original_rootctl_path
                 bootstrap.os.geteuid = original_geteuid
 
-            self.assertTrue(recorded)
             for args, _desc in recorded:
                 self.assertNotIn("-R", args)
             runtime_bin = Path(tmpdir) / "runtime-root" / "bin"
             rootctl = Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl"
             core_handler = rootctl.with_name("cocalc-project-host-core-handler")
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        str(runtime_bin),
-                        str(runtime_bin / "ctl"),
-                        str(runtime_bin / "start-project-host"),
-                        str(runtime_bin / "logs"),
-                        str(runtime_bin / "acp-status"),
-                        str(runtime_bin / "acp-logs"),
-                        str(runtime_bin / "logs-cf"),
-                        str(runtime_bin / "ctl-cf"),
-                    ],
-                    "chown runtime helper scripts",
-                ),
-                recorded,
-            )
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        str(runtime_bin / "fetch-project-bundle.sh"),
-                        str(runtime_bin / "fetch-project-host.sh"),
-                        str(runtime_bin / "fetch-tools.sh"),
-                    ],
-                    "chown runtime fetch helpers",
-                ),
-                recorded,
-            )
+            # Runtime files are owned through their descriptors, never by a
+            # chown of their paths.
+            for args, _desc in recorded:
+                self.assertFalse(any(str(runtime_bin) in str(arg) for arg in args), args)
+            for name in bootstrap_runtime_helper_names():
+                info = (runtime_bin / name).lstat()
+                self.assertTrue(stat.S_ISREG(info.st_mode), name)
+                self.assertEqual(stat.S_IMODE(info.st_mode), 0o755, name)
             self.assertTrue(rootctl.exists())
             self.assertTrue(core_handler.exists())
             ctl_text = (runtime_bin / "ctl").read_text(encoding="utf-8")
@@ -6231,7 +8706,7 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
             self.assertIn(str(rootctl), ctl_text)
             self.assertIn("start|ensure|restart|stop)", ctl_text)
             self.assertIn(
-                'DAEMON_CONTROL_LOCK="/mnt/cocalc/data/tmp/project-host-daemon-control.lock"',
+                'DAEMON_CONTROL_LOCK="/run/cocalc/project-host-daemon-control.lock"',
                 rootctl_text,
             )
             self.assertIn(
@@ -6272,8 +8747,11 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
                 "require_podman_boot_preparation_not_failed",
                 rootctl_text,
             )
+            # storage.conf is written by the runtime user; the runroot is an
+            # argument of that script
+            self.assertIn('runroot = "$2"', rootctl_text)
             self.assertIn(
-                'runroot = "${desired_runroot}"',
+                '"${config_dir}" "${desired_runroot}" "${graphroot}"',
                 rootctl_text,
             )
             self.assertIn(
@@ -6289,7 +8767,7 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
                 rootctl_text,
             )
             self.assertIn(
-                'run_podman_as_runtime 60s "${runtime_dir}" "${cgroup_manager}" system migrate',
+                'run_podman_as_runtime 120s "${runtime_dir}" "${cgroup_manager}" system migrate',
                 rootctl_text,
             )
             self.assertIn(
@@ -6391,8 +8869,9 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
                 'systemctl start "${service}"',
                 rootctl.read_text(encoding="utf-8"),
             )
+            # runtime dirs are owned through descriptors, not install -d
             self.assertIn(
-                'install -d -o "${uid}" -g "${gid}" -m 0700 "${path}"',
+                'python3 -I - "$1" "$(runtime_uid)" "$(runtime_gid)" <<\'PY\'',
                 rootctl.read_text(encoding="utf-8"),
             )
             self.assertIn(
@@ -7016,25 +9495,18 @@ WantedBy=multi-user.target
             captured = {}
 
             original_runtime_root = bootstrap.project_host_runtime_root
-            original_write_text = bootstrap.Path.write_text
-            original_chmod = bootstrap.Path.chmod
             original_run_best_effort = bootstrap.run_best_effort
             try:
                 bootstrap.project_host_runtime_root = lambda _cfg: Path(tmpdir) / "runtime-root"
-                bootstrap.Path.write_text = (
-                    lambda self, data, encoding="utf-8": captured.__setitem__(str(self), data)
-                    or len(data)
-                )
-                bootstrap.Path.chmod = lambda *_args, **_kwargs: None
                 bootstrap.run_best_effort = lambda *_args, **_kwargs: None
                 bootstrap.write_wrapper(cfg)
             finally:
                 bootstrap.project_host_runtime_root = original_runtime_root
-                bootstrap.Path.write_text = original_write_text
-                bootstrap.Path.chmod = original_chmod
                 bootstrap.run_best_effort = original_run_best_effort
 
-            script = captured[str(Path(tmpdir) / "runtime-root" / "bin" / "project-host")]
+            wrapper = Path(tmpdir) / "runtime-root" / "bin" / "project-host"
+            self.assertEqual(stat.S_IMODE(wrapper.stat().st_mode), 0o755)
+            script = wrapper.read_text(encoding="utf-8")
             # the root-owned node first, nvm only as a fallback
             self.assertIn('NODE_BIN="/opt/cocalc/node/current/bin/node"', script)
             self.assertLess(
@@ -8028,6 +10500,15 @@ WantedBy=multi-user.target
             self.assertNotIn("--token", unit)
             self.assertNotIn("EnvironmentFile=/etc/cloudflared/token.env", unit)
             self.assertEqual(recovery_dropin, "[Service]\nTimeoutStopSec=30\n")
+            no_mptcp_dropin = next(
+                data
+                for path, data, _ in writes
+                if path
+                == "/etc/systemd/system/cocalc-cloudflared.service.d/cocalc-no-mptcp.conf"
+            )
+            self.assertEqual(
+                no_mptcp_dropin, "[Service]\nEnvironment=GODEBUG=multipathtcp=0\n"
+            )
 
     def test_configure_cloudflared_uses_token_file_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -8169,6 +10650,90 @@ WantedBy=multi-user.target
                 events,
             )
 
+    def test_reconcile_cloudflared_keeps_active_unchanged_tunnel_running_for_the_no_mptcp_dropin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                cloudflared=bootstrap.CloudflaredSpec(
+                    True,
+                    hostname="host.example.test",
+                    port=9002,
+                    token="token",
+                    tunnel_id="tunnel-id",
+                    creds_json='{"TunnelSecret":"secret"}',
+                ),
+            )
+            stored: dict[str, str] = {}
+            commands = []
+            events = []
+
+            original_run_cmd = bootstrap.run_cmd
+            original_log_line = bootstrap.log_line
+            original_which = bootstrap.shutil.which
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            original_read_text = Path.read_text
+            original_exists = Path.exists
+            original_chmod = bootstrap.os.chmod
+            try:
+                def record_run(_cfg, args, desc, **kwargs):
+                    commands.append((args, desc, kwargs))
+                    return bootstrap.subprocess.CompletedProcess(
+                        args,
+                        0,
+                        stdout=(
+                            f"cloudflared version {bootstrap.CLOUDFLARED_VERSION}"
+                            if desc == "inspect cloudflared version"
+                            else ""
+                        ),
+                    )
+
+                def read_stored(self, encoding="utf-8"):
+                    try:
+                        return stored[str(self)]
+                    except KeyError as exc:
+                        raise FileNotFoundError(str(self)) from exc
+
+                bootstrap.run_cmd = record_run
+                bootstrap.log_line = lambda _cfg, message: events.append(message)
+                bootstrap.shutil.which = lambda _name: "/usr/bin/cloudflared"
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, text, encoding="utf-8": stored.__setitem__(str(self), text) or len(text)  # type: ignore[method-assign]
+                Path.read_text = read_stored  # type: ignore[method-assign]
+                Path.exists = lambda self: str(self) in stored or str(self) == "/etc/cloudflared/tunnel-id.json"  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+
+                bootstrap.configure_cloudflared_with_options(cfg, install_package=False)
+                stored.pop(
+                    "/etc/systemd/system/cocalc-cloudflared.service.d/cocalc-no-mptcp.conf"
+                )
+                commands.clear()
+                events.clear()
+                bootstrap.configure_cloudflared_with_options(cfg, install_package=False)
+            finally:
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.log_line = original_log_line
+                bootstrap.shutil.which = original_which
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+                Path.read_text = original_read_text  # type: ignore[method-assign]
+                Path.exists = original_exists  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+
+            self.assertFalse(
+                any(args[:2] == ["systemctl", "restart"] for args, _desc, _kwargs in commands)
+            )
+            self.assertTrue(
+                any(args[:2] == ["systemctl", "daemon-reload"] for args, _desc, _kwargs in commands)
+            )
+            self.assertTrue(
+                any(args[:3] == ["systemctl", "is-active", "--quiet"] for args, _desc, _kwargs in commands)
+            )
+            self.assertIn(
+                "bootstrap: cloudflared config unchanged; keeping tunnel running",
+                events,
+            )
+
 
 class BootstrapModesTest(unittest.TestCase):
     def test_status_cannot_enable_cleanup_until_legacy_lifecycle_lock_released(self) -> None:
@@ -8277,6 +10842,56 @@ class BootstrapModesTest(unittest.TestCase):
                     self.assertEqual(result, 1)
                     report.assert_called_once_with(cfg, "error", error)
 
+    def test_every_mode_makes_the_state_root_root_owned_first(self) -> None:
+        # Each mode writes beneath /var/lib/cocalc by name (lifecycle export,
+        # status); the ownership migration must come before any of that.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            for mode in (["provision"], ["reconcile"], ["helpers"], ["environment"], ["status"], ["bootstrap"],
+                         ["reconcile", "--only", "cloudflared"]):
+                events: list[str] = []
+
+                def record(name):
+                    return lambda *_args, **_kwargs: events.append(name) or 0
+
+                with self.subTest(mode=mode), \
+                        mock.patch.object(bootstrap, "load_config", return_value=cfg), \
+                        mock.patch.object(bootstrap, "bootstrap_operation_lock", return_value=contextlib.nullcontext()), \
+                        mock.patch.object(bootstrap, "log_line"), \
+                        mock.patch.object(bootstrap, "ensure_cocalc_state_root", side_effect=record("state-root")), \
+                        mock.patch.object(bootstrap, "write_bootstrap_state_files", side_effect=record("state-files")), \
+                        mock.patch.object(bootstrap, "json_load", return_value={}), \
+                        mock.patch.object(bootstrap, "bootstrap_state_path", return_value=Path(tmpdir) / "s.json"), \
+                        mock.patch.object(bootstrap, "ensure_runtime_user", side_effect=record("runtime-user")), \
+                        mock.patch.object(bootstrap, "ensure_bootstrap_paths"), \
+                        mock.patch.object(bootstrap, "configure_cloudflared_with_options"), \
+                        mock.patch.object(bootstrap, "run_provision", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile_helpers", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile_environment", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_bootstrap", side_effect=record("run")), \
+                        mock.patch("sys.stdout", new_callable=io.StringIO):
+                    bootstrap.main([*mode, "--bootstrap-dir", cfg.bootstrap_dir])
+                    self.assertGreater(len(events), 1)
+                    self.assertEqual(events[0], "state-root")
+        # And each run_* entry point starts with it, before record_operation_start.
+        for runner in ("run_provision", "run_reconcile", "run_reconcile_helpers", "run_reconcile_environment"):
+            source = inspect.getsource(getattr(bootstrap, runner))
+            with self.subTest(runner=runner):
+                self.assertLess(source.index("ensure_cocalc_state_root(cfg)"), source.index("report_bootstrap_status("))
+                self.assertLess(source.index("ensure_cocalc_state_root(cfg)"), source.index("record_operation_start("))
+
+    def test_state_root_migration_is_a_noop_without_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = Path(tmpdir) / "state"
+            state.mkdir(mode=0o775)
+            with mock.patch.object(bootstrap, "COCALC_STATE_ROOT", state), \
+                    mock.patch.object(bootstrap, "log_line"), \
+                    mock.patch.object(bootstrap.os, "geteuid", return_value=1000), \
+                    mock.patch.object(bootstrap.os, "fchown") as fchown:
+                bootstrap.ensure_cocalc_state_root(make_cfg(tmpdir))
+            fchown.assert_not_called()
+
     def test_reconcile_mode_runs_under_lifecycle_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -8357,6 +10972,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "configure_host_integrity_watch",
                 "configure_btrfs_scrub",
                 "configure_kernel_sysctl_hardening",
+                "ensure_cocalc_state_root",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
                 "write_helpers",
@@ -8405,6 +11021,8 @@ class BootstrapModesTest(unittest.TestCase):
             self.assertEqual(
                 events,
                 [
+                    # Before anything is written beneath /var/lib/cocalc.
+                    "ensure_cocalc_state_root",
                     "start:reconcile",
                     "ensure_runtime_user",
                     "ensure_bootstrap_paths",
@@ -8650,6 +11268,224 @@ class BootstrapModesTest(unittest.TestCase):
                     ["node_binary"],
                 )
 
+    def _run_boot_preparation_guard(
+        self,
+        *,
+        failed: bool,
+        prepare: str,
+        last_retry: str | None = None,
+        tmp: Path | None = None,
+        daemon_running: bool = False,
+        stamp_dir_mode: int | None = None,
+    ) -> tuple[subprocess.CompletedProcess, str, Path]:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+
+        def function(name: str) -> str:
+            return (
+                f"{name}() {{"
+                + body.split(f"{name}() {{", 1)[1].split("\n}\n", 1)[0]
+                + "\n}\n"
+            )
+
+        if tmp is None:
+            tmp = Path(tempfile.mkdtemp())
+            self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(tmp)]))
+        stamp = tmp / "run" / "retry-stamp"
+        calls = tmp / "calls"
+        pid_file = tmp / "daemon.pid"
+        if stamp_dir_mode is not None:
+            stamp.parent.mkdir(parents=True)
+            os.chmod(stamp.parent, stamp_dir_mode)
+        if last_retry is not None:
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+            stamp.write_text(last_retry)
+        script = (
+            "set -euo pipefail\n"
+            f"CALLS='{calls}'\n"
+            f"PID_FILE='{pid_file}'\n"
+            # a live pid (this shell) when the daemon should look running
+            + ("echo $$ > \"$PID_FILE\"\n" if daemon_running else "")
+            + f"BOOTSTRAP_LIFECYCLE_LOCK='{tmp / 'lock' / 'bootstrap.lock'}'\n"
+            f"BOOTSTRAP_USER='{__import__('getpass').getuser()}'\n"
+            # as a non-root test user, `install -o root -g root` cannot chown:
+            # drop only the owner options, keep the mode (what these tests check)
+            + (
+                ""
+                if os.geteuid() == 0
+                else 'install() { local a=(); while [ "$#" -gt 0 ]; do case "$1" in -o|-g) shift 2;; *) a+=("$1"); shift;; esac; done; command install "${a[@]}"; }\n'
+            )
+            + "systemctl() { echo \"systemctl $*\" >> \"$CALLS\"; "
+            + ("[ \"$1\" = is-failed ] && return 0; " if failed else "[ \"$1\" = is-failed ] && return 1; ")
+            + "return 0; }\n"
+            + function("read_pid_file")
+            + function("project_host_app_running")
+            + function("try_acquire_bootstrap_lifecycle_lock")
+            + f"prepare_podman_boot() {{ echo prepare >> \"$CALLS\"; {prepare} }}\n"
+            # the stamp path is fixed in the root script; point it at tmp here
+            + function("retry_failed_podman_boot_preparation").replace(
+                '"/run/cocalc/podman-boot-prepare-retry"', f"'{stamp}'"
+            )
+            + function("require_podman_boot_preparation_not_failed")
+            + "require_podman_boot_preparation_not_failed\necho started\n"
+        )
+        result = subprocess.run(
+            ["bash", "-c", script], text=True, capture_output=True
+        )
+        logged = calls.read_text() if calls.exists() else ""
+        return result, logged, stamp
+
+    def test_ensure_starts_when_boot_preparation_did_not_fail(self) -> None:
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=False, prepare="return 0;"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "started\n")
+        self.assertNotIn("prepare", calls.splitlines())
+        self.assertFalse(stamp.exists())
+
+    def test_ensure_retries_a_failed_boot_preparation(self) -> None:
+        # One slow boot used to keep project-host down until a person
+        # restarted the prepare unit (alpha, Nov 9 2026).
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=True, prepare="return 0;"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "started\n")
+        self.assertEqual(
+            calls.splitlines(),
+            [
+                "systemctl is-failed --quiet cocalc-project-host-prepare.service",
+                "prepare",
+                "systemctl reset-failed cocalc-project-host-prepare.service",
+            ],
+        )
+        self.assertIn("succeeded on retry", result.stderr)
+        self.assertTrue(stamp.read_text().strip().isdigit())
+
+    def test_a_failing_retry_still_refuses_and_stops_at_the_failure(self) -> None:
+        result, calls, _ = self._run_boot_preparation_guard(
+            failed=True, prepare="false; echo after-failure >> \"$CALLS\";"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("started", result.stdout)
+        self.assertIn(
+            "Podman boot preparation failed; refusing to start project-host",
+            result.stderr,
+        )
+        # errexit holds inside the retried preparation.
+        self.assertNotIn("after-failure", calls)
+        self.assertNotIn("reset-failed", calls)
+
+    def test_failed_boot_preparation_is_retried_at_most_every_interval(
+        self,
+    ) -> None:
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=True,
+            prepare="return 0;",
+            last_retry=str(int(__import__("time").time()) - 60),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("prepare", calls.splitlines())
+        self.assertIn("refusing to start project-host", result.stderr)
+
+    def test_retry_never_waits_for_bootstrap_and_keeps_its_slot(self) -> None:
+        # ensure holds the daemon control lock; bootstrap holds the lifecycle
+        # lock and then waits for the daemon one. Waiting here would deadlock.
+        import fcntl
+        import time
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(tmp)]))
+        lock_path = tmp / "lock" / "bootstrap.lock"
+        lock_path.parent.mkdir()
+        with open(lock_path, "a") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            started = time.monotonic()
+            result, calls, stamp = self._run_boot_preparation_guard(
+                failed=True, prepare="return 0;", tmp=tmp
+            )
+            self.assertLess(time.monotonic() - started, 10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bootstrap is running", result.stderr)
+        self.assertIn("refusing to start project-host", result.stderr)
+        self.assertNotIn("prepare", calls.splitlines())
+        self.assertFalse(stamp.exists())
+        # Once bootstrap lets go, the next ensure retries right away.
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=True, prepare="return 0;", tmp=tmp
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("prepare", calls.splitlines())
+
+    def test_no_retry_under_a_running_daemon(self) -> None:
+        # Preparation removes the rootless runroot and migrates Podman
+        # storage; with project-host running, ensure must keep refusing (as
+        # before the retry existed) and never prepare under the daemon.
+        result, calls, stamp = self._run_boot_preparation_guard(
+            failed=True, prepare="return 0;", daemon_running=True
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("started", result.stdout)
+        self.assertNotIn("prepare", calls.splitlines())
+        self.assertNotIn("reset-failed", calls)
+        self.assertIn("project-host is running; not retrying", result.stderr)
+        self.assertIn("refusing to start project-host", result.stderr)
+        # the retry slot is not spent: once the daemon is gone it retries
+        self.assertFalse(stamp.exists())
+
+    def test_retry_keeps_the_stamp_dir_traversable(self) -> None:
+        # The stamp's dir is /run/cocalc, 0711 so the runtime user can reach
+        # its rootless runroot and the project views beneath it; the retry
+        # used to reset it to 0700 (install -d sets an existing dir's mode).
+        for existing in (0o711, None):
+            result, calls, stamp = self._run_boot_preparation_guard(
+                failed=True, prepare="return 0;", stamp_dir_mode=existing
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("prepare", calls.splitlines())
+            self.assertEqual(stat.S_IMODE(os.stat(stamp.parent).st_mode), 0o711)
+
+    def test_retry_stamp_dir_is_root_owned_0711_in_the_root_script(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        retry = body.split("retry_failed_podman_boot_preparation() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertIn(
+            'install -d -o root -g root -m 0711 "$(dirname "${stamp}")"', retry
+        )
+        self.assertNotIn("-m 0700", retry)
+
+    def test_retry_stamp_path_is_fixed_in_the_root_script(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        retry = body.split("retry_failed_podman_boot_preparation() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertIn('local stamp="/run/cocalc/podman-boot-prepare-retry"', retry)
+        self.assertNotIn("PODMAN_BOOT_PREPARE_RETRY_STAMP", body)
+        # the daemon check comes before anything is stamped or prepared
+        self.assertLess(
+            retry.index("if project_host_app_running; then"),
+            retry.index('echo "${now}" > "${stamp}"'),
+        )
+
+    def test_rootctl_takes_the_lifecycle_lock_before_the_daemon_lock(
+        self,
+    ) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        dispatch = body.split('acquire_bootstrap_lifecycle_lock\nfi\n', 1)
+        self.assertEqual(len(dispatch), 2)
+        self.assertIn('if [ "${cmd}" = "prepare-podman-boot" ]; then', dispatch[0][-200:])
+        self.assertIn("    acquire_daemon_control_lock\n", dispatch[1][:400])
+
+    def test_boot_preparation_has_room_for_a_busy_disk(self) -> None:
+        body = Path(bootstrap.__file__).read_text(encoding="utf-8")
+        prepare = body.split("prepare_podman_boot() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertNotIn("run_podman_as_runtime 60s", prepare)
+        self.assertIn("run_podman_as_runtime 120s", prepare)
+        self.assertIn(
+            "ExecStart={rootctl} prepare-podman-boot\nTimeoutStartSec=600", body
+        )
+
     def test_podman_boot_preparation_restores_project_io_policy(self) -> None:
         # io.max does not survive a reboot; without restoring it first, the
         # first project-host start failed its conformance check every boot.
@@ -8840,6 +11676,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("configure_inotify_limits", lambda _cfg: None)
             patch("configure_journald_limits", lambda _cfg: None)
             patch("configure_rsyslog_limits", lambda _cfg: None)
+            patch("ensure_cocalc_state_root", lambda _cfg: None)
             patch("install_btrfs_helper", lambda _cfg: None)
             patch("install_privileged_wrappers", lambda _cfg: None)
             patch("reconcile_storage_and_containment", lambda _cfg: None)
@@ -9470,6 +12307,96 @@ class ManagedProjectJobOutputRelayTest(unittest.TestCase):
         self.assertNotIn("sel.select", paused)
         self.assertNotIn("emit_output", paused)
         self.assertNotIn("256 * 1024", source)
+
+
+
+class ToolsArtifactLockTest(unittest.TestCase):
+    """The tools lock bootstrap (root) takes in a directory the runtime user
+    may own: nothing in it is followed or changed by path."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.root = self.base / "tools"
+        self.root.mkdir()
+        self.lock = self.root / ".artifact.lock"
+        timeout = mock.patch.object(bootstrap, "bootstrap_lock_timeout_seconds", return_value=1)
+        timeout.start()
+        self.addCleanup(timeout.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hold(self):
+        with bootstrap.tools_artifact_lock(str(self.root)):
+            probe = subprocess.run(["flock", "-n", str(self.lock), "true"])
+            self.assertEqual(probe.returncode, 1)  # held
+
+    def test_a_valid_lock_is_kept_and_held(self) -> None:
+        self.lock.write_text("")
+        self.lock.chmod(0o644)
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertEqual(self.lock.stat().st_ino, inode)
+
+    def test_a_planted_symlink_is_replaced_never_followed(self) -> None:
+        outside = self.base / "shadow"
+        outside.write_text("secret")
+        outside.chmod(0o640)
+        os.symlink(outside, self.lock)
+        self.hold()
+        self.assertEqual(oct(outside.stat().st_mode & 0o777), "0o640")
+        self.assertEqual(outside.read_text(), "secret")
+        info = self.lock.lstat()
+        self.assertTrue(stat.S_ISREG(info.st_mode))
+        self.assertEqual(info.st_uid, os.geteuid())
+        self.assertEqual(oct(info.st_mode & 0o777), "0o644")
+        # a dangling symlink, too (O_CREAT never follows it)
+        self.lock.unlink()
+        os.symlink(self.base / "created-by-root", self.lock)
+        self.hold()
+        self.assertFalse((self.base / "created-by-root").exists())
+
+    def test_a_lock_others_may_write_is_replaced(self) -> None:
+        self.lock.write_text("")
+        self.lock.chmod(0o666)
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertNotEqual(self.lock.stat().st_ino, inode)
+        self.assertEqual(oct(self.lock.stat().st_mode & 0o777), "0o644")
+        # a hard link to it elsewhere counts as not ours either
+        os.link(self.lock, self.base / "elsewhere")
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertNotEqual(self.lock.stat().st_ino, inode)
+
+    def test_a_symlinked_tools_root_is_refused(self) -> None:
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        os.symlink(elsewhere, self.base / "linked")
+        with self.assertRaises(RuntimeError):
+            with bootstrap.tools_artifact_lock(str(self.base / "linked")):
+                pass
+        self.assertFalse((elsewhere / ".artifact.lock").exists())
+
+    def test_a_replant_during_replacement_fails_closed(self) -> None:
+        outside = self.base / "shadow"
+        outside.write_text("secret")
+        outside.chmod(0o640)
+        os.symlink(outside, self.lock)
+        original = bootstrap._replace_tools_lock
+
+        def replace_then_replant(dirfd):
+            original(dirfd)
+            self.lock.unlink()
+            os.symlink(outside, self.lock)
+
+        with mock.patch.object(bootstrap, "_replace_tools_lock", replace_then_replant):
+            with self.assertRaises(RuntimeError):
+                with bootstrap.tools_artifact_lock(str(self.root)):
+                    self.fail("extracted without a valid lock")
+        self.assertEqual(oct(outside.stat().st_mode & 0o777), "0o640")
+        self.assertEqual(outside.read_text(), "secret")
 
 
 class ProjectRuntimeUidBlockTest(unittest.TestCase):

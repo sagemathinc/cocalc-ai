@@ -4,7 +4,7 @@
  */
 
 /*
-Non-Python libzmq kernels on the selected Jupyter transport: kernel_info,
+Non-Python libzmq kernels on the pure-JS Jupyter transport: kernel_info,
 an execution with its result, and a display.  ZMTP_KERNELS names the
 kernelspecs to try (comma-separated), for example "tslab,xpython"; unset, the
 suite is skipped.  (tslab links libzmq through zeromq.js, xeus-python through

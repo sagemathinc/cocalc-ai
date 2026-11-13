@@ -76,7 +76,23 @@ jest.mock("antd", () => {
       ) : null,
     Radio: {
       Button: ({ children }: { children?: ReactNode }) => <>{children}</>,
-      Group: ({ children }: { children?: ReactNode }) => <>{children}</>,
+      Group: ({ children, disabled, onChange, options, value }: any) => (
+        <>
+          {children}
+          {(options ?? []).map((option: any) => (
+            <label key={option.value}>
+              <input
+                checked={value === option.value}
+                disabled={disabled}
+                name="fresh-auth-duration"
+                onChange={() => onChange?.({ target: { value: option.value } })}
+                type="radio"
+              />
+              {option.label}
+            </label>
+          ))}
+        </>
+      ),
     },
     Space: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   };
@@ -202,6 +218,123 @@ describe("FreshAuthModal", () => {
         origin: "https://bay-2-lite.example.com",
       }),
     );
+  });
+
+  it("sends the chosen duration, up to 72 hours, with an authenticator code", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/fresh-auth-status") {
+        return {
+          mode: "account",
+          enabled: true,
+          methods: ["totp"],
+          email_address: "user@example.com",
+        };
+      }
+      if (endpoint === "auth/fresh-auth") {
+        return {};
+      }
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    });
+
+    render(
+      <FreshAuthModal
+        open
+        onCancel={jest.fn()}
+        onSuccess={jest.fn(async () => undefined)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("123456")).toBeTruthy();
+    });
+    fireEvent.change(screen.getByPlaceholderText("123456"), {
+      target: { value: "123456" },
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText("72 hours") as HTMLInputElement).disabled,
+      ).toBe(false);
+    });
+    fireEvent.click(screen.getByLabelText("72 hours"));
+    expect(
+      screen.getByText(/We email you when a verification longer/),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() => {
+      expect(postAuthApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "auth/fresh-auth",
+          body: expect.objectContaining({
+            method: "totp",
+            code: "123456",
+            duration: "72h",
+          }),
+        }),
+      );
+    });
+  });
+
+  it("does not carry a longer duration over to the next opening", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/fresh-auth-status") {
+        return { mode: "account", enabled: true, methods: ["totp"] };
+      }
+      return {};
+    });
+    const props = {
+      onCancel: jest.fn(),
+      onSuccess: jest.fn(async () => undefined),
+    };
+    const { rerender } = render(<FreshAuthModal open {...props} />);
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("123456")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByLabelText("72 hours"));
+    expect(
+      (screen.getByLabelText("72 hours") as HTMLInputElement).checked,
+    ).toBe(true);
+    rerender(<FreshAuthModal open={false} {...props} />);
+    rerender(<FreshAuthModal open {...props} />);
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("123456")).toBeTruthy();
+    });
+    expect(
+      (screen.getByLabelText("15 minutes") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("72 hours") as HTMLInputElement).checked,
+    ).toBe(false);
+  });
+
+  it("starts on the duration a CLI asked for", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/fresh-auth-status") {
+        return { mode: "account", enabled: true, methods: ["totp"] };
+      }
+      return {};
+    });
+
+    render(
+      <FreshAuthModal
+        defaultDuration="24h"
+        open
+        onCancel={jest.fn()}
+        onSuccess={jest.fn(async () => undefined)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("123456")).toBeTruthy();
+    });
+    fireEvent.change(screen.getByPlaceholderText("123456"), {
+      target: { value: "123456" },
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText("24 hours") as HTMLInputElement).checked,
+      ).toBe(true);
+    });
   });
 
   it("approves a passwordless account by email", async () => {

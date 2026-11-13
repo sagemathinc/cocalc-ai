@@ -16,6 +16,7 @@ import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { DeleteAccountButton } from "./delete-account";
 import { SettingsCard } from "./settings-card";
 import { PasswordSetting } from "./settings/password-setting";
+import ActiveFreshAuth from "./settings/active-fresh-auth";
 import TwoFactorAuthSetting from "./settings/two-factor-auth";
 import { ugly_error } from "./util";
 
@@ -72,6 +73,7 @@ export function SecuritySettings({
             />
           </Flex>
           <TwoFactorAuthSetting showHeader={false} />
+          <ActiveFreshAuth />
         </Flex>
         <FreshAuthModal {...freshAuthModalProps} />
       </SettingsCard>

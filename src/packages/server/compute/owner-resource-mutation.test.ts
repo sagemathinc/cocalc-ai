@@ -197,3 +197,38 @@ it.each(["missing", "wrong-home", "unknown-method"])(
     expect(mockStop).not.toHaveBeenCalled();
   },
 );
+
+describe("agent callers across bays", () => {
+  const agent_auth = {
+    account_id,
+    project_id: randomUUID(),
+    token_fingerprint: "a".repeat(64),
+    issued_at_s: 1,
+    expires_at_s: 2,
+  };
+
+  it("forwards an agent mutation without adding a second identity, and the resource bay runs it", async () => {
+    await routeComputeOwnerMutation("stopVm", {
+      agent_auth,
+      id_or_name: vm.name,
+      idempotency_key: randomUUID(),
+    } as any);
+    const request = mockMutate.mock.calls[0][0];
+    expect(request.opts.agent_auth).toEqual(agent_auth);
+    expect(request.opts.account_id).toBeUndefined();
+    mockBay = "resource";
+    await expect(computeOwnerMutationOnBay(request)).resolves.toBeDefined();
+    const ran = mockStop.mock.calls[0][0];
+    expect(ran.agent_auth).toEqual(agent_auth);
+    expect(ran.account_id).toBeUndefined();
+  });
+
+  it("still names the account for an account caller", async () => {
+    await routeComputeOwnerMutation("stopVm", {
+      account_id,
+      id_or_name: vm.name,
+      idempotency_key: randomUUID(),
+    });
+    expect(mockMutate.mock.calls[0][0].opts.account_id).toBe(account_id);
+  });
+});

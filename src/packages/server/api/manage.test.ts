@@ -44,9 +44,8 @@ jest.mock("@cocalc/server/accounts/is-valid-account", () => ({
 }));
 
 jest.mock("@cocalc/backend/auth/password-hash", () => ({
-  __esModule: true,
-  default: jest.fn(() => "hash"),
-  verifyPassword: (...args: any[]) => verifyPasswordMock(...args),
+  tokenHash: jest.fn(() => "hash"),
+  verifyToken: (...args: any[]) => verifyPasswordMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/security-state", () => ({

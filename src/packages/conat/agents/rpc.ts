@@ -128,8 +128,71 @@ export const AGENT_RPC_FAILURE_CODES = [
   "network_unavailable",
   "network_stale",
   "principal_mismatch",
+  "rpc_admission_capacity",
 ] as const;
 export type AgentRpcFailureCode = (typeof AGENT_RPC_FAILURE_CODES)[number];
+
+/**
+ * The hub refuses a request it has not started to read when too many agent
+ * RPCs are in flight. Nothing was submitted. Older hubs send only the message.
+ */
+export const AGENT_RPC_ADMISSION_CAPACITY_CODE = "rpc_admission_capacity";
+export const AGENT_RPC_ADMISSION_CAPACITY_MESSAGE =
+  "agent RPC admission capacity reached";
+
+export function isAgentRpcAdmissionCapacityResponse(data: unknown): boolean {
+  const response = data as { error?: unknown; code?: unknown } | undefined;
+  return (
+    response?.code === AGENT_RPC_ADMISSION_CAPACITY_CODE ||
+    response?.error === AGENT_RPC_ADMISSION_CAPACITY_MESSAGE
+  );
+}
+
+/** A thrown admission refusal, carrying a code and retryable for the CLI. */
+export function agentRpcAdmissionCapacityError(): Error & {
+  code: typeof AGENT_RPC_ADMISSION_CAPACITY_CODE;
+  retryable: true;
+} {
+  return Object.assign(
+    new Error(
+      `${AGENT_RPC_ADMISSION_CAPACITY_MESSAGE}; nothing was submitted. Retry in a few seconds.`,
+    ),
+    {
+      code: AGENT_RPC_ADMISSION_CAPACITY_CODE as typeof AGENT_RPC_ADMISSION_CAPACITY_CODE,
+      retryable: true as const,
+    },
+  );
+}
+
+export function isAgentRpcAdmissionCapacityError(error: unknown): boolean {
+  return (
+    (error as { code?: unknown })?.code === AGENT_RPC_ADMISSION_CAPACITY_CODE
+  );
+}
+
+// Busy refusals: the recipient side was full and saved nothing.
+const RETRYABLE_FAILURE_CODES: ReadonlySet<AgentRpcFailureCode> = new Set([
+  "host_overloaded",
+  "project_overloaded",
+  "rpc_admission_capacity",
+]);
+
+/**
+ * Whether sending the same message again is safe: only a definite rejection
+ * for being busy that saved nothing. Retry a few times with growing,
+ * jittered delays. "unknown" is never retryable: it may still run, so
+ * inspect it instead of sending again.
+ */
+export function agentRpcRetryable(
+  outcome: Pick<AgentRpcOutcome, "outcome" | "code" | "chat_effect">,
+): boolean {
+  return (
+    outcome.outcome === "rejected" &&
+    outcome.chat_effect === "none" &&
+    outcome.code !== undefined &&
+    RETRYABLE_FAILURE_CODES.has(outcome.code)
+  );
+}
 
 // What the recipient's owner must do before an agent message can run it.
 export type AgentRecipientSetupNeed = "codex-connection" | "human-turn";

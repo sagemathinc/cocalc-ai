@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The listener needs no secrets: lib.sh (sourced for the node default) loads
+# the unit's env files but not bay-secrets.env.
+COCALC_BAY_SECRETS_ENV_FILE=/dev/null
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+exec "$COCALC_BAY_NODE_BIN" "${SCRIPT_DIR}/bay-broker-tls.js"

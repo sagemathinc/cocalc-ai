@@ -267,7 +267,8 @@ describe("CLI elevated login approval", () => {
   });
 
   it("persists signed fresh-auth proof on an elevated login challenge", async () => {
-    const freshAuthUntil = new Date(Date.now() + 5 * 60_000);
+    // Exactly the requested duration (mocked as 1 minute): stored as is.
+    const freshAuthUntil = new Date(Date.now() + 60_000);
     queryMock = jest.fn(async (sql) => {
       if (`${sql}`.includes("SELECT *")) {
         return {
@@ -333,6 +334,86 @@ describe("CLI elevated login approval", () => {
     await expect(
       approveCliLoginChallenge({ challenge_id, account_id }),
     ).rejects.toThrow("valid factor level");
+  });
+});
+
+describe("an elevated CLI login gets only the duration it requested", () => {
+  const account_id = "00000000-1000-4000-8000-000000000001";
+  const challenge_id = "00000000-1000-4000-8000-000000000011";
+  const HOUR = 3600_000;
+  const SLACK = 5_000;
+
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  async function approveFrom72hBrowser(
+    requested_duration: string,
+    confirmed_duration?: string,
+  ): Promise<number> {
+    queryMock = jest.fn(async (sql) => ({
+      rows: `${sql}`.includes("SELECT *")
+        ? [
+            {
+              id: challenge_id,
+              account_id,
+              kind: "login",
+              status: "pending",
+              poll_token_hash: hashToken("poll-token"),
+              requested_duration,
+              expire: new Date("2099-06-22T00:00:00.000Z"),
+              created: new Date("2099-06-21T00:00:00.000Z"),
+              metadata: { elevated_login: true },
+            },
+          ]
+        : [],
+      rowCount: 1,
+    }));
+    const { resolveFreshAuthDurationMs } =
+      await import("@cocalc/server/auth/auth-sessions");
+    const { freshAuthDurationMs } = jest.requireActual(
+      "@cocalc/util/auth/fresh-auth-duration",
+    );
+    (resolveFreshAuthDurationMs as jest.Mock).mockImplementation(
+      ({ duration }) => freshAuthDurationMs(duration),
+    );
+    const { approveCliLoginChallenge } = await import("./cli-auth");
+    await approveCliLoginChallenge({
+      challenge_id,
+      account_id,
+      factor_level: "totp",
+      // The approving browser is verified for 72 hours.
+      fresh_auth_until: new Date(Date.now() + 72 * HOUR),
+      confirmed_duration,
+    });
+    const update = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("SET status = 'approved'"),
+    );
+    return (
+      new Date(JSON.parse(update?.[1][2]).fresh_auth_until).valueOf() -
+      Date.now()
+    );
+  }
+
+  it("a default login from a 72 hour browser gets at most 15 minutes", async () => {
+    const ms = await approveFrom72hBrowser("default");
+    expect(ms).toBeLessThanOrEqual(15 * 60_000 + SLACK);
+    expect(ms).toBeGreaterThan(14 * 60_000);
+  });
+
+  it("an extended login from a 72 hour browser gets at most 8 hours", async () => {
+    const ms = await approveFrom72hBrowser("extended");
+    expect(ms).toBeLessThanOrEqual(8 * HOUR + SLACK);
+    expect(ms).toBeGreaterThan(8 * HOUR - 60_000);
+  });
+
+  it("a 72 hour login gets 72 hours only when confirmed", async () => {
+    await expect(approveFrom72hBrowser("72h")).rejects.toThrow(
+      "confirm the requested 72 hours elevation",
+    );
+    const ms = await approveFrom72hBrowser("72h", "72h");
+    expect(ms).toBeLessThanOrEqual(72 * HOUR + SLACK);
+    expect(ms).toBeGreaterThan(72 * HOUR - 60_000);
   });
 });
 
@@ -471,5 +552,126 @@ describe("Codex fresh-auth attention status", () => {
         project_id,
       }),
     ).resolves.toMatchObject({ state: "approved" });
+  });
+});
+
+describe("a CLI elevation longer than 8 hours needs its duration confirmed", () => {
+  const account_id = "00000000-1000-4000-8000-000000000001";
+  const challenge_id = "00000000-3000-4000-8000-000000000003";
+
+  beforeEach(() => {
+    jest.resetModules();
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          id: challenge_id,
+          account_id,
+          kind: "elevate",
+          status: "pending",
+          poll_token_hash: hashToken("poll-token"),
+          target_session_hash: "session-hash",
+          requested_duration: "72h",
+          expire: new Date("2099-09-02T01:00:00.000Z"),
+          created: new Date("2099-09-02T00:00:00.000Z"),
+          metadata: {},
+        },
+      ],
+    }));
+  });
+
+  it("accepts only the exact requested duration", async () => {
+    const { assertLongDurationConfirmed } = await import("./cli-auth");
+    expect(() =>
+      assertLongDurationConfirmed({ requested_duration: "72h" }),
+    ).toThrow("confirm the requested 72 hours elevation");
+    expect(() =>
+      assertLongDurationConfirmed({
+        requested_duration: "72h",
+        confirmed_duration: "24h",
+      }),
+    ).toThrow("confirm the requested 72 hours elevation");
+    expect(() =>
+      assertLongDurationConfirmed({
+        requested_duration: "72h",
+        confirmed_duration: "nonsense",
+      }),
+    ).toThrow("confirm the requested 72 hours elevation");
+    expect(() =>
+      assertLongDurationConfirmed({
+        requested_duration: "72h",
+        confirmed_duration: "72h",
+      }),
+    ).not.toThrow();
+    // Up to 8 hours needs no extra confirmation.
+    for (const requested_duration of ["default", "extended", "8h", null]) {
+      expect(() =>
+        assertLongDurationConfirmed({ requested_duration }),
+      ).not.toThrow();
+    }
+  });
+
+  it("refuses an unconfirmed approval before checking any credential", async () => {
+    const { approveCliElevateChallenge, startCliElevatePasskeyChallenge } =
+      await import("./cli-auth");
+    const { verifyFreshAuthCredentials } =
+      await import("@cocalc/server/auth/two-factor");
+    const { startFreshAuthPasskeyAuthentication } =
+      await import("@cocalc/server/auth/passkeys");
+    await expect(
+      approveCliElevateChallenge({
+        challenge_id,
+        account_id,
+        current_password: "",
+        method: "totp",
+        code: "123456",
+      }),
+    ).rejects.toThrow("confirm the requested 72 hours elevation");
+    expect(verifyFreshAuthCredentials).not.toHaveBeenCalled();
+    await expect(
+      startCliElevatePasskeyChallenge({
+        req: {},
+        challenge_id,
+        account_id,
+        current_password: "",
+      }),
+    ).rejects.toThrow("confirm the requested 72 hours elevation");
+    expect(startFreshAuthPasskeyAuthentication).not.toHaveBeenCalled();
+  });
+});
+
+describe("the dev CLI fresh-auth helper keeps its 8 hour maximum", () => {
+  const account_id = "00000000-1000-4000-8000-000000000001";
+
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  it("refuses more than 8 hours, before touching any session", async () => {
+    const { approveDevCliElevate } = await import("./cli-auth");
+    const { setSessionFreshAuth } =
+      await import("@cocalc/server/auth/auth-sessions");
+    for (const duration of ["9h", "24h", "72h"] as const) {
+      await expect(
+        approveDevCliElevate({
+          account_id,
+          session_hash: "session-hash",
+          hub_password: "dev-password",
+          duration,
+        }),
+      ).rejects.toThrow("dev CLI fresh auth lasts at most 8 hours");
+    }
+    expect(setSessionFreshAuth).not.toHaveBeenCalled();
+  });
+
+  it("still grants up to 8 hours", async () => {
+    const { approveDevCliElevate } = await import("./cli-auth");
+    await expect(
+      approveDevCliElevate({
+        account_id,
+        session_hash: "session-hash",
+        hub_password: "dev-password",
+        duration: "extended",
+      }),
+    ).resolves.toMatchObject({ approved: true, dev: true });
   });
 });

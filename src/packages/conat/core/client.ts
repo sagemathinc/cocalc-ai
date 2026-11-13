@@ -3458,6 +3458,9 @@ export interface AuthenticatedCaller {
   // authenticated session (null when it has none, e.g. an API key).
   account_id?: string;
   auth_session_hash?: string | null;
+  // Only on the host-status subject from a host connection: that host's own
+  // id, so the status service never trusts a host_id in the request (068).
+  host_id?: string;
 }
 
 export class MessageData<T = any> {

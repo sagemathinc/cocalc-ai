@@ -7,12 +7,10 @@ architectures.
 
 Contents (high level):
 - bundle/                  : JS runtime (ncc output) + supporting assets
-- bundle/build/            : zeromq native addons + manifest.json (glibc only)
 - bundle/node_modules/     : native addon packages (node-pty, bufferutil, utf-8-validate)
 - src/packages/project/bin : helper scripts used by the runtime
 
 Native addons:
-- zeromq: bundle/build/linux/<arch>/node/glibc-*/addon.node
 - node-pty: bundle/node_modules/node-pty/prebuilds/linux-*/pty.node
 
 This bundle intentionally excludes darwin/win32 payloads and musl builds

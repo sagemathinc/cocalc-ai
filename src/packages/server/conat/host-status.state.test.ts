@@ -86,6 +86,39 @@ describe("host status project state ordering", () => {
     }
   });
 
+  it("refuses a state report without the calling host's id, before any database access (068)", async () => {
+    const { initHostStatusService } = await import("./host-status");
+    const service = await initHostStatusService();
+    await expect(
+      service.reportProjectState({
+        project_id: "project-1",
+        state: { state: "running", time: new Date() },
+      } as any),
+    ).rejects.toThrow("project_id, state and host_id are required");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("a state report for a project on another host writes nothing and tells the caller to delete (068)", async () => {
+    const ownership = await import("./host-project-ownership");
+    (
+      ownership.shouldDeleteHostProjectUpdate as jest.Mock
+    ).mockResolvedValueOnce(true);
+    const { initHostStatusService } = await import("./host-status");
+    const service = await initHostStatusService();
+    await expect(
+      service.reportProjectState({
+        host_id: "host-1",
+        project_id: "project-b",
+        state: { state: "off", time: new Date() },
+      }),
+    ).resolves.toEqual({ action: "delete" });
+    expect(ownership.shouldDeleteHostProjectUpdate).toHaveBeenCalledWith({
+      host_id: "host-1",
+      project_id: "project-b",
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("preserves event time and rejects reports older than authoritative state", async () => {
     const { initHostStatusService } = await import("./host-status");
     const service = await initHostStatusService();
@@ -109,6 +142,7 @@ describe("host status project state ordering", () => {
       {
         state: "starting",
         time: "2026-07-31T01:00:00.000Z",
+        reporter_host_id: "host-1",
       },
       "2026-07-31T01:00:00.000Z",
     ]);

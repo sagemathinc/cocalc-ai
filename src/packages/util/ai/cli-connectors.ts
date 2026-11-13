@@ -137,6 +137,20 @@ export function sanitizeConnectionDescription(value: unknown): string {
 }
 
 /** A token handed to one agent turn; never a refresh token. */
+/**
+ * The directory of the connector wrappers (gh, git, cf, wrangler) in an
+ * agent's environment. Not a secret: the wrappers read the turn's token
+ * themselves, and only while a turn of an agent with the connector is running.
+ */
+export const CLI_CONNECTOR_BIN_ENV = "COCALC_CONNECTOR_BIN";
+
+/**
+ * Login shells run the project's profile, which may put its own directories
+ * (/usr/bin, ~/.cargo/bin, ...) before the wrappers. Commands run through a
+ * login shell start with this line to put them first again.
+ */
+export const CLI_CONNECTOR_PATH_LINE = `if [ -n "\${${CLI_CONNECTOR_BIN_ENV}:-}" ]; then PATH="$${CLI_CONNECTOR_BIN_ENV}:$PATH"; export PATH; fi`;
+
 export interface CliConnectorTurnToken {
   connector: CliConnector;
   token: string;
@@ -166,7 +180,7 @@ CLI connector tokens are unavailable this turn (connector access could not be co
     const who = description ? ` (${description})` : "";
     lines.push(
       connector === "github"
-        ? `- GitHub${who}: \`gh\` and \`git\` over https://github.com are signed in as the user.`
+        ? `- GitHub${who}: \`gh\` and \`git\` (https://github.com remotes, and git@github.com: ones, which go over https) are signed in as the user.`
         : `- Cloudflare${who}: \`cf\` and \`wrangler\` are signed in to the user's Cloudflare account.`,
     );
   }
@@ -175,5 +189,6 @@ CLI connector tokens are unavailable this turn (connector access could not be co
 The user turned on these connectors for you for this turn:
 ${lines.join("\n")}
 They act as the user. Unless the user asked for it, confirm before anything destructive, public or costly (force-pushing or pushing to shared branches, merging, deleting, deploying to production, buying resources). Credentials are supplied automatically; never print, copy or store them.
+The signed-in commands are wrappers in \`$${CLI_CONNECTOR_BIN_ENV}\`: if one does not seem signed in (a shell profile may have reordered PATH), run \`export PATH="$${CLI_CONNECTOR_BIN_ENV}:$PATH"\` first. They work only during this turn, not in sensors or background jobs started from it.
 [/CLI connectors]`;
 }

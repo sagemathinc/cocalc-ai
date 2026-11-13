@@ -10,9 +10,8 @@ jest.mock("@cocalc/server/accounts/rehome-fence", () => ({
     await fn({ query }),
 }));
 
-jest.mock("@cocalc/backend/auth/password-hash", () => ({
-  __esModule: true,
-  default: () => "hashed-password",
+jest.mock("@cocalc/database/settings/password-kdf", () => ({
+  newPasswordHash: async () => "hashed-password",
 }));
 
 const endOtherSessions = jest.fn(async (_opts: any) => {});

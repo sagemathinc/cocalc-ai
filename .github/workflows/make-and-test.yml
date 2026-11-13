@@ -13,10 +13,10 @@ on:
     branches:
       - main
       - next
+  # Every base branch, so stacked PRs get CI too. After re-pointing a PR's
+  # base, close and reopen it (or push a commit) to start a run: an `edited`
+  # trigger would put a skipped ci-ok on the head commit.
   pull_request:
-    branches:
-      - main
-      - next
   workflow_dispatch:
     inputs:
       debug_enabled:
@@ -229,6 +229,7 @@ jobs:
 
       - name: Install system packages
         run: |
+          .github/scripts/ci-apt-mirror.sh
           APT_RETRY=(
             -o Acquire::Retries=3
             -o Acquire::http::Timeout=15
@@ -313,20 +314,6 @@ jobs:
             test_args+=(--shard="$TEST_SHARD")
           fi
           ./workspaces.py test "${test_args[@]}"
-
-      # The pure-JS ZMTP transport is the default (jupyter/zmq/zmtp.ts); while
-      # the native zeromq addon still ships as its fallback, the Jupyter kernel
-      # suites run on it too.
-      - name: Jupyter tests on the native transport
-        if: matrix.lane == 'rest' && contains(format(',{0},', matrix.packages), ',jupyter,')
-        env:
-          COCALC_JUPYTER_ZMQ: native
-          ZMTP_REQUIRE_PYZMQ: "1"
-        run: |
-          source venv/bin/activate
-          jupyter --version > /dev/null && python -c "import zmq"
-          cd src/packages/jupyter
-          pnpm exec jest --maxWorkers=1 kernel/test zmq/transport.test.ts zmq/sockets-behavior.test.ts
 
       # Warnings only: flags a slow new test file on the PR that adds it.
       - name: Slowest test files

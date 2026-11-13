@@ -19,13 +19,15 @@ export default async function cliElevatePasskeyStart(req, res) {
     if (!account_id || !getRememberMeHash(req)) {
       throw new Error("must be signed in");
     }
-    const { challenge_id, current_password } = getParams(req);
+    const { challenge_id, current_password, confirmed_duration } =
+      getParams(req);
     res.json(
       await startCliElevatePasskeyChallenge({
         req,
         challenge_id: `${challenge_id ?? ""}`,
         account_id,
         current_password: `${current_password ?? ""}`,
+        confirmed_duration,
       }),
     );
   } catch (err) {
