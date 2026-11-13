@@ -49,6 +49,18 @@ interface Options {
   };
 }
 
+// Policy chosen by a server-side caller, never by request input. It travels
+// in its own argument so that nothing in `options` (which public routes fill
+// from request bodies) can reach it.
+export interface InternalTicketPolicy {
+  // the rate-limit namespace (support_ticket_attempts.source)
+  source: string;
+  // skip the rules keyed on the email; only for a server-chosen email
+  skip_email_rules?: boolean;
+  // trusted Zendesk tags added to the ticket
+  extra_tags?: string[];
+}
+
 export function ticketResultToUserURL(ticketResult: any): string {
   return urlToUserURL(ticketResult?.result?.url ?? ticketResult?.url);
 }
@@ -78,13 +90,22 @@ export async function normalizeZendeskBody(body: string): Promise<string> {
     );
 }
 
-export default async function createTicket(options: Options): Promise<string> {
+export default async function createTicket(
+  options: Options,
+  internal?: InternalTicketPolicy,
+): Promise<string> {
   const normalized = normalizeSupportTicketOptions(options);
   log.debug("createTicket", normalized);
 
   const { account_id, email, files, type, subject, url, info, ip_address } =
     normalized;
-  await assertSupportTicketRateLimit({ account_id, email, ip_address });
+  await assertSupportTicketRateLimit({
+    account_id,
+    email,
+    ip_address,
+    source: internal?.source,
+    skip_email_rules: internal?.skip_email_rules === true,
+  });
 
   const client = await getClient();
   const name = await getUserName(email, account_id);
@@ -135,6 +156,7 @@ export default async function createTicket(options: Options): Promise<string> {
         normalized.support_content_consent === true
           ? "support_content_consent_yes"
           : "support_content_consent_no",
+        ...(internal?.extra_tags ?? []),
       ],
     },
   } as CreateOrUpdateTicket; // ATTN: this is somehow necessary, no idea why
