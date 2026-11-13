@@ -82,6 +82,10 @@ describe("automatic convergence while a host upgrade is in flight", () => {
       ensureAutomaticHostArtifactDeploymentsReconcileInternal(deps),
     ).resolves.toMatchObject({ queued: true, op_id: "op-1" });
     expect(deps.createHostLro).toHaveBeenCalledTimes(1);
+    // Marked as the site's own convergence, which names no software source.
+    const queued = (deps.createHostLro.mock.calls[0] as any[])[0];
+    expect(queued.input.automatic).toBe(true);
+    expect(queued.input.base_url).toBeUndefined();
   });
 
   it("does not reconcile runtime components while an upgrade is in flight", async () => {
@@ -99,6 +103,9 @@ describe("automatic convergence while a host upgrade is in flight", () => {
     await expect(
       ensureAutomaticHostRuntimeDeploymentsReconcileInternal(idle),
     ).resolves.toMatchObject({ queued: true, op_id: "op-2" });
+    const queued = (idle.createHostLro.mock.calls[0] as any[])[0];
+    expect(queued.input.automatic).toBe(true);
+    expect(queued.input.base_url).toBeUndefined();
   });
 });
 

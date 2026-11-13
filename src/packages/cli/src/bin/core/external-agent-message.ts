@@ -6,6 +6,10 @@ import {
   type ExternalAgentInboxMessage,
 } from "@cocalc/conat/agents/external";
 import {
+  AGENT_RPC_ADMISSION_CAPACITY_CODE,
+  agentRpcAdmissionCapacityError,
+  isAgentRpcAdmissionCapacityError,
+  isAgentRpcAdmissionCapacityResponse,
   validateAgentRpcRequest,
   validateAgentRpcOutcome,
   validateAgentRpcPreparation,
@@ -115,6 +119,8 @@ export async function sendExternalAgentMessage(
       50_000,
       "external agent RPC deadline exceeded",
     );
+    if (isAgentRpcAdmissionCapacityResponse(response.data))
+      throw agentRpcAdmissionCapacityError();
     if (response.data?.error) throw new Error(response.data.error);
     const result = response.data?.result;
     if (request.action === "destinations") {
@@ -180,6 +186,15 @@ export async function sendExternalAgentMessage(
     } else validateAgentRpcOutcome(result, request);
     return result;
   } catch (error) {
+    if (
+      isAgentRpcAdmissionCapacityError(error) &&
+      (request.action === "send" || request.action === "prepare-attachments")
+    )
+      return rpcOutcome(request, "rejected", {
+        code: AGENT_RPC_ADMISSION_CAPACITY_CODE,
+        chat_effect: "none",
+        reason: (error as Error).message,
+      });
     if (!submissionStarted && request.action === "send")
       return rpcOutcome(request, "rejected", {
         chat_effect: "none",

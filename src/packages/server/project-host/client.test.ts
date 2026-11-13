@@ -221,7 +221,13 @@ describe("project-host client routing", () => {
   it("uses direct host control on the local host bay", async () => {
     const { getRoutedHostControlClient } = await import("./client");
     const client = await getRoutedHostControlClient({ host_id: "host-1" });
-    expect(client).toEqual({ kind: "local-client" });
+    // The local client, with its software calls guarded.
+    expect(client).toMatchObject({ kind: "local-client" });
+    await expect(
+      client.upgradeSoftware({
+        targets: [{ artifact: "project-host", version: "../x" }],
+      } as any),
+    ).rejects.toThrow("invalid host software version or channel");
     expect(createHostControlClientMock).toHaveBeenCalledWith({
       host_id: "host-1",
       client: { kind: "explicit-client" },

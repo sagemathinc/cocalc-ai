@@ -77,6 +77,8 @@ a = require('../../dist/cloud/smoke-runner/project-host'); await a.runProjectHos
 
 */
 import { execFile as execFileCb } from "node:child_process";
+import { safeSshDestination } from "@cocalc/backend/ssh-destination";
+import { projectHostRequest } from "@cocalc/server/hosts/public-route-probe";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1788,8 +1790,10 @@ async function loadHostConnectionHints(
     ssh_user === "root"
       ? "/root/cocalc-host/bootstrap/bootstrap.log"
       : `/home/${ssh_user}/cocalc-host/bootstrap/bootstrap.log`;
-  const ssh_target =
-    public_ip && ssh_user ? `${ssh_user}@${public_ip}` : undefined;
+  // Shown to the operator as commands to paste: only checked values.
+  const ssh_target = safeSshDestination(ssh_user, public_ip, {
+    requireIp: true,
+  });
   const host_url =
     normalizeUrl(row.public_url ?? undefined) ??
     normalizeUrl(row.internal_url ?? undefined) ??
@@ -1803,10 +1807,10 @@ async function loadHostConnectionHints(
     host_log_path: "/mnt/cocalc/data/log",
     bootstrap_log_path,
     ssh_tail_log: ssh_target
-      ? `ssh ${ssh_target} 'tail -n 300 /mnt/cocalc/data/log'`
+      ? `ssh -- ${ssh_target} 'tail -n 300 /mnt/cocalc/data/log'`
       : undefined,
     scp_log: ssh_target
-      ? `scp ${ssh_target}:/mnt/cocalc/data/log ./host.log`
+      ? `scp -- ${ssh_target}:/mnt/cocalc/data/log ./host.log`
       : undefined,
   };
 }
@@ -1823,22 +1827,15 @@ function parseCookie(
   return `${cookieName}=${match[1]}`;
 }
 
+// Every request here goes to the host's stored URL (host_url), which a host
+// report could have written: through the guarded project-host request, which
+// checks the address connected to and never follows a redirect.
 async function fetchWithTimeout(
   input: string,
   opts: RequestInit & { timeoutMs?: number } = {},
 ): Promise<Response> {
-  const timeoutMs = opts.timeoutMs ?? 10000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const { timeoutMs: _ignore, signal, ...rest } = opts;
-    return await fetch(input, {
-      ...rest,
-      signal: signal ?? controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  const { timeoutMs = 10000, signal: _signal, ...rest } = opts;
+  return await projectHostRequest(input, rest, { timeout_ms: timeoutMs });
 }
 
 async function waitForCondition(
@@ -5517,3 +5514,5 @@ export async function runProjectHostGcpFlowSmoke({
     log,
   });
 }
+
+export const _test = { fetchWithTimeout };

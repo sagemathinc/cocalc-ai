@@ -10,6 +10,7 @@ let maybeStartLaunchpadOnPremServicesMock: jest.Mock;
 let getLaunchpadRestPortMock: jest.Mock;
 let registerSelfHostTunnelKeyMock: jest.Mock;
 let resolveOnPremHostMock: jest.Mock;
+let isLaunchpadProductMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => {
   const getLogger = jest.fn(() => ({
@@ -47,6 +48,7 @@ jest.mock("@cocalc/server/launchpad/mode", () => ({
   __esModule: true,
   getLaunchpadLocalConfig: (...args: any[]) =>
     getLaunchpadLocalConfigMock(...args),
+  isLaunchpadProduct: (...args: any[]) => isLaunchpadProductMock(...args),
 }));
 
 jest.mock("@cocalc/server/onprem", () => ({
@@ -713,10 +715,27 @@ describe("initHostStatusService registerOnPremTunnel", () => {
       conat_router_port: 9102,
     }));
     resolveOnPremHostMock = jest.fn(() => "lite4b.cocalc.ai");
+    isLaunchpadProductMock = jest.fn(() => true);
     delete process.env.COCALC_DEV_GCP_REVERSE_TUNNEL;
   });
 
-  it("allows dev-only GCP hosts to register a reverse tunnel", async () => {
+  it("refuses every tunnel off a launchpad site, even with the dev flag, before any database access (068)", async () => {
+    process.env.COCALC_DEV_GCP_REVERSE_TUNNEL = "1";
+    isLaunchpadProductMock = jest.fn(() => false);
+    const { initHostStatusService } = await import("./host-status");
+    const service: any = await initHostStatusService();
+    await expect(
+      service.registerOnPremTunnel({
+        host_id: "host-gcp",
+        public_key: "ssh-ed25519 AAAA host",
+      }),
+    ).rejects.toThrow("on-prem tunnels are only available on a launchpad site");
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(maybeStartLaunchpadOnPremServicesMock).not.toHaveBeenCalled();
+    expect(registerSelfHostTunnelKeyMock).not.toHaveBeenCalled();
+  });
+
+  it("allows dev-only GCP hosts to register a reverse tunnel on a launchpad site", async () => {
     process.env.COCALC_DEV_GCP_REVERSE_TUNNEL = "1";
     queryMock
       .mockResolvedValueOnce({
@@ -741,6 +760,17 @@ describe("initHostStatusService registerOnPremTunnel", () => {
       host_id: "host-gcp",
       public_key: "ssh-ed25519 AAAA host",
     });
+    // the registration is a record a bay keeps (warn; info is not kept), and
+    // it never carries the key (068)
+    const { default: getLogger } =
+      (await import("@cocalc/backend/logger")) as any;
+    const loggers = getLogger.mock.results.map((r) => r.value);
+    const recorded = loggers.flatMap((l) =>
+      l.warn.mock.calls.filter(([m]) => m === "on-prem tunnel key registered"),
+    );
+    expect(recorded).toEqual([
+      ["on-prem tunnel key registered", { host_id: "host-gcp" }],
+    ]);
     expect(result).toMatchObject({
       sshd_host: "lite4b.cocalc.ai",
       sshd_port: 2201,
@@ -759,6 +789,42 @@ describe("initHostStatusService reportProjectProvisioned", () => {
     createHostStatusServiceMock = jest.fn(({ impl }) => impl);
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn(async () => ({ rows: [] }));
+  });
+
+  it("an inventory updates only the caller's own projects, with only the accepted ids (068)", async () => {
+    const ownership = await import("./host-project-ownership");
+    (
+      ownership.classifyHostProvisionedInventory as jest.Mock
+    ).mockResolvedValueOnce({
+      accepted_project_ids: ["p-own"],
+      delete_project_ids: ["p-other-host"],
+    });
+    const { initHostStatusService } = await import("./host-status");
+    const service = await initHostStatusService();
+    await expect(
+      service.reportHostProvisionedInventory({
+        host_id: "host-1",
+        project_ids: ["p-own", "p-other-host"],
+      }),
+    ).resolves.toEqual({ delete_project_ids: ["p-other-host"] });
+    expect(ownership.classifyHostProvisionedInventory).toHaveBeenCalledWith({
+      host_id: "host-1",
+      project_ids: ["p-own", "p-other-host"],
+    });
+    const update = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("UPDATE projects"),
+    );
+    expect(update[0]).toContain("WHERE projects.host_id = $1");
+    expect(update[1].slice(0, 2)).toEqual(["host-1", ["p-own"]]);
+  });
+
+  it("refuses a provisioned report without the calling host's id, before any database access (068)", async () => {
+    const { initHostStatusService } = await import("./host-status");
+    const service: any = await initHostStatusService();
+    await expect(
+      service.reportProjectProvisioned({ project_id: "p", provisioned: false }),
+    ).rejects.toThrow("project_id, provisioned and host_id are required");
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("asks a non-owner host to delete only data it has, and never updates the owner's project", async () => {

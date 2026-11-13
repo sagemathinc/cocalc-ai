@@ -70,6 +70,27 @@ function inRequestedNetwork<
   return inside.length ? inside : peers;
 }
 
+// Names people try for "everyone" when no peer has that name.
+const GROUP_LIKE_NAMES = new Set([
+  "*",
+  "all",
+  "everyone",
+  "everybody",
+  "group",
+  "team",
+  "here",
+  "channel",
+]);
+
+/** A hint for a group-like name that matched no peer, or "". */
+export function groupNameHint(name: string, broadcast = false): string {
+  if (!GROUP_LIKE_NAMES.has(name.trim().replace(/^@/, "").toLowerCase()))
+    return "";
+  return broadcast
+    ? " There are no group destinations; list each peer by name (agent destinations shows them)."
+    : " There are no group destinations; use `cocalc agent broadcast --to a,b` to message several peers.";
+}
+
 export function resolveAgentName(
   input: string,
   directory: AgentNetworkDiscovery,
@@ -93,7 +114,9 @@ export function resolveAgentName(
       ({ member }) => member.kind === "external" && isLabel(member.label),
     );
   if (!byId && !byLabel && !/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name))
-    throw new Error("Use an exact lowercase agent name, such as reviewer");
+    throw new Error(
+      `Use an exact lowercase agent name, such as reviewer.${groupNameHint(name)}`,
+    );
   // A selected mention remains pinned even if the account directory changes.
   const selected = references.filter((ref) => ref.name === name);
   if (!selected.length) {
@@ -118,7 +141,7 @@ export function resolveAgentName(
     : candidates;
   if (!matches.length)
     throw new Error(
-      `No approved destination or current-turn mention named @${name}. Discover destinations or select the agent in the human composer; no message was sent.`,
+      `No approved destination or current-turn mention named @${name}. Discover destinations or select the agent in the human composer; no message was sent.${groupNameHint(name)}`,
     );
   for (const { member } of matches)
     if (member.kind === "registered") validateAgentEndpoint(member.endpoint);
@@ -309,7 +332,7 @@ export function resolveBroadcastTargets(
     const matches = inRequestedNetwork(named, requestedNetwork);
     if (matches.length === 0)
       throw new Error(
-        `${where}: no network peer ${"name" in p ? `named @${p.name}` : "matches this target"}; run agent destinations. No message was sent.`,
+        `${where}: no network peer ${"name" in p ? `named @${p.name}` : "matches this target"}; run agent destinations. No message was sent.${"name" in p && p.name != null ? groupNameHint(p.name, true) : ""}`,
       );
     if (
       new Set(matches.map((peer) => agentRpcSourceKey(peerTarget(peer)))).size >

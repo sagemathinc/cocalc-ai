@@ -1395,6 +1395,7 @@ export function createHostRegistryService({
     description: "Project-host registry and metadata sync",
     client,
     impl,
+    bindArgs: bindHostRegistryArgs,
   });
 }
 
@@ -1473,7 +1474,104 @@ export function createHostStatusService({
     description: "Project-host -> master status updates",
     client,
     impl,
+    bindArgs: bindHostStatusArgs,
   });
+}
+
+// Every host-status request acts for the host that sent it (finding 068):
+// the conat server stamps the authenticated host's id into the caller, and it
+// replaces any host_id in the request.  No caller host id (not a host
+// connection, or a server that does not stamp it): refused.
+export function bindHostStatusArgs(
+  name: string,
+  args: any[],
+  caller?: { host_id?: string },
+): any[] {
+  const host_id = callerHostId("host status", name, caller);
+  const opts = requireOptions("host status", name, args);
+  return [{ ...opts, host_id }, ...args.slice(1)];
+}
+
+// The registry the same way (finding 068-2): "report" methods must report the
+// calling host itself (a mismatched id is refused, never rewritten, so no host
+// can write another host's row or URLs), "bound" methods act for the caller,
+// and only the public key is unbound.  Typed over every HostRegistryApi
+// method, so a new one can't be added without a decision here.
+export const HOST_REGISTRY_BINDING: Record<
+  keyof HostRegistryApi,
+  "report" | "bound" | "public"
+> = {
+  register: "report",
+  heartbeat: "report",
+  shutdownNotice: "bound",
+  getProjectHostAuthPublicKey: "public",
+  listProjectUserDeltas: "bound",
+  listProjectUserReconcile: "bound",
+  listProjectStopPolicyDeltas: "bound",
+  listProjectStopPolicyReconcile: "bound",
+  reportProjectPressureAction: "bound",
+  getMasterConatTokenStatus: "bound",
+  rotateMasterConatToken: "bound",
+};
+
+export function bindHostRegistryArgs(
+  name: string,
+  args: any[],
+  caller?: { host_id?: string },
+): any[] {
+  const binding = Object.prototype.hasOwnProperty.call(
+    HOST_REGISTRY_BINDING,
+    name,
+  )
+    ? HOST_REGISTRY_BINDING[name]
+    : undefined;
+  if (binding === "public") {
+    return args;
+  }
+  const host_id = callerHostId("host registry", name, caller);
+  if (binding == null) {
+    const err: any = new Error(`unknown host registry method '${name}'`);
+    err.code = 400;
+    throw err;
+  }
+  const opts = requireOptions("host registry", name, args);
+  if (binding === "report") {
+    if (opts.id !== host_id) {
+      const err: any = new Error(
+        `host registry '${name}' may only report the calling host`,
+      );
+      err.code = 403;
+      throw err;
+    }
+    return args;
+  }
+  return [{ ...opts, host_id }, ...args.slice(1)];
+}
+
+function callerHostId(
+  service: string,
+  name: string,
+  caller?: { host_id?: string },
+): string {
+  const host_id = caller?.host_id;
+  if (typeof host_id !== "string" || !host_id) {
+    const err: any = new Error(
+      `${service} '${name}' requires an authenticated host`,
+    );
+    err.code = 403;
+    throw err;
+  }
+  return host_id;
+}
+
+function requireOptions(service: string, name: string, args: any[]): any {
+  const opts = args[0];
+  if (opts == null || typeof opts !== "object" || Array.isArray(opts)) {
+    const err: any = new Error(`${service} '${name}' requires its options`);
+    err.code = 400;
+    throw err;
+  }
+  return opts;
 }
 
 export function createHostControlService({

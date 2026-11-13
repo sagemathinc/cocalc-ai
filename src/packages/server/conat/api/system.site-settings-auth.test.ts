@@ -1039,4 +1039,33 @@ describe("site settings dangerous-session auth", () => {
       "session_max_lifetime_days=120",
     ]);
   });
+
+  it("shows password_kdf to admins while real password settings stay redacted", async () => {
+    getConfiguredBayIdMock.mockReturnValue("bay-0");
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-0");
+    getServerSettingsMock.mockResolvedValue({
+      password_kdf: "scrypt",
+      email_smtp_password: "hunter2",
+    });
+    getPoolQueryMock.mockResolvedValue({
+      rows: [
+        { name: "password_kdf", readonly: false },
+        { name: "email_smtp_password", readonly: false },
+      ],
+    });
+    const { getSiteSettingsOnSeed } = await import("./system");
+    const { settings } = await getSiteSettingsOnSeed({
+      names: ["password_kdf", "email_smtp_password"],
+    });
+    const byName = Object.fromEntries(settings.map((s) => [s.name, s]));
+    expect(byName.password_kdf).toMatchObject({
+      value: "scrypt",
+      default_value: "legacy",
+      redacted: false,
+    });
+    expect(byName.email_smtp_password).toMatchObject({
+      value: null,
+      redacted: true,
+    });
+  });
 });
