@@ -11,6 +11,7 @@
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -59,6 +60,27 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+// One writeSync is one write(2), which may write fewer bytes than asked (a
+// full disk, a file-size limit) without an error. Write every byte, refuse a
+// write that makes no progress, fsync, and check the size, so a short file is
+// an error instead of a truncated sidecar or lock token.
+function writeAllAndSync(fd: number, text: string): void {
+  const buf = Buffer.from(text, "utf8");
+  let offset = 0;
+  while (offset < buf.length) {
+    const n = writeSync(fd, buf, offset, buf.length - offset);
+    if (!(n > 0)) {
+      throw new Error("auth grant write made no progress");
+    }
+    offset += n;
+  }
+  fsyncSync(fd);
+  const size = fstatSync(fd).size;
+  if (size !== buf.length) {
+    throw new Error(`auth grant file is ${size} bytes, expected ${buf.length}`);
+  }
+}
+
 // Serializes the whole read/patch/write across processes with an exclusive
 // lock file holding a random owner token. There is no time-based takeover: a
 // lock's age does not show that its owner is gone (it may be paused). If the
@@ -79,12 +101,25 @@ function withLock(path: string, fn: () => void): "done" | "busy" {
       sleepSync(25);
     }
   }
+  // The lock is ours from here. If writing the token fails (full disk, file
+  // size limit), remove it again: no one ever takes over a lock by age, so a
+  // lock left behind here would block every later update.
+  const ours = fstatSync(fd);
   try {
-    writeSync(fd, token);
-    fsyncSync(fd);
-  } finally {
+    writeAllAndSync(fd, token);
+  } catch (err) {
     closeSync(fd);
+    try {
+      const now = lstatSync(lock);
+      if (now.dev === ours.dev && now.ino === ours.ino) {
+        rmSync(lock, { force: true });
+      }
+    } catch {
+      // already gone
+    }
+    throw err;
   }
+  closeSync(fd);
   try {
     fn();
     return "done";
@@ -194,8 +229,7 @@ function writeGrants(
   try {
     const fd = openSync(tmp, "wx", FILE_MODE);
     try {
-      writeSync(fd, `${JSON.stringify(payload, null, 2)}\n`);
-      fsyncSync(fd);
+      writeAllAndSync(fd, `${JSON.stringify(payload, null, 2)}\n`);
     } finally {
       closeSync(fd);
     }

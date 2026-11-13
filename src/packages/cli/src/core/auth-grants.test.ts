@@ -636,3 +636,234 @@ test("auth status shows a present lock so a frozen record is visible", () => {
     assert.match(`${st.recorded_note}`, /may be stale/);
   });
 });
+
+// ---- every byte of the sidecar and the lock token is written (#154 follow-up)
+
+const fsMod = require("node:fs");
+
+function withPatched<T>(name: string, impl: any, fn: () => T): T {
+  const orig = fsMod[name];
+  fsMod[name] = impl;
+  try {
+    return fn();
+  } finally {
+    fsMod[name] = orig;
+  }
+}
+
+// The lock token is 32 hex characters; the sidecar is JSON. Every call gets
+// the whole buffer (with an offset), so its first byte tells a patched
+// writeSync which of the two writes it is.
+function isSidecarWrite(buf: any, _off: number): boolean {
+  return Buffer.isBuffer(buf) && buf[0] === 0x7b; // "{"
+}
+
+function seedOne(configPath: string): string {
+  recordSessionGrant(
+    configPath,
+    "prod",
+    {
+      api: "https://cocalc.ai",
+      session_expires_at: "2026-11-20T01:00:00.000Z",
+      fresh_auth_until: null,
+    },
+    NOW,
+  );
+  return readFileSync(authGrantsPath(configPath), "utf8");
+}
+
+function recordOther(configPath: string): string {
+  return captureStderr(() =>
+    recordSessionGrant(
+      configPath,
+      "other",
+      { api: "https://cocalc.ai", ...NO_TIMES },
+      NOW,
+    ),
+  ).text;
+}
+
+test("short positive writes are completed: the sidecar and the lock token are written in full", () => {
+  withConfigDir((configPath, dir) => {
+    seedOne(configPath);
+    const orig = fsMod.writeSync;
+    const seen: number[] = [];
+    withPatched(
+      "writeSync",
+      (fd: number, buf: Buffer, off: number, len: number) => {
+        const n = orig(fd, buf, off, Math.min(len, 5));
+        seen.push(n);
+        return n;
+      },
+      () => assert.equal(recordOther(configPath), ""),
+    );
+    assert.ok(seen.length > 10, `${seen.length} writes`);
+    const grants = JSON.parse(
+      readFileSync(authGrantsPath(configPath), "utf8"),
+    ).grants;
+    assert.deepEqual(Object.keys(grants).sort(), ["other", "prod"]);
+    assert.deepEqual(readdirSync(dir), ["config.json.auth-grants.json"]);
+  });
+});
+
+for (const [label, makeImpl] of [
+  ["a sidecar write that makes no progress", () => () => 0],
+  [
+    "an error after a partial sidecar write",
+    (orig: any) => {
+      let calls = 0;
+      return (fd: number, buf: Buffer, off: number, len: number) => {
+        if (++calls > 1)
+          throw Object.assign(new Error("EFBIG"), { code: "EFBIG" });
+        return orig(fd, buf, off, Math.min(len, 10));
+      };
+    },
+  ],
+] as Array<[string, (orig: any) => any]>) {
+  test(`${label}: the sidecar stays byte-identical, with no temp file and no lock left`, () => {
+    withConfigDir((configPath, dir) => {
+      const before = seedOne(configPath);
+      const orig = fsMod.writeSync;
+      const bad = makeImpl(orig);
+      const text = withPatched(
+        "writeSync",
+        (fd: number, buf: Buffer, off: number, len: number) =>
+          isSidecarWrite(buf, off)
+            ? bad(fd, buf, off, len)
+            : orig(fd, buf, off, len),
+        () => recordOther(configPath),
+      );
+      assert.match(text, /could not update/);
+      assert.equal(readFileSync(authGrantsPath(configPath), "utf8"), before);
+      assert.deepEqual(readdirSync(dir), ["config.json.auth-grants.json"]);
+    });
+  });
+}
+
+for (const [label, impl] of [
+  ["makes no progress", () => 0],
+  [
+    "fails (EFBIG)",
+    () => {
+      throw Object.assign(new Error("EFBIG"), { code: "EFBIG" });
+    },
+  ],
+] as Array<[string, any]>) {
+  test(`a lock token write that ${label} removes our own lock, so the next update is not blocked`, () => {
+    withConfigDir((configPath, dir) => {
+      const before = seedOne(configPath);
+      const orig = fsMod.writeSync;
+      const text = withPatched(
+        "writeSync",
+        (fd: number, buf: Buffer, off: number, len: number) =>
+          isSidecarWrite(buf, off) ? orig(fd, buf, off, len) : impl(),
+        () => recordOther(configPath),
+      );
+      assert.match(text, /could not update/);
+      assert.doesNotMatch(text, /is held/);
+      assert.equal(readFileSync(authGrantsPath(configPath), "utf8"), before);
+      assert.deepEqual(readdirSync(dir), ["config.json.auth-grants.json"]);
+      // nothing stale is left behind: the next update goes through
+      assert.equal(recordOther(configPath), "");
+      const grants = JSON.parse(
+        readFileSync(authGrantsPath(configPath), "utf8"),
+      ).grants;
+      assert.deepEqual(Object.keys(grants).sort(), ["other", "prod"]);
+    });
+  });
+}
+
+for (const which of ["sidecar", "lock token"] as const) {
+  test(`a ${which} write that reports more bytes than it wrote is caught by the size check`, () => {
+    withConfigDir((configPath, dir) => {
+      const before = seedOne(configPath);
+      const orig = fsMod.writeSync;
+      const text = withPatched(
+        "writeSync",
+        (fd: number, buf: Buffer, off: number, len: number) => {
+          if (isSidecarWrite(buf, off) !== (which === "sidecar")) {
+            return orig(fd, buf, off, len);
+          }
+          orig(fd, buf, off, Math.min(len, 3));
+          return len; // claims every byte
+        },
+        () => recordOther(configPath),
+      );
+      assert.match(text, /could not update/);
+      assert.equal(readFileSync(authGrantsPath(configPath), "utf8"), before);
+      assert.deepEqual(readdirSync(dir), ["config.json.auth-grants.json"]);
+    });
+  });
+}
+
+test("a failed lock token write never removes a lock that is no longer its own", () => {
+  withConfigDir((configPath) => {
+    seedOne(configPath);
+    const lock = `${authGrantsPath(configPath)}.lock`;
+    const orig = fsMod.writeSync;
+    withPatched(
+      "writeSync",
+      (fd: number, buf: Buffer, off: number, len: number) => {
+        if (isSidecarWrite(buf, off)) return orig(fd, buf, off, len);
+        // someone replaces the lock, then our token write fails
+        rmSync(lock);
+        writeFileSync(lock, "someone-else");
+        throw Object.assign(new Error("EIO"), { code: "EIO" });
+      },
+      () => assert.match(recordOther(configPath), /could not update/),
+    );
+    assert.equal(readFileSync(lock, "utf8"), "someone-else");
+  });
+});
+
+test(
+  "a real file-size limit (RLIMIT_FSIZE) leaves the sidecar byte-identical, with no temp file and no lock",
+  { skip: process.platform === "win32" },
+  () => {
+    withConfigDir((configPath, dir) => {
+      // a sidecar larger than the child's 2 KiB limit
+      for (let i = 0; i < 40; i++) {
+        recordSessionGrant(
+          configPath,
+          `profile-${i}`,
+          {
+            api: "https://cocalc.ai",
+            session_expires_at: "2026-11-20T01:00:00.000Z",
+            fresh_auth_until: "2026-11-13T02:00:00.000Z",
+          },
+          NOW,
+        );
+      }
+      const before = readFileSync(authGrantsPath(configPath), "utf8");
+      assert.ok(before.length > 4096, `${before.length}`);
+      const script = join(dir, "record.js");
+      writeFileSync(
+        script,
+        [
+          `const m = require(${JSON.stringify(require.resolve("./auth-grants"))});`,
+          "m.recordSessionGrant(process.argv[2], 'new', { api: 'https://cocalc.ai', session_expires_at: null, fresh_auth_until: null });",
+          "console.log('RETURNED');",
+        ].join("\n"),
+      );
+      const { spawnSync } = require("node:child_process");
+      const res = spawnSync(
+        "/bin/bash",
+        [
+          "-c",
+          'ulimit -f 4; exec "$0" "$1" "$2"',
+          process.execPath,
+          script,
+          configPath,
+        ],
+        { encoding: "utf8" },
+      );
+      assert.match(res.stdout, /^RETURNED/, res.stdout + res.stderr);
+      assert.match(res.stderr, /could not update/, res.stderr);
+      assert.equal(readFileSync(authGrantsPath(configPath), "utf8"), before);
+      assert.deepEqual(readdirSync(dir).sort(), [
+        "config.json.auth-grants.json",
+        "record.js",
+      ]);
+    });
+  },
+);
