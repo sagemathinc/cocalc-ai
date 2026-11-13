@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { BAY_OWNED_METADATA_KEYS } from "./__tests__/host-report-metadata-fixtures";
+
 let queryMock: jest.Mock;
 let connectMock: jest.Mock;
 let upsertProjectHostMock: jest.Mock;
@@ -1632,26 +1634,61 @@ describe("host report sanitizer (054 C containment)", () => {
     });
   });
 
-  it("strips each denied top-level key and keeps everything else", async () => {
-    const { stripHostReportedMetadata, HOST_REPORT_DENIED_METADATA_KEYS } =
+  it("drops each denied top-level key and keeps host-owned ones", async () => {
+    const { HOST_REPORT_DENIED_METADATA_KEYS } =
       await import("./host-registry");
+    const { pickHostReportedMetadata } = await import("./host-report-metadata");
     expect([...HOST_REPORT_DENIED_METADATA_KEYS].sort()).toEqual(
       [...DENIED].sort(),
     );
     for (const key of DENIED) {
-      const stripped: any = stripHostReportedMetadata({
+      const picked: any = pickHostReportedMetadata({
         [key]: { anything: 1 },
         software: { project_host: "1.0.0" },
         host_session_id: "s",
       });
-      expect(stripped).not.toHaveProperty(key);
-      expect(stripped.software).toEqual({ project_host: "1.0.0" });
-      expect(stripped.host_session_id).toBe("s");
+      expect(picked).not.toHaveProperty(key);
+      expect(picked.software).toEqual({ project_host: "1.0.0" });
+      expect(picked.host_session_id).toBe("s");
     }
     const original = { self_host: { http_tunnel_port: 1 }, metrics: {} };
-    stripHostReportedMetadata(original);
+    pickHostReportedMetadata(original);
     expect(original).toHaveProperty("self_host");
-    expect(stripHostReportedMetadata(undefined)).toBeUndefined();
+    expect(pickHostReportedMetadata(undefined)).toEqual({});
+  });
+
+  // 076: the bay's own state (billing, desired_state, the probe quarantines,
+  // restart recovery, ...) shares project_hosts.metadata with the report and
+  // is merged with jsonb `||`, so the report must not carry any of it.
+  it("a report keeps no bay-owned key, and the old deny-list did (mutation check)", async () => {
+    const { sanitizeHostReport } = await import("./host-registry");
+    const report: Record<string, unknown> = { host_session_id: "s" };
+    for (const key of BAY_OWNED_METADATA_KEYS) {
+      report[key] = { quarantined: false, state: "ok" };
+    }
+    const keptBayKeys = (metadata: any) =>
+      BAY_OWNED_METADATA_KEYS.filter((key) =>
+        Object.prototype.hasOwnProperty.call(metadata ?? {}, key),
+      );
+    const cleaned = sanitizeHostReport({ metadata: report } as any, {
+      isLocalSelfHost: false,
+    }).report.metadata;
+    expect(keptBayKeys(cleaned)).toEqual([]);
+    expect(cleaned).toEqual({ host_session_id: "s" });
+    // The pre-076 strip: delete the denied keys and keep the rest.
+    const oldStrip = (metadata: Record<string, unknown>) => {
+      const stripped = { ...metadata };
+      for (const key of DENIED) delete stripped[key];
+      return stripped;
+    };
+    expect(keptBayKeys(oldStrip(report))).toEqual(
+      expect.arrayContaining([
+        "billing",
+        "desired_state",
+        "runtime_synthetic_probe",
+        "public_route_probe",
+      ]),
+    );
   });
 
   it("refuses each bad URL class and keeps good URLs", async () => {
@@ -1727,14 +1764,25 @@ describe("host report sanitizer (054 C containment)", () => {
           public_url: "https://elsewhere.example",
           public_ip: "10.1.2.3",
           ip_address: "10.1.2.3",
+          // 076: every bay-owned key a host must not set or replace
+          ...Object.fromEntries(
+            BAY_OWNED_METADATA_KEYS.filter(
+              (key) => !(DENIED as readonly string[]).includes(key),
+            ).map((key) => [key, { quarantined: false, state: "ok" }]),
+          ),
         },
       } as any);
       expect(upsertProjectHostMock).toHaveBeenCalledTimes(1);
       const written = upsertProjectHostMock.mock.calls[0][0];
-      for (const key of DENIED) {
+      for (const key of [...DENIED, ...BAY_OWNED_METADATA_KEYS]) {
         expect(written.metadata).not.toHaveProperty(key);
       }
       expect(written.metadata.software).toEqual({ project_host: "1.0.0" });
+      expect(Object.keys(written.metadata).sort()).toEqual([
+        "host_boot_id",
+        "host_session_id",
+        "software",
+      ]);
       // refused URLs keep the stored values, never the reported ones
       expect(written.public_url).toBe(STORED_URLS.public_url);
       expect(written.internal_url).toBe(STORED_URLS.internal_url);

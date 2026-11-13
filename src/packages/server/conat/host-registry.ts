@@ -13,6 +13,7 @@ import {
 import { conat } from "@cocalc/backend/conat";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
+import { pickHostReportedMetadata } from "./host-report-metadata";
 import {
   exchangeProjectHostBootstrapToken,
   proveProjectHostMasterToken,
@@ -74,17 +75,16 @@ export function authoritativeSshServer(
   return publicIp ? `${publicIp}:2222` : reported;
 }
 
-// Top-level metadata keys a host report may never set. self_host holds the
-// reverse-tunnel ports the bay proxies to on its own machine; local, provider,
-// cloud_provider and machine switch a host onto that local-proxy route. The
-// rest are the bay's own record of where the host is and what it owns at the
-// edge: runtime (the provider's view, incl. the IP and user the bay SSHes to),
-// dns, cloudflare_tunnel, public_route and content_dns (DNS records and
-// tunnels the bay creates and deletes), and public_url, public_ip and
-// ip_address (read as addresses). Bay code writes them (host create, provider
-// reconcile, tunnel registration, DNS work, the Star seed, which calls
-// upsertProjectHost directly); a host report drops them. Hosts never send them
-// (project-host/master.ts buildPayload).
+// Top-level metadata keys the bay owns that a host report must never set:
+// self_host holds the reverse-tunnel ports the bay proxies to on its own
+// machine; local, provider, cloud_provider and machine switch a host onto that
+// local-proxy route; runtime, dns, cloudflare_tunnel, public_route and
+// content_dns are the bay's record of where the host is and what it owns at
+// the edge; public_url, public_ip and ip_address are read as addresses. A
+// report keeps only host-owned keys (host-report-metadata.ts), so these and
+// every other bay-owned key (billing, desired_state, the probe quarantines,
+// restart recovery, ...) are dropped; this list names the ones whose loss
+// would be most severe and is asserted in tests.
 export const HOST_REPORT_DENIED_METADATA_KEYS = [
   "self_host",
   "local",
@@ -101,28 +101,14 @@ export const HOST_REPORT_DENIED_METADATA_KEYS = [
   "ip_address",
 ] as const;
 
-export function stripHostReportedMetadata(metadata: unknown): unknown {
-  if (
-    metadata == null ||
-    typeof metadata !== "object" ||
-    Array.isArray(metadata)
-  ) {
-    return metadata;
-  }
-  const stripped = { ...(metadata as Record<string, unknown>) };
-  for (const key of HOST_REPORT_DENIED_METADATA_KEYS) {
-    delete stripped[key];
-  }
-  return stripped;
-}
-
 const HOST_REPORT_URL_FIELDS = ["public_url", "internal_url"] as const;
 type HostReportUrlField = (typeof HOST_REPORT_URL_FIELDS)[number];
 
 // The one place a register or heartbeat report is cleaned before any use: the
-// denied metadata keys are dropped, a local self-host reports no URLs, and a
-// URL naming a loopback, link-local or metadata address is refused (the caller
-// keeps the stored value for a refused field). Values are never logged.
+// metadata is reduced to host-owned keys with valid values, a local self-host
+// reports no URLs, and a URL naming a loopback, link-local or metadata address
+// is refused (the caller keeps the stored value for a refused field). Values
+// are never logged.
 export function sanitizeHostReport<
   T extends { metadata?: any; public_url?: string; internal_url?: string },
 >(
@@ -131,7 +117,7 @@ export function sanitizeHostReport<
 ): { report: T; refusedUrlFields: HostReportUrlField[] } {
   const report: T = {
     ...info,
-    metadata: stripHostReportedMetadata(info.metadata),
+    metadata: pickHostReportedMetadata(info.metadata),
   };
   if (isLocalSelfHost) {
     report.public_url = undefined;
@@ -1551,7 +1537,7 @@ export async function initHostRegistryService() {
         // Decided from the bay's row: a report's own machine is stripped first.
         const isLocalSelfHost = await resolveLocalSelfHost({
           ...info,
-          metadata: stripHostReportedMetadata(info.metadata),
+          metadata: pickHostReportedMetadata(info.metadata),
         } as HostRegistration);
         const { report: cleaned, refusedUrlFields } = sanitizeHostReport(info, {
           isLocalSelfHost,
@@ -1672,7 +1658,7 @@ export async function initHostRegistryService() {
         // Decided from the bay's row: a report's own machine is stripped first.
         const isLocalSelfHost = await resolveLocalSelfHost({
           ...info,
-          metadata: stripHostReportedMetadata(info.metadata),
+          metadata: pickHostReportedMetadata(info.metadata),
         } as HostRegistration);
         const { report: cleaned, refusedUrlFields } = sanitizeHostReport(info, {
           isLocalSelfHost,
