@@ -14,6 +14,7 @@ jest.mock("./condition-alert", () => ({
 }));
 
 import {
+  alertHostName,
   formatSpotFallbackAlertBody,
   runSpotFallbackAlertCheck,
   SPOT_FALLBACK_ALERT_SUBJECT,
@@ -29,10 +30,11 @@ function host(
   state: Record<string, any>,
   extra: Record<string, any> = {},
 ) {
+  // As in project_hosts: the name is a column, metadata has none.
   return {
     id,
+    name: `host-${id}`,
     metadata: {
-      name: `host-${id}`,
       desired_pricing_model: "spot",
       effective_pricing_model: "spot",
       machine: { machine_type: "t2d-standard-16" },
@@ -160,6 +162,40 @@ describe("runSpotFallbackAlertCheck", () => {
     expect(subject).toBe(SPOT_FALLBACK_ALERT_SUBJECT);
     expect(reminderMinutes).toBe(24 * 60);
     expect(body.indexOf("- host-b")).toBeLessThan(body.indexOf("- host-z"));
+    // The name comes from the name column, which the query must select.
+    expect(mockQuery.mock.calls[0][0]).toMatch(/SELECT id, name, metadata/);
+  });
+
+  it("never shows the host id: an unnamed host is (unnamed host)", () => {
+    const row = host("1a7b2c3d-0000-4000-8000-00000000000n", {
+      active_machine_type: "c2d-highcpu-32",
+      machine_type_attempt_started_at: hoursAgo(30),
+    });
+    for (const name of [null, undefined, "  ", "\n\t", 42]) {
+      expect(spotFallbackAlertRow({ ...row, name } as any, NOW)?.name).toBe(
+        "(unnamed host)",
+      );
+    }
+    const body = formatSpotFallbackAlertBody([
+      spotFallbackAlertRow({ ...row, name: null }, NOW)!,
+    ]);
+    expect(body).toContain("- (unnamed host)");
+    expect(body).not.toContain(row.id);
+  });
+
+  it("uses the name column first, then metadata.name or display_name", () => {
+    const row = host("m", {
+      active_machine_type: "c2d-highcpu-32",
+      machine_type_attempt_started_at: hoursAgo(30),
+    });
+    const withMeta = (name: unknown, meta: Record<string, any>) =>
+      spotFallbackAlertRow(
+        { ...row, name, metadata: { ...row.metadata, ...meta } } as any,
+        NOW,
+      )?.name;
+    expect(withMeta("column", { name: "meta" })).toBe("column");
+    expect(withMeta(null, { name: "meta" })).toBe("meta");
+    expect(withMeta("", { display_name: "shown" })).toBe("shown");
   });
 
   it("clears the condition when no host is over 24 h", async () => {
@@ -168,6 +204,35 @@ describe("runSpotFallbackAlertCheck", () => {
     expect(mockConditionAlert).not.toHaveBeenCalled();
     expect(mockConditionCleared).toHaveBeenCalledWith(
       SPOT_FALLBACK_ALERT_SUBJECT,
+    );
+  });
+});
+
+describe("alertHostName", () => {
+  it("escapes Markdown, so a name cannot add links or formatting", () => {
+    const name = alertHostName("[click](https://evil.example) **x** `y` #h");
+    expect(name).toBe(
+      "\\[click\\]\\(https://evil.example\\) \\*\\*x\\*\\* \\`y\\` #h",
+    );
+    expect(name).not.toMatch(/(^|[^\\])[[\]()*`]/);
+    expect(alertHostName("<img src=x>")).toBe("\\<img src=x\\>");
+  });
+
+  it("is one line without control or bidi characters", () => {
+    expect(alertHostName("a\nb\r\nc\td\u0000e\u2028f")).toBe("a b c d e f");
+    expect(alertHostName("ab\u202ecd\u2066ef\u200b")).toBe("abcdef");
+    expect(alertHostName("  my   host  ")).toBe("my host");
+  });
+
+  it("keeps at most 64 characters", () => {
+    expect(alertHostName("x".repeat(64))).toBe("x".repeat(64));
+    const long = alertHostName("y".repeat(200));
+    expect(Array.from(long)).toHaveLength(64);
+    expect(long.endsWith("…")).toBe(true);
+    // Whole characters only, never half of an emoji.
+    expect(Array.from(alertHostName("😀".repeat(100)))).toHaveLength(64);
+    expect(alertHostName("😀".repeat(100))).not.toMatch(
+      /[\ud800-\udbff](?![\udc00-\udfff])/,
     );
   });
 });

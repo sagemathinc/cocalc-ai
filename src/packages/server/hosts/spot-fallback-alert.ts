@@ -29,6 +29,7 @@ export interface SpotFallbackAlertRow {
 
 interface HostRow {
   id: string;
+  name?: string | null;
   metadata?: Record<string, any> | null;
 }
 
@@ -67,9 +68,36 @@ export function spotFallbackAlertRow(
   if (since == null || now - since <= SPOT_FALLBACK_ALERT_AFTER_MS) {
     return undefined;
   }
-  const name =
-    `${metadata.name ?? metadata.display_name ?? ""}`.trim() || row.id;
-  return { id: row.id, name, kind };
+  // Hosts keep their name in the name column, not in metadata.
+  const name = [row.name, metadata.name, metadata.display_name].find(
+    (value) => typeof value === "string" && value.trim(),
+  );
+  return { id: row.id, name: alertHostName(name), kind };
+}
+
+const MAX_NAME_LENGTH = 64;
+
+// An owner-chosen host name as one short line of plain text in a Markdown
+// alert: control and bidi characters removed, whitespace collapsed, at most
+// 64 characters, Markdown syntax escaped. Never the host id.
+export function alertHostName(value: unknown): string {
+  const text = (typeof value === "string" ? value : "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "(unnamed host)";
+  const chars = Array.from(text);
+  const short =
+    chars.length > MAX_NAME_LENGTH
+      ? `${chars
+          .slice(0, MAX_NAME_LENGTH - 1)
+          .join("")
+          .trimEnd()}…`
+      : text;
+  // Inline Markdown only: the name always follows "- ", so line-start
+  // syntax (#, -, +, 1.) cannot apply.
+  return short.replace(/[\\`*_{}[\]()<>!|~]/g, "\\$&");
 }
 
 // Counts and host names only: stable facts, so an unchanged condition has an
@@ -104,12 +132,17 @@ export function formatSpotFallbackAlertBody(
 export async function runSpotFallbackAlertCheck(
   now = Date.now(),
 ): Promise<number> {
+  // Running Spot hosts with recovery state (as desiredPricingModel reads
+  // it), in a stable order; the first 1000 by id are checked.
   const { rows } = await getPool().query<HostRow>(
-    `SELECT id, metadata
+    `SELECT id, name, metadata
        FROM project_hosts
       WHERE deleted IS NULL
         AND status = 'running'
         AND metadata ? 'spot_recovery_state'
+        AND lower(trim(COALESCE(metadata->>'desired_pricing_model',
+                                metadata->>'pricing_model'))) = 'spot'
+      ORDER BY id
       LIMIT 1000`,
   );
   const alerts = byHostId(
