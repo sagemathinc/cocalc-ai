@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { agentRpcAdmissionCapacityError } from "@cocalc/conat/agents/rpc";
 import { emitError, emitSuccess, printArrayTable } from "./cli-output";
 
 function withConsoleCapture(fn: () => void): string {
@@ -179,6 +180,60 @@ test("emitError exposes validated retry metadata and a human retry hint", () => 
   assert.equal(parsed.error.code, "api_search_rate_limited");
   assert.equal(parsed.error.retry_after_ms, 1250);
   assert.match(parsed.error.hint, /Wait at least 2 seconds/);
+});
+
+test("emitError says whether a coded error is retryable, only when it knows", () => {
+  const busy = withStderrCapture(() =>
+    emitError(
+      { globals: { output: "json" } },
+      "agent broadcast",
+      agentRpcAdmissionCapacityError(),
+      (url) => url,
+    ),
+  );
+  const parsed = JSON.parse(busy);
+  assert.equal(parsed.error.code, "rpc_admission_capacity");
+  assert.equal(parsed.error.retryable, true);
+  assert.match(parsed.error.hint, /safe to run again after a few seconds/);
+  assert.deepEqual(Object.keys(parsed.error).sort(), [
+    "code",
+    "hint",
+    "message",
+    "retryable",
+  ]);
+  const human = withStderrCapture(() =>
+    emitError(
+      { globals: {} },
+      "agent broadcast",
+      agentRpcAdmissionCapacityError(),
+      (url) => url,
+    ),
+  );
+  assert.match(human, /^ERROR: agent RPC admission capacity reached;/);
+  assert.match(human, /safe to run again/);
+  const plain = JSON.parse(
+    withStderrCapture(() =>
+      emitError(
+        { globals: { output: "json" } },
+        "agent send",
+        new Error("No approved destination"),
+        (url) => url,
+      ),
+    ),
+  );
+  assert.equal("retryable" in plain.error, false);
+  const notRetryable = JSON.parse(
+    withStderrCapture(() =>
+      emitError(
+        { globals: { output: "json" } },
+        "agent send",
+        Object.assign(new Error("x"), { retryable: false }),
+        (url) => url,
+      ),
+    ),
+  );
+  assert.equal(notRetryable.error.retryable, false);
+  assert.equal(notRetryable.error.hint, undefined);
 });
 
 test("emitError suggests auth login for cookie-required CLI failures", () => {
