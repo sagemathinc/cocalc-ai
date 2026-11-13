@@ -206,6 +206,10 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.assignProjectHost": projectFromOpts,
   "projects.setProjectMetadata": projectFromOpts,
   "projects.setProjectDeletionProtection": projectFromOpts,
+  // Automatic snapshot/backup schedules are stored with the project; fresh
+  // auth and admin status are asked of the caller's home bay.
+  "projects.setProjectSnapshotSchedule": projectFromOpts,
+  "projects.setProjectBackupSchedule": projectFromOpts,
   "projects.setProjectManageUsersOwnerOnly": projectFromOpts,
   "projects.setProjectUserRole": projectFromNestedOpts,
   "projects.getProjectAccessLandingInfo": projectFromOpts,

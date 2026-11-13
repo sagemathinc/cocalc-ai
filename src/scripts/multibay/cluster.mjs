@@ -67,6 +67,8 @@ export class MultibayCluster {
     this.stopHooks = new Set();
     // Every bay of a real cluster has the same one (bay-systemd installs it).
     this.sharedSecret = randomBytes(32).toString("hex");
+    // Per-bay environment overrides, applied when a bay (re)starts.
+    this.envOverrides = new Map();
   }
 
   async init() {
@@ -161,7 +163,20 @@ export class MultibayCluster {
     for (const key of ["TMPDIR", "CI", "GITHUB_ACTIONS"]) {
       if (process.env[key]) env[key] = process.env[key];
     }
+    Object.assign(env, this.envOverrides.get(id) ?? {});
     return env;
+  }
+
+  /**
+   * Restart every bay (the seed first) with these environment overrides,
+   * e.g. another project runtime for one group of checks; `{}` restores the
+   * defaults.
+   */
+  async restartAllWithEnv(overrides) {
+    for (const id of this.bayIds) {
+      this.envOverrides.set(id, { ...overrides });
+      await this.restartBay(id);
+    }
   }
 
   startBay(id) {
