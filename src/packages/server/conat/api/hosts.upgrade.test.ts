@@ -48,6 +48,14 @@ jest.mock("@cocalc/server/cloud/bootstrap-host", () => ({
   __esModule: true,
   buildCloudInitStartupScript: (...args: any[]) =>
     buildCloudInitStartupScriptMock(...args),
+  // the real one is tested in cloud/bootstrap-host.test.ts
+  buildBootstrapReconcileSshScript: ({
+    launcher,
+    scope,
+  }: {
+    launcher: string;
+    scope: string;
+  }) => `ssh-reconcile scope=${scope}\n${launcher}`,
 }));
 
 jest.mock("@cocalc/server/cloud/ssh-key", () => ({
@@ -395,10 +403,9 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       }),
       {},
     );
-    expect(ssh.getScript()).toContain(
-      'BOOTSTRAP_PID="$(sudo -n bash -lc \'nohup env COCALC_BOOTSTRAP_RECONCILE_SCOPE="$3" bash "$1" >>"$2" 2>&1 </dev/null & echo $!\'',
+    expect(ssh.getScript()).toBe(
+      "ssh-reconcile scope=full\n#!/bin/bash\necho hi\n",
     );
-    expect(ssh.getScript()).toContain('"$BOOTSTRAP_LOG" "full")');
     expect(delayMock).toHaveBeenCalledTimes(2);
   });
 
@@ -838,10 +845,9 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       ).resolves.toBeUndefined();
 
       expect(spawnMock).toHaveBeenCalled();
-      expect(ssh.getScript()).toContain(
-        'COCALC_BOOTSTRAP_RECONCILE_SCOPE="$3"',
+      expect(ssh.getScript()).toBe(
+        `ssh-reconcile scope=${bootstrapScope}\n#!/bin/bash\necho hi\n`,
       );
-      expect(ssh.getScript()).toContain(`"${bootstrapScope}")`);
       expect(
         loadEffectiveProjectHostRuntimeDeploymentsMock,
       ).not.toHaveBeenCalled();
@@ -941,6 +947,7 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
   });
 
   it("uses the effective runtime deployment artifact target during software reconcile", async () => {
+    isAdminMock = jest.fn(async (id: string) => id === "admin-account");
     const initialRow = makeHostRow({
       version: "1776405602543",
       desiredProjectHostVersion: "1776405602543",
@@ -959,7 +966,8 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
         target_type: "artifact",
         target: "project-host",
         desired_version: "1776486535462",
-        requested_by: ACCOUNT_ID,
+        // Host-scoped deployments count only when an admin set them.
+        requested_by: "admin-account",
         requested_at: "2026-04-15T00:00:00.000Z",
         updated_at: "2026-04-15T00:00:00.000Z",
       },

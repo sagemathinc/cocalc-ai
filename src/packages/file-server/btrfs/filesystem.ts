@@ -556,15 +556,10 @@ export class Filesystem {
         },
         { min: 250 },
       );
-      const { stderr, exit_code } = await sudo({
-        command: "chown",
-        args: [
-          `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`,
-          this.opts.mount,
-        ],
-        err_on_exit: false,
-      });
-      return { stderr, exit_code };
+      // The mount root stays root-owned, as on production hosts (the root
+      // helper refuses to change it): BEES and project-root hardening rely
+      // on that.
+      return { stderr: "", exit_code: 0 };
     } finally {
       await delay(1000);
       mountLock = false;

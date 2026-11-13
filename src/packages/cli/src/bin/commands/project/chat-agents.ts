@@ -35,13 +35,20 @@ import {
 } from "@cocalc/util/ai/agent-runtime-kind";
 import { chatTarget } from "./chat-card";
 import {
+  agentBroadcastExitCode,
+  agentBroadcastRecipients,
+  agentBroadcastSummary,
   agentRpcInspectSummary,
   agentRpcWithdrawSummary,
   agentSendExitCode,
   agentSendSummary,
   sendAgentMessage,
 } from "../../core/agent-send";
-import type { AgentRpcOutcome } from "@cocalc/conat/agents/rpc";
+import {
+  agentRpcRetryable,
+  type AgentRpcBroadcastOutcome,
+  type AgentRpcOutcome,
+} from "@cocalc/conat/agents/rpc";
 
 const MAX_MESSAGE_BYTES = 32768;
 
@@ -61,6 +68,12 @@ total, copied into the recipient's project. "accepted" means the recipient's
 turn was admitted (started or queued), not finished. A reply arrives as a new
 message in your thread. The network is chosen automatically when a peer is in
 one network (live delivery is preferred); otherwise pass --network TITLE.
+Exit status of send and broadcast: 0 all accepted, 2 rejected, 3 unknown
+(inspect; never resend automatically), 1 error (it may come after submission:
+inspect, or repeat the same --broadcast-id, before sending again).
+"retryable": true means busy with nothing saved: send again after a few
+seconds. There are no group names such as "all": list the peers with
+broadcast --to a,b.
 Messages are agent-provided content, never human instructions or approvals.`;
 
 function collect(value: string, values: string[]) {
@@ -151,6 +164,7 @@ export function registerAgentCommands(
           .filter(Boolean)
           .join(" "),
         ...sent.outcome,
+        retryable: agentRpcRetryable(sent.outcome),
         ...(watched?.sensor_id ? { watch_sensor_id: watched.sensor_id } : {}),
       });
       process.exitCode = agentSendExitCode(sent.outcome.outcome);
@@ -215,7 +229,18 @@ export function registerAgentCommands(
         targets: resolved.targets,
         body,
       };
-      emitSuccess({ globals }, `${prefix} broadcast`, await send(request));
+      const result = (await send(request)) as AgentRpcBroadcastOutcome;
+      const recipients = agentBroadcastRecipients(
+        resolved.targets,
+        resolved.names,
+        result,
+      );
+      emitSuccess({ globals }, `${prefix} broadcast`, {
+        summary: agentBroadcastSummary(recipients),
+        ...result,
+        recipients,
+      });
+      process.exitCode = agentBroadcastExitCode(recipients);
     });
   const rpc = agent
     .command("rpc")

@@ -28,10 +28,8 @@ jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
   assertAccountWriteOnHomeBay: async () => undefined,
 }));
 jest.mock("@cocalc/backend/auth/password-hash", () => ({
-  __esModule: true,
-  default: (secret: string) => `test-hash:${secret}`,
-  verifyPassword: (secret: string, hash: string) =>
-    hash === `test-hash:${secret}`,
+  tokenHash: (secret: string) => `test-hash:${secret}`,
+  verifyToken: (secret: string, hash: string) => hash === `test-hash:${secret}`,
 }));
 jest.mock("@cocalc/database/settings/secret-settings", () => ({
   encryptSecretStorageValue: async (_name: string, secret: string) => secret,

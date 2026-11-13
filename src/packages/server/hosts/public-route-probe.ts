@@ -8,6 +8,12 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
+import {
+  createProjectHostAgent,
+  projectHostLoopbackUrlsAllowed,
+  safeProjectHostUrl,
+} from "@cocalc/backend/project-host-target";
+import type { lookup as dnsLookup } from "node:dns";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_WEBSOCKET_ATTEMPTS = 8;
@@ -20,7 +26,19 @@ type WebSocketUpgradeProbe = (opts: {
   url: URL;
   origin: string;
   timeout_ms: number;
+  lookup?: typeof dnsLookup;
 }) => Promise<{ status: number; cf_ray?: string }>;
+
+// A fresh guarded agent per request: no socket outlives its request, and the
+// address actually connected to is checked (a host-written public_url can name
+// anything; see @cocalc/backend/project-host-target).
+function probeAgent(url: URL, lookup?: typeof dnsLookup) {
+  return createProjectHostAgent({
+    secure: url.protocol === "https:",
+    allowLoopback: projectHostLoopbackUrlsAllowed(),
+    lookup,
+  });
+}
 
 export type ProjectHostPublicRouteProbeStage =
   | "health"
@@ -127,6 +145,12 @@ function normalizedBaseUrl(value: string): URL {
   if (url.username || url.password) {
     throw new Error("project-host public URL must not contain credentials");
   }
+  // public_url may have been written by a host report: never probe a
+  // loopback, link-local or metadata address (the agent checks the resolved
+  // address as well).
+  if (safeProjectHostUrl(value) == null) {
+    throw new Error("project-host public URL is not an allowed target");
+  }
   url.pathname = "/";
   url.search = "";
   url.hash = "";
@@ -146,21 +170,23 @@ async function fetchWithTimeout({
   url,
   init,
   timeout_ms,
+  lookup,
 }: {
   fetchImpl?: FetchLike;
   url: URL;
   init: RequestInit;
   timeout_ms: number;
+  lookup?: typeof dnsLookup;
 }): Promise<Response> {
   if (fetchImpl == null) {
     try {
-      return await requestWithIsolatedSocket({ url, init, timeout_ms });
+      return await requestWithIsolatedSocket({ url, init, timeout_ms, lookup });
     } catch (err) {
       if (!isTransientRequestError(err)) throw err;
       await new Promise((resolve) =>
         setTimeout(resolve, TRANSIENT_REQUEST_RETRY_DELAY_MS),
       );
-      return await requestWithIsolatedSocket({ url, init, timeout_ms });
+      return await requestWithIsolatedSocket({ url, init, timeout_ms, lookup });
     }
   }
   return await fetchImpl(url, {
@@ -199,10 +225,12 @@ async function requestWithIsolatedSocket({
   url,
   init,
   timeout_ms,
+  lookup,
 }: {
   url: URL;
   init: RequestInit;
   timeout_ms: number;
+  lookup?: typeof dnsLookup;
 }): Promise<Response> {
   const request = url.protocol === "https:" ? httpsRequest : httpRequest;
   const headers = new Headers(init.headers);
@@ -220,8 +248,9 @@ async function requestWithIsolatedSocket({
     const req = request(url, {
       method: init.method,
       headers: Object.fromEntries(headers.entries()),
-      // Do not share the application process's long-lived HTTP agent state.
-      agent: false,
+      // Do not share the application process's long-lived HTTP agent state:
+      // a fresh agent that checks the address connected to.
+      agent: probeAgent(url, lookup),
     });
     let settled = false;
     const finish = (fn: () => void) => {
@@ -263,6 +292,32 @@ async function requestWithIsolatedSocket({
     req.once("error", (err) => finish(() => reject(err)));
     if (body != null) req.write(body);
     req.end();
+  });
+}
+
+/** One HTTP(S) request to a project host, as a fetch-style Response, through a
+ * fresh guarded agent (the address connected to is checked) and never
+ * following a redirect. For bay-side requests to host-written URLs. */
+export async function projectHostRequest(
+  url: string | URL,
+  init: RequestInit = {},
+  {
+    timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS,
+    lookup,
+  }: {
+    timeout_ms?: number;
+    lookup?: typeof dnsLookup;
+  } = {},
+): Promise<Response> {
+  const target = typeof url === "string" ? new URL(url) : url;
+  if (safeProjectHostUrl(target.toString()) == null) {
+    throw new Error("project-host URL is not an allowed target");
+  }
+  return await requestWithIsolatedSocket({
+    url: target,
+    init,
+    timeout_ms,
+    lookup,
   });
 }
 
@@ -350,10 +405,12 @@ async function probeWebSocketUpgrade({
   url,
   origin,
   timeout_ms,
+  lookup,
 }: {
   url: URL;
   origin: string;
   timeout_ms: number;
+  lookup?: typeof dnsLookup;
 }): Promise<{ status: number; cf_ray?: string }> {
   const key = randomBytes(16).toString("base64");
   const expectedAccept = createHash("sha1")
@@ -364,6 +421,7 @@ async function probeWebSocketUpgrade({
   return await new Promise((resolve, reject) => {
     const req = request(url, {
       method: "GET",
+      agent: probeAgent(url, lookup),
       headers: {
         Connection: "Upgrade",
         Upgrade: "websocket",
@@ -439,6 +497,7 @@ export async function probeProjectHostPublicRoute({
   websocketProbeImpl = probeWebSocketUpgrade,
   websocket_attempts = DEFAULT_WEBSOCKET_ATTEMPTS,
   timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS,
+  lookup,
 }: {
   public_url: string;
   origin: string;
@@ -447,6 +506,8 @@ export async function probeProjectHostPublicRoute({
   websocketProbeImpl?: WebSocketUpgradeProbe;
   websocket_attempts?: number;
   timeout_ms?: number;
+  // For tests: the resolver behind the guarded agent.
+  lookup?: typeof dnsLookup;
 }): Promise<ProjectHostPublicRouteProbeResult> {
   const baseUrl = normalizedBaseUrl(public_url);
   const normalizedSiteOrigin = normalizedOrigin(origin);
@@ -478,6 +539,7 @@ export async function probeProjectHostPublicRoute({
   try {
     health = await fetchWithTimeout({
       fetchImpl,
+      lookup,
       url: healthUrl,
       init: { method: "GET", headers },
       timeout_ms,
@@ -525,6 +587,7 @@ export async function probeProjectHostPublicRoute({
   try {
     preflight = await fetchWithTimeout({
       fetchImpl,
+      lookup,
       url: sessionUrl,
       init: {
         method: "OPTIONS",
@@ -561,6 +624,7 @@ export async function probeProjectHostPublicRoute({
   try {
     session = await fetchWithTimeout({
       fetchImpl,
+      lookup,
       url: sessionUrl,
       init: {
         method: "POST",
@@ -603,6 +667,7 @@ export async function probeProjectHostPublicRoute({
           url: websocketUrl,
           origin: normalizedSiteOrigin,
           timeout_ms,
+          lookup,
         });
         return {
           ok: true,

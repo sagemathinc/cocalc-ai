@@ -52,6 +52,29 @@ import {
 } from "./project-quota-group";
 import type { CapturedSnapshotData } from "@cocalc/file-server/btrfs/snapshot-preparer";
 
+// the warnings logged, by message
+const mockWarnings: any[][] = [];
+jest.mock("@cocalc/backend/logger", () => {
+  const actual = jest.requireActual("@cocalc/backend/logger");
+  const getLogger = actual.default ?? actual;
+  return {
+    __esModule: true,
+    ...actual,
+    default: (name: string) => {
+      const logger = getLogger(name);
+      return new Proxy(logger, {
+        get: (target, prop) =>
+          prop === "warn"
+            ? (...args: any[]) => {
+                mockWarnings.push(args);
+                return target.warn(...args);
+              }
+            : target[prop],
+      });
+    },
+  };
+});
+
 // whether a persist fence is held (persist-fence.ts), as the code under test
 // sees it
 let fenced = false;
@@ -958,6 +981,109 @@ describe("in the project-host", () => {
     ]);
     expect(read(join(root, "a.db"))).toBe("after the snapshot");
     expect(await isPersistVolumeReady(root)).toBe(true);
+    expect(leftovers()).toEqual([]);
+  });
+
+  // replaced persist volumes kept aside (068-DS)
+  const keptVolumes = () =>
+    readdirSync(mount).filter((x) =>
+      x.startsWith(`project-${PROJECT}-persist.restore_old.`),
+    );
+
+  it("a recover that kept the old home keeps the replaced history aside, out of the staging directory (068-DS)", async () => {
+    await readyVolume();
+    const { subvolume, snapshotPath } = await backupSnapshot();
+    await copyPersistVolumeIntoSnapshot({ subvolume, snapshotPath });
+    // the history the restore replaces
+    await writeFile(join(root, "a.db"), "after the snapshot");
+    await writeFile(join(root, "new.db"), "after the snapshot");
+    mockWarnings.length = 0;
+    let keptOldHome = false;
+    const asked: boolean[] = [];
+    const result = await replaceProjectHome({
+      project_id: PROJECT,
+      replacement: snapshotPath,
+      reason: "test",
+      env,
+      ops: fakeOps(),
+      swap: async () => {
+        await rm(home, { recursive: true });
+        await cp(snapshotPath, home, {
+          recursive: true,
+          verbatimSymlinks: true,
+        });
+        // known only once the home is swapped (restore-staging.ts)
+        keptOldHome = true;
+        return "swapped";
+      },
+      keepPrevious: () => {
+        asked.push(keptOldHome);
+        return keptOldHome;
+      },
+    });
+    expect(result).toBe("swapped");
+    expect(asked).toEqual([true]);
+    // the restored history is in place
+    expect(read(join(root, "a.db"))).toBe("live");
+    // the replaced one is kept whole, beside it, and nothing is left in the
+    // staging directory (whose leftovers are deleted after a day)
+    expect(leftovers()).toEqual([]);
+    expect(keptVolumes()).toHaveLength(1);
+    const kept = join(mount, keptVolumes()[0]);
+    expect(read(join(kept, "a.db"))).toBe("after the snapshot");
+    expect(read(join(kept, "new.db"))).toBe("after the snapshot");
+    // in the host's log, where an admin finds it
+    expect(mockWarnings).toContainEqual([
+      "recover kept the replaced persist volume aside",
+      { project_id: PROJECT, path: kept },
+    ]);
+    // the orphan sweep deletes only volumes named for a project: a kept one
+    // whose project has no home here stays
+    const otherKept = join(mount, `project-${OTHER}-persist.restore_old.1`);
+    await mkdir(otherKept);
+    await writeFile(join(otherKept, "a.db"), "kept");
+    expect(await deleteOrphanedPersistVolumes({ env })).toEqual([]);
+    expect(read(join(otherKept, "a.db"))).toBe("kept");
+    expect(read(join(kept, "a.db"))).toBe("after the snapshot");
+  });
+
+  it("deletes the replaced history when the old home was not kept", async () => {
+    await readyVolume();
+    const { subvolume, snapshotPath } = await backupSnapshot();
+    await copyPersistVolumeIntoSnapshot({ subvolume, snapshotPath });
+    await replaceProjectHome({
+      project_id: PROJECT,
+      replacement: snapshotPath,
+      reason: "test",
+      env,
+      ops: fakeOps(),
+      swap: async () => "swapped",
+      keepPrevious: () => false,
+    });
+    expect(leftovers()).toEqual([]);
+    expect(keptVolumes()).toEqual([]);
+  });
+
+  it("keeps nothing aside when the home can't be swapped in: the history goes back", async () => {
+    await readyVolume();
+    const { subvolume, snapshotPath } = await backupSnapshot();
+    await copyPersistVolumeIntoSnapshot({ subvolume, snapshotPath });
+    await writeFile(join(root, "a.db"), "after the snapshot");
+    await expect(
+      replaceProjectHome({
+        project_id: PROJECT,
+        replacement: snapshotPath,
+        reason: "test",
+        env,
+        ops: fakeOps(),
+        swap: async () => {
+          throw new Error("swap failed");
+        },
+        keepPrevious: () => true,
+      }),
+    ).rejects.toThrow("swap failed");
+    expect(read(join(root, "a.db"))).toBe("after the snapshot");
+    expect(keptVolumes()).toEqual([]);
     expect(leftovers()).toEqual([]);
   });
 

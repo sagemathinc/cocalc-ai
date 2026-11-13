@@ -3523,6 +3523,8 @@ describe("cloud host start failures", () => {
 });
 
 describe("spot recovery fallback ladder", () => {
+  // N2D and N2 have no predefined 16-core 64 GB type: their 128 GB types are
+  // listed but never chosen, recovery uses n2d/n2-custom-32-65536 instead.
   const zoneTypes = [
     { name: "t2d-standard-16", guestCpus: 16, memoryMb: 65536 },
     { name: "n2d-standard-32", guestCpus: 32, memoryMb: 131072 },
@@ -3655,14 +3657,14 @@ describe("spot recovery fallback ladder", () => {
     // n2d is cheaper on Spot than n2 here, and c2d has no price: n2d first.
     expect(setMachineType).toHaveBeenLastCalledWith(
       expect.anything(),
-      "n2d-standard-32",
+      "n2d-custom-32-65536",
       {},
     );
     expect(setPricingModel.mock.calls.map((call) => call[1])).toEqual(["spot"]);
     const metadata = await hostMetadata(hostId);
     expect(metadata.effective_pricing_model).toBe("spot");
     expect(metadata.spot_recovery_state).toMatchObject({
-      active_machine_type: "n2d-standard-32",
+      active_machine_type: "n2d-custom-32-65536",
       fallback_rungs_tried: expect.arrayContaining(["spot:t2d-standard-16"]),
     });
     const actions = (await events(hostId)).map((e) => e.action);
@@ -3743,7 +3745,7 @@ describe("spot recovery fallback ladder", () => {
     expect(startHost).toHaveBeenCalledTimes(2);
     expect(setMachineType).toHaveBeenCalledWith(
       expect.anything(),
-      "n2d-standard-32",
+      "n2d-custom-32-65536",
       {},
     );
     expect(setPricingModel).toHaveBeenLastCalledWith(
@@ -3755,7 +3757,7 @@ describe("spot recovery fallback ladder", () => {
     expect(metadata.effective_pricing_model).toBe("on_demand");
     expect(metadata.spot_recovery_state).toMatchObject({
       phase: "running_standard_fallback",
-      active_machine_type: "n2d-standard-32",
+      active_machine_type: "n2d-custom-32-65536",
     });
     const skipped = (await events(hostId)).filter(
       (e) => e.action === "fallback_rung_skipped",
@@ -3765,9 +3767,14 @@ describe("spot recovery fallback ladder", () => {
     ).toEqual(
       expect.arrayContaining([
         "on_demand:t2d-standard-16",
-        "spot:n2d-standard-32",
+        "spot:n2d-custom-32-65536",
       ]),
     );
+    // A custom type is not in the zone's list: its vCPUs come from its name.
+    expect(
+      skipped.find((e) => e.runtime.machine_type === "n2d-custom-32-65536")
+        ?.runtime.vcpus,
+    ).toBe(32);
   });
 
   it("never throws: schedules a full retry and alerts when every option fails", async () => {
@@ -4018,7 +4025,7 @@ describe("spot recovery fallback ladder", () => {
     let flaky = 1;
     const { current } = configuredProvider({
       setMachineTypeError: (type) =>
-        type === "n2d-standard-32" && flaky-- > 0
+        type === "n2d-custom-32-65536" && flaky-- > 0
           ? "socket hang up"
           : undefined,
     });
@@ -4027,9 +4034,11 @@ describe("spot recovery fallback ladder", () => {
     await start(hostId);
 
     let state = (await hostMetadata(hostId)).spot_recovery_state;
-    expect(state.fallback_rungs_tried).not.toContain("spot:n2d-standard-32");
+    expect(state.fallback_rungs_tried).not.toContain(
+      "spot:n2d-custom-32-65536",
+    );
     expect(state).toMatchObject({
-      transient_rung: "spot:n2d-standard-32",
+      transient_rung: "spot:n2d-custom-32-65536",
       transient_retries: 1,
     });
     const { rows } = await getPool().query(
@@ -4041,16 +4050,16 @@ describe("spot recovery fallback ladder", () => {
     // The follow-up gets back to the same option instead of skipping it.
     await startAgain(hostId);
 
-    expect(current).toEqual({ type: "n2d-standard-32", pricing: "spot" });
+    expect(current).toEqual({ type: "n2d-custom-32-65536", pricing: "spot" });
     state = (await hostMetadata(hostId)).spot_recovery_state;
-    expect(state.active_machine_type).toBe("n2d-standard-32");
+    expect(state.active_machine_type).toBe("n2d-custom-32-65536");
   });
 
   it("moves on from an option that keeps failing transiently", async () => {
     const hostId = "1a7b2c3d-0000-4000-8000-000000000009";
     const { current } = configuredProvider({
       setMachineTypeError: (type) =>
-        type === "n2d-standard-32" ? "socket hang up" : undefined,
+        type === "n2d-custom-32-65536" ? "socket hang up" : undefined,
     });
     await spotHost(hostId);
 
@@ -4060,9 +4069,9 @@ describe("spot recovery fallback ladder", () => {
     }
 
     // Four retries of n2d, then the next option (n2) on Spot.
-    expect(current).toEqual({ type: "n2-standard-32", pricing: "spot" });
+    expect(current).toEqual({ type: "n2-custom-32-65536", pricing: "spot" });
     const state = (await hostMetadata(hostId)).spot_recovery_state;
-    expect(state.fallback_rungs_tried).toContain("spot:n2d-standard-32");
+    expect(state.fallback_rungs_tried).toContain("spot:n2d-custom-32-65536");
   });
 });
 

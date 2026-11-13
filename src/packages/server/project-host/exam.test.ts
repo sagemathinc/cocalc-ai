@@ -319,3 +319,15 @@ describe("project-host exam configuration", () => {
     ).toBe(false);
   });
 });
+
+describe("exam hostname source (054 C)", () => {
+  it("reads only the validated public_url column, never metadata.public_url", () => {
+    expect(() =>
+      __test__.examHostnameForHost({
+        id: "00000000-1000-4000-8000-000000000001",
+        public_url: null,
+        metadata: { public_url: "https://attacker.example.net" },
+      } as any),
+    ).toThrow("host must have a public URL");
+  });
+});

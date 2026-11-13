@@ -4,6 +4,7 @@ import {
   getProjectHostAuthTokenPrivateKey,
 } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
+import { projectHostAgentFor } from "@cocalc/backend/project-host-target";
 import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import { inboxPrefix } from "@cocalc/conat/names";
 import {
@@ -354,6 +355,9 @@ function getOrCreateRoutedHubClient({
     noCache: true,
     forceNew: true,
     address,
+    // Both socket.io transports (polling and websocket) connect through this
+    // agent, which checks the address actually connected to (054 C).
+    agent: projectHostAgentFor(address) as any,
     inboxPrefix: account_id
       ? inboxPrefix({ account_id })
       : inboxPrefix({ hub_id: "hub" }),

@@ -157,4 +157,36 @@ describe("podmanLimits memory pressure controls", () => {
       "--shm-size=64m",
     ]);
   });
+
+  // The root helper writes memory_swap_max to the project leaf on start and on
+  // every reconcile (run/podman.ts reconcileProjectCgroup), so this mapping is
+  // what a project gets.
+  it.each([
+    ["a memory limit with swap enabled but no host swap", { memory: 1000, swap: true }, 0],
+    ["a memory limit with swap disabled", { memory: 1000, swap: false }, 200],
+    ["no memory limit at all", { pids: 4096 }, 200],
+  ])(
+    "gives no swap to a project with no swap allowance: %s",
+    async (_name, config, hostSwap) => {
+      getContainerSwapSizeMb.mockResolvedValue(hostSwap);
+      const { podmanLimits, projectCgroupLimitsFromPodmanArgs } =
+        await import("./run/limits");
+      const args = await podmanLimits(config);
+
+      expect(args.some((arg) => arg.startsWith("--memory-swap="))).toBe(false);
+      expect(projectCgroupLimitsFromPodmanArgs(args).memory_swap_max).toBe("0");
+    },
+  );
+
+  it("keeps a computed swap allowance", async () => {
+    getContainerSwapSizeMb.mockResolvedValue(300);
+    const { podmanLimits, projectCgroupLimitsFromPodmanArgs } =
+      await import("./run/limits");
+
+    expect(
+      projectCgroupLimitsFromPodmanArgs(
+        await podmanLimits({ memory: 1000, swap: true }),
+      ).memory_swap_max,
+    ).toBe("300");
+  });
 });

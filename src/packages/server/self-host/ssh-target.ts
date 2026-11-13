@@ -1,9 +1,14 @@
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import { spawn, type ChildProcess } from "node:child_process";
 import { getLogger } from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import getPort from "@cocalc/backend/get-port";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
-import { argsJoin } from "@cocalc/util/args";
+import {
+  parseSshTargetSpec,
+  shellCommand,
+  sshDestinationArgs,
+} from "@cocalc/backend/ssh-destination";
 
 const logger = getLogger("server:self-host:ssh-target");
 
@@ -25,29 +30,21 @@ type TunnelState = {
 
 const tunnels = new Map<string, TunnelState>();
 
-function parseSshTarget(raw: string): SshTarget | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  // Accept user@host[:port] or host[:port]. ssh config names pass through unchanged.
-  const atIndex = trimmed.indexOf("@");
-  const hasUser = atIndex > 0;
-  const user = hasUser ? trimmed.slice(0, atIndex) : undefined;
-  const hostPart = hasUser ? trimmed.slice(atIndex + 1) : trimmed;
-  const matchPort = hostPart.match(/^(.*):(\d+)$/);
-  if (matchPort) {
-    const host = matchPort[1];
-    const port = Number(matchPort[2]);
-    if (host && Number.isFinite(port)) {
-      return {
-        raw: trimmed,
-        host,
-        user,
-        port,
-        explicit: true,
-      };
-    }
-  }
-  return { raw: trimmed, host: hostPart, user, explicit: false };
+// The stored target is set by admins, and could be written by host reports
+// before those were stripped, so every part is checked (see
+// @cocalc/backend/ssh-destination): a target that is not a plain
+// [user@]host[:port] is refused, never passed to ssh.
+export function parseSshTarget(raw: string): SshTarget | undefined {
+  const trimmed = `${raw ?? ""}`.trim();
+  const spec = parseSshTargetSpec(trimmed);
+  if (!spec) return undefined;
+  return {
+    raw: trimmed,
+    host: spec.host,
+    user: spec.user,
+    port: spec.port,
+    explicit: spec.port != null,
+  };
 }
 
 function buildSshArgs(target: SshTarget, extraArgs: string[] = []): string[] {
@@ -65,7 +62,7 @@ function buildSshArgs(target: SshTarget, extraArgs: string[] = []): string[] {
   if (target.port) {
     args.push("-p", String(target.port));
   }
-  args.push(...extraArgs, target.host);
+  args.push(...extraArgs, ...sshDestinationArgs(target.host));
   return args;
 }
 
@@ -107,8 +104,9 @@ async function loadSelfHostMetadata(host_id: string): Promise<any> {
 
 async function ensureReversePort(host_id: string): Promise<number> {
   const metadata = await loadSelfHostMetadata(host_id);
-  const stored = Number(metadata?.self_host?.ssh_reverse_port ?? 0);
-  if (stored) return stored;
+  // Only a valid stored port is reused; anything else gets a fresh port.
+  const stored = safeTunnelPort(metadata?.self_host?.ssh_reverse_port);
+  if (stored != null) return stored;
   const port = await getPort();
   await updateHostSelfHostMetadata(host_id, {
     ssh_reverse_port: port,
@@ -214,7 +212,7 @@ export async function ensureSelfHostReverseTunnel(opts: {
 }): Promise<number> {
   const target = parseSshTarget(opts.ssh_target);
   if (!target) {
-    throw new Error("self-host ssh target is empty");
+    throw new Error("self-host ssh target is missing or not allowed");
   }
   const existing = tunnels.get(opts.host_id);
   if (
@@ -287,6 +285,44 @@ export async function ensureSelfHostReverseTunnelsOnStartup(): Promise<void> {
   }
 }
 
+// The remote command line that installs the connector. Every value is
+// shell-quoted, so the remote shells see each one as exactly one word, whatever
+// it contains (the host name, for one, is chosen by the host's owner).
+export function connectorInstallRemoteCommand(opts: {
+  ssh_port: number;
+  ssh_user: string;
+  pairing_token: string;
+  version?: string;
+  name?: string;
+}): string {
+  const installArgs = [
+    "--ssh-host",
+    "localhost",
+    "--ssh-port",
+    String(opts.ssh_port),
+    "--ssh-user",
+    opts.ssh_user,
+    "--token",
+    opts.pairing_token,
+    "--ssh-no-strict-host-key-checking",
+    "--replace",
+  ];
+  if (opts.version) {
+    installArgs.push("--version", opts.version);
+  }
+  if (opts.name) {
+    installArgs.push("--name", opts.name);
+  }
+  const lingerCmd =
+    'command -v loginctl >/dev/null 2>&1 && sudo -n loginctl enable-linger "$USER"';
+  const installCmd = `set -euo pipefail; ${shellCommand([
+    "curl",
+    "-fsSL",
+    "https://software.cocalc.ai/software/self-host/install.sh",
+  ])} | ${shellCommand(["bash", "-s", "--", ...installArgs])} && ${lingerCmd}`;
+  return shellCommand(["bash", "-lc", installCmd]);
+}
+
 export async function runConnectorInstallOverSsh(opts: {
   host_id: string;
   ssh_target: string;
@@ -297,40 +333,16 @@ export async function runConnectorInstallOverSsh(opts: {
 }): Promise<void> {
   const target = parseSshTarget(opts.ssh_target);
   if (!target) {
-    throw new Error("self-host ssh target is empty");
+    throw new Error("self-host ssh target is missing or not allowed");
   }
   const config = getLaunchpadLocalConfig("local");
-  const sshUser = config.ssh_user ?? "user";
-  const installCmdParts = [
-    "curl",
-    "-fsSL",
-    "https://software.cocalc.ai/software/self-host/install.sh",
-    "|",
-    "bash",
-    "-s",
-    "--",
-    "--ssh-host",
-    "localhost",
-    "--ssh-port",
-    String(opts.ssh_port),
-    "--ssh-user",
-    sshUser,
-    "--token",
-    opts.pairing_token,
-    "--ssh-no-strict-host-key-checking",
-    "--replace",
-  ];
-  if (opts.version) {
-    installCmdParts.push("--version", opts.version);
-  }
-  if (opts.name) {
-    installCmdParts.push("--name", opts.name);
-  }
-  const lingerCmd =
-    'command -v loginctl >/dev/null 2>&1 && sudo -n loginctl enable-linger "$USER"';
-  const installCmd = `set -euo pipefail; ${argsJoin(
-    installCmdParts,
-  )} && ${lingerCmd}`;
+  const remoteCommand = connectorInstallRemoteCommand({
+    ssh_port: opts.ssh_port,
+    ssh_user: config.ssh_user ?? "user",
+    pairing_token: opts.pairing_token,
+    version: opts.version,
+    name: opts.name,
+  });
   const args: string[] = [
     "-o",
     "BatchMode=yes",
@@ -345,11 +357,13 @@ export async function runConnectorInstallOverSsh(opts: {
   if (target.port) {
     args.push("-p", String(target.port));
   }
-  args.push(target.host, "bash", "-lc", installCmd);
+  // ssh joins the words after the destination into one line for the remote
+  // shell, so the whole remote command is passed as one shell-quoted word.
+  args.push(...sshDestinationArgs(target.host, [remoteCommand]));
+  // The command carries the pairing token, so it is not logged.
   logger.info("installing connector over ssh", {
     host_id: opts.host_id,
     target: target.raw,
-    command: argsJoin(["ssh", ...args]),
   });
   await new Promise<void>((resolve, reject) => {
     const child = spawn("ssh", args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -393,3 +407,5 @@ export async function runConnectorInstallOverSsh(opts: {
     });
   });
 }
+
+export const _test = { buildSshArgs };
