@@ -4,55 +4,66 @@
  */
 
 export const CODEX_CHAT_BODY = String.raw`
-## What Codex chat is for
+## Start work with Codex
 
-Codex chat is the integrated agent interface in CoCalc-ai. A project chat thread
-can include humans and Codex, and Codex can use project-aware tools to inspect
-files, run commands, work with notebooks, and make changes.
+Ask Codex to build, analyze, or change something in your CoCalc project. It can
+inspect files, run software, and return results in the conversation. You and
+your collaborators can review those results and continue with another request.
 
-## Open Codex
+1. Open **Agents**, choose **New agent**, and enter your request.
+2. Choose **Codex** in the runtime menu. Check the selected project, working
+   directory, model, and payment source before starting.
+3. Include the relevant inputs, the result you want, and how it should be
+   checked. For example, ask for an application with specific controls and
+   require the agent to exercise those controls.
+4. Choose **Start agent**. See [Use the Agents workspace](/docs/ai/my-agents)
+   for the first-project flow and the full set of controls.
 
-1. Open the project.
-2. Open the Agents or chat area.
-3. Start a Codex thread.
-4. Ask a concrete task, including relevant files and constraints.
+You can also continue an existing Codex conversation from its project chat.
+Starting work can use model allowance and project compute. A working directory
+helps the agent locate files; it does not restrict its access to the project.
 
-Claude Code is also integrated, on sites that enable it. For other
-terminal-native agents such as opencode, install and run them
-inside a normal project terminal with compatible software and permissions.
-Hosted project images and local CoCalc Plus can provide different operating
-systems and installed tools; terminal-native agents provide their own interface.
+## Review the result and ask for changes
 
-On phones, open **Chat tools** using the ellipsis button, then choose
+Ask for the deliverable to appear as a card in the conversation. Open it beside
+the chat, inspect the result, and describe the next change. Use **Open in project**
+when you want to inspect or edit the underlying files and software yourself.
+
+A saved file preview shows the current saved file. For an interactive app,
+ask the agent to open it in the project browser and share its browser card;
+then try the controls. See [reviewing results and building an app](/docs/ai/my-agents)
+for the complete workflow. For code changes, ask the agent to run the relevant
+checks and report their output, including any failures.
+
+Continue in the same conversation to revise the work. If you need to recover
+earlier file contents, use [TimeTravel](/docs/files/timetravel) or
+[Git](/docs/files/git), as appropriate for the file. Stopping an agent does not
+undo changes it already made.
+
+## Choose the next guide
+
+- [Connect model access and choose funding](/docs/ai/connect-credentials).
+- [Configure models and defaults](/docs/ai/codex-settings).
+- [Guide running work, queue requests, and fork a conversation](/docs/ai/codex-conversations).
+- [Set continuing goals and answer questions](/docs/ai/codex-goals).
+- [Schedule work or respond to events](/docs/ai/codex-automation).
+- [Connect agents through Agent Networks](/docs/ai/agent-features#agent-networks).
+- [Use memory across sessions](/docs/ai/agent-memory).
+- [Give an agent access to other projects](/docs/ai/cocalc-access).
+- [Ask for help with an editor selection](/docs/ai/editor-agent).
+- [Set notifications and inspect sessions](/docs/ai/codex-notifications).
+
+On phones, open **Chat tools** with the ellipsis button, then choose
 **Thread actions** to open the thread menu.
 
-## Find the right guide
+## Other agents
 
-- [Compare all integrated agent features](/docs/ai/agent-features).
-- [Start and review work in Agents](/docs/ai/my-agents).
-- [Use Claude Code](/docs/ai/claude-code).
-- [Let agents remember notes across sessions](/docs/ai/agent-memory).
-- [Connect access and choose funding](/docs/ai/connect-credentials).
-- [Give an agent access to other CoCalc projects](/docs/ai/cocalc-access).
-- [Configure models, access, and defaults](/docs/ai/codex-settings).
-- [Steer, queue, and fork conversations](/docs/ai/codex-conversations).
-- [Manage goals and answer questions](/docs/ai/codex-goals).
-- [Watch for events with sensors](/docs/ai/codex-automation).
-- [Set notifications and inspect sessions](/docs/ai/codex-notifications).
-- [Use Agent from an editor](/docs/ai/editor-agent).
-
-## Give better tasks
-
-Name files, describe the desired outcome, and ask Codex to validate changes.
-For live notebooks, ask Codex to use the live notebook APIs. For UI actions,
-docs action ids such as \`settings.environment.secrets\` let agents open the
-right panel directly.
-
-## Why this matters in CoCalc
-
-CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
-what Codex changes, keep terminals and notebooks running, use TimeTravel, and
-share the same project state with collaborators.
+[Claude Code](/docs/ai/claude-code) is also integrated on sites that enable it.
+Use the [feature comparison](/docs/ai/agent-features) for the differences in
+goals, tools, access, and controls. Other terminal agents, such as opencode,
+can run in a project terminal when compatible with its software and permissions;
+they provide their own interface. Hosted project images and local CoCalc Plus
+can have different operating systems and installed tools.
 `;
 
 export const MY_AGENTS_BODY = String.raw`
@@ -122,11 +133,6 @@ the chat to inspect it beside your request, then ask the same agent for a
 specific correction or another version. **Artifacts** in the sidebar helps you
 find artifacts from named agents. Use **Open in project** when you need the
 underlying files, software, or complete project view.
-
-![A saved dispatch review image open beside its agent conversation in a fresh CoCalc project with fictional data](/public/docs/agents-workspace-dispatch-review-20260924.jpg)
-
-This example shows a reviewable image result beside the conversation. The
-underlying file remains in the project.
 
 ## Turn a recurring task into an app
 

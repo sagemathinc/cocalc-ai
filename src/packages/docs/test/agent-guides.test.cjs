@@ -70,14 +70,19 @@ test("agent guides keep distinct headings and valid internal links", () => {
   assert.equal(verifyDocsStatic().ok, true);
 });
 
-test("Agents guide includes its saved-result screenshot", () => {
-  const body = getDocsEntry("ai/my-agents").body;
-  const image = body.match(/!\[[^\]]+\]\((\/public\/docs\/[^)]+)\)/);
-  assert.ok(image, "an inline screenshot should explain the review surface");
-  assert.ok(
-    existsSync(resolve(__dirname, "../../assets", image[1].slice(1))),
-    image[1],
-  );
+test("inline agent-guide images have descriptions and existing local assets", () => {
+  for (const slug of ["ai/codex-chat", ...Object.keys(guides)]) {
+    const body = getDocsEntry(slug).body;
+    for (const [, description, imagePath] of body.matchAll(
+      /!\[([^\]]*)\]\((\/public\/docs\/[^)]+)\)/g,
+    )) {
+      assert.ok(description.trim(), `${slug}: describe ${imagePath}`);
+      assert.ok(
+        existsSync(resolve(__dirname, "../../assets", imagePath.slice(1))),
+        `${slug}: ${imagePath}`,
+      );
+    }
+  }
 });
 
 test("editor recipes remain in their task guides", () => {
