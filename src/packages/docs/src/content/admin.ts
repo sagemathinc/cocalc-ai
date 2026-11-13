@@ -164,9 +164,12 @@ Refresh this after restarting the hub or changing local dev instances.
 ~~~sh
 cocalc bay list --json
 cocalc account where <account_id> --json
-cocalc account rehome <account_id> --bay <bay_id> --reason "..." --yes --json
+cocalc account rehome <account_id> --bay <bay_id> --reason "..." --unsafe-rehome --yes --json
 cocalc account rehome-status --op-id <op_id> --source-bay <bay_id> --json
 ~~~
+
+The CLI treats rehome as an exceptional, unsafe operation and asks you to audit
+the account's data portability first.
 
 Dangerous account operations require recent admin verification. In local dev,
 use:

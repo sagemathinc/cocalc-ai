@@ -1176,6 +1176,275 @@ describe("GcpProvider", () => {
     expect(startMock).not.toHaveBeenCalled();
   });
 
+  it("applies a changed pricing model to a stopped instance before starting it", async () => {
+    // The host was switched to standard while stopped; the instance is
+    // still Spot and must be Standard when it starts.
+    getMock.mockResolvedValueOnce([
+      {
+        status: "TERMINATED",
+        scheduling: { preemptible: true, provisioningModel: "SPOT" },
+      },
+    ]);
+    authRequestMock.mockResolvedValueOnce({
+      data: { name: "op-scheduling", status: "DONE" },
+    });
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+    startMock.mockResolvedValueOnce([{}]);
+
+    const provider = new GcpProvider();
+    await provider.startHost(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+        metadata: { gpu_count: 0 },
+      },
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+      { pricing_model: "on_demand" },
+    );
+
+    expect(authRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        url: expect.stringContaining(
+          "/projects/proj-1/zones/us-west1-a/instances/ph-test/setScheduling",
+        ),
+        data: expect.objectContaining({
+          provisioningModel: "STANDARD",
+          preemptible: false,
+          instanceTerminationAction: null,
+        }),
+      }),
+    );
+    expect(startMock).toHaveBeenCalledTimes(1);
+    expect(authRequestMock.mock.invocationCallOrder[0]).toBeLessThan(
+      startMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("applies Spot scheduling to a stopped Standard instance before starting it", async () => {
+    getMock.mockResolvedValueOnce([
+      {
+        status: "TERMINATED",
+        scheduling: { preemptible: false, provisioningModel: "STANDARD" },
+      },
+    ]);
+    setSchedulingMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-scheduling", status: "DONE" } },
+    ]);
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+    startMock.mockResolvedValueOnce([{}]);
+
+    const provider = new GcpProvider();
+    await provider.startHost(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+      },
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+      { pricing_model: "spot" },
+    );
+
+    expect(setSchedulingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance: "ph-test",
+        schedulingResource: expect.objectContaining({
+          provisioningModel: "SPOT",
+          preemptible: true,
+        }),
+      }),
+    );
+    expect(authRequestMock).not.toHaveBeenCalled();
+    expect(startMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves scheduling alone when the stopped instance already has the pricing model", async () => {
+    getMock.mockResolvedValueOnce([
+      {
+        status: "TERMINATED",
+        scheduling: { preemptible: false, provisioningModel: "STANDARD" },
+      },
+    ]);
+    startMock.mockResolvedValueOnce([{}]);
+
+    const provider = new GcpProvider();
+    await provider.startHost(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+      },
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+      { pricing_model: "on_demand" },
+    );
+
+    expect(authRequestMock).not.toHaveBeenCalled();
+    expect(setSchedulingMock).not.toHaveBeenCalled();
+    expect(startMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies the pricing model once a STOPPING instance reaches TERMINATED", async () => {
+    getMock
+      .mockResolvedValueOnce([
+        {
+          status: "STOPPING",
+          scheduling: { preemptible: true, provisioningModel: "SPOT" },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          status: "TERMINATED",
+          scheduling: { preemptible: true, provisioningModel: "SPOT" },
+        },
+      ]);
+    authRequestMock.mockResolvedValueOnce({
+      data: { name: "op-scheduling", status: "DONE" },
+    });
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+    startMock.mockResolvedValueOnce([{}]);
+
+    const provider = new GcpProvider();
+    await provider.startHost(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+      },
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+      { pricing_model: "on_demand" },
+    );
+
+    expect(authRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ provisioningModel: "STANDARD" }),
+      }),
+    );
+    expect(startMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["SUSPENDED", "PROVISIONING", "REPAIRING"])(
+    "does not change scheduling of a %s instance, and starts it as before",
+    async (status) => {
+      getMock.mockResolvedValueOnce([
+        {
+          status,
+          scheduling: { preemptible: true, provisioningModel: "SPOT" },
+        },
+      ]);
+      startMock.mockResolvedValueOnce([{}]);
+
+      const provider = new GcpProvider();
+      await provider.startHost(
+        {
+          provider: "gcp",
+          instance_id: "ph-test",
+          zone: "us-west1-a",
+          ssh_user: "ubuntu",
+        },
+        {
+          project_id: "proj-1",
+          client_email: "svc@example.com",
+          private_key: "key",
+        },
+        { pricing_model: "on_demand" },
+      );
+
+      expect(authRequestMock).not.toHaveBeenCalled();
+      expect(setSchedulingMock).not.toHaveBeenCalled();
+      expect(startMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not change scheduling when the wait for TERMINATED times out", async () => {
+    jest.useFakeTimers();
+    try {
+      // Still STOPPING on every read: the wait gives up.
+      getMock.mockResolvedValue([
+        {
+          status: "STOPPING",
+          scheduling: { preemptible: true, provisioningModel: "SPOT" },
+        },
+      ]);
+      startMock.mockResolvedValueOnce([{}]);
+
+      const provider = new GcpProvider();
+      const started = provider.startHost(
+        {
+          provider: "gcp",
+          instance_id: "ph-test",
+          zone: "us-west1-a",
+          ssh_user: "ubuntu",
+        },
+        {
+          project_id: "proj-1",
+          client_email: "svc@example.com",
+          private_key: "key",
+        },
+        { pricing_model: "on_demand" },
+      );
+      await jest.advanceTimersByTimeAsync(130_000);
+      await started;
+
+      expect(authRequestMock).not.toHaveBeenCalled();
+      expect(setSchedulingMock).not.toHaveBeenCalled();
+      expect(startMock).toHaveBeenCalledTimes(1);
+    } finally {
+      getMock.mockReset();
+      jest.useRealTimers();
+    }
+  });
+
+  it("never changes the scheduling of a running instance on start", async () => {
+    getMock.mockResolvedValueOnce([
+      {
+        status: "RUNNING",
+        scheduling: { preemptible: true, provisioningModel: "SPOT" },
+      },
+    ]);
+
+    const provider = new GcpProvider();
+    await provider.startHost(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+      },
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+      { pricing_model: "on_demand" },
+    );
+
+    expect(authRequestMock).not.toHaveBeenCalled();
+    expect(setSchedulingMock).not.toHaveBeenCalled();
+    expect(stopMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
+  });
+
   it("changes scheduling when switching pricing models", async () => {
     getMock.mockResolvedValueOnce([
       {

@@ -11,6 +11,7 @@ import type { PostgreSQL } from "@cocalc/database/postgres/types";
 import { PassportStrategyDB } from "@cocalc/database/settings/auth-sso-types";
 import { callback2 as cb2 } from "@cocalc/util/async-utils";
 import { SERVER_SETTINGS_ENV_PREFIX } from "@cocalc/util/consts";
+import { isPasswordKdfOneWayError } from "@cocalc/util/db-schema/password-kdf";
 import { EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import {
   AllSiteSettingsKeys,
@@ -150,11 +151,18 @@ export async function load_server_settings_from_env(
         }
       }
 
-      await cb2(db.set_server_setting, {
-        name: key,
-        value: envval,
-        readonly: true,
-      });
+      try {
+        await cb2(db.set_server_setting, {
+          name: key,
+          value: envval,
+          readonly: true,
+        });
+      } catch (err) {
+        // password_kdf is one-way: a stale env value must not stop the hub.
+        // Anything else (database, encryption) is a real failure.
+        if (!isPasswordKdfOneWayError(err)) throw err;
+        L.error(`ignoring $${envvar}: ${err}`);
+      }
     }
   }
 }

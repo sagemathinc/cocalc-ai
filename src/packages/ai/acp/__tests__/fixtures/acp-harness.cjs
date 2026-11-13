@@ -107,8 +107,38 @@ const update = (text, sessionId = "fixture-session") =>
       },
     },
   });
-readline.createInterface({ input: process.stdin }).on("line", (line) => {
+const lineReader = readline.createInterface({ input: process.stdin });
+// --load-delay-ms=N: answer session/load only after N ms, like an agent that
+// replays a long saved history before it can respond.
+const loadDelayMs = Number(
+  (process.argv.find((arg) => arg.startsWith("--load-delay-ms=")) ?? "=0").split("=")[1],
+);
+// --new-delay-ms=N: the same for session/new (a slow agent that is not replaying).
+const newDelayMs = Number(
+  (process.argv.find((arg) => arg.startsWith("--new-delay-ms=")) ?? "=0").split("=")[1],
+);
+// --resume-delay-ms=N: the same for session/resume (reading the saved session
+// on slow storage, without a replay).
+const resumeDelayMs = Number(
+  (process.argv.find((arg) => arg.startsWith("--resume-delay-ms=")) ?? "=0").split("=")[1],
+);
+lineReader.on("line", (line) => {
   const message = JSON.parse(line);
+  const delayMs =
+    message.method === "session/load"
+      ? loadDelayMs
+      : message.method === "session/new"
+        ? newDelayMs
+        : message.method === "session/resume"
+          ? resumeDelayMs
+          : 0;
+  if (delayMs > 0 && !message.delayedLoad) {
+    setTimeout(
+      () => lineReader.emit("line", JSON.stringify({ ...message, delayedLoad: true })),
+      delayMs,
+    );
+    return;
+  }
   if (message.id === "question") {
     if (questionPrompt == null) return;
     update(JSON.stringify(message.result ?? { rejected: true }));
@@ -145,8 +175,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         },
         agentCapabilities: {
           loadSession: !process.argv.includes("--no-resume"),
-          ...(process.argv.includes("--fork")
-            ? { sessionCapabilities: { fork: {} } }
+          ...(process.argv.includes("--fork") ||
+          process.argv.includes("--resume-cap")
+            ? {
+                sessionCapabilities: {
+                  ...(process.argv.includes("--fork") ? { fork: {} } : {}),
+                  // --resume-cap: offers session/resume (no history replay).
+                  ...(process.argv.includes("--resume-cap") ? { resume: {} } : {}),
+                },
+              }
             : {}),
         },
         ...(process.argv.includes("--steering")
@@ -172,6 +209,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       });
     case "session/new":
     case "session/load":
+    case "session/resume":
       if (
         process.argv.includes("--reject-auth") ||
         process.argv.includes("--reject-params")
@@ -299,7 +337,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           sessionId: "fixture-session",
           ...controls(),
         });
-      update("old replayed answer");
+      // session/load replays the saved history first; session/resume does not.
+      if (message.method === "session/load") update("old replayed answer");
       if (process.argv.includes("--crash-resume")) return process.exit(2);
       if (
         process.argv.includes("--reject-resume") ||

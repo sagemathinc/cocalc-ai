@@ -3459,6 +3459,67 @@ describe("cloud host start failures", () => {
       standard_hold_until: holdUntil,
     });
   });
+
+  it("starts a host switched to standard while stopped with standard pricing", async () => {
+    // The owner stopped a Spot host, changed it to standard (which only
+    // updates the host record) and started it: the provider must get the
+    // standard pricing, or the instance boots as Spot while billed standard.
+    const hostId = "0b7c3a52-5d1e-4c8e-9a0f-6c2f4d9e1a27";
+    const setPricingModel = jest.fn(async () => undefined);
+    const startHost = jest.fn(async () => undefined);
+    const getStatus = jest.fn(async () => "running");
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          setPricingModel,
+          startHost,
+          getStatus,
+        },
+      },
+      creds: {},
+    });
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Switched to standard while stopped",
+      region: "us-south1",
+      status: "off",
+      metadata: {
+        owner: "acct-owner",
+        billing: { funding_mode: "site-funded" },
+        pricing_model: "on_demand",
+        desired_pricing_model: "on_demand",
+        effective_pricing_model: "on_demand",
+        interruption_restore_policy: "none",
+        machine: {
+          cloud: "gcp",
+          zone: "us-south1-c",
+          machine_type: "t2d-standard-8",
+          disk_gb: 200,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          instance_id: `cocalc-host-${hostId}`,
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.start({
+      id: "start-switched-to-standard-1",
+      vm_id: hostId,
+      action: "start",
+      payload: { provider: "gcp" },
+    } as any);
+
+    expect(startHost).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: `cocalc-host-${hostId}` }),
+      {},
+      expect.objectContaining({ pricing_model: "on_demand" }),
+    );
+  });
 });
 
 describe("spot recovery fallback ladder", () => {

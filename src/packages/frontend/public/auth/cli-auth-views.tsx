@@ -4,7 +4,7 @@
  */
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   postAuthApi,
@@ -23,6 +23,69 @@ import {
 } from "@cocalc/frontend/auth/second-factor-input";
 import { COLORS } from "@cocalc/util/theme";
 import { ExternalAgentApproval } from "./external-agent-approval";
+import {
+  formatFreshAuthDuration,
+  isLongFreshAuthDuration,
+  parseFreshAuthDuration,
+  type FreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
+
+// The duration a CLI asked for, or "default" if it is not one we know.
+function safeDuration(value: unknown): FreshAuthDuration {
+  try {
+    return parseFreshAuthDuration(value);
+  } catch {
+    return "default";
+  }
+}
+
+// " for 72 hours" for a requested duration other than the default, so the
+// approve button itself says what is being approved.
+function forDurationSuffix(value: unknown): string {
+  const duration = safeDuration(value);
+  return duration === "default"
+    ? ""
+    : ` for ${formatFreshAuthDuration(duration)}`;
+}
+
+// A verification longer than 8 hours that an agent or a CLI asked for is
+// never preselected or approved by default: the owner confirms it explicitly.
+function LongDurationConfirm({
+  value,
+  checked,
+  onChange,
+}: {
+  value: unknown;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const duration = safeDuration(value);
+  if (!isLongFreshAuthDuration(duration)) return null;
+  return (
+    <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>
+        Yes, this request asks for {formatFreshAuthDuration(duration)}, and I
+        want the terminal to stay elevated that long.
+      </span>
+    </label>
+  );
+}
+
+function elevatedForText(value: unknown, subject: string): string {
+  const duration = safeDuration(value);
+  if (duration === "default") return "";
+  let text = ` ${subject} will stay elevated for ${formatFreshAuthDuration(duration)}.`;
+  if (isLongFreshAuthDuration(duration)) {
+    text +=
+      " We will email you about it, and you can end it any time in Account Settings, Profile, Security.";
+  }
+  return text;
+}
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -91,7 +154,7 @@ type ChallengeInfo = {
   current_email_address?: string | null;
   current_display_name?: string | null;
   current_matches_account?: boolean | null;
-  requested_duration?: "default" | "extended" | null;
+  requested_duration?: FreshAuthDuration | null;
   elevated_login?: boolean;
   auth_client?: "cli" | "mobile";
   state: "pending" | "approved" | "redeemed" | "canceled";
@@ -282,9 +345,21 @@ export function PublicCliLoginApprovalView({
   const [error, setError] = useState("");
   const [signingOut, setSigningOut] = useState(false);
   const authOrigin = getControlPlaneOrigin();
+  const [longConfirmed, setLongConfirmed] = useState(false);
+  const requestedDuration = safeDuration(info?.requested_duration);
+  const needsLongConfirm =
+    info?.elevated_login === true && isLongFreshAuthDuration(requestedDuration);
+  // A confirmation never carries over to another request.
+  useEffect(() => {
+    setLongConfirmed(false);
+  }, [challengeId, info?.requested_duration]);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    defaultExtended:
-      info?.elevated_login === true && info?.requested_duration === "extended",
+    // A long request is never preselected; the owner confirms it above and
+    // then picks it in the verification dialog.
+    defaultDuration:
+      info?.elevated_login === true && !needsLongConfirm
+        ? requestedDuration
+        : undefined,
     origin: authOrigin,
   });
 
@@ -316,6 +391,14 @@ export function PublicCliLoginApprovalView({
   }, [challengeId, onEmailHintChange]);
 
   async function approve() {
+    // Not only the button: Enter or any other path must not approve a long
+    // request without the confirmation (the server checks it too).
+    if (needsLongConfirm && !longConfirmed) {
+      setError(
+        `Confirm that the terminal should stay elevated for ${formatFreshAuthDuration(requestedDuration)}.`,
+      );
+      return;
+    }
     setApproving(true);
     setError("");
     try {
@@ -338,6 +421,9 @@ export function PublicCliLoginApprovalView({
             challenge_id: challengeId,
             approval_token: proof.token,
             approval_home_bay_id: proof.home_bay_id,
+            ...(needsLongConfirm
+              ? { confirmed_duration: requestedDuration }
+              : {}),
           },
         });
         setApproved(true);
@@ -445,18 +531,35 @@ export function PublicCliLoginApprovalView({
               CLI session and does not reuse your browser session.
             </>
           )}
-          {info?.elevated_login && info.requested_duration === "extended"
-            ? " The terminal session will stay elevated for 8 hours."
+          {info?.elevated_login
+            ? elevatedForText(info.requested_duration, "The terminal session")
             : ""}
           {loginHintLabel(info)}
         </Alert>
       )}
+      {!approved && needsLongConfirm ? (
+        <>
+          <LongDurationConfirm
+            value={requestedDuration}
+            checked={longConfirmed}
+            onChange={setLongConfirmed}
+          />
+          <div>
+            In the verification dialog, choose{" "}
+            {formatFreshAuthDuration(requestedDuration)}.
+          </div>
+        </>
+      ) : undefined}
       {!approved ? (
-        <ActionButton disabled={approving} onClick={approve}>
+        <ActionButton
+          disabled={approving || (needsLongConfirm && !longConfirmed)}
+          onClick={approve}
+        >
           {approving
             ? "Approving..."
             : info?.elevated_login
-              ? "Approve Elevated CLI Login"
+              ? "Approve Elevated CLI Login" +
+                forDurationSuffix(requestedDuration)
               : isMobileLogin(info)
                 ? "Approve Mobile App Login"
                 : "Approve CLI Login"}
@@ -484,6 +587,13 @@ export function PublicCliElevateApprovalView({
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState("");
   const [signingOut, setSigningOut] = useState(false);
+  const [longConfirmed, setLongConfirmed] = useState(false);
+  const requestedDuration = safeDuration(info?.requested_duration);
+  const needsLongConfirm = isLongFreshAuthDuration(requestedDuration);
+  // A confirmation never carries over to another request.
+  useEffect(() => {
+    setLongConfirmed(false);
+  }, [challengeId, info?.requested_duration]);
   const methods = freshAuthStatus?.methods ?? [];
   const requiresPassword = freshAuthStatus?.enabled === false;
   const passwordUnavailable =
@@ -528,14 +638,19 @@ export function PublicCliElevateApprovalView({
     };
   }, [challengeId]);
 
-  const allowExtended = useMemo(
-    () =>
-      info?.requested_duration === "extended" &&
-      (usePasskey || inferredMethod === "totp"),
-    [info?.requested_duration, inferredMethod, usePasskey],
-  );
-
   async function approve() {
+    // Not only the button: Enter in the password or code field must not
+    // approve a long request without the confirmation (the server checks it
+    // too).
+    if (needsLongConfirm && !longConfirmed) {
+      setError(
+        `Confirm that the terminal should stay elevated for ${formatFreshAuthDuration(requestedDuration)}.`,
+      );
+      return;
+    }
+    const confirmed = needsLongConfirm
+      ? { confirmed_duration: requestedDuration }
+      : {};
     setSaving(true);
     setError("");
     try {
@@ -543,6 +658,7 @@ export function PublicCliElevateApprovalView({
         await approveCliElevationWithPasskey({
           challenge_id: challengeId,
           current_password: "",
+          ...confirmed,
         });
       } else {
         await postAuthApi({
@@ -552,6 +668,7 @@ export function PublicCliElevateApprovalView({
             current_password: requiresPassword ? currentPassword : "",
             method: code.trim() ? inferredMethod : undefined,
             code: code.trim() || undefined,
+            ...confirmed,
           },
         });
       }
@@ -618,8 +735,8 @@ export function PublicCliElevateApprovalView({
       ) : (
         <Alert kind="info">
           Verify a CLI security action for {requestedAccountLabel(info)}.
-          {allowExtended
-            ? " This terminal session will stay elevated for 8 hours."
+          {info
+            ? elevatedForText(info.requested_duration, "This terminal session")
             : ""}
         </Alert>
       )}
@@ -698,8 +815,21 @@ export function PublicCliElevateApprovalView({
               )}
             </div>
           ) : undefined}
-          <ActionButton disabled={saving || !canApprove} onClick={approve}>
-            {saving ? "Verifying..." : "Approve CLI Elevation"}
+          <LongDurationConfirm
+            value={info?.requested_duration}
+            checked={longConfirmed}
+            onChange={setLongConfirmed}
+          />
+          <ActionButton
+            disabled={
+              saving || !canApprove || (needsLongConfirm && !longConfirmed)
+            }
+            onClick={approve}
+          >
+            {saving
+              ? "Verifying..."
+              : "Approve CLI Elevation" +
+                forDurationSuffix(info?.requested_duration)}
           </ActionButton>
         </>
       ) : undefined}

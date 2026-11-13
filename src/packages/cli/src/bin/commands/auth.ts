@@ -14,6 +14,11 @@ import { signOutSession } from "../core/support-as-user";
 import { resolveAgentTokenFromEnv } from "../../core/agent-token";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import {
+  FRESH_AUTH_MAX_HOURS,
+  parseFreshAuthDuration,
+  type FreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
+import {
   clearAuthGrants,
   recordFreshAuth,
   recordSessionGrant,
@@ -57,6 +62,23 @@ export function profileScopedFetch(
     relayFetch(input, init, undefined, {
       credentialSite: api,
     })) as typeof fetch;
+}
+
+// --duration wins; then --short (15 minutes); otherwise 8 hours, as before.
+// Accepts "72h", "72" (hours), "default" or "extended".
+export function elevationDuration(opts: {
+  short?: boolean;
+  extended?: boolean;
+  duration?: string;
+}): FreshAuthDuration {
+  const raw = `${opts.duration ?? ""}`.trim();
+  if (raw) {
+    if (opts.short) {
+      throw new Error("use either --short or --duration, not both");
+    }
+    return parseFreshAuthDuration(/^[0-9]+$/.test(raw) ? `${raw}h` : raw);
+  }
+  return opts.short ? "default" : "extended";
 }
 
 export function registerAuthCommand(
@@ -644,7 +666,7 @@ access earlier; remaining seconds use the local clock; null means unknown.
   async function runBrowserLogin(
     globals: any,
     opts: {
-      duration?: "default" | "extended";
+      duration?: FreshAuthDuration;
       elevatedLogin?: boolean;
       email?: string;
       pollMs?: string;
@@ -831,11 +853,12 @@ access earlier; remaining seconds use the local clock; null means unknown.
     opts: {
       extended?: boolean;
       short?: boolean;
+      duration?: string;
       dev?: boolean;
       pollMs?: string;
     },
   ): Promise<Record<string, unknown>> {
-    const freshAuthDuration = opts.short ? "default" : "extended";
+    const freshAuthDuration = elevationDuration(opts);
     const effective = resolveEffectiveGlobals(globals);
     // The record is about a stored profile's session, so it is written only
     // when the elevated cookie is that profile's own cookie.
@@ -1222,6 +1245,10 @@ Examples:
     .option("--short", "keep this elevation active for 15 minutes")
     .option("--extended", "keep this elevation active for 8 hours (default)")
     .option(
+      "--duration <hours>",
+      `keep this elevation active for 1h to ${FRESH_AUTH_MAX_HOURS}h (more than 8h sends you an email)`,
+    )
+    .option(
       "--dev",
       "dev-only: elevate using the hub password instead of browser approval",
     )
@@ -1231,6 +1258,7 @@ Examples:
         opts: {
           extended?: boolean;
           short?: boolean;
+          duration?: string;
           dev?: boolean;
           pollMs?: string;
         },
@@ -1248,6 +1276,10 @@ Examples:
     .option("--email <email>", "optional email hint shown during browser login")
     .option("--short", "keep this elevation active for 15 minutes")
     .option("--extended", "keep this elevation active for 8 hours (default)")
+    .option(
+      "--duration <hours>",
+      `keep this elevation active for 1h to ${FRESH_AUTH_MAX_HOURS}h (more than 8h sends you an email)`,
+    )
     .option(
       "--dev",
       "dev-only: elevate using the hub password instead of browser approval",
@@ -1268,6 +1300,7 @@ Examples:
           email?: string;
           extended?: boolean;
           short?: boolean;
+          duration?: string;
           dev?: boolean;
           pollMs?: string;
           setCurrent?: boolean;
@@ -1280,7 +1313,7 @@ Examples:
           async (globals: any) => {
             const usesStoredCredentials = hasLegacyStoredCredentials(globals);
             const combinedBrowserLogin = !usesStoredCredentials && !opts.dev;
-            const duration = opts.short ? "default" : "extended";
+            const duration = elevationDuration(opts);
             const login = usesStoredCredentials
               ? await saveAuthProfile(globals, opts)
               : await runBrowserLogin(globals, {

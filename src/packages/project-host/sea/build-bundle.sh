@@ -218,23 +218,6 @@ if [ -n "${ARTIFACT_MESSAGE// }" ]; then
   ' "$OUT/artifact-metadata.json" "$ARTIFACT_MESSAGE"
 fi
 
-# zeromq expects its build manifest next to the native addon; ncc copies the
-# compiled .node file but not the manifest.json, so copy it manually.
-ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -quit || true)
-if [ -n "$ZEROMQ_BUILD" ]; then
-  mkdir -p "$OUT"/bundle/build
-  cp -r "$ZEROMQ_BUILD/"* "$OUT"/bundle/build/
-  # Keep only linux builds in the bundle to avoid shipping unused platforms.
-  rm -rf "$OUT"/bundle/build/darwin "$OUT"/bundle/build/win32 || true
-  # Keep only glibc builds (we run on glibc-based Ubuntu).
-  rm -rf "$OUT"/bundle/build/linux/*/node/musl-* || true
-  # zeromq looks for ../build relative to the bundle root, so mirror it there too.
-  rm -f "$OUT/build"
-  ln -s "bundle/build" "$OUT/build"
-else
-  echo "zeromq build directory not found; skipping copy"
-fi
-
 fetch_native_pkg() {
   local pkg="$1"
   local dest="$2"

@@ -955,8 +955,15 @@ function siteSettingDefaultValue(name: string): unknown {
   return spec?.to_val != null ? spec.to_val(spec.default, {}) : spec?.default;
 }
 
-function isSensitiveSiteSetting(name: string, spec: any): boolean {
+// Settings whose names look sensitive but whose values are not: admins must be
+// able to see them (e.g. whether password_kdf's one-way scrypt switch is on).
+const NON_SENSITIVE_SITE_SETTINGS = new Set(["password_kdf"]);
+
+export function isSensitiveSiteSetting(name: string, spec: any): boolean {
   const normalized = name.toLowerCase();
+  if (spec?.password !== true && NON_SENSITIVE_SITE_SETTINGS.has(normalized)) {
+    return false;
+  }
   return (
     spec?.password === true ||
     normalized.includes("secret") ||

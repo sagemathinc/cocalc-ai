@@ -128,23 +128,6 @@ node "$ROOT/scripts/dev/write-build-identity.js" \
   --artifact-kind "project-bundle" \
   --out "$OUT/build-identity.json"
 
-# Copy zeromq native manifest/build artifacts expected at runtime (via @cocalc/jupyter)
-ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -quit || true)
-if [ -n "$ZEROMQ_BUILD" ]; then
-echo "- Copy zeromq native build artefacts"
-  mkdir -p "$OUT"/bundle/build
-  cp -r "$ZEROMQ_BUILD/"* "$OUT"/bundle/build/
-  # Keep only linux builds in the bundle to avoid shipping unused platforms.
-  rm -rf "$OUT"/bundle/build/darwin "$OUT"/bundle/build/win32 || true
-  # Keep only glibc builds (we run on glibc-based Ubuntu).
-  rm -rf "$OUT"/bundle/build/linux/*/node/musl-* || true
-  # Ensure legacy path /opt/cocalc/project-bundle/build/... resolves correctly.
-  rm -f "$OUT/build"
-  ln -s "bundle/build" "$OUT/build"
-else
-  echo "  (zeromq build directory not found; skipping copy)"
-fi
-
 fetch_native_pkg() {
   local pkg="$1"
   local dest="$2"
@@ -233,14 +216,6 @@ if [ -f "$ROOT/packages/project/sea/bundle-README.md" ]; then
 fi
 
 echo "- Verify native addons (linux glibc)"
-if ! compgen -G "$OUT/bundle/build/linux/x64/node/glibc-*/addon.node" >/dev/null; then
-  echo "ERROR: missing zeromq glibc addon for linux/x64" >&2
-  exit 1
-fi
-if ! compgen -G "$OUT/bundle/build/linux/arm64/node/glibc-*/addon.node" >/dev/null; then
-  echo "ERROR: missing zeromq glibc addon for linux/arm64" >&2
-  exit 1
-fi
 if [ ! -f "$OUT/bundle/node_modules/node-pty/prebuilds/linux-x64/pty.node" ]; then
   echo "ERROR: missing node-pty linux-x64 prebuild" >&2
   exit 1

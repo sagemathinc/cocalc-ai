@@ -49,5 +49,13 @@ Table({
       type: "boolean",
       desc: "True if this token has been revoked.",
     },
+    redeemed: {
+      type: "timestamp",
+      desc: "When this bootstrap token first minted a master-conat token (audit only).",
+    },
+    exchange_closed: {
+      type: "timestamp",
+      desc: "When the host proved it holds a valid master-conat token: this bootstrap token can no longer mint one (it still works for status and payload requests until it expires).",
+    },
   },
 });

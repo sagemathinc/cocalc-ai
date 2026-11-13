@@ -2,6 +2,10 @@ import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
+import {
+  CLI_CONNECTOR_BIN_ENV,
+  CLI_CONNECTOR_PATH_LINE,
+} from "@cocalc/util/ai/cli-connectors";
 import { localPath } from "./filesystem";
 import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
 import { readFile } from "fs/promises";
@@ -107,9 +111,23 @@ async function getContainerImage(home: string): Promise<string> {
  * Note: Environment is not propagated from the host; callers should expand any
  * needed env directly into the script if required.
  */
+/**
+ * The script as run by `bash -lc`. The login shell's profile runs first and
+ * may put its own directories before the CLI connector wrappers on PATH;
+ * with a connector, the script puts them first again.
+ */
+export function sandboxShellScript(
+  script: string,
+  env?: Record<string, string>,
+): string {
+  return env?.[CLI_CONNECTOR_BIN_ENV]
+    ? `${CLI_CONNECTOR_PATH_LINE}\n${script}`
+    : script;
+}
+
 export async function sandboxExec({
   project_id,
-  script,
+  script: requestedScript,
   cwd,
   env: extraEnv,
   timeoutMs,
@@ -143,6 +161,7 @@ export async function sandboxExec({
     throw Error("Managed commands require the existing project container");
   if (extraEnv?.COCALC_MANAGED_JOB_SCOPE !== undefined)
     throw Error("Managed job scope is reserved for the trusted runtime");
+  const script = sandboxShellScript(requestedScript, extraEnv);
   if (onOutput && signal?.aborted)
     return { stdout: "", stderr: "", code: 130, cleanupConfirmed: true };
   signal?.throwIfAborted();
@@ -150,7 +169,7 @@ export async function sandboxExec({
     project_id,
     useEphemeral,
     cwd,
-    script,
+    script: requestedScript,
     timeoutMs,
   });
   const args: string[] = [];
