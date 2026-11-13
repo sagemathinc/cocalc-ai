@@ -330,9 +330,8 @@ const surfaces = [
     // 14.3.3 (#1291, a security fix) to 336.0 KiB. The Jupyter notebook
     // security guide (Trust switch removal) brings it to about 342.4 KiB.
     // "How long a verification lasts" (#1550) brings it to 345.1 KiB, and the
-    // guide to Claude subscriptions run in the project (#1590) adds about
-    // 2.5 KiB more.
-    max: 350 * KiB,
+    // guide to Claude subscriptions run in the project (#1590) to 348.0 KiB.
+    max: 349 * KiB,
   },
   {
     label: "minimal project settings",
