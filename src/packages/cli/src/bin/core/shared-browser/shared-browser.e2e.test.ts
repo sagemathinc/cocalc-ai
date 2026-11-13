@@ -260,9 +260,10 @@ test(
       await viewer.say({ type: "text", text: "[pasted]" });
       await sleep(300);
       await viewer.handBack();
-      assert.equal(
-        await page.$eval("#t", (el: HTMLInputElement) => el.value),
-        `${typed}[pasted]`,
+      await until(
+        () => page.$eval("#t", (el: HTMLInputElement) => el.value),
+        (value) => value === `${typed}[pasted]`,
+        "the typed text and the paste",
       );
     } finally {
       await agent.close().catch(() => {});
@@ -335,10 +336,13 @@ test(
       // Paste into the field.
       await viewer.say({ type: "text", text: " pasted" });
       await viewer.handBack();
-      // (Cmd+A selected all of it, so the paste replaced it.)
-      assert.equal(
-        await page.$eval("#t", (el: HTMLInputElement) => el.value),
-        " pasted",
+      // (Cmd+A selected all of it, so the paste replaced it.) The paste
+      // reaches the page asynchronously, so wait for it; a lost paste still
+      // fails here.
+      await until(
+        () => page.$eval("#t", (el: HTMLInputElement) => el.value),
+        (value) => value === " pasted",
+        "the paste replaced the field",
       );
     } finally {
       await agent.close().catch(() => {});
@@ -689,17 +693,23 @@ test(
           `downloaded ${expected}`,
         );
       }
-      assert.deepEqual(readdirSync(downloadsTo).sort(), [
-        "paper (1).pdf",
-        "paper.pdf",
-      ]);
+      await until(
+        () => readdirSync(downloadsTo).sort(),
+        (names) => names.join("|") === "paper (1).pdf|paper.pdf",
+        "both papers in ~/Downloads",
+      );
       assert.equal(readFileSync(join(downloadsTo, "paper.pdf"), "utf8"), PDF);
       assert.equal(
         viewer.state!.downloads[0].path,
         join(downloadsTo, "paper (1).pdf"),
       );
-      // Nothing left where Chromium saved.
-      assert.deepEqual(readdirSync(staging), []);
+      // Nothing left where Chromium saved. A download shows as completed
+      // before its staged copy is removed, so wait for that.
+      await until(
+        () => readdirSync(staging),
+        (names) => names.length === 0,
+        "nothing left where Chromium saved",
+      );
 
       // Too large: stopped, not in ~/Downloads.
       await viewer.say({ type: "navigate", url: `${base}/big` });
