@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import {
   HOST_REPORT_METADATA_LIMITS,
   HOST_REPORTED_METADATA_KEYS,
@@ -13,8 +15,12 @@ import {
 import {
   BAY_OWNED_METADATA_KEYS,
   NOT_METADATA_KEY_MATCHES,
+  REVIEWED_METADATA_BUILDERS,
   REVIEWED_METADATA_WRITE_TEMPLATES,
   SHARED_HOST_OWNED_METADATA_KEYS,
+  metadataBuilderId,
+  metadataBuilderIds,
+  scannedPackageRoots,
   masterUsesReportBuilders,
   hostReportFixture,
   metadataKeysWrittenIn,
@@ -139,6 +145,132 @@ describe("pickHostReportedMetadata", () => {
       expect(found).toHaveLength(1);
       expect(reviewed.has(`${found[0].file}#${found[0].sha256}`)).toBe(false);
     }
+  });
+
+  it("scans every package, so a bay write outside server/database is pinned", () => {
+    // security-audit 2748: hub/servers/app/self-host-connector.ts writes the
+    // whole metadata object; server/database-only roots never saw it.
+    const packages = join(__dirname, "..", "..");
+    const all = readdirSync(packages, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name !== "node_modules")
+      .map((entry) => entry.name);
+    for (const name of ["hub", "frontend", "project-host", "util", "conat"]) {
+      expect(all).toContain(name);
+    }
+    expect(scannedPackageRoots()).toEqual([...all].sort());
+    const files = new Set(metadataWriteTemplates().map(({ file }) => file));
+    expect(files.has("hub/servers/app/self-host-connector.ts")).toBe(true);
+    const hubWrite = metadataWriteTemplatesIn(
+      "hub/servers/app/probe.ts",
+      "await pool().query(`UPDATE project_hosts SET metadata=$2 WHERE id=$1`, [id, metadata]);",
+    );
+    expect(hubWrite).toHaveLength(1);
+    expect(
+      new Set(REVIEWED_METADATA_WRITE_TEMPLATES).has(
+        `${hubWrite[0].file}#${hubWrite[0].sha256}`,
+      ),
+    ).toBe(false);
+  });
+
+  it("scans the host's own SQLite project_hosts table, which has no metadata write", () => {
+    // project-host/sqlite/hosts.ts is the host's local table (sshpiperd keys),
+    // not the bay database; nothing in it is selected today, and a metadata
+    // or dynamic write added there would be.
+    const file = "project-host/sqlite/hosts.ts";
+    const text = readFileSync(join(__dirname, "..", "..", file), "utf8");
+    expect(/project_hosts/i.test(text)).toBe(true);
+    expect(metadataWriteTemplatesIn(file, text)).toEqual([]);
+  });
+
+  it("selects a project_hosts write whose SET is built in code", () => {
+    // vanta / ops0 2735 G2a: the fragment pushed into sets does not mention
+    // project_hosts and the statement does not mention metadata.
+    const source = [
+      "const sets: string[] = [];",
+      "sets.push(`metadata = metadata || $${idx++}::jsonb`);",
+      'await pool().query(`UPDATE project_hosts SET ${sets.join(", ")} WHERE id=$1`, params);',
+      'await pool().query(`INSERT INTO "project_hosts" (${columns}) VALUES (${values})`, params);',
+    ].join("\n");
+    const found = metadataWriteTemplatesIn("server/probe.ts", source);
+    expect(found.map(({ text }) => text.slice(0, 26))).toEqual([
+      "UPDATE project_hosts SET $",
+      'INSERT INTO "project_hosts',
+    ]);
+    const reviewed = new Set(REVIEWED_METADATA_WRITE_TEMPLATES);
+    for (const { file, sha256 } of found) {
+      expect(reviewed.has(`${file}#${sha256}`)).toBe(false);
+    }
+  });
+
+  it("pins the builders of dynamic metadata writes and the desired_state trigger by function body", () => {
+    // ops0 2735 G2b/G2c, 2737: a changed body, or a removed or renamed
+    // function, fails until it is re-reviewed.
+    expect(metadataBuilderIds()).toEqual(
+      [...REVIEWED_METADATA_BUILDERS].sort(),
+    );
+    const named = REVIEWED_METADATA_BUILDERS.map((id) =>
+      id.split("#").slice(0, 2).join("#"),
+    );
+    for (const builder of [
+      "server/hosts/metadata-patch.ts#metadataPatch",
+      "server/hosts/metadata-patch.ts#metadataPatchAssignment",
+      "server/project-host/spend-maintenance.ts#writeHostBillingChanges",
+      "server/cloud/reconcile.ts#updateHostFromProviderSnapshot",
+      "server/cloud/host-work.ts#buildHostUpdate",
+      "database/postgres/schema/project-host-desired-state.ts#desiredStateGuardFunctionSql",
+    ]) {
+      expect(named).toContain(builder);
+    }
+  });
+
+  it("fails on an edited builder body, a renamed builder and an edited trigger body", () => {
+    const reviewed = new Set(REVIEWED_METADATA_BUILDERS);
+    const read = (file: string) =>
+      readFileSync(join(__dirname, "..", "..", file), "utf8");
+    const patch = "server/hosts/metadata-patch.ts";
+    const patchText = read(patch);
+    expect(
+      reviewed.has(
+        metadataBuilderId(patch, patchText, "metadataPatchAssignment"),
+      ),
+    ).toBe(true);
+    const edited = patchText.replace(
+      "::text[]) || $${setParam}::jsonb",
+      "::text[]) || $${setParam}::jsonb || $9::jsonb",
+    );
+    expect(edited).not.toEqual(patchText);
+    expect(
+      reviewed.has(metadataBuilderId(patch, edited, "metadataPatchAssignment")),
+    ).toBe(false);
+    const renamed = patchText.replace(
+      "function metadataPatchAssignment(",
+      "function metadataPatchAssignment2(",
+    );
+    expect(metadataBuilderId(patch, renamed, "metadataPatchAssignment")).toBe(
+      `${patch}#metadataPatchAssignment#missing`,
+    );
+    const trigger = "database/postgres/schema/project-host-desired-state.ts";
+    const triggerText = read(trigger);
+    const editedTrigger = triggerText.replace(
+      "NEW.metadata := NEW.metadata - 'desired_state';",
+      "NEW.metadata := NEW.metadata - 'desired_state' - 'billing';",
+    );
+    expect(editedTrigger).not.toEqual(triggerText);
+    expect(
+      reviewed.has(
+        metadataBuilderId(
+          trigger,
+          editedTrigger,
+          "desiredStateGuardFunctionSql",
+        ),
+      ),
+    ).toBe(false);
+    const templates = new Set(REVIEWED_METADATA_WRITE_TEMPLATES);
+    const unreviewed = metadataWriteTemplatesIn(trigger, editedTrigger).filter(
+      ({ file, sha256 }) => !templates.has(`${file}#${sha256}`),
+    );
+    expect(unreviewed).toHaveLength(1);
+    expect(unreviewed[0].text).toMatch(/NEW\.metadata :=/);
   });
 
   it("hashes whole templates, including INSERT VALUES and ON CONFLICT parts", () => {

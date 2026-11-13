@@ -219,6 +219,13 @@ export const SHARED_HOST_OWNED_METADATA_KEYS = ["software"] as const;
 // Matches in other tables or contexts (same files) that are not
 // project_hosts.metadata keys.
 export const NOT_METADATA_KEY_MATCHES = [
+  // machine.metadata.* fields of a create-host request, nested under
+  // `machine` (frontend/hosts/providers/registry.ts buildCreatePayload)
+  "cpu",
+  "ram_gb",
+  "self_host_kind",
+  "self_host_mode",
+  "self_host_ssh_target",
   "key",
   "op_id",
   "port",
@@ -226,17 +233,26 @@ export const NOT_METADATA_KEY_MATCHES = [
   "source_host_id",
 ] as const;
 
+// Directories never scanned: dependencies, build output (dist, dist-release,
+// dist-types, dist-ts, build, .next), coverage, and tests (which hold the
+// negative controls themselves).
+const SKIPPED_DIRECTORIES =
+  /^(node_modules|dist|dist-[a-z]+|build|\.next|coverage|__tests__|test)$/;
+// Package roots never scanned: only dependencies and build output (a package
+// named "test" is scanned; test directories inside packages are not).
+const SKIPPED_PACKAGES =
+  /^(node_modules|dist|dist-[a-z]+|build|\.next|coverage)$/;
+const SOURCE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (["node_modules", "dist", "__tests__", "test"].includes(entry.name)) {
-        continue;
-      }
+      if (SKIPPED_DIRECTORIES.test(entry.name)) continue;
       out.push(...sourceFiles(path));
     } else if (
-      entry.name.endsWith(".ts") &&
+      SOURCE_FILE.test(entry.name) &&
       !entry.name.endsWith(".d.ts") &&
       !entry.name.includes(".test.")
     ) {
@@ -264,10 +280,23 @@ export function metadataKeysWrittenIn(text: string): Set<string> {
   return keys;
 }
 
+const PACKAGES = join(__dirname, "..", "..", "..");
+
+// Every package is scanned (security-audit 2748, ops0 2735): a bay write can
+// live outside server/database (hub/servers/app/self-host-connector.ts).
+export function scannedPackageRoots(): string[] {
+  return readdirSync(PACKAGES, { withFileTypes: true })
+    .filter(
+      (entry) => entry.isDirectory() && !SKIPPED_PACKAGES.test(entry.name),
+    )
+    .map((entry) => entry.name)
+    .sort();
+}
+
 function projectHostSources(): Array<{ file: string; text: string }> {
-  const packages = join(__dirname, "..", "..", "..");
+  const packages = PACKAGES;
   const out: Array<{ file: string; text: string }> = [];
-  for (const root of ["server", "database"]) {
+  for (const root of scannedPackageRoots()) {
     for (const file of sourceFiles(join(packages, root))) {
       const text = readFileSync(file, "utf8");
       if (/project_hosts/i.test(text)) {
@@ -278,8 +307,8 @@ function projectHostSources(): Array<{ file: string; text: string }> {
   return out;
 }
 
-// Top-level project_hosts.metadata keys written by server and database code
-// in the detected forms.
+// Top-level project_hosts.metadata keys written by code in any package that
+// mentions project_hosts, in the detected forms.
 export function writtenProjectHostMetadataKeys(): Set<string> {
   const keys = new Set<string>();
   for (const { text } of projectHostSources()) {
@@ -288,17 +317,27 @@ export function writtenProjectHostMetadataKeys(): Set<string> {
   return keys;
 }
 
-// Every SQL template in server/database code that may write
-// project_hosts.metadata: over-inclusively, every string or template literal
-// that mentions project_hosts (any case, schema prefix or quoting) and
-// metadata, reads included. The whole
-// string or template literal is taken (including VALUES, ON CONFLICT and
-// WHERE parts), whitespace-normalized and hashed; each must be listed in
-// REVIEWED_METADATA_WRITE_TEMPLATES, so a new or changed write fails the
-// test until it is reviewed. Limits: a `${...}` interpolation is hashed as
+// Every SQL template, in any package's code that mentions project_hosts
+// (any case), that may write project_hosts.metadata. Over-inclusively, every
+// string or template literal that
+// - mentions project_hosts (any case, schema prefix or quoting) and metadata,
+//   reads included; or
+// - mentions project_hosts and UPDATE or INSERT and has a `${...}`: a
+//   statement whose SET or VALUES part is built in code (vanta, ops0 2735
+//   G2a), e.g. `UPDATE project_hosts SET ${sets.join(", ")}`; or
+// - assigns NEW.metadata or `metadata :=` (a trigger body, G2c).
+// The whole string or template literal is taken (including VALUES, ON
+// CONFLICT and WHERE parts), whitespace-normalized and hashed; each must be
+// listed in REVIEWED_METADATA_WRITE_TEMPLATES, so a new or changed write
+// fails the test until it is reviewed. The fragments that builders push into
+// dynamic statements are pinned by function body in
+// REVIEWED_METADATA_BUILDERS. Limits: a `${...}` interpolation is hashed as
 // its source text, not its runtime value; SQL built by concatenating
-// separate strings is seen piece by piece. The keys such a write sets in code
-// come from the manual inventory (BAY_OWNED_METADATA_KEYS).
+// separate strings is seen piece by piece; a builder outside the named list
+// is seen only through its statement's pin; the file prefilter reads raw
+// text, so a name written with escapes (`project\x5fhosts`) skips the file.
+// The keys such a write sets in code come from the manual inventory
+// (BAY_OWNED_METADATA_KEYS).
 export function metadataWriteTemplates(): Array<{
   file: string;
   sha256: string;
@@ -345,9 +384,12 @@ export function metadataWriteTemplatesIn(
       // project_hosts (any schema prefix or quoting) and metadata, case-folded
       // with quotes removed, is pinned; reads are pinned too.
       const folded = sql.toLowerCase().replace(/["`]/g, "");
-      if (!folded.includes("project_hosts") || !folded.includes("metadata")) {
-        continue;
-      }
+      const table = folded.includes("project_hosts");
+      const selected =
+        (table && folded.includes("metadata")) ||
+        (table && /\b(update|insert)\b/.test(folded) && sql.includes("${")) ||
+        /\bnew\.metadata\b|\bmetadata\s*:=/.test(folded);
+      if (!selected) continue;
       out.push({
         file,
         sha256: createHash("sha256").update(sql).digest("hex"),
@@ -365,8 +407,10 @@ export function metadataWriteTemplateIds(): string[] {
 }
 
 // Reviewed for 076 by file and the sha256 of the whole whitespace-normalized
-// template (comment = what the template does). A new or changed template that
-// mentions project_hosts and metadata fails the test until it is reviewed.
+// template (comment = what the template does). A new or changed selected
+// template fails the test until it is reviewed. The comparison is a MULTISET
+// (sorted lists, counts included): a template that occurs twice in a file is
+// listed twice, so a third copy also fails.
 export const REVIEWED_METADATA_WRITE_TEMPLATES: readonly string[] = [
   // schema (mentions project_hosts and metadata): CREATE TABLE IF NOT EXISTS project_host_metrics_samples ( host_i
   "database/postgres/project-host-metrics.ts#4dcd82e3e69b4c58340a7336e809327aaa13f81053ec123d740650453714fa37",
@@ -378,6 +422,22 @@ export const REVIEWED_METADATA_WRITE_TEMPLATES: readonly string[] = [
   "database/postgres/project-hosts.ts#0ab6e94214cc544aa1dc2802d88a159757ec166eded3d55b3c9b55bee28161bc",
   // WRITE: keys visible in the SQL: UPDATE project_hosts SET metadata = jsonb_set( COALESCE(metadata
   "database/postgres/project-hosts.ts#a86776df0338fd5d1798bd2bde1786300f76175358e64ddd6f58933f55846030",
+  // TRIGGER (G2c): the desired_state guard logs to cloud_vm_log; reads OLD/NEW.metadata->desired_state
+  "database/postgres/schema/project-host-desired-state.ts#15f2d2c016e053a0fb216207b05e821631ba1ef6cb1c61b6e8493d04ccf47258",
+  // TRIGGER (G2c): the desired_state guard reverts an unversioned change: NEW.metadata := jsonb_set(..., '{desired_state}', OLD ...) or - 'desired_state'
+  "database/postgres/schema/project-host-desired-state.ts#90f56eb6c7f72d0ee2dd04a8729b87484c148b6a8a3d0bf65c762295e5308e5f",
+  // TRIGGER (G2c): CREATE OR REPLACE FUNCTION project_hosts_guard_desired_state; body ${onUnversionedChange} (pinned above, and desiredStateGuardFunctionSql in REVIEWED_METADATA_BUILDERS)
+  "database/postgres/schema/project-host-desired-state.ts#bcf4c58053a76e07c397e3687dc5e7e400282417f8e9285ffb7af7bda250125f",
+  // schema: CREATE TRIGGER (desired_state guard) BEFORE UPDATE ON project_hosts
+  "database/postgres/schema/project-host-desired-state.ts#e469a68ffeab29cccade1cc0a02970932e077522fc4c9210a46ba80025c7571b",
+  // READ (pinned because detection is over-inclusive): proxy route lookup, project -> project_hosts incl. metadata
+  "hub/proxy/project-host.ts#8e9bf79004c41f85f7db351c3ecfd65e3281d81dc6b7588fe1422db13a4a8687",
+  // READ (pinned because detection is over-inclusive): proxy route lookup by host id incl. metadata
+  "hub/proxy/project-host.ts#c49b51129b254379fd36e0dfaaab361a8214398760f12691b15b264cb5ce1c0f",
+  // READ (pinned because detection is over-inclusive): self-host hosts of a connector (metadata->>'owner')
+  "hub/servers/app/self-host-connector.ts#a2d7947f1dd3a36ad29235490a236ed47cdf3ba77696def981f7a54ee8df7edc",
+  // WRITE whole object (maybeAutoStartHost): metadata=$4 = the row read above with self_host updated and bootstrap removed
+  "hub/servers/app/self-host-connector.ts#c0b5d44e693f9e6eab5982d3e8c6db598e518643b9e43333e83bc4dce57cd13a",
   // READ (pinned because detection is over-inclusive): SELECT metadata->'agent_rpc_report'->>'version' AS version, meta
   "server/agents/rpc.ts#d00c12d810ea16b9399c53b38030abe9152adc1ea44968671a1e4f5a5121e8c2",
   // READ (pinned because detection is over-inclusive): SELECT metadata #>> '{machine,zone}' AS zone FROM project_hosts
@@ -410,12 +470,18 @@ export const REVIEWED_METADATA_WRITE_TEMPLATES: readonly string[] = [
   "server/cloud/host-dns-reconciliation.ts#d31a211c363336e315b0a6f94a20645217742bd679c4d0eaf60efebd024473f7",
   // WRITE, dynamic SET list built in code (may include the whole metadata object from code): manual inventory: UPDATE project_hosts SET ${[...sets, "updated=NOW()"].join(", ")
   "server/cloud/host-work.ts#0838ee0556648489f709ac7e824133c5535f61abfa3a94d5c7c297809d47d8ec",
+  // DYNAMIC WRITE (G2a): SET from buildHostUpdate (metadata via metadataPatchAssignment); in transitionAndQueueRecoveryStart
+  "server/cloud/host-work.ts#228ba4a0407c4689bd89fafc4e7dd370949bfb7983a55ed47611a7d5c5d61532",
   // WRITE: keys visible in the SQL: UPDATE project_hosts SET metadata = jsonb_set(metadata, '{spot_r
   "server/cloud/host-work.ts#92b4e368305bf0a08159dd7fc78ee9894ef6923057d9b1e9f3ee3c7c4ab9241e",
+  // DYNAMIC WRITE (G2a): SET from buildHostUpdate (metadata via metadataPatchAssignment); in updateHostRow
+  "server/cloud/host-work.ts#d9fcc7bf68699e8381e646623b6e8d6515a5d38b194e86b61a36896449867606",
   // WRITE: keys visible in the SQL: UPDATE project_hosts SET metadata=jsonb_set(COALESCE(metadata, '
   "server/cloud/public-route.ts#010d0158551ad3064218de2dd25ca2667aaf03e90739a12d8b1e594c715c2ea1",
   // READ (pinned because detection is over-inclusive): SELECT id, name, region, status, public_url, internal_url, ssh_s
   "server/cloud/public-route.ts#b16c9a64b3871afc5e8d21c8071de63e6b719977b9cd61e672129a1acf8b5852",
+  // DYNAMIC WRITE (G2a): SET from updateHostFromProviderSnapshot (metadata = jsonb_set chain over '{runtime}', '{spot_recovery_state}')
+  "server/cloud/reconcile.ts#567bec5628f56c47f7d32c57bc825345d31cd5829542446c08aa97381d7c1d5a",
   // READ (pinned because detection is over-inclusive): SELECT id, name, status, deleted, metadata FROM project_hosts WH
   "server/cloud/reconcile.ts#89a768e34d7d458ba7c224d6ad977f27715f4dd43b35b4136068be36e4074e53",
   // READ (pinned because detection is over-inclusive): SELECT id, status, deleted, last_seen, metadata FROM project_hos
@@ -570,6 +636,8 @@ export const REVIEWED_METADATA_WRITE_TEMPLATES: readonly string[] = [
   "server/hosts/host-integrity-health.ts#4800a90146c4fc7d8911172a06a27bc1e777b1e39e47eec995458bb9d608ccc1",
   // READ (pinned because detection is over-inclusive): SELECT id AS host_id, name AS host_name, metadata->'metrics'->'c
   "server/hosts/kernel-hardening-health.ts#4428d73dd9847a65e5d24b47f2b70ebd9d1909cab1ebfdedccaa690eb39b2c69",
+  // DYNAMIC (G2a; ${FENCED_STATES_SQL} in WHERE): writes the maintenance column, not metadata
+  "server/hosts/maintenance.ts#b4a468e5c2347ca07d0a8512bba9b456576136a4a58810907167704a42da3c80",
   // READ (pinned because detection is over-inclusive): SELECT id, name, region, public_url, status, last_seen, metadata
   "server/hosts/runtime-maintenance.ts#1b1518036e1000264da3d0860ac65efb28e666d7f5122d6f371fb5ada3cb9667",
   // WRITE: keys visible in the SQL: UPDATE project_hosts SET metadata=jsonb_set( COALESCE(metadata,
@@ -660,6 +728,8 @@ export const REVIEWED_METADATA_WRITE_TEMPLATES: readonly string[] = [
   "server/project-host/spend-maintenance.ts#52146903eb35de1ac8bdbae5d7e80266d9639196802889cdb017ca634eb8d978",
   // WRITE: keys visible in the SQL: UPDATE project_hosts SET metadata = jsonb_set( metadata, '{billi
   "server/project-host/spend-maintenance.ts#5c5238b67f8e30d656c8eec20456196c0c57d0ee74ba688b0927ee0c611d17d7",
+  // DYNAMIC WRITE (G2a): SET from writeHostBillingChanges (metadata patch: - removed keys || set keys, via metadataPatch)
+  "server/project-host/spend-maintenance.ts#f63da0295e6a2c1ac9bf977db3e1af1dcfde4e02f79691e5fdb7ea14389cd1e7",
   // READ (pinned because detection is over-inclusive): SELECT p.project_id, p.host_id, p.last_backup, COALESCE((to_json
   "server/projects/maintenance-status.ts#a0606d6a6d406b426f199c5ff465d64f04abf049b59ca26a1cc9962eee4423d2",
   // READ (pinned because detection is over-inclusive): SELECT h.id AS host_id, h.last_seen AS host_last_seen, h.metadat
@@ -759,3 +829,87 @@ export function masterUsesReportBuilders(): boolean {
     calls.has("buildPayload:buildHostReportMetadata")
   );
 }
+
+// Builders whose SQL fragments are pushed into a dynamic project_hosts
+// statement (ops0 2735 G2b, 2737), and the desired_state trigger body (G2c):
+// "file#function", with the sha256 of the whitespace-normalized source of
+// that function (the builder, or the function holding the statement that
+// consumes its fragments). A changed body fails the test until it is
+// re-reviewed; a removed or renamed function fails as "missing".
+export function namedFunctionTexts(
+  file: string,
+  text: string,
+  name: string,
+): string[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const out: string[] = [];
+  const visit = (node: ts.Node) => {
+    let found: ts.Node | undefined;
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
+      node.name &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name
+    ) {
+      found = node;
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      node.initializer &&
+      (ts.isArrowFunction(node.initializer) ||
+        ts.isFunctionExpression(node.initializer))
+    ) {
+      found = node;
+    }
+    if (found) out.push(found.getText(source).split(/\s+/).join(" ").trim());
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return out;
+}
+
+export function metadataBuilderId(
+  file: string,
+  text: string,
+  name: string,
+): string {
+  const bodies = namedFunctionTexts(file, text, name);
+  if (bodies.length !== 1) {
+    return `${file}#${name}#${bodies.length === 0 ? "missing" : "duplicate"}`;
+  }
+  return `${file}#${name}#${createHash("sha256").update(bodies[0]).digest("hex")}`;
+}
+
+// The current ids of the functions named in REVIEWED_METADATA_BUILDERS.
+export function metadataBuilderIds(): string[] {
+  return REVIEWED_METADATA_BUILDERS.map((id) => {
+    const [file, name] = id.split("#");
+    return metadataBuilderId(
+      file,
+      readFileSync(join(PACKAGES, file), "utf8"),
+      name,
+    );
+  }).sort();
+}
+
+export const REVIEWED_METADATA_BUILDERS: readonly string[] = [
+  // desired_state trigger body (G2c): reverts an unversioned change of metadata.desired_state
+  "database/postgres/schema/project-host-desired-state.ts#desiredStateGuardFunctionSql#8befff8aa0f2be623af0c3fdf34c99ef52331356a3ae4d127306d2b2b17bf96b",
+  // host work: SET list from an updates object; metadata as a patch against the loaded snapshot (else `metadata=$n`, the whole object)
+  "server/cloud/host-work.ts#buildHostUpdate#578e124902cb73fa189e5aaf768f33a9a564f3282e8ac68b74bf6ae334c46fad",
+  // host work recovery: consumes buildHostUpdate inside the recovery transaction
+  "server/cloud/host-work.ts#transitionAndQueueRecoveryStart#40b9bb4821af7e0de74b3282f8fc73a22002c34904a7df491edb48365565674b",
+  // host work: consumes buildHostUpdate in UPDATE project_hosts SET ${sets.join(", ")}
+  "server/cloud/host-work.ts#updateHostRow#d26f2f0bb664a873185a96ceb3cdb0d90346a60cdc3140eb96e0f26d5536e624",
+  // host work: consumes buildHostUpdate, unless desired_state is stopped
+  "server/cloud/host-work.ts#updateHostRowUnlessStopped#c8e92e90c3aa51984725555c32591ff662620f6552b2773f3d2153796513049d",
+  // provider reconcile: jsonb_set chain over '{runtime}' and '{spot_recovery_state}', consumed by its UPDATE
+  "server/cloud/reconcile.ts#updateHostFromProviderSnapshot#d4383552877d9110a57278eff412d326b95b8ab07000dedbce5e01507f5cc22b",
+  // the top-level keys changed or removed relative to the row a writer read (set / remove)
+  "server/hosts/metadata-patch.ts#metadataPatch#550334ec5484fdd2953bb12a65cd9dde6587e321e336933fbfa2c1d19a4645f7",
+  // the SET fragment `metadata = (COALESCE(metadata, '{}') - $remove::text[]) || $set::jsonb`
+  "server/hosts/metadata-patch.ts#metadataPatchAssignment#2af1b2de2e3d3596faeca4ab07d1961aeb398cdc9d354094b6e122ade415b52b",
+  // billing pass: pushes the metadata patch (and status, desired_state generation) into UPDATE project_hosts SET ${sets.join(", ")}
+  "server/project-host/spend-maintenance.ts#writeHostBillingChanges#786722804ac74077cc4c1885e4c860e924c629706d012931d7001df40b3c2620",
+];
