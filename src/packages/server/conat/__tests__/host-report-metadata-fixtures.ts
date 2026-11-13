@@ -412,11 +412,11 @@ export function metadataWriteTemplateIds(): string[] {
 // (sorted lists, counts included): a template that occurs twice in a file is
 // listed twice, so a third copy also fails.
 export const REVIEWED_METADATA_WRITE_TEMPLATES: readonly string[] = [
-  // schema (mentions project_hosts and metadata): CREATE TABLE IF NOT EXISTS project_host_metrics_samples ( host_i
+  // schema (mentions project_hosts and metadata): creates table project_host_metrics_samples ( host_i
   "database/postgres/project-host-metrics.ts#4dcd82e3e69b4c58340a7336e809327aaa13f81053ec123d740650453714fa37",
   // READ (pinned because detection is over-inclusive): WITH relevant_hosts AS ( SELECT h.id, h.name FROM project_hosts
   "database/postgres/project-host-metrics.ts#633760eba352cbfde4a81f4c6fea16692dfb940615c4245063b6a8bc9cde4076",
-  // schema (mentions project_hosts and metadata): CREATE TABLE IF NOT EXISTS project_host_runtime_deployments ( sc
+  // schema (mentions project_hosts and metadata): creates table project_host_runtime_deployments ( sc
   "database/postgres/project-host-runtime-deployments.ts#658c7eede05b6ac311b99ee92db6c29db3684870498d093448d92c3954b0f52e",
   // WRITE: insert: INSERT INTO project_hosts (id, bay_id, name, region, public_url,
   "database/postgres/project-hosts.ts#0ab6e94214cc544aa1dc2802d88a159757ec166eded3d55b3c9b55bee28161bc",
