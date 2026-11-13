@@ -1,5 +1,7 @@
 # CoCalc-AI
 
+CoCalc provides workspaces where people and their AI agents work with software, data, and computing resources. Agents use the project's tools; people can review results from chat and open the underlying files and applications when needed.
+
 CoCalc-AI is a complete rewrite of CoCalc. This repository powers [CoCalc.ai](https://cocalc.ai), the hosted service, and the following products and deployment architectures:
 
 - [CoCalc Plus](https://software.cocalc.ai/software/cocalc-plus/index.html): a local, single-user CoCalc runtime
@@ -35,7 +37,7 @@ flowchart TD
     C --> G
     R --> G
 
-    P --> T["Notebooks • Files • Terminals • Apps"]
+    P --> T["Apps • Files • Terminals • Notebooks"]
     D --> T
     L --> T
     C --> T
@@ -48,11 +50,11 @@ flowchart TD
 
 At a product level, CoCalc-AI combines:
 
-- computational documents and notebooks
-- files, terminals, app servers, and browser-based IDE workflows
-- real-time collaboration
 - project-scoped agent workflows with Codex and Claude Code
+- real-time collaboration
+- files, terminals, app servers, and browser-based IDE workflows
 - durable project infrastructure: root filesystems, backups, snapshots, and project and host placement
+- computational documents and notebooks
 
 Compared to the older CoCalc architecture, the important shift is this:
 
