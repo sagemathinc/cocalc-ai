@@ -169,8 +169,9 @@ describe("pickHostReportedMetadata", () => {
     expect(getHostReportMetadataDropCounts()).toEqual({ over_budget: 2 });
   });
 
-  // A transparent proxy counts the reads the walk makes: the work must stay
-  // within the node budget however wide the value is.
+  // A transparent proxy counts the property reads the walk makes: they must
+  // stay within the node budget however wide the value is. (It counts get
+  // traps, not the engine's key enumeration, which is linear in the width.)
   function counted<T extends object>(
     target: T,
   ): { value: T; reads: () => number } {

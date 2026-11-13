@@ -127,8 +127,10 @@ function hasOwn(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-// Own keys one at a time, so a wide object is never copied into a key or
-// entry array by this code.
+// Own keys one at a time, so this code never copies a wide object into a key
+// or entry array. (The engine still enumerates an object's keys when a for-in
+// loop starts: linear in the width of a value the server has already
+// decoded.)
 function* ownKeys(value: Record<string, unknown>): Generator<string> {
   for (const key in value) {
     if (hasOwn(value, key)) yield key;
@@ -138,9 +140,10 @@ function* ownKeys(value: Record<string, unknown>): Generator<string> {
 // Walks a value with explicit depth, node and byte budgets: each child is
 // read and charged one at a time before anything below it is visited, the
 // stack holds at most maxDepth frames, and the walk stops at the first value
-// over a budget. So the work done is bounded by the budgets, not by the
-// width or depth a host chooses. Returns false when the value is not plain
-// JSON or exceeds a budget.
+// over a budget. So the values read and the walk's memory are bounded by the
+// budgets, not by the width or depth a host chooses; only the engine's key
+// enumeration of an object (see ownKeys) is linear in its width. Returns
+// false when the value is not plain JSON or exceeds a budget.
 function withinBudget(root: unknown, budget: Budget): boolean {
   const limits = HOST_REPORT_METADATA_LIMITS;
   const stack: Frame[] = [];
@@ -201,7 +204,8 @@ function withinBudget(root: unknown, budget: Budget): boolean {
   return true;
 }
 
-// Whether an object has more than `max` own keys, reading at most max + 1.
+// Whether an object has more than `max` own keys, stopping after max + 1
+// (the engine's for-in enumeration itself is linear in the width).
 function hasMoreKeysThan(value: Record<string, unknown>, max: number): boolean {
   let count = 0;
   for (const key in value) {
