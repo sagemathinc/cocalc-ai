@@ -128,9 +128,12 @@ function hasOwn(value: object, key: string): boolean {
 }
 
 // Own keys one at a time, so this code never copies a wide object into a key
-// or entry array. (The engine still enumerates an object's keys when a for-in
-// loop starts: linear in the width of a value the server has already
-// decoded.)
+// or entry array. The engine still enumerates an object's keys when a for-in
+// loop starts, so that step is linear in the object's width. The width is
+// bounded only by what the server received and decoded: conat has no overall
+// message size limit (conat/core/client.ts: messages are chunked into frames
+// of at most MAX_PAYLOAD, 8 MB, conat/core/constants.ts; reassembly is limited
+// by time, not size).
 function* ownKeys(value: Record<string, unknown>): Generator<string> {
   for (const key in value) {
     if (hasOwn(value, key)) yield key;

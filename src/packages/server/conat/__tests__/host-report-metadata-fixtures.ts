@@ -6,18 +6,25 @@
 // Shared by host-report-metadata.test.ts and host-registry.test.ts.
 
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import ts from "typescript";
 
 // Top-level metadata keys the bay writes. writtenProjectHostMetadataKeys()
-// below finds the ones written by jsonb_set paths, `- 'key'` and
-// `metadata.key =` in server/database code that touches project_hosts; the
-// enumeration test fails if it finds one that is not listed here. The rest
-// come from manual traces (security-audit's 076 reader trace, host create and
-// provider reconcile). None may come from a host report.
+// below finds the ones written in the detected SQL forms (see
+// metadataKeysWrittenIn) in server/database code that touches project_hosts;
+// the enumeration test fails if it finds one that is not listed here, and
+// wholeMetadataWriterFiles() fails closed on any new file that writes the
+// whole metadata object. Not detected: keys set in code before such a
+// whole-object write, e.g. an object literal over a metadata spread
+// (`{ ...metadata, bootstrap: ... }`, cloud/host-work.ts); bootstrap and
+// reconcile below are listed from a manual check of that form.
+// The rest come from manual traces (security-audit's 076 reader trace, host
+// create and provider reconcile). The allow-list drops every non-host key
+// whether or not it is listed. None may come from a host report.
 export const BAY_OWNED_METADATA_KEYS = [
   "admin_reopen_reservation",
   "billing",
+  "bootstrap",
   "cloud_provider",
   "desired_pricing_model",
   "cloudflare_tunnel",
@@ -45,6 +52,7 @@ export const BAY_OWNED_METADATA_KEYS = [
   "public_route_incidents",
   "public_route_probe",
   "public_url",
+  "reconcile",
   "renewal_interval",
   "resources",
   "restart_recovery",
@@ -109,7 +117,15 @@ export function hostReportFixture(): Record<string, unknown> {
 export const SHARED_HOST_OWNED_METADATA_KEYS = ["software"] as const;
 
 // Matches of the enumeration patterns that are not project_hosts.metadata keys.
-export const NOT_METADATA_KEY_MATCHES = ["key", "port"] as const;
+// Matches in other tables or contexts (same files) that are not
+// project_hosts.metadata keys.
+export const NOT_METADATA_KEY_MATCHES = [
+  "key",
+  "op_id",
+  "port",
+  "project_host_id",
+  "source_host_id",
+] as const;
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -131,26 +147,112 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-// Top-level project_hosts.metadata keys written by server and database code.
-export function writtenProjectHostMetadataKeys(): Set<string> {
-  const packages = join(__dirname, "..", "..", "..");
-  const patterns = [
-    /jsonb_set\(\s*[^']*?'\{(\w+)/g,
-    /-\s*'(\w+)'/g,
-    /\bmetadata\.(\w+)\s*=(?!=)/g,
-  ];
+// The metadata keys a piece of source text writes, in the detected forms:
+// jsonb_set paths (also over COALESCE(metadata, '{}'::jsonb)), `- 'key'`,
+// `#- '{key,...}'`, `metadata.key =` and `|| jsonb_build_object('key', ...)`.
+export function metadataKeysWrittenIn(text: string): Set<string> {
   const keys = new Set<string>();
-  for (const root of ["server", "database"]) {
-    for (const file of sourceFiles(join(packages, root))) {
-      const text = readFileSync(file, "utf8");
-      if (!text.includes("project_hosts")) continue;
-      for (const pattern of patterns) {
-        for (const match of text.matchAll(pattern)) keys.add(match[1]);
-      }
-    }
+  const add = (pattern: RegExp) => {
+    for (const match of text.matchAll(pattern)) keys.add(match[1]);
+  };
+  add(/jsonb_set\(\s*(?:[^'()]|'\{\}'|\((?:[^'()]|'\{\}')*\))*?,\s*'\{(\w+)/g);
+  add(/-\s*'(\w+)'/g);
+  add(/#-\s*'\{(\w+)/g);
+  add(/\bmetadata\.(\w+)\s*=(?!=)/g);
+  for (const call of text.matchAll(/\|\|\s*jsonb_build_object\(([^()]*)\)/g)) {
+    for (const match of call[1].matchAll(/'(\w+)'\s*,/g)) keys.add(match[1]);
   }
   return keys;
 }
+
+function projectHostSources(): Array<{ file: string; text: string }> {
+  const packages = join(__dirname, "..", "..", "..");
+  const out: Array<{ file: string; text: string }> = [];
+  for (const root of ["server", "database"]) {
+    for (const file of sourceFiles(join(packages, root))) {
+      const text = readFileSync(file, "utf8");
+      if (text.includes("project_hosts")) {
+        out.push({ file: relative(packages, file), text });
+      }
+    }
+  }
+  return out;
+}
+
+// Top-level project_hosts.metadata keys written by server and database code
+// in the detected forms.
+export function writtenProjectHostMetadataKeys(): Set<string> {
+  const keys = new Set<string>();
+  for (const { text } of projectHostSources()) {
+    for (const key of metadataKeysWrittenIn(text)) keys.add(key);
+  }
+  return keys;
+}
+
+// Files with an `UPDATE project_hosts` that writes the whole metadata object
+// from a parameter (a read-modify-write in code, so no key is visible in the
+// SQL). Their keys come from the manual inventory; a new such file must be
+// reviewed and listed in REVIEWED_WHOLE_METADATA_WRITERS.
+export function wholeMetadataWriterFiles(): string[] {
+  const files = new Set<string>();
+  for (const { file, text } of projectHostSources()) {
+    for (const update of text.matchAll(
+      /UPDATE\s+project_hosts\b([\s\S]*?)(?:WHERE|RETURNING|`)/gi,
+    )) {
+      if (/\bmetadata\s*=\s*(?:\$\d+|COALESCE\(\s*\$\d+)/.test(update[1])) {
+        files.add(file);
+      }
+    }
+  }
+  return [...files].sort();
+}
+
+// Every UPDATE/INSERT of project_hosts that touches metadata must be
+// classified: keys visible in a detected form, a whole-object parameter write
+// (wholeMetadataWriterFiles), or listed here after review. Returns the
+// statements that are none of these, as "file: first 60 chars".
+export function unclassifiedMetadataStatements(): string[] {
+  const out: string[] = [];
+  for (const { file, text } of projectHostSources()) {
+    for (const statement of text.matchAll(
+      /(?:UPDATE\s+project_hosts\b[\s\S]*?(?:WHERE|RETURNING|`|;)|INSERT\s+INTO\s+project_hosts\b[\s\S]*?(?:VALUES|SELECT|`|;))/gi,
+    )) {
+      const sql = statement[0];
+      if (!/\bmetadata\b/.test(sql)) continue;
+      if (metadataKeysWrittenIn(sql).size > 0) continue;
+      if (/\bmetadata\s*=\s*(?:\$\d+|COALESCE\(\s*\$\d+)/.test(sql)) continue;
+      out.push(`${file}: ${sql.split(/\s+/).join(" ").slice(0, 60)}`);
+    }
+  }
+  return out.sort();
+}
+
+// Reviewed by hand (076): a parameterized path or a trusted bay insert, never
+// a host report.
+export const REVIEWED_UNCLASSIFIED_METADATA_STATEMENTS = [
+  // upsertProjectHost: the merge this PR guards (host reports reach it only
+  // through sanitizeHostReport) and the bay's own upserts.
+  "database/postgres/project-hosts.ts: INSERT INTO project_hosts (id, bay_id, name, region, public_",
+  // setProjectHostMetadataKey-style helper: path from a bay caller.
+  "database/postgres/project-hosts.ts: UPDATE project_hosts SET metadata = jsonb_set( COALESCE(meta",
+  // public-route.ts: path is a bay-chosen public-route key.
+  "server/cloud/public-route.ts: UPDATE project_hosts SET metadata=jsonb_set(COALESCE(metadat",
+  // host create from the bay (cloud lifecycle) and rehome between bays.
+  "server/conat/api/hosts-cloud-lifecycle.ts: INSERT INTO project_hosts (id, name, region, status, metadat",
+  "server/project-host/rehome.ts: INSERT INTO project_hosts (id, bay_id, name, region, public_",
+] as const;
+
+export const REVIEWED_WHOLE_METADATA_WRITERS = [
+  "server/conat/api/hosts-cloud-lifecycle.ts",
+  "server/conat/api/hosts-project-host-rollbacks.ts",
+  "server/conat/api/hosts.ts",
+  "server/conat/host-registry.ts",
+  "server/hosts/start-worker.ts",
+  "server/launchpad/onprem-sshd.ts",
+  "server/project-host/auto-grow.ts",
+  "server/self-host/connector-tokens.ts",
+  "server/self-host/ssh-target.ts",
+] as const;
 
 function unwrap(node: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(node)) node = node.expression;

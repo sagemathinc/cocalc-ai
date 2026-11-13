@@ -13,9 +13,14 @@ import {
 import {
   BAY_OWNED_METADATA_KEYS,
   NOT_METADATA_KEY_MATCHES,
+  REVIEWED_UNCLASSIFIED_METADATA_STATEMENTS,
+  REVIEWED_WHOLE_METADATA_WRITERS,
   SHARED_HOST_OWNED_METADATA_KEYS,
   hostReportedKeysFromSource,
   hostReportFixture,
+  metadataKeysWrittenIn,
+  unclassifiedMetadataStatements,
+  wholeMetadataWriterFiles,
   writtenProjectHostMetadataKeys,
 } from "./__tests__/host-report-metadata-fixtures";
 
@@ -34,7 +39,7 @@ describe("pickHostReportedMetadata", () => {
     );
   });
 
-  it("lists every metadata key the bay writes (fails on a new unlisted one)", () => {
+  it("lists every metadata key the bay writes in the detected SQL forms (fails on a new unlisted one)", () => {
     const listed = new Set<string>([
       ...BAY_OWNED_METADATA_KEYS,
       ...SHARED_HOST_OWNED_METADATA_KEYS,
@@ -43,6 +48,43 @@ describe("pickHostReportedMetadata", () => {
     const written = writtenProjectHostMetadataKeys();
     expect(written.size).toBeGreaterThan(10);
     expect([...written].filter((key) => !listed.has(key))).toEqual([]);
+  });
+
+  it("detects each supported SQL write form (positive controls)", () => {
+    const forms = [
+      "UPDATE project_hosts SET metadata=jsonb_set(metadata,'{probe_a}',$2)",
+      "UPDATE project_hosts SET metadata=jsonb_set(COALESCE(metadata,'{}'::jsonb),'{probe_b}',$2)",
+      "UPDATE project_hosts SET metadata = jsonb_set(\n  COALESCE(metadata, '{}'::jsonb),\n  '{probe_c,quarantined}', $2)",
+      "UPDATE project_hosts SET metadata = metadata || jsonb_build_object('probe_d', $2, 'probe_e', $3)",
+      "UPDATE project_hosts SET metadata = metadata - 'probe_f'",
+      "UPDATE project_hosts SET metadata = metadata #- '{probe_h,sent_at}'",
+      "metadata.probe_g = value;",
+    ];
+    const found = metadataKeysWrittenIn(forms.join("\n"));
+    for (const key of [
+      "probe_a",
+      "probe_b",
+      "probe_c",
+      "probe_d",
+      "probe_e",
+      "probe_f",
+      "probe_g",
+      "probe_h",
+    ]) {
+      expect(found.has(key)).toBe(true);
+    }
+  });
+
+  it("fails closed on a metadata statement the scanner cannot classify", () => {
+    expect(unclassifiedMetadataStatements()).toEqual(
+      [...REVIEWED_UNCLASSIFIED_METADATA_STATEMENTS].sort(),
+    );
+  });
+
+  it("fails closed on a new file that writes the whole metadata object", () => {
+    expect(wholeMetadataWriterFiles()).toEqual([
+      ...REVIEWED_WHOLE_METADATA_WRITERS,
+    ]);
   });
 
   it("passes a real report through unchanged", () => {
