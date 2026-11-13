@@ -119,11 +119,38 @@ const HubApiStructure = {
   adminCrm,
 } as const satisfies HubApiTransformStructure;
 
+let hubApiMethodNames: ReadonlySet<string> | undefined;
+
+/**
+ * Whether name is exactly a hub API method, `group.method`. Anything else, such
+ * as `group.method.extra` or an inherited property name, is not: it must be
+ * refused before admission, routing and logging, which all compare exact names.
+ */
+export function isHubApiMethodName(name: unknown): name is string {
+  if (typeof name !== "string") return false;
+  hubApiMethodNames ??= new Set(Object.keys(getHubApiPrincipalPolicies()));
+  return hubApiMethodNames.has(name);
+}
+
+/**
+ * The error for a name that is not exactly a hub API method. Clients detect an
+ * older server by the `unknown function '<name>'` message, so short printable
+ * names are echoed in that form; anything else is not echoed.
+ */
+export function unknownHubApiFunctionError(name: unknown): Error {
+  const shown =
+    typeof name === "string" && /^[\x20-\x7e]{1,200}$/.test(name)
+      ? ` '${name}'`
+      : "";
+  return Object.assign(new Error(`unknown function${shown}`), { code: 400 });
+}
+
 export function getHubApiPrincipalPolicy(
   name: string,
 ): HubApiPrincipalPolicy | undefined {
-  const [group, functionName] = `${name ?? ""}`.split(".");
-  return HubApiStructure[group]?.[functionName]?.principalPolicy;
+  if (!isHubApiMethodName(name)) return undefined;
+  const [group, functionName] = name.split(".");
+  return HubApiStructure[group][functionName].principalPolicy;
 }
 
 export function getHubApiPrincipalPolicies(): Record<
@@ -261,8 +288,11 @@ export function transformArgs({
   for (const arg of args ?? []) {
     if (arg != null && typeof arg === "object") delete arg.agent_auth;
   }
+  if (!isHubApiMethodName(name)) {
+    return Promise.reject(unknownHubApiFunctionError(name));
+  }
   const [group, functionName] = name.split(".");
-  return HubApiStructure[group]?.[functionName]({
+  return HubApiStructure[group][functionName]({
     args,
     account_id,
     auth_session_hash,
