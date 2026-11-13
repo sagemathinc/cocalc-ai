@@ -695,7 +695,10 @@ test(
       }
       await until(
         () => readdirSync(downloadsTo).sort(),
-        (names) => names.join("|") === "paper (1).pdf|paper.pdf",
+        (names) =>
+          names.length === 2 &&
+          names[0] === "paper (1).pdf" &&
+          names[1] === "paper.pdf",
         "both papers in ~/Downloads",
       );
       assert.equal(readFileSync(join(downloadsTo, "paper.pdf"), "utf8"), PDF);
