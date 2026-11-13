@@ -832,64 +832,80 @@ advise deprovisioning a host with important unbacked work.
 `;
 
 export const PROJECT_HOST_SPOT_RECOVERY_BODY = String.raw`
-## Why spot recovery exists
+## Recover work after a spot interruption
 
-Spot hosts can be much cheaper than standard on-demand hosts, but the cloud
-provider can reclaim them at any time. CoCalc's spot recovery strategy controls
-what happens after that interruption: retry spot, optionally fall back to a
-standard VM, and later probe whether spot capacity is available again.
+A cloud provider can reclaim a spot host at any time. CoCalc can restore host
+capacity; an interrupted analysis, training run, or agent task still needs to
+resume from saved work. Keep checkpoints and required results in project files
+or separately retained storage. [Shared scratch](/docs/hosts/shared-scratch)
+is not included in project backups.
 
-Spot recovery is active only when the host uses **spot** pricing and
-**Interruption restore** is set to **Restore immediately**. The **Spot Recovery
-Strategy** modal shows the recovery states as a diagram, but the diagram is
-read-only; the settings below it control behavior.
+Spot recovery is active only with **spot** pricing and **Interruption restore**
+set to **Restore immediately**. Open **Spot Recovery Strategy** in the host
+settings. Its diagram shows recovery states; the settings below it control
+behavior and are saved with the host form.
 
 ## Retry spot first
 
-After a spot interruption, CoCalc first tries to restore the same kind of spot
-capacity. The key settings are:
+CoCalc first tries the configured spot machine type. These settings control
+when recovery advances to fallback:
 
-- **Spot retry window (minutes)**: how long CoCalc keeps retrying spot before
-  moving on.
-- **Retry backoff (seconds)**: the base delay between spot restore attempts.
-  The worker adds exponential backoff up to a cap.
-- **Max restore attempts before fallback**: a count-based limit. Use a positive
-  value. Entering \`0\` currently uses the default count instead of disabling
-  the attempt limit.
+- **Spot retry window (minutes)**: the time allowed for spot retries.
+- **Retry backoff (seconds)**: the base delay between attempts, with
+  exponential backoff up to a cap.
+- **Max restore attempts before fallback**: the count-based limit. Enter a
+  positive value; \`0\` currently uses the default count rather than disabling
+  the limit.
 
-Use a short window when user-facing uptime matters. Use a longer window when
-cost matters more than immediate recovery.
+## Check which machine is running
+
+On site-funded GCP hosts, recovery can try alternate spot machine types before
+standard capacity. These automatic machine-type alternatives are not used for
+pay-as-you-go hosts. Provider availability, compatible hardware and quota still
+limit which machine can start.
+
+Host details show when the active machine differs from the configured one:
+**Running … instead of … on Spot**, or **on Standard pricing**. A recovery phase
+of \`idle\` can still mean an alternate spot machine is running. Check the
+active machine, available memory and required software before resuming a
+workload; a configured machine type alone does not establish current capacity
+or equivalent performance.
 
 ## Standard fallback
 
-When **Allow standard fallback** is enabled, CoCalc can temporarily switch the
-host to a standard on-demand VM if spot recovery fails. The host remains
-configured as a spot host, but it is running as a standard fallback. The UI
-shows this as **standard fallback** and explains the current standard rate and
-the spot rate when restored.
+With **Allow standard fallback** enabled, CoCalc can use a standard on-demand
+VM after spot attempts fail. The host remains configured for spot while its
+effective pricing is standard. The fallback indicator explains the current
+standard rate and the spot rate when restored.
 
-The fallback settings are:
+- **Minimum standard runtime (minutes)** delays probes after fallback.
+- **Spot probe interval (minutes)** controls checks for the configured spot
+  machine type in the same zone.
+- **Require successful probe before returning to spot** requires a matching
+  probe VM to start before a return.
+- **Rapid-preemption window (minutes)** and **Circuit-breaker hold (minutes)**
+  keep a repeatedly interrupted host on standard capacity longer.
 
-- **Minimum standard runtime (minutes)**: how long the standard fallback should
-  run before CoCalc starts trying to return to spot.
-- **Spot probe interval (minutes)**: how often to check the same zone and
-  machine type for spot availability.
-- **Require successful probe before returning to spot**: when enabled, CoCalc
-  only switches back after a matching probe VM starts successfully.
+## Returning to the configured spot machine
 
-## Returning to spot
+Returning from standard capacity or an alternate spot machine restarts the
+host. After the required hold and a successful probe, CoCalc can defer that
+restart while projects are active. It prefers a quiet period or the region's
+overnight window, but can also return when the configured fallback runtime cap
+is reached. That cap is not a deadline by which spot capacity is guaranteed.
 
-While a host is on standard fallback, CoCalc probes for spot availability.
-After a successful probe and the minimum runtime window, it can move back to
-spot. Returning to spot is itself disruptive because the underlying VM changes,
-so schedule sensitive workloads accordingly.
+Save checkpoints before a planned return as well as before an interruption.
+After recovery, check both host readiness and the workload's saved results;
+restoring a host does not restore a process's in-memory state. See
+[Project host lifecycle actions](/docs/hosts/lifecycle) for status checks.
 
 ## Agent notes
 
-When explaining spot recovery, distinguish three states: desired pricing
-(spot), effective pricing (possibly standard fallback), and recovery phase.
-Use spot for cost-sensitive workloads that tolerate interruption. Use standard
-hosts for workloads that must not be interrupted by cloud spot reclamation.
+Report configured and active machine types, desired and effective pricing,
+and recovery phase separately. Resume from verified saved work rather than
+assuming a completed infrastructure operation means the computation finished.
+Standard hosts avoid spot reclamation, but can still stop for maintenance,
+billing or other failures.
 `;
 
 export const PROJECT_HOST_CHANGE_RULES_BODY = String.raw`
@@ -1428,7 +1444,7 @@ different questions, so it helps to know which one you need.
 
 | Layer | Where it lives | What it is for |
 | --- | --- | --- |
-| Edit history (TimeTravel) | Stored separately on the project host | Every saved change to a document, file by file |
+| Edit history (TimeTravel) | Stored separately on the project host | Recorded revisions of supported files |
 | Snapshots | \`~/.snapshots\` on the project host | Fast, read-only, point-in-time copies of HOME |
 | Backups | Encrypted, off-host object storage | Recovery when the host or its disk is gone, moves, archives |
 
@@ -1481,8 +1497,10 @@ and works through them as the host frees up.
 - **Stored data is content-addressed and encrypted.** Each chunk is identified
   by the hash of its contents, and btrfs verifies its own data checksums when
   files are read for a backup.
-- **Backups are tested.** CoCalc regularly test-restores from each active
-  backup repository and samples stored data for integrity.
+- **Recovery checks are tracked.** CoCalc records test-restore results for
+  active backup repositories and sampled integrity checks for sealed and
+  draining repositories. These checks do not validate every file or establish
+  that your application can resume correctly.
 
 ## What is not in a backup
 
@@ -1525,6 +1543,13 @@ snapshot is gone or you need an older version.
 explains how to choose the smallest recovery operation, and
 [Project host storage, backups, and snapshots](/docs/hosts/storage) covers
 restore behaviour and the file-size limit.
+
+Before relying on recovered work, check the backup's date and skipped-file
+report. Restore selected files to a separate comparison path, inspect their
+contents, and rerun the smallest useful application check before replacing
+current work. For an analysis or training run, confirm that the saved inputs,
+checkpoints and results belong to the intended run. Files that were only in
+memory or excluded storage cannot be recovered from that backup.
 
 ## Agent notes
 

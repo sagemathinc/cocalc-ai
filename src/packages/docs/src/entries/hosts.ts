@@ -164,10 +164,11 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
       "A project host with start stop restart deprovision and delete controls",
     ),
     lastReviewed: "2026-05-27",
+    searchKeywords: "browser runtime idle timeout stop restart maintenance",
     slug: "hosts/lifecycle",
     status: "ready",
     summary:
-      "Understand start, stop, restart, drain, deprovision, and delete actions for project hosts.",
+      "Understand project and browser runtime limits, stop or restart a host, and verify work after maintenance.",
     title: "Project host lifecycle actions",
   },
   {
@@ -192,7 +193,7 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
     slug: "hosts/spot-recovery",
     status: "ready",
     summary:
-      "Explain spot retry windows, standard fallback, probes, and returning from fallback to spot.",
+      "Recover interrupted workloads, identify the active machine and pricing, and prepare for a return from fallback to spot.",
     title: "Spot recovery strategy for project hosts",
   },
   {
@@ -308,7 +309,7 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
     slug: "hosts/backups",
     status: "ready",
     summary:
-      "How snapshots and backups work, their default schedule, what they guarantee, and what makes a backup slow.",
+      "Choose a recovery layer, understand backup coverage and checks, and verify restored work before using it.",
     title: "How snapshots and backups work",
   },
   {
