@@ -122,6 +122,25 @@ describe("pickHostReportedMetadata", () => {
     }
   });
 
+  // vanta's 4 variants (ops0 2728) and review's uppercase case: each is
+  // detected and unreviewed, so it fails the pin until it is reviewed.
+  it("detects quoted, schema-qualified and uppercase metadata writes", () => {
+    const reviewed = new Set(REVIEWED_METADATA_WRITE_TEMPLATES);
+    const sqls = [
+      "UPDATE project_hosts SET \"metadata\" = jsonb_set(metadata, '{billing}', $2) WHERE id = $1",
+      "UPDATE public.project_hosts SET metadata = jsonb_set(metadata, '{billing}', $2) WHERE id = $1",
+      "UPDATE \"project_hosts\" SET metadata = jsonb_set(metadata, '{billing}', $2) WHERE id = $1",
+      "INSERT INTO public.project_hosts (id, metadata) VALUES ($1, $2)",
+      "UPDATE PROJECT_HOSTS SET METADATA = JSONB_SET(METADATA, '{billing}', $2) WHERE ID = $1",
+    ];
+    for (const sql of sqls) {
+      const source = `pool().query(\`${sql}\`, [id, value]);`;
+      const found = metadataWriteTemplatesIn("server/probe.ts", source);
+      expect(found).toHaveLength(1);
+      expect(reviewed.has(`${found[0].file}#${found[0].sha256}`)).toBe(false);
+    }
+  });
+
   it("hashes whole templates, including INSERT VALUES and ON CONFLICT parts", () => {
     const upsert = metadataWriteTemplates().find(
       ({ file, text }) =>
