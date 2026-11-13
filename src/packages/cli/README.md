@@ -597,7 +597,7 @@ See `cocalc sensor --help` and the docs page "Watch for events with sensors".
 ## Auth Commands
 
 - `auth status [--check]`
-  - Without `--check` it makes no request. It also shows `recorded_session_expires_at`, `recorded_fresh_auth_until`, `session_remaining_s` and `fresh_auth_remaining_s`: the expiry times returned by the last `auth login` / `auth elevate` made by this CLI config on this machine, kept in `auth-grants.json` next to `config.json` (timestamps only). They are informational: the server may end access earlier, a grant made elsewhere does not update them, the remaining seconds use the local clock, and `null` means unknown.
+  - Without `--check` it makes no request. It also shows `recorded_session_expires_at`, `recorded_fresh_auth_until`, `session_remaining_s` and `fresh_auth_remaining_s`: the expiry times returned by the last `auth login` / `auth elevate` made by this CLI config on this machine, kept in `<config>.auth-grants.json` next to the config file, e.g. `config.auth-grants.json` (timestamps only; one per config file). They are informational: the server may end access earlier, a grant made elsewhere does not update them, the remaining seconds use the local clock, and `null` means unknown.
 - `auth list`
 - `auth login [--profile <name>] [--api ...] [--api-key ...] [--account-id ...]`
 - `auth setup ...` (alias for `auth login`)

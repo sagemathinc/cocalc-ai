@@ -1664,3 +1664,98 @@ test("only the writer and auth status reference the recorded grant fields", () =
   // auth.ts only writes records, and reads them in exactly one place (status)
   assert.equal((authJs.match(/recordedAuthStatus\)?\(/g) ?? []).length, 1);
 });
+
+for (const outcome of ["approved", "error"] as const) {
+  for (const change of ["re-login", "logout"] as const) {
+    test(`auth elevate (${outcome}) after a ${change} during the wait leaves the new state's record alone (review R3)`, async () => {
+      const { dir, configPath } = grantFixture();
+      const config: any = {
+        current_profile: "prod",
+        profiles: { prod: { ...PROD } },
+      };
+      recordSessionGrant(configPath, "prod", {
+        api: PROD.api,
+        session_expires_at: "2099-02-01T00:00:00.000Z",
+        fresh_auth_until: "2099-01-01T02:00:00.000Z",
+      });
+      const restore = fakeFetch({
+        "/api/v2/auth/cli/elevate/start": () => ({
+          challenge_id: "c4",
+          poll_token: "p4",
+          approval_url: "https://hub.example.test/e",
+          expires_at: "2099-01-01T00:00:00.000Z",
+        }),
+        "/api/v2/auth/cli/elevate/status": () => {
+          // another CLI process changes this profile during the wait
+          if (change === "re-login") {
+            config.profiles.prod = {
+              ...PROD,
+              cookie: "remember_me=new-session",
+            };
+            recordSessionGrant(configPath, "prod", {
+              api: PROD.api,
+              session_expires_at: "2099-03-01T00:00:00.000Z",
+              fresh_auth_until: "2099-01-01T05:00:00.000Z",
+            });
+          } else {
+            delete config.profiles.prod;
+          }
+          if (outcome === "error") return { error: "denied" };
+          return {
+            challenge_id: "c4",
+            kind: "elevate",
+            state: "approved",
+            expires_at: "2099-01-01T00:00:00.000Z",
+            fresh_auth_until: "2099-01-01T08:00:00.000Z",
+          };
+        },
+      });
+      try {
+        const program = new Command();
+        registerAuthCommand(
+          program,
+          makeDeps(
+            {},
+            {
+              authConfigPath: () => configPath,
+              loadAuthConfig: () => config,
+              applyAuthProfile: (globals: any) => ({
+                globals: { ...config.profiles.prod, ...globals },
+                profile: "prod",
+                fromProfile: true,
+              }),
+              buildCookieHeader: (_api: string, effective: any) =>
+                effective.cookie,
+            },
+          ),
+        );
+        const run = program.parseAsync(["node", "test", "auth", "elevate"]);
+        if (outcome === "error") await assert.rejects(run, /denied/);
+        else await run;
+        const grants = JSON.parse(
+          readFileSync(authGrantsPath(configPath), "utf8"),
+        ).grants;
+        if (change === "re-login") {
+          // the new session's record is untouched by the old session's result
+          assert.equal(
+            grants.prod.session_expires_at,
+            "2099-03-01T00:00:00.000Z",
+          );
+          assert.equal(
+            grants.prod.fresh_auth_until,
+            "2099-01-01T05:00:00.000Z",
+          );
+        } else {
+          // logged out meanwhile: the old record is not refreshed
+          assert.equal(
+            grants.prod.fresh_auth_until,
+            "2099-01-01T02:00:00.000Z",
+          );
+        }
+      } finally {
+        restore();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+}

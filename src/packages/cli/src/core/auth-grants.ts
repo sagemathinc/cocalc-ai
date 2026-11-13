@@ -4,7 +4,8 @@
 // length of any secret). They are informational: nothing may read them to
 // decide anything (whether to elevate, which credential to use, whether to
 // prompt). The only reader is `auth status`. They live in a sidecar next to
-// config.json so that recording a grant never rewrites the credential file;
+// the config file (one per config) so recording a grant never rewrites the
+// credential file;
 // a missing or corrupt sidecar only loses the records.
 
 import {
@@ -16,14 +17,19 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { applyPrivateMode } from "./platform-paths";
 
 const DIR_MODE = 0o700;
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
 const FILE_MODE = 0o600;
 
 export type AuthGrantRecord = {
@@ -40,8 +46,52 @@ type AuthGrantsFile = {
   grants: Record<string, AuthGrantRecord>;
 };
 
+// One sidecar per config file (two configs in one directory never share
+// records): <config name without .json>.auth-grants.json.
 export function authGrantsPath(configPath: string): string {
-  return join(dirname(configPath), "auth-grants.json");
+  const name = basename(configPath).replace(/\.json$/i, "");
+  return join(dirname(configPath), `${name}.auth-grants.json`);
+}
+
+const LOCK_WAIT_MS = 5_000;
+const LOCK_STALE_MS = 30_000;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Serializes the whole read/patch/write across processes with an exclusive
+// lock file. A lock older than LOCK_STALE_MS (a crashed writer) is removed.
+// Returns false if the lock could not be taken in time; the caller then
+// skips the update (records are informational only).
+function withLock(path: string, fn: () => void): boolean {
+  const lock = `${path}.lock`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let fd: number | undefined;
+  while (fd === undefined) {
+    try {
+      fd = openSync(lock, "wx", FILE_MODE);
+    } catch (err: any) {
+      if (err?.code !== "EEXIST") throw err;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          rmSync(lock, { force: true });
+          continue;
+        }
+      } catch {
+        continue; // the lock went away meanwhile
+      }
+      if (Date.now() >= deadline) return false;
+      sleepSync(25);
+    }
+  }
+  try {
+    fn();
+    return true;
+  } finally {
+    closeSync(fd);
+    rmSync(lock, { force: true });
+  }
 }
 
 export function apiOrigin(api: unknown): string | null {
@@ -69,14 +119,16 @@ export function isoOrNull(value: unknown): string | null {
 
 function readGrants(configPath: string): Record<string, AuthGrantRecord> {
   const path = authGrantsPath(configPath);
-  if (!existsSync(path)) return {};
+  if (!existsSync(path)) return Object.create(null);
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8"));
     const grants = parsed?.grants;
     if (!grants || typeof grants !== "object" || Array.isArray(grants)) {
-      return {};
+      return Object.create(null);
     }
-    const out: Record<string, AuthGrantRecord> = {};
+    // Null prototype: profile names such as "__proto__" or "constructor" are
+    // valid and must be plain keys.
+    const out: Record<string, AuthGrantRecord> = Object.create(null);
     for (const [name, value] of Object.entries(grants)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const v = value as any;
@@ -91,7 +143,7 @@ function readGrants(configPath: string): Record<string, AuthGrantRecord> {
     }
     return out;
   } catch {
-    return {};
+    return Object.create(null);
   }
 }
 
@@ -107,7 +159,10 @@ function writeGrants(
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: DIR_MODE });
   const payload: AuthGrantsFile = { version: 1, grants };
-  const tmp = join(dir, `.auth-grants.${randomBytes(6).toString("hex")}.tmp`);
+  const tmp = join(
+    dir,
+    `.${basename(path)}.${randomBytes(6).toString("hex")}.tmp`,
+  );
   try {
     const fd = openSync(tmp, "wx", FILE_MODE);
     try {
@@ -124,16 +179,22 @@ function writeGrants(
 }
 
 // Best effort: a failure to record must never fail the login/elevate itself.
-// The sidecar is re-read here, immediately before each write, and only the
-// given profile's entry is changed, so a record written by another CLI
-// process during a long browser approval wait is kept.
+// The sidecar is re-read here, under an exclusive lock, immediately before
+// each write, and only the given profile's entry is changed, so a record
+// written by another CLI process (during a long browser approval wait, or
+// at the same moment) is kept.
 function update(
   configPath: string,
   fn: (grants: Record<string, AuthGrantRecord>) => boolean,
 ): void {
   try {
-    const grants = readGrants(configPath);
-    if (fn(grants)) writeGrants(configPath, grants);
+    const path = authGrantsPath(configPath);
+    mkdirSync(dirname(path), { recursive: true, mode: DIR_MODE });
+    const done = withLock(path, () => {
+      const grants = readGrants(configPath);
+      if (fn(grants)) writeGrants(configPath, grants);
+    });
+    if (!done) throw new Error("lock busy");
   } catch {
     process.stderr.write(
       "warning: could not update the local auth grant record (informational only; auth itself is unaffected)\n",
@@ -171,19 +232,24 @@ export function recordSessionGrant(
 // A fresh-auth result for the existing session (elevate). The session expiry
 // is kept only if the record is for the same site; a null value (failed or
 // unknown elevation) clears the recorded fresh-auth window.
+// `stillCurrent` is checked under the sidecar lock, right before writing: if
+// the profile's session changed while waiting for approval (a re-login or a
+// logout), the result belongs to the old session and nothing is recorded.
 export function recordFreshAuth(
   configPath: string,
   profile: string,
   grant: { api: unknown; fresh_auth_until: unknown },
   now: Date = new Date(),
+  stillCurrent: () => boolean = () => true,
 ): void {
   const api = apiOrigin(grant.api);
   update(configPath, (grants) => {
+    if (!stillCurrent()) return false;
     if (!api) {
       delete grants[profile];
       return true;
     }
-    const prior = grants[profile];
+    const prior = hasOwn(grants, profile) ? grants[profile] : undefined;
     grants[profile] = {
       api,
       recorded_at: now.toISOString(),
@@ -199,7 +265,7 @@ export function clearAuthGrants(configPath: string, profiles: string[]): void {
   update(configPath, (grants) => {
     let changed = false;
     for (const name of profiles) {
-      if (name in grants) {
+      if (hasOwn(grants, name)) {
         delete grants[name];
         changed = true;
       }
@@ -214,7 +280,7 @@ export function renameAuthGrant(
   to: string,
 ): void {
   update(configPath, (grants) => {
-    const record = grants[from];
+    const record = hasOwn(grants, from) ? grants[from] : undefined;
     delete grants[to];
     delete grants[from];
     if (record) grants[to] = record;
@@ -242,7 +308,8 @@ export function recordedAuthStatus(
   profileApi: unknown,
   now: Date = new Date(),
 ): Record<string, unknown> {
-  const record = readGrants(configPath)[profile];
+  const grants = readGrants(configPath);
+  const record = hasOwn(grants, profile) ? grants[profile] : undefined;
   const api = apiOrigin(profileApi);
   const applies = !!record && !!api && record.api === api;
   const nowMs = now.valueOf();

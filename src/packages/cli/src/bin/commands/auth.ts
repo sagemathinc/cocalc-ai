@@ -347,7 +347,7 @@ export function registerAuthCommand(
 Without --check this makes no request. recorded_session_expires_at,
 recorded_fresh_auth_until and the *_remaining_s fields come from the last
 auth login / auth elevate made by this CLI config on this machine
-(auth-grants.json next to config.json, timestamps only). The server may end
+(<config>.auth-grants.json next to the config file, timestamps only). The server may end
 access earlier; remaining seconds use the local clock; null means unknown.
 `,
     )
@@ -849,12 +849,35 @@ access earlier; remaining seconds use the local clock; null means unknown.
       effective.cookie === grantConfig.profiles[grantApplied.profile]?.cookie
         ? grantApplied.profile
         : undefined;
+    // Compared in memory only, never persisted.
+    const grantCookie = grantProfile
+      ? grantConfig.profiles[grantProfile]?.cookie
+      : undefined;
     const noteFreshAuth = (fresh_auth_until: unknown) => {
       if (!grantProfile) return;
-      recordFreshAuth(grantConfigPath, grantProfile, {
-        api: effective.api ? normalizeUrl(effective.api) : defaultApiBaseUrl(),
-        fresh_auth_until,
-      });
+      recordFreshAuth(
+        grantConfigPath,
+        grantProfile,
+        {
+          api: effective.api
+            ? normalizeUrl(effective.api)
+            : defaultApiBaseUrl(),
+          fresh_auth_until,
+        },
+        new Date(),
+        // A re-login or logout of this profile during the approval wait
+        // means the result is for the old session: record nothing.
+        () => {
+          try {
+            return (
+              loadAuthConfig(grantConfigPath).profiles[grantProfile]?.cookie ===
+              grantCookie
+            );
+          } catch {
+            return false;
+          }
+        },
+      );
     };
     const apiBaseUrl = effective.api
       ? normalizeUrl(effective.api)
@@ -1002,8 +1025,10 @@ access earlier; remaining seconds use the local clock; null means unknown.
         dev: status.dev === true,
       };
     }
-    // A failed or abandoned elevation must not leave an earlier fresh-auth
-    // window on record.
+    // A failed elevation (an error from the start or poll request, or a
+    // non-approved result) must not leave an earlier fresh-auth window on
+    // record. An interrupted CLI (Ctrl-C) records nothing and keeps the
+    // earlier record: abandoning the wait does not change the server state.
     let status: CliChallengeStatus;
     try {
       const codexAttentionContext = codexAttentionContextFromEnv();
