@@ -303,8 +303,18 @@ export function metadataWriteTemplates(): Array<{
   sha256: string;
   text: string;
 }> {
+  return projectHostSources().flatMap(({ file, text }) =>
+    metadataWriteTemplatesIn(file, text),
+  );
+}
+
+// The metadata write templates in one source text (see metadataWriteTemplates).
+export function metadataWriteTemplatesIn(
+  file: string,
+  text: string,
+): Array<{ file: string; sha256: string; text: string }> {
   const out: Array<{ file: string; sha256: string; text: string }> = [];
-  for (const { file, text } of projectHostSources()) {
+  {
     // String and template literals as the TypeScript parser sees them, so a
     // stray quote or backtick in a comment cannot shift the boundaries.
     const source = ts.createSourceFile(

@@ -20,6 +20,7 @@ import {
   metadataKeysWrittenIn,
   metadataWriteTemplateIds,
   metadataWriteTemplates,
+  metadataWriteTemplatesIn,
   writtenProjectHostMetadataKeys,
 } from "./__tests__/host-report-metadata-fixtures";
 
@@ -82,6 +83,43 @@ describe("pickHostReportedMetadata", () => {
     expect(metadataWriteTemplateIds()).toEqual(
       [...REVIEWED_METADATA_WRITE_TEMPLATES].sort(),
     );
+  });
+
+  // security-audit's 9 bypass forms and review's 2: each carries a detected
+  // literal key AND a part that could write any top-level key. Each must be
+  // extracted as a metadata write whose hash is not reviewed, so it fails the
+  // pin above until someone reviews it.
+  it("extracts every bypass form as an unreviewed metadata write", () => {
+    const forms = [
+      "jsonb_set(metadata,'{billing}',$2) || jsonb_build_object($3::text, $4)",
+      "jsonb_set(metadata,'{billing}',$2) || to_jsonb($3)",
+      "jsonb_set(metadata,'{billing}',$2) || ($3)::jsonb",
+      "jsonb_set(jsonb_set(metadata,'{billing}',$2), $3::text[], $4)",
+      "jsonb_set(jsonb_set(metadata,'{billing}',$2), string_to_array($3, ','), $4)",
+      "jsonb_set($2::jsonb, '{billing}', $3)",
+      "jsonb_set(metadata,'{billing}',$2) || ${extra}",
+      "jsonb_set(metadata,'{billing}',$2) || (SELECT m FROM t WHERE t.id = $3)",
+      "jsonb_concat(jsonb_set(metadata,'{billing}',$2), $3::jsonb)",
+      "jsonb_set(metadata,'{billing}',$2) || unreviewed_metadata_function($3)",
+      "jsonb_set(metadata,'{billing}',$2) || '{\"review_future\": 1}'::jsonb",
+    ];
+    const reviewed = new Set(REVIEWED_METADATA_WRITE_TEMPLATES);
+    for (const form of forms) {
+      const source = [
+        "const extra = '';",
+        "pool().query(",
+        "  `UPDATE project_hosts",
+        `      SET metadata = ${form.replace(/`/g, "\\`")},`,
+        "          updated = NOW()",
+        "    WHERE id = $1 AND deleted IS NULL`,",
+        ");",
+      ].join("\n");
+      const found = metadataWriteTemplatesIn("server/probe.ts", source);
+      expect(found).toHaveLength(1);
+      // the whole template, past the subquery's inner WHERE
+      expect(found[0].text).toMatch(/updated = NOW\(\) WHERE id = \$1/);
+      expect(reviewed.has(`${found[0].file}#${found[0].sha256}`)).toBe(false);
+    }
   });
 
   it("hashes whole templates, including INSERT VALUES and ON CONFLICT parts", () => {
