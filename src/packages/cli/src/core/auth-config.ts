@@ -2,18 +2,19 @@ import { randomBytes } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
-  writeFileSync,
   writeSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { applyPrivateMode, cocalcCliConfigDir } from "./platform-paths";
 
@@ -149,28 +150,66 @@ export function saveAuthConfig(
 }
 
 // The config file holds every profile's credentials, so it is never written
-// in place: a crash or a full disk mid-write must not truncate it. Write a
-// private temp file in the same directory, fsync it, then rename it over the
-// file. A symlinked config keeps its link: the rename replaces the link's
-// target, as the old in-place write did.
-function writeFileAtomically(path: string, text: string): void {
-  let target = path;
-  let isLink = false;
+// in place: a crash, a short write or a full disk must not truncate it. Write
+// a private temp file in the same directory (every byte, then fsync), then
+// rename it over the file. A symlinked config keeps its link: the rename
+// replaces the link's final target (also when that target does not exist
+// yet). Any error other than "does not exist" aborts without touching the
+// config. A hard-linked config loses its other links on the rename (they keep
+// the old contents); a symlink is the supported way to share one.
+const MAX_LINKS = 40;
+
+function isNotFound(err: any): boolean {
+  return err?.code === "ENOENT";
+}
+
+function resolveWriteTarget(path: string): string {
+  let st;
   try {
-    isLink = lstatSync(path).isSymbolicLink();
-  } catch {
-    // does not exist yet
+    st = lstatSync(path);
+  } catch (err) {
+    if (isNotFound(err)) return path; // a new config file
+    throw err;
   }
-  if (isLink) {
+  if (!st.isSymbolicLink()) return path;
+  try {
+    return realpathSync(path);
+  } catch (err) {
+    if (!isNotFound(err)) throw err;
+  }
+  // A dangling link (possibly a chain): follow it by hand to the missing
+  // final target, so the atomic write creates that target.
+  let current = path;
+  for (let i = 0; i < MAX_LINKS; i++) {
+    let cur;
     try {
-      target = realpathSync(path);
-    } catch {
-      // A dangling link: keep the previous behaviour of writing through it.
-      writeFileSync(path, text, { encoding: "utf8", mode: CONFIG_FILE_MODE });
-      applyPrivateMode(path, CONFIG_FILE_MODE);
-      return;
+      cur = lstatSync(current);
+    } catch (err) {
+      if (isNotFound(err)) return current;
+      throw err;
     }
+    if (!cur.isSymbolicLink()) return realpathSync(current);
+    current = resolve(dirname(current), readlinkSync(current));
   }
+  const err: any = new Error(`too many symbolic links: ${path}`);
+  err.code = "ELOOP";
+  throw err;
+}
+
+function writeAll(fd: number, text: string): void {
+  const buf = Buffer.from(text, "utf8");
+  let offset = 0;
+  while (offset < buf.length) {
+    const n = writeSync(fd, buf, offset, buf.length - offset);
+    if (!(n > 0)) {
+      throw new Error("auth config write made no progress");
+    }
+    offset += n;
+  }
+}
+
+function writeFileAtomically(path: string, text: string): void {
+  const target = resolveWriteTarget(path);
   const tmp = join(
     dirname(target),
     `.${basename(target)}.${randomBytes(6).toString("hex")}.tmp`,
@@ -178,8 +217,14 @@ function writeFileAtomically(path: string, text: string): void {
   try {
     const fd = openSync(tmp, "wx", CONFIG_FILE_MODE);
     try {
-      writeSync(fd, text);
+      writeAll(fd, text);
       fsyncSync(fd);
+      const size = fstatSync(fd).size;
+      if (size !== Buffer.byteLength(text, "utf8")) {
+        throw new Error(
+          `auth config temp file is ${size} bytes, expected more`,
+        );
+      }
     } finally {
       closeSync(fd);
     }

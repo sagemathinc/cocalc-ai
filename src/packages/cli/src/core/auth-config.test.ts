@@ -363,3 +363,180 @@ test(
     }
   },
 );
+
+// ---- fault injection (review A1/A2, security-audit short write)
+
+const fsMod = require("node:fs");
+
+function withPatched<T>(name: string, impl: any, fn: () => T): T {
+  const orig = fsMod[name];
+  fsMod[name] = impl;
+  try {
+    return fn();
+  } finally {
+    fsMod[name] = orig;
+  }
+}
+
+function savedFixture() {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+  const file = join(dir, "config.json");
+  saveAuthConfig(sampleConfig("remember_me=original"), file);
+  return { dir, file, before: readFileSync(file, "utf8") };
+}
+
+test("short positive writes are completed: the config is written in full", () => {
+  const { dir, file } = savedFixture();
+  try {
+    const orig = fsMod.writeSync;
+    withPatched(
+      "writeSync",
+      (fd: number, buf: Buffer, off: number, len: number) =>
+        orig(fd, buf, off, Math.min(len, 7)),
+      () => saveAuthConfig(sampleConfig("remember_me=new"), file),
+    );
+    assert.equal(loadAuthConfig(file).profiles.dev.cookie, "remember_me=new");
+    assert.deepEqual(readdirSync(dir), ["config.json"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const [label, name, makeImpl] of [
+  ["a write that makes no progress", "writeSync", () => () => 0],
+  [
+    "an error after a partial write",
+    "writeSync",
+    (orig: any) => {
+      let calls = 0;
+      return (fd: number, buf: Buffer, off: number, len: number) => {
+        if (++calls > 1)
+          throw Object.assign(new Error("EFBIG"), { code: "EFBIG" });
+        return orig(fd, buf, off, Math.min(len, 10));
+      };
+    },
+  ],
+  [
+    "an fsync failure",
+    "fsyncSync",
+    () => () => {
+      throw Object.assign(new Error("EIO"), { code: "EIO" });
+    },
+  ],
+  [
+    "a rename failure",
+    "renameSync",
+    () => () => {
+      throw Object.assign(new Error("EXDEV"), { code: "EXDEV" });
+    },
+  ],
+] as Array<[string, string, (orig: any) => any]>) {
+  test(`${label} leaves the existing config byte-identical and no temp file`, () => {
+    const { dir, file, before } = savedFixture();
+    try {
+      const impl = makeImpl(fsMod[name]);
+      assert.throws(() =>
+        withPatched(name, impl, () =>
+          saveAuthConfig(sampleConfig("remember_me=new"), file),
+        ),
+      );
+      assert.equal(readFileSync(file, "utf8"), before);
+      assert.deepEqual(readdirSync(dir), ["config.json"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test(
+  "a real file-size limit (RLIMIT_FSIZE) leaves the config byte-identical and throws",
+  { skip: process.platform === "win32" },
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+    const file = join(dir, "config.json");
+    try {
+      const big = sampleConfig("remember_me=" + "x".repeat(20));
+      saveAuthConfig(big, file);
+      const before = readFileSync(file, "utf8");
+      const script = join(dir, "save.js");
+      writeFileSync(
+        script,
+        [
+          `const m = require(${JSON.stringify(require.resolve("./auth-config"))});`,
+          "const cfg = { current_profile: 'dev', profiles: { dev: { api: 'https://cocalc.example.test', cookie: 'remember_me=' + 'y'.repeat(9000) } } };",
+          "try { m.saveAuthConfig(cfg, process.argv[2]); console.log('SAVED'); } catch (e) { console.log('THREW ' + (e.code || e.message)); }",
+        ].join("\n"),
+      );
+      const { spawnSync } = require("node:child_process");
+      const res = spawnSync(
+        "/bin/bash",
+        [
+          "-c",
+          'ulimit -f 4; exec "$0" "$1" "$2"',
+          process.execPath,
+          script,
+          file,
+        ],
+        { encoding: "utf8" },
+      );
+      assert.match(res.stdout, /^THREW /, res.stdout + res.stderr);
+      assert.equal(readFileSync(file, "utf8"), before);
+      assert.deepEqual(readdirSync(dir).sort(), ["config.json", "save.js"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("symlink resolution errors other than not-found abort without writing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+  const real = join(dir, "real.json");
+  const link = join(dir, "config.json");
+  try {
+    saveAuthConfig(sampleConfig("remember_me=original"), real);
+    const before = readFileSync(real, "utf8");
+    symlinkSync("real.json", link);
+    for (const name of ["realpathSync", "lstatSync"]) {
+      assert.throws(
+        () =>
+          withPatched(
+            name,
+            () => {
+              throw Object.assign(new Error("EIO"), { code: "EIO" });
+            },
+            () => saveAuthConfig(sampleConfig("remember_me=new"), link),
+          ),
+        /EIO/,
+        name,
+      );
+      assert.equal(readFileSync(real, "utf8"), before, name);
+      assert.equal(lstatSync(link).isSymbolicLink(), true);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a dangling symlink chain gets its final target created atomically", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+  const link = join(dir, "config.json");
+  try {
+    symlinkSync("mid.json", link);
+    symlinkSync("final.json", join(dir, "mid.json"));
+    saveAuthConfig(sampleConfig("remember_me=chain"), link);
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
+    assert.equal(lstatSync(join(dir, "mid.json")).isSymbolicLink(), true);
+    assert.equal(
+      loadAuthConfig(join(dir, "final.json")).profiles.dev.cookie,
+      "remember_me=chain",
+    );
+    assert.equal(statSync(join(dir, "final.json")).mode & 0o777, 0o600);
+    assert.deepEqual(readdirSync(dir).sort(), [
+      "config.json",
+      "final.json",
+      "mid.json",
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
