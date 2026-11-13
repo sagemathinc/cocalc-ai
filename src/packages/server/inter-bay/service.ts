@@ -477,6 +477,7 @@ import { runAuditedProjectBackupRepoPrunePlan } from "@cocalc/server/project-bac
 import {
   getProjectBackupShardAdminStatus,
   getSeedProjectBackupConfig,
+  getSeedProjectBackupConfigForDeletion,
   releaseProjectBackupRepoAssignment,
   resolveProjectBackupRepoAssignment,
 } from "@cocalc/server/project-backup";
@@ -2765,6 +2766,16 @@ async function startHostConnectionService(): Promise<void> {
         project_region,
         backup_repo_id,
         preferred_backup_repo_id,
+      }),
+    getSeedBackupConfigForDeletion: async ({
+      project_id,
+      backup_repo_id,
+      source_bay_id,
+    }) =>
+      await getSeedProjectBackupConfigForDeletion({
+        project_id,
+        backup_repo_id,
+        source_bay_id,
       }),
     resolveSeedBackupRepoAssignment: async ({
       project_id,

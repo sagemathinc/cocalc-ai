@@ -14,6 +14,7 @@ import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
   deleteProjectDataOnHost,
+  invalidateProjectBackupConfigOnHostChecked,
   stopProjectOnHost,
 } from "@cocalc/server/project-host/control";
 import {
@@ -21,6 +22,7 @@ import {
   getProjectBackupConfigForDeletion,
   releaseProjectBackupRepoAssignment,
   resolveProjectBackupRepoAssignment,
+  type DeletionBackupConfigEmpty,
 } from "@cocalc/server/project-backup";
 import { PROJECT_HARD_DELETE_PROJECT_ID_TABLES } from "@cocalc/server/projects/hard-delete-tables";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -41,6 +43,62 @@ const BACKUP_PURGE_RETRY_DELAYS_MS = [
   2 * 60 * 60_000,
 ] as const;
 let deletedProjectsSchemaReady: Promise<void> | undefined;
+
+// Every value backup_purge_status may hold, legacy ones included: a
+// database constraint rejects any other on every insert and update.
+//   scheduled, running, failed, quarantined: the purge lifecycle;
+//   purged: snapshots were actually forgotten;
+//   no_backup_repo: no backup repository was recorded at deletion, so none
+//     was ever handed to a host (see getDeletedProjectBackupConfigForDeletion);
+//   purged_corrective: closed by hand without a forget, e.g. after the whole
+//     repository was deleted; requires metadata.backup_purge_correction
+//     {reason, at, ref}, also enforced by the database.
+export const BACKUP_PURGE_STATUSES = [
+  "scheduled",
+  "running",
+  "failed",
+  "quarantined",
+  "purged",
+  "no_backup_repo",
+  "purged_corrective",
+] as const;
+
+// The two checks, added NOT VALID: existing rows are not checked, but every
+// insert and every update of any row is. The corrective one fails closed: a
+// CHECK passes on NULL, so each part is wrapped in COALESCE(..., false).
+const CORRECTION = "metadata->'backup_purge_correction'";
+const DELETED_PROJECTS_CONSTRAINTS = [
+  {
+    name: "deleted_projects_purge_status_known",
+    check: `backup_purge_status IS NULL OR backup_purge_status IN (${BACKUP_PURGE_STATUSES.map((s) => `'${s}'`).join(", ")})`,
+  },
+  {
+    name: "deleted_projects_corrective_has_evidence",
+    check: `backup_purge_status IS DISTINCT FROM 'purged_corrective' OR COALESCE(
+      jsonb_typeof(${CORRECTION}) = 'object'
+      AND jsonb_typeof(${CORRECTION}->'reason') = 'string'
+      AND length(btrim(${CORRECTION}->>'reason')) > 0
+      AND jsonb_typeof(${CORRECTION}->'ref') = 'string'
+      AND length(btrim(${CORRECTION}->>'ref')) > 0
+      AND jsonb_typeof(${CORRECTION}->'at') = 'string'
+      AND (${CORRECTION}->>'at') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}',
+      false)`,
+  },
+] as const;
+
+// A deletion configuration that can't be built now, for backups that may
+// exist: the purge must fail (and be retried, then quarantined), never be
+// recorded as done.
+export class BackupConfigMissingError extends Error {
+  readonly token: Exclude<DeletionBackupConfigEmpty, "no_backup_repo">;
+  constructor(token: Exclude<DeletionBackupConfigEmpty, "no_backup_repo">) {
+    super(
+      `backup repository recorded but its configuration is missing: ${token}`,
+    );
+    this.name = "BackupConfigMissingError";
+    this.token = token;
+  }
+}
 
 function backupIndexHost(project_id: string): string {
   return `project-${project_id}-index`;
@@ -85,6 +143,15 @@ export type HardDeleteProjectResult = {
   already_deleted?: boolean;
   backup: {
     mode: "immediate" | "scheduled";
+    // purged: forgotten now; no_backup_repo: none recorded at deletion;
+    // scheduled: for the purge worker; retrying: the configuration could not
+    // be built now, so the purge worker retries it; already_deleted.
+    outcome:
+      | "purged"
+      | "no_backup_repo"
+      | "scheduled"
+      | "retrying"
+      | "already_deleted";
     retention_days: number;
     purge_due_at: string | null;
     purged_at: string | null;
@@ -225,6 +292,22 @@ async function ensureDeletedProjectsSchema(): Promise<void> {
       await pool().query(
         "CREATE INDEX IF NOT EXISTS deleted_projects_backup_purge_due_at_idx ON deleted_projects(backup_purge_due_at)",
       );
+      for (const { name, check } of DELETED_PROJECTS_CONSTRAINTS) {
+        const { rows } = await pool().query(
+          "SELECT 1 FROM pg_constraint WHERE conname=$1 AND conrelid='deleted_projects'::regclass",
+          [name],
+        );
+        if (rows.length > 0) continue;
+        try {
+          // NOT VALID: a brief lock, no scan of existing rows.
+          await pool().query(
+            `ALTER TABLE deleted_projects ADD CONSTRAINT ${name} CHECK (${check}) NOT VALID`,
+          );
+        } catch (err) {
+          // another hub added it meanwhile
+          if ((err as any)?.code !== "42710") throw err;
+        }
+      }
     })().catch((err) => {
       deletedProjectsSchemaReady = undefined;
       throw err;
@@ -395,6 +478,10 @@ async function forgetAllSnapshotsForHost({
 }
 
 type BackupDeletionResult = {
+  // purged: the forget ran; no_backup_repo: no repository was recorded, so
+  // there was nothing to forget. A configuration that can't be built throws
+  // BackupConfigMissingError instead.
+  outcome: "purged" | "no_backup_repo";
   skipped: boolean;
   deleted_snapshots: number;
   deleted_index_snapshots: number;
@@ -404,19 +491,26 @@ type BackupDeletionResult = {
 async function deleteProjectBackupsWithToml({
   project_id,
   toml,
+  empty,
   onProgress,
 }: {
   project_id: string;
   toml: string;
+  empty?: DeletionBackupConfigEmpty;
   onProgress?: () => Promise<void>;
 }): Promise<BackupDeletionResult> {
   if (!toml.trim()) {
-    return {
-      skipped: true,
-      deleted_snapshots: 0,
-      deleted_index_snapshots: 0,
-      reason: "no backup configuration",
-    };
+    if (empty === "no_backup_repo") {
+      return {
+        outcome: "no_backup_repo",
+        skipped: true,
+        deleted_snapshots: 0,
+        deleted_index_snapshots: 0,
+        reason: "no backup repository",
+      };
+    }
+    // Unclassified empty configurations fail closed too.
+    throw new BackupConfigMissingError(empty ?? "repo_missing");
   }
 
   const tempDir = await mkdtemp(join(tmpdir(), "cocalc-hard-delete-"));
@@ -434,6 +528,7 @@ async function deleteProjectBackupsWithToml({
       onProgress,
     });
     return {
+      outcome: "purged",
       skipped: false,
       deleted_snapshots: deletedSnapshots,
       deleted_index_snapshots: deletedIndexSnapshots,
@@ -446,8 +541,10 @@ async function deleteProjectBackupsWithToml({
 async function deleteProjectBackups(
   project_id: string,
 ): Promise<BackupDeletionResult> {
-  const { toml } = await getProjectBackupConfigForDeletion({ project_id });
-  return await deleteProjectBackupsWithToml({ project_id, toml });
+  const { toml, empty } = await getProjectBackupConfigForDeletion({
+    project_id,
+  });
+  return await deleteProjectBackupsWithToml({ project_id, toml, empty });
 }
 
 async function deleteProjectBackupsForDeletedProject({
@@ -461,12 +558,17 @@ async function deleteProjectBackupsForDeletedProject({
   backup_repo_id: string | null;
   onProgress?: () => Promise<void>;
 }): Promise<BackupDeletionResult> {
-  const { toml } = await getDeletedProjectBackupConfigForDeletion({
+  const { toml, empty } = await getDeletedProjectBackupConfigForDeletion({
     project_id,
     host_id,
     backup_repo_id,
   });
-  return await deleteProjectBackupsWithToml({ project_id, toml, onProgress });
+  return await deleteProjectBackupsWithToml({
+    project_id,
+    toml,
+    empty,
+    onProgress,
+  });
 }
 
 async function runDeleteMaybeMissingTable({
@@ -503,6 +605,99 @@ async function runDeleteMaybeMissingTable({
   }
 }
 
+// What hard delete did on the project's host, kept in deleted_projects
+// metadata as fixed tokens only (raw errors may name subjects or ids; they go
+// to the log).
+//   data: completed (the host's delete call finished without error), failed,
+//     no_host;
+//   profile: pending (rows committed, the removal not done yet), removed or
+//     absent (confirmed by the host), failed (the host reported an error),
+//     unconfirmed (an older host that doesn't report it), error (the call
+//     itself failed), no_host.
+type HostCleanupErrorToken =
+  | "timeout"
+  | "unreachable"
+  | "rpc_error"
+  | "rm_failed";
+type HostCleanupRecord = {
+  at: string;
+  data: "completed" | "failed" | "no_host";
+  data_error?: HostCleanupErrorToken;
+  profile:
+    | "pending"
+    | "removed"
+    | "absent"
+    | "failed"
+    | "unconfirmed"
+    | "error"
+    | "no_host";
+  profile_error?: HostCleanupErrorToken;
+};
+
+function hostCleanupErrorToken(err: unknown): HostCleanupErrorToken {
+  const code = (err as any)?.code;
+  const text = `${(err as any)?.message ?? err}`;
+  if (code === 408 || /timeout|timed out/i.test(text)) return "timeout";
+  if (code === 503 || /no responders|not connected|unreachable/i.test(text)) {
+    return "unreachable";
+  }
+  return "rpc_error";
+}
+
+async function removeHostBackupProfile({
+  project_id,
+  host_id,
+  hostCleanup,
+}: {
+  project_id: string;
+  host_id: string;
+  hostCleanup: HostCleanupRecord;
+}): Promise<void> {
+  let profile: HostCleanupRecord["profile"];
+  let profile_error: HostCleanupErrorToken | undefined;
+  try {
+    const result = await invalidateProjectBackupConfigOnHostChecked({
+      project_id,
+      host_id,
+    });
+    profile = result.profile ?? "unconfirmed";
+    if (profile === "failed") profile_error = "rm_failed";
+  } catch (err) {
+    profile = "error";
+    profile_error = hostCleanupErrorToken(err);
+    log.warn("hard delete host backup profile removal failed", {
+      project_id,
+      host_id,
+      err: `${err}`,
+    });
+  }
+  if (profile === "failed" || profile === "unconfirmed") {
+    log.warn("hard delete host backup profile not confirmed removed", {
+      project_id,
+      host_id,
+      profile,
+    });
+  }
+  const record: HostCleanupRecord = {
+    ...hostCleanup,
+    profile,
+    ...(profile_error ? { profile_error } : {}),
+  };
+  try {
+    await pool().query(
+      `UPDATE deleted_projects
+       SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{host_cleanup}', $2::jsonb, true)
+       WHERE project_id=$1`,
+      [project_id, JSON.stringify(record)],
+    );
+  } catch (err) {
+    log.warn("hard delete host cleanup record update failed", {
+      project_id,
+      err: `${err}`,
+    });
+  }
+}
+
 async function purgeProjectRows({
   project,
   deleted_by,
@@ -511,14 +706,22 @@ async function purgeProjectRows({
   backup_purge_due_at,
   backup_purge_status,
   backups_purged_at,
+  backup_purge_error = null,
+  backup_purge_attempts = 0,
+  backup_purge_next_attempt_at = null,
+  host_cleanup,
 }: {
   project: ProjectRow;
   deleted_by: string;
-  backup: BackupDeletionResult;
+  backup: Omit<BackupDeletionResult, "outcome"> & { outcome?: string };
   backup_retention_days: number;
   backup_purge_due_at: Date | null;
-  backup_purge_status: string;
+  backup_purge_status: (typeof BACKUP_PURGE_STATUSES)[number];
   backups_purged_at: Date | null;
+  backup_purge_error?: string | null;
+  backup_purge_attempts?: number;
+  backup_purge_next_attempt_at?: Date | null;
+  host_cleanup: HostCleanupRecord;
 }): Promise<string[]> {
   await ensureDeletedProjectsSchema();
   const purged: string[] = [];
@@ -535,6 +738,7 @@ async function purgeProjectRows({
     const owner_account_id = ownerAccountIdFromUsers(project.users);
     const metadata = {
       backup,
+      host_cleanup,
     };
     await client.query(
       `
@@ -548,7 +752,7 @@ async function purgeProjectRows({
           )
         VALUES
           ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12, $13,
-           NULL, NULL, 0, NULL, NULL, $14::jsonb)
+           NULL, $14, $15, $16, NULL, $17::jsonb)
         ON CONFLICT (project_id)
         DO UPDATE SET
           title = EXCLUDED.title,
@@ -585,6 +789,9 @@ async function purgeProjectRows({
         backup_purge_due_at,
         backups_purged_at,
         backup_purge_status,
+        backup_purge_error,
+        backup_purge_attempts,
+        backup_purge_next_attempt_at,
         JSON.stringify(metadata),
       ],
     );
@@ -810,12 +1017,16 @@ async function markDeletedProjectBackupPurgeSuccess({
   result: BackupDeletionResult;
   attempts: number;
 }): Promise<boolean> {
+  // A forget ran: purged now. No repository recorded: nothing was purged, so
+  // no purge time, and no longer due.
+  const purged = result.outcome === "purged";
   const { rowCount } = await pool().query(
     `
       UPDATE deleted_projects
       SET
-        backup_purge_status='purged',
-        backups_purged_at=NOW(),
+        backup_purge_status=$4,
+        backups_purged_at=CASE WHEN $5::boolean THEN NOW() ELSE NULL END,
+        backup_purge_due_at=CASE WHEN $5::boolean THEN backup_purge_due_at ELSE NULL END,
         backup_purge_started_at=NULL,
         backup_purge_error=NULL,
         backup_purge_next_attempt_at=NULL,
@@ -830,7 +1041,13 @@ async function markDeletedProjectBackupPurgeSuccess({
         AND backup_purge_status='running'
         AND backup_purge_attempts=$3
     `,
-    [project_id, JSON.stringify(result), attempts],
+    [
+      project_id,
+      JSON.stringify(result),
+      attempts,
+      purged ? "purged" : "no_backup_repo",
+      purged,
+    ],
   );
   return (rowCount ?? 0) > 0;
 }
@@ -900,6 +1117,7 @@ export async function processDueDeletedProjectBackupPurges({
 } = {}): Promise<{
   processed: number;
   purged: number;
+  no_backup_repo: number;
   failed: number;
   quarantined: number;
   recovered_stale: number;
@@ -939,6 +1157,7 @@ export async function processDueDeletedProjectBackupPurges({
     [batchSize, BACKUP_PURGE_MAX_ATTEMPTS],
   );
   let purged = 0;
+  let noBackupRepo = 0;
   let failed = 0;
   let processed = 0;
   let quarantined = stale.quarantined;
@@ -967,7 +1186,11 @@ export async function processDueDeletedProjectBackupPurges({
           attempts: claimed.backup_purge_attempts,
         })
       ) {
-        purged += 1;
+        if (result.outcome === "purged") {
+          purged += 1;
+        } else {
+          noBackupRepo += 1;
+        }
       }
     } catch (err) {
       const failure = await markDeletedProjectBackupPurgeFailure({
@@ -986,6 +1209,7 @@ export async function processDueDeletedProjectBackupPurges({
   return {
     processed,
     purged,
+    no_backup_repo: noBackupRepo,
     failed,
     quarantined,
     recovered_stale: stale.recovered,
@@ -1031,6 +1255,7 @@ export async function hardDeleteProject({
         already_deleted: true,
         backup: {
           mode: "immediate",
+          outcome: "already_deleted",
           retention_days: 0,
           purge_due_at: null,
           purged_at: null,
@@ -1046,24 +1271,58 @@ export async function hardDeleteProject({
   }
   const project = access.project;
 
-  let backupDeleteResult: BackupDeletionResult;
-  let backupPurgeStatus: string;
+  let backupDeleteResult: Omit<BackupDeletionResult, "outcome">;
+  let backupOutcome: HardDeleteProjectResult["backup"]["outcome"];
+  let backupPurgeStatus: (typeof BACKUP_PURGE_STATUSES)[number];
   let backupPurgeDueAt: Date | null;
   let backupsPurgedAt: Date | null;
+  let backupPurgeError: string | null = null;
+  let backupPurgeAttempts = 0;
+  let backupPurgeNextAttemptAt: Date | null = null;
   if (purgeBackupsImmediately) {
     await progress({
       step: "backups",
       message: "deleting backups",
       detail: { project_id },
     });
-    backupDeleteResult = await deleteProjectBackups(project_id);
-    backupPurgeStatus = "purged";
-    backupPurgeDueAt = null;
-    backupsPurgedAt = new Date();
+    try {
+      const result = await deleteProjectBackups(project_id);
+      backupDeleteResult = result;
+      backupOutcome = result.outcome;
+      if (result.outcome === "purged") {
+        backupPurgeStatus = "purged";
+        backupsPurgedAt = new Date();
+      } else {
+        // Nothing was purged: no purge time, and nothing left due.
+        backupPurgeStatus = "no_backup_repo";
+        backupsPurgedAt = null;
+      }
+      backupPurgeDueAt = null;
+    } catch (err) {
+      if (!(err instanceof BackupConfigMissingError)) throw err;
+      // The configuration can't be built now, for backups that may exist.
+      // The delete goes ahead as asked; the backup purge is recorded as
+      // failed and due now, so the purge worker retries it and, after its
+      // retries, quarantines it (which backup-purge health reports).
+      backupOutcome = "retrying";
+      backupPurgeStatus = "failed";
+      backupPurgeDueAt = new Date();
+      backupsPurgedAt = null;
+      backupPurgeError = err.message;
+      backupPurgeAttempts = 1;
+      backupPurgeNextAttemptAt = backupPurgeRetryAt(1);
+      backupDeleteResult = {
+        skipped: true,
+        deleted_snapshots: 0,
+        deleted_index_snapshots: 0,
+        reason: err.message,
+      };
+    }
   } else {
     backupPurgeDueAt = new Date(
       Date.now() + retentionDays * 24 * 60 * 60 * 1000,
     );
+    backupOutcome = "scheduled";
     backupPurgeStatus = "scheduled";
     backupsPurgedAt = null;
     backupDeleteResult = {
@@ -1085,6 +1344,7 @@ export async function hardDeleteProject({
 
   const backup: HardDeleteProjectResult["backup"] = {
     mode: purgeBackupsImmediately ? "immediate" : "scheduled",
+    outcome: backupOutcome,
     retention_days: purgeBackupsImmediately ? 0 : retentionDays,
     purge_due_at: backupPurgeDueAt ? backupPurgeDueAt.toISOString() : null,
     purged_at: backupsPurgedAt ? backupsPurgedAt.toISOString() : null,
@@ -1096,6 +1356,13 @@ export async function hardDeleteProject({
     message: "deleting local host data",
     detail: { project_id, host_id: project.host_id },
   });
+  // The data now; the cached backup profile only after the rows are gone
+  // (below), so a config fetch racing the delete can't re-create it.
+  let hostCleanup: HostCleanupRecord = {
+    at: new Date().toISOString(),
+    data: "no_host",
+    profile: "no_host",
+  };
   if (project.host_id) {
     try {
       await stopProjectOnHost(project.project_id);
@@ -1106,13 +1373,21 @@ export async function hardDeleteProject({
         err: `${err}`,
       });
     }
+    hostCleanup = { ...hostCleanup, profile: "pending" };
     try {
+      // Resolves only after the host's delete call finished without error.
       await deleteProjectDataOnHost({
         project_id: project.project_id,
         host_id: project.host_id,
       });
+      hostCleanup = { ...hostCleanup, data: "completed" };
     } catch (err) {
-      log.debug("hard delete host data cleanup best-effort failed", {
+      hostCleanup = {
+        ...hostCleanup,
+        data: "failed",
+        data_error: hostCleanupErrorToken(err),
+      };
+      log.warn("hard delete host data cleanup best-effort failed", {
         project_id: project.project_id,
         host_id: project.host_id,
         err: `${err}`,
@@ -1148,7 +1423,20 @@ export async function hardDeleteProject({
       backup_purge_due_at: backupPurgeDueAt,
       backup_purge_status: backupPurgeStatus,
       backups_purged_at: backupsPurgedAt,
+      backup_purge_error: backupPurgeError,
+      backup_purge_attempts: backupPurgeAttempts,
+      backup_purge_next_attempt_at: backupPurgeNextAttemptAt,
+      host_cleanup: hostCleanup,
     });
+    // The rows are committed: the host's config fetch for this project now
+    // fails, so its cached backup profile can't come back once removed.
+    if (project.host_id) {
+      await removeHostBackupProfile({
+        project_id: project.project_id,
+        host_id: project.host_id,
+        hostCleanup,
+      });
+    }
     await publishProjectHardDeleteRemoveEvents(project).catch((err) => {
       log.warn("failed to publish hard-delete project removal events", {
         project_id,

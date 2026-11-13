@@ -17,6 +17,8 @@ const deleteAppSubdomainDnsMock = jest.fn();
 const releaseProjectBackupRepoAssignmentMock = jest.fn();
 const resolveProjectBackupRepoAssignmentMock = jest.fn();
 const getDeletedProjectBackupConfigForDeletionMock = jest.fn();
+const invalidateProjectBackupConfigOnHostCheckedMock = jest.fn();
+const getProjectBackupConfigForDeletionMock = jest.fn();
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -54,6 +56,8 @@ jest.mock("@cocalc/server/project-host/control", () => ({
   stopProjectOnHost: (...args: any[]) => stopProjectOnHostMock(...args),
   deleteProjectDataOnHost: (...args: any[]) =>
     deleteProjectDataOnHostMock(...args),
+  invalidateProjectBackupConfigOnHostChecked: (...args: any[]) =>
+    invalidateProjectBackupConfigOnHostCheckedMock(...args),
 }));
 
 jest.mock("@cocalc/server/cloud/dns", () => ({
@@ -67,7 +71,8 @@ jest.mock("@cocalc/server/project-backup", () => ({
   __esModule: true,
   getDeletedProjectBackupConfigForDeletion: (...args: any[]) =>
     getDeletedProjectBackupConfigForDeletionMock(...args),
-  getProjectBackupConfigForDeletion: jest.fn(),
+  getProjectBackupConfigForDeletion: (...args: any[]) =>
+    getProjectBackupConfigForDeletionMock(...args),
   // No status known: every shard counts toward restore drill coverage.
   getProjectBackupRepoStatuses: jest.fn(async () => new Map()),
   releaseProjectBackupRepoAssignment: (...args: any[]) =>
@@ -358,6 +363,10 @@ describe("hard delete project cleanup", () => {
     resolveProjectBackupRepoAssignmentMock.mockResolvedValue(undefined);
     getDeletedProjectBackupConfigForDeletionMock.mockResolvedValue({
       toml: "",
+      empty: "no_backup_repo",
+    });
+    invalidateProjectBackupConfigOnHostCheckedMock.mockResolvedValue({
+      profile: "removed",
     });
   });
 
@@ -608,16 +617,17 @@ describe("hard delete project cleanup", () => {
     );
     getDeletedProjectBackupConfigForDeletionMock
       .mockRejectedValueOnce(new Error("damaged repository"))
-      .mockResolvedValue({ toml: "" });
+      .mockResolvedValue({ toml: "", empty: "no_backup_repo" });
 
     const { processDueDeletedProjectBackupPurges } =
       await import("./hard-delete");
     await expect(
       processDueDeletedProjectBackupPurges({ limit: 1 }),
     ).resolves.toMatchObject({ processed: 1, failed: 1, quarantined: 0 });
+    // no repository recorded: done, but never counted as purged
     await expect(
       processDueDeletedProjectBackupPurges({ limit: 1 }),
-    ).resolves.toMatchObject({ processed: 1, purged: 1 });
+    ).resolves.toMatchObject({ processed: 1, purged: 0, no_backup_repo: 1 });
 
     const { rows } = await getPool().query<{
       project_id: string;
@@ -638,7 +648,7 @@ describe("hard delete project cleanup", () => {
     expect(rows[0]?.backup_purge_next_attempt_at).toBeInstanceOf(Date);
     expect(rows[1]).toMatchObject({
       project_id: OTHER_PROJECT_ID,
-      backup_purge_status: "purged",
+      backup_purge_status: "no_backup_repo",
       backup_purge_attempts: 1,
     });
   });
@@ -661,7 +671,8 @@ describe("hard delete project cleanup", () => {
       processDueDeletedProjectBackupPurges({ limit: 1 }),
     ).resolves.toMatchObject({
       processed: 1,
-      purged: 1,
+      purged: 0,
+      no_backup_repo: 1,
       quarantined: 1,
       recovered_stale: 1,
     });
@@ -675,5 +686,481 @@ describe("hard delete project cleanup", () => {
     );
     expect(rows[0]?.backup_purge_status).toBe("quarantined");
     expect(rows[0]?.backup_purge_quarantined_at).toBeInstanceOf(Date);
+  });
+
+  describe("backup purge outcomes", () => {
+    const HOST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const parseOutputMock = () =>
+      jest.requireMock("@cocalc/backend/sandbox/exec").parseOutput as jest.Mock;
+    const row = async (project_id = PROJECT_ID) =>
+      (
+        await getPool().query(
+          `SELECT backup_purge_status, backups_purged_at, backup_purge_due_at,
+                  backup_purge_attempts, backup_purge_next_attempt_at,
+                  backup_purge_error, metadata
+           FROM deleted_projects WHERE project_id=$1`,
+          [project_id],
+        )
+      ).rows[0];
+    const scheduleDue = async (project_id = PROJECT_ID) =>
+      await getPool().query(
+        `INSERT INTO deleted_projects (project_id, backup_purge_due_at, backup_purge_status)
+         VALUES ($1, NOW() - INTERVAL '1 hour', 'scheduled')`,
+        [project_id],
+      );
+    const worker = async () =>
+      await (
+        await import("./hard-delete")
+      ).processDueDeletedProjectBackupPurges({
+        limit: 5,
+      });
+    const health = async () =>
+      await (await import("./backup-purge-health")).getBackupPurgeHealth();
+
+    beforeEach(() => {
+      parseOutputMock().mockReset();
+      getProjectBackupConfigForDeletionMock.mockReset();
+    });
+
+    describe("the scheduled purge", () => {
+      it("records no repository as no_backup_repo: not purged, not due, not counted as purged", async () => {
+        await scheduleDue();
+        await expect(worker()).resolves.toMatchObject({
+          processed: 1,
+          purged: 0,
+          no_backup_repo: 1,
+        });
+        expect(await row()).toMatchObject({
+          backup_purge_status: "no_backup_repo",
+          backups_purged_at: null,
+          backup_purge_due_at: null,
+        });
+        // not claimed again, not overdue
+        await expect(worker()).resolves.toMatchObject({ processed: 0 });
+        expect(await health()).toMatchObject({ overdue: 0, quarantined: 0 });
+      });
+
+      it.each([
+        "local_config_missing",
+        "repo_missing",
+        "bucket_missing",
+        "credentials_missing",
+        "seed_config_unavailable",
+      ])(
+        "fails a missing configuration (%s), retries it and quarantines it, never 'purged'",
+        async (token) => {
+          await scheduleDue();
+          getDeletedProjectBackupConfigForDeletionMock.mockResolvedValue({
+            toml: "",
+            empty: token,
+          });
+          for (let attempt = 1; attempt <= 5; attempt++) {
+            const result = await worker();
+            expect(result).toMatchObject({
+              processed: 1,
+              purged: 0,
+              no_backup_repo: 0,
+            });
+            const current = await row();
+            expect(current.backup_purge_attempts).toBe(attempt);
+            expect(current.backups_purged_at).toBeNull();
+            expect(current.backup_purge_error).toContain(token);
+            expect(current.backup_purge_status).toBe(
+              attempt < 5 ? "failed" : "quarantined",
+            );
+            // the retry is due now
+            await getPool().query(
+              "UPDATE deleted_projects SET backup_purge_next_attempt_at=NOW() - INTERVAL '1 second' WHERE project_id=$1",
+              [PROJECT_ID],
+            );
+          }
+          expect(await health()).toMatchObject({ quarantined: 1 });
+        },
+      );
+
+      it.each([
+        ["no reason", { toml: "" }],
+        ["no reason, whitespace only", { toml: "  \n" }],
+        ["an undefined reason", { toml: "", empty: undefined }],
+      ])(
+        "fails an empty configuration with %s, never no_backup_repo or purged",
+        async (_label, config) => {
+          await scheduleDue();
+          getDeletedProjectBackupConfigForDeletionMock.mockResolvedValue(
+            config,
+          );
+          await expect(worker()).resolves.toMatchObject({
+            processed: 1,
+            purged: 0,
+            no_backup_repo: 0,
+            failed: 1,
+          });
+          const current = await row();
+          expect(current.backup_purge_status).toBe("failed");
+          expect(current.backups_purged_at).toBeNull();
+          expect(current.backup_purge_attempts).toBe(1);
+          expect(current.backup_purge_error).toContain("repo_missing");
+        },
+      );
+
+      it("records a forget that ran as purged", async () => {
+        await scheduleDue();
+        getDeletedProjectBackupConfigForDeletionMock.mockResolvedValue({
+          toml: "[repository]",
+        });
+        parseOutputMock().mockReturnValue({ stdout: "[]" });
+        await expect(worker()).resolves.toMatchObject({
+          processed: 1,
+          purged: 1,
+        });
+        const current = await row();
+        expect(current.backup_purge_status).toBe("purged");
+        expect(current.backups_purged_at).toBeInstanceOf(Date);
+        expect(current.metadata.backup_purge_result).toMatchObject({
+          outcome: "purged",
+          skipped: false,
+        });
+      });
+    });
+
+    describe("an immediate purge", () => {
+      const deleteNow = async () =>
+        await (
+          await import("./hard-delete")
+        ).hardDeleteProject({
+          project_id: PROJECT_ID,
+          account_id: ACCOUNT_ID,
+          purge_backups_now: true,
+        });
+
+      it("records no repository as no_backup_repo, with no purge time", async () => {
+        await seedProject(PROJECT_ID);
+        getProjectBackupConfigForDeletionMock.mockResolvedValue({
+          toml: "",
+          empty: "no_backup_repo",
+        });
+        const result = await deleteNow();
+        expect(result.backup).toMatchObject({
+          mode: "immediate",
+          outcome: "no_backup_repo",
+          purged_at: null,
+          purge_due_at: null,
+          skipped: true,
+        });
+        expect(await row()).toMatchObject({
+          backup_purge_status: "no_backup_repo",
+          backups_purged_at: null,
+          backup_purge_due_at: null,
+        });
+      });
+
+      it("still deletes on a missing configuration, and hands the purge to the worker", async () => {
+        await seedProject(PROJECT_ID);
+        getProjectBackupConfigForDeletionMock.mockResolvedValue({
+          toml: "",
+          empty: "bucket_missing",
+        });
+        const result = await deleteNow();
+        expect(result.backup).toMatchObject({
+          mode: "immediate",
+          outcome: "retrying",
+          purged_at: null,
+          skipped: true,
+        });
+        await expect(countRows("projects", "project_id=$1")).resolves.toBe(0);
+        const current = await row();
+        expect(current).toMatchObject({
+          backup_purge_status: "failed",
+          backups_purged_at: null,
+          backup_purge_attempts: 1,
+        });
+        expect(current.backup_purge_due_at).toBeInstanceOf(Date);
+        expect(current.backup_purge_next_attempt_at).toBeInstanceOf(Date);
+        expect(current.backup_purge_error).toContain("bucket_missing");
+        // the worker takes it over once its retry is due
+        await getPool().query(
+          "UPDATE deleted_projects SET backup_purge_next_attempt_at=NOW() - INTERVAL '1 second' WHERE project_id=$1",
+          [PROJECT_ID],
+        );
+        getDeletedProjectBackupConfigForDeletionMock.mockResolvedValue({
+          toml: "",
+          empty: "bucket_missing",
+        });
+        await expect(worker()).resolves.toMatchObject({
+          processed: 1,
+          failed: 1,
+        });
+        expect((await row()).backup_purge_attempts).toBe(2);
+      });
+
+      it.each([
+        ["no reason", { toml: "" }],
+        ["no reason, whitespace only", { toml: "  \n" }],
+        ["an undefined reason", { toml: "", empty: undefined }],
+      ])(
+        "hands an empty configuration with %s to the worker, never no_backup_repo or purged",
+        async (_label, config) => {
+          await seedProject(PROJECT_ID);
+          getProjectBackupConfigForDeletionMock.mockResolvedValue(config);
+          const result = await deleteNow();
+          expect(result.backup).toMatchObject({
+            mode: "immediate",
+            outcome: "retrying",
+            purged_at: null,
+          });
+          const current = await row();
+          expect(current).toMatchObject({
+            backup_purge_status: "failed",
+            backups_purged_at: null,
+            backup_purge_attempts: 1,
+          });
+          expect(current.backup_purge_due_at).toBeInstanceOf(Date);
+          expect(current.backup_purge_error).toContain("repo_missing");
+        },
+      );
+
+      it("records a forget that ran as purged", async () => {
+        await seedProject(PROJECT_ID);
+        getProjectBackupConfigForDeletionMock.mockResolvedValue({
+          toml: "[repository]",
+        });
+        parseOutputMock().mockReturnValue({ stdout: "[]" });
+        const result = await deleteNow();
+        expect(result.backup.outcome).toBe("purged");
+        expect(result.backup.purged_at).not.toBeNull();
+        expect((await row()).backup_purge_status).toBe("purged");
+      });
+
+      it("propagates a failing forget and deletes nothing", async () => {
+        await seedProject(PROJECT_ID);
+        getProjectBackupConfigForDeletionMock.mockResolvedValue({
+          toml: "[repository]",
+        });
+        parseOutputMock().mockImplementation(() => {
+          throw new Error("rustic exploded");
+        });
+        await expect(deleteNow()).rejects.toThrow("rustic exploded");
+        await expect(countRows("projects", "project_id=$1")).resolves.toBe(1);
+        await expect(
+          countRows("deleted_projects", "project_id=$1"),
+        ).resolves.toBe(0);
+      });
+    });
+
+    describe("host cleanup", () => {
+      const deleteOnHost = async () => {
+        await seedProject(PROJECT_ID);
+        await getPool().query(
+          "UPDATE projects SET host_id=$2 WHERE project_id=$1",
+          [PROJECT_ID, HOST_ID],
+        );
+        return await (
+          await import("./hard-delete")
+        ).hardDeleteProject({
+          project_id: PROJECT_ID,
+          account_id: ACCOUNT_ID,
+        });
+      };
+
+      it("removes the profile only after the rows are committed, with the record pending until then", async () => {
+        let seen: any;
+        invalidateProjectBackupConfigOnHostCheckedMock.mockImplementation(
+          async () => {
+            seen = {
+              projects: await countRows("projects", "project_id=$1"),
+              host_cleanup: (await row()).metadata.host_cleanup,
+            };
+            return { profile: "removed" };
+          },
+        );
+        await deleteOnHost();
+        expect(
+          invalidateProjectBackupConfigOnHostCheckedMock,
+        ).toHaveBeenCalledWith({
+          project_id: PROJECT_ID,
+          host_id: HOST_ID,
+        });
+        expect(seen.projects).toBe(0);
+        expect(seen.host_cleanup).toMatchObject({
+          data: "completed",
+          profile: "pending",
+        });
+        expect((await row()).metadata.host_cleanup).toEqual({
+          at: expect.any(String),
+          data: "completed",
+          profile: "removed",
+        });
+      });
+
+      it.each([
+        ["absent", { profile: "absent" }, { profile: "absent" }],
+        [
+          "failed",
+          { profile: "failed" },
+          { profile: "failed", profile_error: "rm_failed" },
+        ],
+        // an older host: never read as removed
+        ["unconfirmed", {}, { profile: "unconfirmed" }],
+      ])("records a %s profile", async (_label, answer, expected) => {
+        invalidateProjectBackupConfigOnHostCheckedMock.mockResolvedValue(
+          answer,
+        );
+        await deleteOnHost();
+        expect((await row()).metadata.host_cleanup).toEqual({
+          at: expect.any(String),
+          data: "completed",
+          ...expected,
+        });
+      });
+
+      it("records a failed call with a fixed token and still deletes", async () => {
+        invalidateProjectBackupConfigOnHostCheckedMock.mockRejectedValue(
+          new Error(`no responders for host ${HOST_ID}`),
+        );
+        await expect(deleteOnHost()).resolves.toBeDefined();
+        const host_cleanup = (await row()).metadata.host_cleanup;
+        expect(host_cleanup).toEqual({
+          at: expect.any(String),
+          data: "completed",
+          profile: "error",
+          profile_error: "unreachable",
+        });
+        // fixed tokens only: the raw error (with the host id) is not stored
+        expect(JSON.stringify((await row()).metadata)).not.toContain(HOST_ID);
+      });
+
+      it("records the data and the profile independently", async () => {
+        deleteProjectDataOnHostMock.mockRejectedValue(
+          new Error(`request timed out talking to ${HOST_ID}`),
+        );
+        invalidateProjectBackupConfigOnHostCheckedMock.mockResolvedValue({
+          profile: "removed",
+        });
+        await expect(deleteOnHost()).resolves.toBeDefined();
+        expect(
+          invalidateProjectBackupConfigOnHostCheckedMock,
+        ).toHaveBeenCalled();
+        expect((await row()).metadata.host_cleanup).toEqual({
+          at: expect.any(String),
+          data: "failed",
+          data_error: "timeout",
+          profile: "removed",
+        });
+        expect(JSON.stringify((await row()).metadata)).not.toContain(HOST_ID);
+      });
+
+      it("records no host, and calls nothing", async () => {
+        await seedProject(PROJECT_ID);
+        await (
+          await import("./hard-delete")
+        ).hardDeleteProject({
+          project_id: PROJECT_ID,
+          account_id: ACCOUNT_ID,
+        });
+        expect(
+          invalidateProjectBackupConfigOnHostCheckedMock,
+        ).not.toHaveBeenCalled();
+        expect((await row()).metadata.host_cleanup).toEqual({
+          at: expect.any(String),
+          data: "no_host",
+          profile: "no_host",
+        });
+      });
+    });
+
+    describe("the status constraints", () => {
+      const write = async (status: string | null, metadata: unknown) => {
+        await worker(); // the schema, with its constraints
+        await getPool().query(
+          `INSERT INTO deleted_projects (project_id, backup_purge_status, metadata)
+           VALUES ($1, $2, $3::jsonb)`,
+          [
+            OTHER_PROJECT_ID,
+            status,
+            metadata == null ? null : JSON.stringify(metadata),
+          ],
+        );
+      };
+      const ok = {
+        reason: "repository deleted whole",
+        at: "2026-10-22T12:00:00Z",
+        ref: "corrective-closure-record",
+      };
+
+      it.each([
+        "scheduled",
+        "running",
+        "failed",
+        "quarantined",
+        "purged",
+        "no_backup_repo",
+        null,
+      ])("accepts the status %s", async (status) => {
+        await expect(write(status, null)).resolves.toBeUndefined();
+      });
+
+      it("rejects an unknown status", async () => {
+        await expect(write("deleted", null)).rejects.toThrow();
+      });
+
+      it.each([
+        ["metadata NULL", null],
+        ["{}", {}],
+        ["a null correction", { backup_purge_correction: null }],
+        ["a string correction", { backup_purge_correction: "x" }],
+        ["an empty correction", { backup_purge_correction: {} }],
+        ["no reason", { backup_purge_correction: { at: ok.at, ref: ok.ref } }],
+        [
+          "no ref",
+          { backup_purge_correction: { at: ok.at, reason: ok.reason } },
+        ],
+        [
+          "no at",
+          { backup_purge_correction: { reason: ok.reason, ref: ok.ref } },
+        ],
+        [
+          "a blank reason",
+          { backup_purge_correction: { ...ok, reason: "  " } },
+        ],
+        ["a blank ref", { backup_purge_correction: { ...ok, ref: "" } }],
+        ["a number ref", { backup_purge_correction: { ...ok, ref: 5 } }],
+        ["an object at", { backup_purge_correction: { ...ok, at: {} } }],
+        [
+          "an at that is no date-time",
+          { backup_purge_correction: { ...ok, at: "yesterday" } },
+        ],
+      ])("rejects purged_corrective with %s", async (_label, metadata) => {
+        await expect(write("purged_corrective", metadata)).rejects.toThrow();
+      });
+
+      it("accepts purged_corrective with its evidence", async () => {
+        await expect(
+          write("purged_corrective", { backup_purge_correction: ok }),
+        ).resolves.toBeUndefined();
+      });
+
+      it("adds each constraint once, idempotently", async () => {
+        await worker();
+        await jest.isolateModulesAsync(async () => {
+          await (
+            await import("./hard-delete")
+          ).processDueDeletedProjectBackupPurges();
+        });
+        const { rows } = await getPool().query(
+          `SELECT conname, convalidated FROM pg_constraint
+           WHERE conrelid='deleted_projects'::regclass AND contype='c' ORDER BY conname`,
+        );
+        expect(rows).toEqual([
+          {
+            conname: "deleted_projects_corrective_has_evidence",
+            convalidated: false,
+          },
+          {
+            conname: "deleted_projects_purge_status_known",
+            convalidated: false,
+          },
+        ]);
+      });
+    });
   });
 });
