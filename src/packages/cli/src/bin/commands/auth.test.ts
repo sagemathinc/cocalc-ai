@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { beforeEach, afterEach } from "node:test";
+import test, { after, beforeEach, afterEach } from "node:test";
 import { Command } from "commander";
 import { createHash, randomUUID } from "node:crypto";
 import { readExternalAgentCredential } from "../core/external-agent-profile";
@@ -14,6 +21,12 @@ import {
 } from "./auth";
 import { sanitizeProfileName } from "../../core/auth-config";
 import { cookieNameFor, normalizeSecretValue } from "../../core/auth-cookies";
+import { authGrantsPath, recordSessionGrant } from "../../core/auth-grants";
+
+// login/elevate record grant timestamps next to the config path: keep the
+// default path in a private temp dir, never a shared /tmp file.
+const defaultConfigDir = mkdtempSync(join(tmpdir(), "cocalc-auth-test-"));
+after(() => rmSync(defaultConfigDir, { recursive: true, force: true }));
 
 let savedTransport: string | undefined;
 let savedRelay: string | undefined;
@@ -40,7 +53,7 @@ function makeDeps(
     runLocalCommand: async (_command: unknown, _name: string, fn: any) => {
       capture.data = await fn({});
     },
-    authConfigPath: () => "/tmp/cocalc-cli-config.json",
+    authConfigPath: () => join(defaultConfigDir, "config.json"),
     loadAuthConfig: () => ({ profiles: {} }),
     selectedProfileName: () => "default",
     applyAuthProfile: (globals: any) => ({
@@ -1286,3 +1299,463 @@ test("auth use rejects reserved env auth profile names", async () => {
     /reserved for environment-based auth/,
   );
 });
+
+// ---- recorded grant timestamps (client-side, informational only)
+
+function grantFixture() {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-auth-grant-"));
+  const configPath = join(dir, "config.json");
+  return { dir, configPath };
+}
+
+function fakeFetch(
+  routes: Record<string, () => any>,
+  calls: string[] = [],
+): () => void {
+  const originalFetch = global.fetch;
+  global.fetch = (async (url: string | URL | Request) => {
+    const path = `${url}`.replace(/^https?:\/\/[^/]+/, "");
+    calls.push(path);
+    const route = routes[path];
+    if (!route) throw new Error(`unexpected fetch url ${url}`);
+    return { json: async () => route() } as any;
+  }) as any;
+  return () => {
+    global.fetch = originalFetch;
+  };
+}
+
+function elevateDeps(
+  capture: { data?: any },
+  configPath: string,
+  config: { profiles: any; current_profile?: string },
+  saves: { n: number },
+) {
+  return makeDeps(capture, {
+    authConfigPath: () => configPath,
+    loadAuthConfig: () => config,
+    saveAuthConfig: () => {
+      saves.n += 1;
+    },
+    applyAuthProfile: (globals: any) => ({
+      globals: { ...config.profiles.prod, ...globals },
+      profile: "prod",
+      fromProfile: true,
+    }),
+    buildCookieHeader: (_api: string, effective: any) => effective.cookie,
+  });
+}
+
+const PROD = {
+  api: "https://hub.example.test",
+  account_id: "acct-123",
+  cookie: "remember_me=remember-cookie-1",
+};
+
+test("auth login records the session and fresh-auth expiry; auth status shows them without any request", async () => {
+  const { dir, configPath } = grantFixture();
+  const capture: { data?: any } = {};
+  let config: any = { profiles: {} };
+  const restore = fakeFetch({
+    "/api/v2/auth/cli/login/start": () => ({
+      challenge_id: "c1",
+      poll_token: "p1",
+      approval_url: "https://hub.example.test/a",
+      expires_at: "2099-01-01T00:00:00.000Z",
+    }),
+    "/api/v2/auth/cli/login/status": () => ({
+      challenge_id: "c1",
+      kind: "login",
+      state: "approved",
+      expires_at: "2099-01-01T00:00:00.000Z",
+      redeem_token: "r1",
+    }),
+    "/api/v2/auth/cli/login/redeem": () => ({
+      account_id: "acct-123",
+      remember_me: "remember-cookie-1",
+      expire: "2099-02-01T00:00:00.000Z",
+      fresh_auth_until: "2099-01-01T08:00:00.000Z",
+    }),
+  });
+  try {
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        authConfigPath: () => configPath,
+        loadAuthConfig: () => config,
+        saveAuthConfig: (next: any) => {
+          config = next;
+        },
+        defaultApiBaseUrl: () => "https://hub.example.test",
+      }),
+    );
+    await program.parseAsync([
+      "node",
+      "test",
+      "auth",
+      "login",
+      "--poll-ms",
+      "200ms",
+    ]);
+  } finally {
+    restore();
+  }
+  // the credential file is not touched by the record
+  assert.equal(JSON.stringify(config).includes("fresh_auth"), false);
+  assert.equal(JSON.stringify(config).includes("recorded"), false);
+
+  const calls: string[] = [];
+  const restore2 = fakeFetch({}, calls);
+  try {
+    const status: { data?: any } = {};
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(status, {
+        authConfigPath: () => configPath,
+        loadAuthConfig: () => config,
+        applyAuthProfile: (globals: any) => ({
+          globals: { ...config.profiles.default, ...globals },
+          profile: "default",
+          fromProfile: true,
+        }),
+      }),
+    );
+    await program.parseAsync(["node", "test", "auth", "status"]);
+    assert.deepEqual(calls, []); // no RPC
+    assert.equal(status.data.recorded_profile, "default");
+    assert.equal(
+      status.data.recorded_session_expires_at,
+      "2099-02-01T00:00:00.000Z",
+    );
+    assert.equal(
+      status.data.recorded_fresh_auth_until,
+      "2099-01-01T08:00:00.000Z",
+    );
+    assert.ok(status.data.fresh_auth_remaining_s > 0);
+    assert.ok(status.data.session_remaining_s > 0);
+    assert.match(status.data.recorded_note, /this CLI config on this machine/);
+    // no secret-derived value in plain status
+    const text = JSON.stringify(status.data);
+    assert.equal(text.includes("remember-cookie-1"), false);
+    assert.equal(text.includes("auth_session_hash"), false);
+  } finally {
+    restore2();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("auth elevate records fresh auth in the sidecar only: the credential file is not written", async () => {
+  const { dir, configPath } = grantFixture();
+  const config = { current_profile: "prod", profiles: { prod: { ...PROD } } };
+  const before = JSON.stringify(config);
+  const saves = { n: 0 };
+  recordSessionGrant(configPath, "prod", {
+    api: PROD.api,
+    session_expires_at: "2099-02-01T00:00:00.000Z",
+    fresh_auth_until: null,
+  });
+  // another CLI process records a different profile during the browser wait
+  let polls = 0;
+  const restore = fakeFetch({
+    "/api/v2/auth/cli/elevate/start": () => ({
+      challenge_id: "c2",
+      poll_token: "p2",
+      approval_url: "https://hub.example.test/e",
+      expires_at: "2099-01-01T00:00:00.000Z",
+    }),
+    "/api/v2/auth/cli/elevate/status": () => {
+      polls += 1;
+      recordSessionGrant(configPath, "staging", {
+        api: "https://staging.example.test",
+        session_expires_at: "2099-03-01T00:00:00.000Z",
+        fresh_auth_until: null,
+      });
+      return {
+        challenge_id: "c2",
+        kind: "elevate",
+        state: "approved",
+        expires_at: "2099-01-01T00:00:00.000Z",
+        fresh_auth_until: "2099-01-01T08:00:00.000Z",
+      };
+    },
+  });
+  try {
+    const capture: { data?: any } = {};
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      elevateDeps(capture, configPath, config, saves),
+    );
+    await program.parseAsync(["node", "test", "auth", "elevate"]);
+    assert.equal(polls, 1);
+    assert.equal(saves.n, 0);
+    assert.equal(JSON.stringify(config), before);
+    const grants = JSON.parse(
+      readFileSync(authGrantsPath(configPath), "utf8"),
+    ).grants;
+    assert.equal(grants.prod.fresh_auth_until, "2099-01-01T08:00:00.000Z");
+    assert.equal(grants.prod.session_expires_at, "2099-02-01T00:00:00.000Z");
+    assert.equal(grants.staging.session_expires_at, "2099-03-01T00:00:00.000Z");
+  } finally {
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed auth elevate clears the recorded fresh-auth window", async () => {
+  const { dir, configPath } = grantFixture();
+  const config = { current_profile: "prod", profiles: { prod: { ...PROD } } };
+  recordSessionGrant(configPath, "prod", {
+    api: PROD.api,
+    session_expires_at: "2099-02-01T00:00:00.000Z",
+    fresh_auth_until: "2099-01-01T08:00:00.000Z",
+  });
+  const restore = fakeFetch({
+    "/api/v2/auth/cli/elevate/start": () => ({ error: "denied" }),
+  });
+  try {
+    const program = new Command();
+    registerAuthCommand(program, elevateDeps({}, configPath, config, { n: 0 }));
+    await assert.rejects(
+      program.parseAsync(["node", "test", "auth", "elevate"]),
+      /denied/,
+    );
+    const grants = JSON.parse(
+      readFileSync(authGrantsPath(configPath), "utf8"),
+    ).grants;
+    assert.equal(grants.prod.fresh_auth_until, null);
+    assert.equal(grants.prod.session_expires_at, "2099-02-01T00:00:00.000Z");
+  } finally {
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("auth elevate with an explicit --cookie does not write a record for the stored profile", async () => {
+  const { dir, configPath } = grantFixture();
+  const config = { current_profile: "prod", profiles: { prod: { ...PROD } } };
+  const restore = fakeFetch({
+    "/api/v2/auth/cli/elevate/start": () => ({
+      challenge_id: "c3",
+      poll_token: "p3",
+      approval_url: "https://hub.example.test/e",
+      expires_at: "2099-01-01T00:00:00.000Z",
+    }),
+    "/api/v2/auth/cli/elevate/status": () => ({
+      challenge_id: "c3",
+      kind: "elevate",
+      state: "approved",
+      expires_at: "2099-01-01T00:00:00.000Z",
+      fresh_auth_until: "2099-01-01T08:00:00.000Z",
+    }),
+  });
+  try {
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(
+        {},
+        {
+          authConfigPath: () => configPath,
+          loadAuthConfig: () => config,
+          runLocalCommand: async (_c: unknown, _n: string, fn: any) => {
+            await fn({ cookie: "remember_me=other-session" });
+          },
+          applyAuthProfile: (globals: any) => ({
+            globals: { ...config.profiles.prod, ...globals },
+            profile: "prod",
+            fromProfile: true,
+          }),
+          buildCookieHeader: (_api: string, effective: any) => effective.cookie,
+        },
+      ),
+    );
+    await program.parseAsync(["node", "test", "auth", "elevate"]);
+    assert.throws(() => readFileSync(authGrantsPath(configPath)));
+  } finally {
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("auth logout removes the profile's record; auth rename moves it", async () => {
+  const { dir, configPath } = grantFixture();
+  let config: any = {
+    current_profile: "prod",
+    profiles: { prod: { ...PROD }, keep: { ...PROD } },
+  };
+  const grant = {
+    api: PROD.api,
+    session_expires_at: "2099-02-01T00:00:00.000Z",
+    fresh_auth_until: "2099-01-01T08:00:00.000Z",
+  };
+  recordSessionGrant(configPath, "prod", grant);
+  recordSessionGrant(configPath, "keep", grant);
+  try {
+    const deps = (capture: { data?: any }) =>
+      makeDeps(capture, {
+        authConfigPath: () => configPath,
+        loadAuthConfig: () => structuredClone(config),
+        saveAuthConfig: (next: any) => {
+          config = next;
+        },
+        revokeSession: async () => true,
+      });
+    let program = new Command();
+    registerAuthCommand(program, deps({}));
+    await program.parseAsync([
+      "node",
+      "test",
+      "auth",
+      "rename",
+      "keep",
+      "kept",
+    ]);
+    let grants = JSON.parse(
+      readFileSync(authGrantsPath(configPath), "utf8"),
+    ).grants;
+    assert.deepEqual(Object.keys(grants).sort(), ["kept", "prod"]);
+    program = new Command();
+    registerAuthCommand(program, deps({}));
+    await program.parseAsync([
+      "node",
+      "test",
+      "auth",
+      "logout",
+      "--target-profile",
+      "prod",
+    ]);
+    grants = JSON.parse(
+      readFileSync(authGrantsPath(configPath), "utf8"),
+    ).grants;
+    assert.deepEqual(Object.keys(grants), ["kept"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("only the writer and auth status reference the recorded grant fields", () => {
+  // Informational only: no other code may read them to decide anything.
+  const srcRoot = join(__dirname, "..", "..");
+  const hits: string[] = [];
+  const walk = (d: string) => {
+    for (const name of readdirSync(d)) {
+      const p = join(d, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (p.endsWith(".js") && !p.endsWith(".test.js")) {
+        const text = readFileSync(p, "utf8");
+        if (/auth-grants|recordedAuthStatus/.test(text))
+          hits.push(p.slice(srcRoot.length + 1));
+      }
+    }
+  };
+  walk(srcRoot);
+  assert.deepEqual(hits.sort(), [
+    "bin/commands/auth.js",
+    "bin/main.js",
+    "core/auth-grants.js",
+  ]);
+  const authJs = readFileSync(
+    join(srcRoot, "bin", "commands", "auth.js"),
+    "utf8",
+  );
+  // auth.ts only writes records, and reads them in exactly one place (status)
+  assert.equal((authJs.match(/recordedAuthStatus\)?\(/g) ?? []).length, 1);
+});
+
+for (const outcome of ["approved", "error"] as const) {
+  for (const change of ["re-login", "logout"] as const) {
+    test(`auth elevate (${outcome}) after a ${change} during the wait leaves the new state's record alone (review R3)`, async () => {
+      const { dir, configPath } = grantFixture();
+      const config: any = {
+        current_profile: "prod",
+        profiles: { prod: { ...PROD } },
+      };
+      recordSessionGrant(configPath, "prod", {
+        api: PROD.api,
+        session_expires_at: "2099-02-01T00:00:00.000Z",
+        fresh_auth_until: "2099-01-01T02:00:00.000Z",
+      });
+      const restore = fakeFetch({
+        "/api/v2/auth/cli/elevate/start": () => ({
+          challenge_id: "c4",
+          poll_token: "p4",
+          approval_url: "https://hub.example.test/e",
+          expires_at: "2099-01-01T00:00:00.000Z",
+        }),
+        "/api/v2/auth/cli/elevate/status": () => {
+          // another CLI process changes this profile during the wait
+          if (change === "re-login") {
+            config.profiles.prod = {
+              ...PROD,
+              cookie: "remember_me=new-session",
+            };
+            recordSessionGrant(configPath, "prod", {
+              api: PROD.api,
+              session_expires_at: "2099-03-01T00:00:00.000Z",
+              fresh_auth_until: "2099-01-01T05:00:00.000Z",
+            });
+          } else {
+            delete config.profiles.prod;
+          }
+          if (outcome === "error") return { error: "denied" };
+          return {
+            challenge_id: "c4",
+            kind: "elevate",
+            state: "approved",
+            expires_at: "2099-01-01T00:00:00.000Z",
+            fresh_auth_until: "2099-01-01T08:00:00.000Z",
+          };
+        },
+      });
+      try {
+        const program = new Command();
+        registerAuthCommand(
+          program,
+          makeDeps(
+            {},
+            {
+              authConfigPath: () => configPath,
+              loadAuthConfig: () => config,
+              applyAuthProfile: (globals: any) => ({
+                globals: { ...config.profiles.prod, ...globals },
+                profile: "prod",
+                fromProfile: true,
+              }),
+              buildCookieHeader: (_api: string, effective: any) =>
+                effective.cookie,
+            },
+          ),
+        );
+        const run = program.parseAsync(["node", "test", "auth", "elevate"]);
+        if (outcome === "error") await assert.rejects(run, /denied/);
+        else await run;
+        const grants = JSON.parse(
+          readFileSync(authGrantsPath(configPath), "utf8"),
+        ).grants;
+        if (change === "re-login") {
+          // the new session's record is untouched by the old session's result
+          assert.equal(
+            grants.prod.session_expires_at,
+            "2099-03-01T00:00:00.000Z",
+          );
+          assert.equal(
+            grants.prod.fresh_auth_until,
+            "2099-01-01T05:00:00.000Z",
+          );
+        } else {
+          // logged out meanwhile: the old record is not refreshed
+          assert.equal(
+            grants.prod.fresh_auth_until,
+            "2099-01-01T02:00:00.000Z",
+          );
+        }
+      } finally {
+        restore();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+}
