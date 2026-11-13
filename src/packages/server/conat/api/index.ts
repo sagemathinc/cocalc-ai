@@ -70,8 +70,10 @@ import {
   type HubApi,
   getHubApiPrincipalPolicy,
   getUserId,
+  isHubApiMethodName,
   isHubApiPrincipalAllowed,
   transformArgs,
+  unknownHubApiFunctionError,
 } from "@cocalc/conat/hub/api";
 import { hubApiErrorAttrs } from "@cocalc/conat/hub/api/error-attrs";
 import { boundHubApiSessionHash } from "./bound-session";
@@ -253,8 +255,20 @@ async function serve() {
   }
 }
 
-async function handleMessage({ mesg }) {
+export async function handleMessage({ mesg }) {
   const request = mesg.data ?? ({} as any);
+  // Only exact `group.method` names. `group.method.extra` would otherwise run as
+  // `group.method` while missing every check keyed by the exact name: admission
+  // and the resolver cap, edge routing, the host software admin gate, and the
+  // labels in logs (finding 080). Refuse it before any of them.
+  if (!isHubApiMethodName(request?.name)) {
+    const err = unknownHubApiFunctionError(request?.name);
+    mesg.respond(null, {
+      noThrow: true,
+      headers: { error: err.message, error_attrs: hubApiErrorAttrs(err) },
+    });
+    return;
+  }
   const { account_id } = getUserId(mesg.subject);
   // we explicitly do NOT await this, since we want this hub server to handle
   // potentially many messages at once, not one at a time!
@@ -390,6 +404,9 @@ export async function handleApiRequest({ request, mesg }) {
       auth_exp_s,
     } = getUserId(mesg.subject);
     const { name, args } = request as any;
+    if (!isHubApiMethodName(name)) {
+      throw unknownHubApiFunctionError(name);
+    }
     const auth_session_hash = boundHubApiSessionHash({
       account_id,
       caller: mesg.caller,
@@ -526,6 +543,10 @@ async function getResponseLocal({
   auth_iat_s,
   auth_exp_s,
 }) {
+  // Also reached from other bays and the billing authority, so check here too.
+  if (!isHubApiMethodName(name)) {
+    throw unknownHubApiFunctionError(name);
+  }
   const [group, functionName] = name.split(".");
   const f = hubApi[group]?.[functionName];
   if (f == null) {
