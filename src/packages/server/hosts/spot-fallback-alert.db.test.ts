@@ -93,8 +93,8 @@ describe("runSpotFallbackAlertCheck query", () => {
   it("reads running, undeleted Spot hosts only, as desiredPricingModel does", async () => {
     await expect(runSpotFallbackAlertCheck()).resolves.toBe(2);
     const [{ body }] = mockConditionAlert.mock.calls[0];
-    expect(body).toContain("- alt host");
-    expect(body).toContain("- legacy host");
+    expect(body).toContain("- `alt host`");
+    expect(body).toContain("- `legacy host`");
     for (const name of ["standard host", "deleted host", "stopped host"]) {
       expect(body).not.toContain(name);
     }

@@ -53,7 +53,7 @@ describe("spotFallbackAlertRow", () => {
       });
     expect(spotFallbackAlertRow(alternate(25), NOW)).toEqual({
       id: "a",
-      name: "host-a",
+      name: "`host-a`",
       kind: "spot_alternate",
     });
     expect(spotFallbackAlertRow(alternate(23), NOW)).toBeUndefined();
@@ -113,20 +113,20 @@ describe("spotFallbackAlertRow", () => {
 describe("formatSpotFallbackAlertBody", () => {
   it("lists counts and host names only, in a stable form", () => {
     const body = formatSpotFallbackAlertBody([
-      { id: "a", name: "host-a", kind: "spot_alternate" },
-      { id: "b", name: "host-b", kind: "standard_fallback" },
-      { id: "c", name: "host-c", kind: "standard_fallback" },
+      { id: "a", name: "`host-a`", kind: "spot_alternate" },
+      { id: "b", name: "`host-b`", kind: "standard_fallback" },
+      { id: "c", name: "`host-c`", kind: "standard_fallback" },
     ]);
     expect(body).toBe(
       [
         "3 Spot hosts have been on a fallback for more than 24 hours. CoCalc should have moved them back by now; check the host's recovery events.",
         "",
         "On Spot, but another machine type: 1",
-        "- host-a",
+        "- `host-a`",
         "",
         "On Standard pricing: 2",
-        "- host-b",
-        "- host-c",
+        "- `host-b`",
+        "- `host-c`",
       ].join("\n"),
     );
     expect(body).not.toMatch(/host_id|t2d|n2d|\d{4}-\d{2}-\d{2}/);
@@ -161,7 +161,7 @@ describe("runSpotFallbackAlertCheck", () => {
       mockConditionAlert.mock.calls[0];
     expect(subject).toBe(SPOT_FALLBACK_ALERT_SUBJECT);
     expect(reminderMinutes).toBe(24 * 60);
-    expect(body.indexOf("- host-b")).toBeLessThan(body.indexOf("- host-z"));
+    expect(body.indexOf("- `host-b`")).toBeLessThan(body.indexOf("- `host-z`"));
     // The name comes from the name column, which the query must select.
     expect(mockQuery.mock.calls[0][0]).toMatch(/SELECT id, name, metadata/);
   });
@@ -193,9 +193,9 @@ describe("runSpotFallbackAlertCheck", () => {
         { ...row, name, metadata: { ...row.metadata, ...meta } } as any,
         NOW,
       )?.name;
-    expect(withMeta("column", { name: "meta" })).toBe("column");
-    expect(withMeta(null, { name: "meta" })).toBe("meta");
-    expect(withMeta("", { display_name: "shown" })).toBe("shown");
+    expect(withMeta("column", { name: "meta" })).toBe("`column`");
+    expect(withMeta(null, { name: "meta" })).toBe("`meta`");
+    expect(withMeta("", { display_name: "shown" })).toBe("`shown`");
   });
 
   it("clears the condition when no host is over 24 h", async () => {
@@ -209,30 +209,38 @@ describe("runSpotFallbackAlertCheck", () => {
 });
 
 describe("alertHostName", () => {
-  it("escapes Markdown, so a name cannot add links or formatting", () => {
-    const name = alertHostName("[click](https://evil.example) **x** `y` #h");
-    expect(name).toBe(
-      "\\[click\\]\\(https://evil.example\\) \\*\\*x\\*\\* \\`y\\` #h",
+  it("renders the name as inline code, so it cannot add links or formatting", () => {
+    expect(alertHostName("[click](https://evil.example) **x** `y` #h")).toBe(
+      "`[click](https://evil.example) **x** y #h`",
     );
-    expect(name).not.toMatch(/(^|[^\\])[[\]()*`]/);
-    expect(alertHostName("<img src=x>")).toBe("\\<img src=x\\>");
+    expect(alertHostName("<img src=x>")).toBe("`<img src=x>`");
+    // Bare URLs and www. names would be autolinked outside a code span.
+    expect(alertHostName("https://phish.example/login")).toBe(
+      "`https://phish.example/login`",
+    );
+    expect(alertHostName("www.evil.example")).toBe("`www.evil.example`");
+    // No backtick can close the span early; only backticks is unnamed.
+    expect(alertHostName("a``b`` <x>")).toBe("`ab <x>`");
+    expect(alertHostName("```")).toBe("(unnamed host)");
+    for (const name of ["x`y", "``https://e.example``", "`"]) {
+      expect(alertHostName(name).slice(1, -1)).not.toContain("`");
+    }
   });
 
   it("is one line without control or bidi characters", () => {
-    expect(alertHostName("a\nb\r\nc\td\u0000e\u2028f")).toBe("a b c d e f");
-    expect(alertHostName("ab\u202ecd\u2066ef\u200b")).toBe("abcdef");
-    expect(alertHostName("  my   host  ")).toBe("my host");
+    expect(alertHostName("a\nb\r\nc\td\u0000e\u2028f")).toBe("`a b c d e f`");
+    expect(alertHostName("ab\u202ecd\u2066ef\u200b")).toBe("`abcdef`");
+    expect(alertHostName("  my   host  ")).toBe("`my host`");
   });
 
   it("keeps at most 64 characters", () => {
-    expect(alertHostName("x".repeat(64))).toBe("x".repeat(64));
-    const long = alertHostName("y".repeat(200));
+    expect(alertHostName("x".repeat(64))).toBe(`\`${"x".repeat(64)}\``);
+    const long = alertHostName("y".repeat(200)).slice(1, -1);
     expect(Array.from(long)).toHaveLength(64);
     expect(long.endsWith("…")).toBe(true);
     // Whole characters only, never half of an emoji.
-    expect(Array.from(alertHostName("😀".repeat(100)))).toHaveLength(64);
-    expect(alertHostName("😀".repeat(100))).not.toMatch(
-      /[\ud800-\udbff](?![\udc00-\udfff])/,
-    );
+    const emoji = alertHostName("😀".repeat(100)).slice(1, -1);
+    expect(Array.from(emoji)).toHaveLength(64);
+    expect(emoji).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
   });
 });

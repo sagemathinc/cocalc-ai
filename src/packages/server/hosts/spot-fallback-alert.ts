@@ -77,13 +77,14 @@ export function spotFallbackAlertRow(
 
 const MAX_NAME_LENGTH = 64;
 
-// An owner-chosen host name as one short line of plain text in a Markdown
-// alert: control and bidi characters removed, whitespace collapsed, at most
-// 64 characters, Markdown syntax escaped. Never the host id.
+// An owner-chosen host name as Markdown for the alert: one line without
+// control, bidi or backtick characters, at most 64 characters, as inline
+// code. Never the host id.
 export function alertHostName(value: unknown): string {
   const text = (typeof value === "string" ? value : "")
     .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
     .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+    .replace(/`/g, "")
     .replace(/\s+/g, " ")
     .trim();
   if (!text) return "(unnamed host)";
@@ -95,9 +96,9 @@ export function alertHostName(value: unknown): string {
           .join("")
           .trimEnd()}…`
       : text;
-  // Inline Markdown only: the name always follows "- ", so line-start
-  // syntax (#, -, +, 1.) cannot apply.
-  return short.replace(/[\\`*_{}[\]()<>!|~]/g, "\\$&");
+  // A code span: Markdown inside it is literal and it is never autolinked
+  // (bare URLs and www. names would be otherwise).
+  return `\`${short}\``;
 }
 
 // Counts and host names only: stable facts, so an unchanged condition has an
