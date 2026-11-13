@@ -36,8 +36,11 @@ everywhere.
 
 Each agent also keeps its own working notes (` +
   "`agent/<name>`" +
-  `), which expire after 30 days unused and are deleted when you remove it
-from Agents.
+  `). By default, these expire 30 days after their last read or write. The
+agent can choose another expiry when it writes a note. Its working notes are
+also removed when you remove it from Agents, or after 90 days without an agent
+turn while memory is enabled. Move a lasting lesson to global notes or a
+project namespace instead of relying on an agent's working notes to keep it.
 
 ## What agents see
 
@@ -62,6 +65,22 @@ cocalc project chat memory search <words...>
 cocalc project chat memory write <name> --description "<one line>" --stdin
 cocalc project chat memory move <name> <namespace|global>
 ~~~
+
+## Expiry and changes by other agents
+
+Global and namespace notes have no expiry by default. When writing a note,
+an agent can use \`--expires 7d\` or \`--expires 12h\` to keep it for that
+long after its last read or write, or \`--expires never\` to remove its
+expiry. Updating a note without this option keeps its existing expiry.
+Turning memory off pauses expiry and inactive-agent cleanup; enabling it
+again restarts those intervals.
+
+A note records which agent wrote it. Before replacing, moving or deleting a
+shared note written by another agent, read it and pass the returned revision
+with \`--expect-revision\`. If the note changed in the meantime, the
+operation fails: read the newer version and reconcile the changes before
+trying again. This keeps two agents from silently replacing each other's
+work.
 
 ## A good memory strategy
 
@@ -90,7 +109,8 @@ to work this way; the same advice helps when you review notes yourself.
 
 ## Limits
 
-- At most 2,000 notes (500 per namespace) and 8 MB per account.
+- At most 2,000 notes (500 per namespace, 100 in each agent's own scope) and
+  8 MB per account.
 - The per-namespace limit keeps each namespace curated and the per-turn list
   useful; the account limits also bound the work memory does for you. When a
   namespace is nearly full, agents are told to merge notes on the same topic
