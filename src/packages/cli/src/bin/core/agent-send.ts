@@ -12,6 +12,7 @@ import type { AgentSelf } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import type {
+  AgentRpcBroadcastOutcome,
   AgentRpcOutcome,
   AgentRpcPreparation,
   AgentRpcRequest,
@@ -19,6 +20,8 @@ import type {
   AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
 import {
+  agentRpcRetryable,
+  agentRpcSourceKey,
   isExternalAgentSource,
   validateAgentRpcPreparation,
 } from "@cocalc/conat/agents/rpc";
@@ -267,6 +270,10 @@ export function agentSendSummary(result: AgentSendResult): string {
       outcome.chat_effect === "saved"
         ? " The message was saved in their thread, but no turn started."
         : " Nothing was saved."
+    }${
+      agentRpcRetryable(outcome)
+        ? " Busy, so it is safe to send again after a few seconds (retryable)."
+        : ""
     }`;
   const target = outcome.target;
   const profile = result.external_agent
@@ -278,7 +285,84 @@ export function agentSendSummary(result: AgentSendResult): string {
   return `UNCONFIRMED: delivery to ${who} via ${network} is not known (${why}). It may still run, so do not resend automatically.${inspect} A deliberate retry needs a new --attempt-id.`;
 }
 
-/** One plain sentence for `agent rpc inspect`: where the turn is, if known. */
+export interface AgentBroadcastRecipient {
+  /** From the destination list the CLI resolved, never from the reply. */
+  name: string;
+  target: AgentRpcTarget;
+  attempt_id?: string;
+  outcome: AgentRpcOutcome["outcome"];
+  code?: AgentRpcOutcome["code"];
+  chat_effect?: AgentRpcOutcome["chat_effect"];
+  retryable: boolean;
+}
+
+/** One result per requested target, in order; a missing one is unknown. */
+export function agentBroadcastRecipients(
+  targets: AgentRpcTarget[],
+  names: (string | undefined)[],
+  result: AgentRpcBroadcastOutcome,
+): AgentBroadcastRecipient[] {
+  const children = Array.isArray(result?.children) ? [...result.children] : [];
+  return targets.map((target, index) => {
+    const key = agentRpcSourceKey(target);
+    const at = children.findIndex(
+      (child) => agentRpcSourceKey(child.target) === key,
+    );
+    const child = at < 0 ? undefined : children.splice(at, 1)[0];
+    return {
+      name: names[index] ?? key,
+      target,
+      ...(child ? { attempt_id: child.attempt_id } : {}),
+      outcome: child?.outcome ?? "unknown",
+      ...(child?.code ? { code: child.code } : {}),
+      ...(child?.chat_effect ? { chat_effect: child.chat_effect } : {}),
+      retryable: child ? agentRpcRetryable(child) : false,
+    };
+  });
+}
+
+/**
+ * Exit status for a broadcast, like `agent send`: 0 only if every recipient
+ * accepted; 3 if any is unknown (inspect, do not resend); otherwise 2.
+ */
+export function agentBroadcastExitCode(
+  recipients: AgentBroadcastRecipient[],
+): number {
+  if (recipients.every(({ outcome }) => outcome === "accepted")) return 0;
+  return recipients.some(({ outcome }) => outcome === "unknown") ? 3 : 2;
+}
+
+export function agentBroadcastSummary(
+  recipients: AgentBroadcastRecipient[],
+): string {
+  const list = (items: AgentBroadcastRecipient[]) =>
+    items.map(({ name }) => `@${name}`).join(", ");
+  const accepted = recipients.filter(({ outcome }) => outcome === "accepted");
+  const busy = recipients.filter(({ retryable }) => retryable);
+  const refused = recipients.filter(
+    ({ outcome, retryable }) => outcome === "rejected" && !retryable,
+  );
+  const unknown = recipients.filter(({ outcome }) => outcome === "unknown");
+  const parts = [
+    `Delivered to ${accepted.length} of ${recipients.length}${accepted.length ? `: ${list(accepted)}` : ""}.`,
+  ];
+  if (busy.length)
+    parts.push(
+      `Busy, nothing saved (retryable): ${list(busy)}; send to each again with agent send after a few seconds.`,
+    );
+  if (refused.length)
+    parts.push(`Not delivered (not retryable): ${list(refused)}.`);
+  if (unknown.length)
+    parts.push(
+      `UNCONFIRMED: ${list(unknown)}; it may still run, so do not resend automatically.`,
+    );
+  if (accepted.length < recipients.length)
+    parts.push(
+      "Repeating this --broadcast-id returns this same result and sends nothing.",
+    );
+  return parts.join(" ");
+}
+
 /** One line for `agent rpc withdraw`. */
 export function agentRpcWithdrawSummary(outcome: AgentRpcOutcome): string {
   if (outcome.outcome === "accepted")
@@ -292,6 +376,7 @@ export function agentRpcWithdrawSummary(outcome: AgentRpcOutcome): string {
   return `Unknown: ${outcome.reason ?? "no answer"}. Check with agent rpc inspect.`;
 }
 
+/** One plain sentence for `agent rpc inspect`: where the turn is, if known. */
 export function agentRpcInspectSummary(outcome: AgentRpcOutcome): string {
   if (outcome.turn) return agentRpcTurnSummary(outcome.turn);
   // An external member: no turn starts; it reads its inbox.

@@ -8,6 +8,7 @@ import {
   NEBIUS_SPOT_OFFERED,
   NEBIUS_SPOT_UNAVAILABLE_MESSAGE,
 } from "@cocalc/util/consts/nebius-spot";
+import { computeCallerAccountId } from "@cocalc/util/compute-agent-auth";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import type { ComputeProjectSshRequest } from "@cocalc/conat/inter-bay/api";
@@ -229,9 +230,7 @@ function resolveComputeActor(
   },
   expectedProjectId?: string,
 ) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   if (opts.agent_auth) {
     const projectId = expectedProjectId ?? `${opts.project_id ?? ""}`.trim();
     if (!projectId || opts.agent_auth.project_id !== projectId) {
@@ -1611,9 +1610,7 @@ async function resizeVolumeLocal(opts: {
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   const config = await getComputeVmConfig();
   requireComputeVmCreateAllowed(config, accountId);
   const volume = await resolveOwnedVolume(accountId, opts.id_or_name);
@@ -1769,9 +1766,7 @@ async function setVolumeFundingModeLocal(opts: {
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   const volume = await resolveOwnedVolume(accountId, opts.id_or_name);
   if (hasCourseVolumeFunding(volume))
     throw new Error(
@@ -1848,9 +1843,7 @@ async function deleteVolumeLocal(opts: {
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   const volume = await resolveOwnedVolume(accountId, opts.id_or_name);
   const { actorKind } = resolveComputeActor(opts, volume.project_id ?? "");
   await authorizeComputeMutation({
@@ -2599,9 +2592,7 @@ async function requestState(opts: {
   stop_after_minutes?: number | null;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   if (opts.desired_state === "running") {
     requireComputeVmStartAllowed(await getComputeVmConfig(), accountId);
   }
@@ -2729,9 +2720,7 @@ async function setVmTtlLocal(opts: {
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   const config = await getComputeVmConfig();
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
@@ -2857,9 +2846,7 @@ async function setVmFundingModeLocal(opts: {
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
   denyCourseVmMutation(vm, "Funding source change");
@@ -2960,9 +2947,7 @@ async function setVmMachineTypeLocal(opts: {
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
   denyCourseVmMutation(vm, "Machine or pricing change");
@@ -3174,9 +3159,7 @@ async function setVmPricingModelLocal(opts: {
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
   if (vm.state !== "stopped" || vm.desired_state !== "stopped") {
@@ -3299,9 +3282,7 @@ async function deleteVmLocal(opts: {
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
-  const accountId = requireAccount(
-    opts.agent_auth?.account_id ?? opts.account_id,
-  );
+  const accountId = requireAccount(computeCallerAccountId(opts));
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
   await authorizeComputeMutation({

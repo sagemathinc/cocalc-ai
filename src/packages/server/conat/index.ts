@@ -74,6 +74,7 @@ import { startArtifactCatalogMaintenance } from "@cocalc/server/artifacts/catalo
 import { startArtifactCatalogHintDrainer } from "@cocalc/server/artifacts/catalog-changes";
 import { startApiRelayQuotaMaintenance } from "@cocalc/server/membership/api-relay-maintenance";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
+import { initPasswordHashMigration } from "@cocalc/server/auth/password-hash-migration";
 import { startOAuthClientPurgeMaintenance } from "@cocalc/server/auth/oauth/purge";
 import { startSagebrushSyncRetentionMaintenance } from "@cocalc/server/sagebrush/sync-retention";
 import { startActiveUserMapHistoryMaintenance } from "@cocalc/server/active-user-map-history";
@@ -198,6 +199,7 @@ export function startConatApiBackgroundWorkers(): void {
     startOAuthClientPurgeMaintenance();
     startSagebrushSyncRetentionMaintenance();
     initDeletedAccountRetention();
+    initPasswordHashMigration();
   }
   startMembershipSideEffectsMaintenance();
   startSiteLicenseAffiliationReleaseMaintenance();
