@@ -13,14 +13,13 @@ import {
 import {
   BAY_OWNED_METADATA_KEYS,
   NOT_METADATA_KEY_MATCHES,
-  REVIEWED_UNCLASSIFIED_METADATA_STATEMENTS,
-  REVIEWED_WHOLE_METADATA_WRITERS,
+  REVIEWED_METADATA_STATEMENTS,
   SHARED_HOST_OWNED_METADATA_KEYS,
   masterUsesReportBuilders,
   hostReportFixture,
   metadataKeysWrittenIn,
+  metadataStatementClassified,
   unclassifiedMetadataStatements,
-  wholeMetadataWriterFiles,
   writtenProjectHostMetadataKeys,
 } from "./__tests__/host-report-metadata-fixtures";
 
@@ -79,15 +78,28 @@ describe("pickHostReportedMetadata", () => {
   });
 
   it("fails closed on a metadata statement the scanner cannot classify", () => {
+    // Each listed entry is file#sha256 of the exact normalized statement.
     expect(unclassifiedMetadataStatements()).toEqual(
-      [...REVIEWED_UNCLASSIFIED_METADATA_STATEMENTS].sort(),
+      [...REVIEWED_METADATA_STATEMENTS].sort(),
     );
   });
 
-  it("fails closed on a new file that writes the whole metadata object", () => {
-    expect(wholeMetadataWriterFiles()).toEqual([
-      ...REVIEWED_WHOLE_METADATA_WRITERS,
-    ]);
+  it("does not classify a statement that mixes a detected key with a parameter part", () => {
+    expect(
+      metadataStatementClassified(
+        "UPDATE project_hosts SET metadata = jsonb_set(metadata,'{billing}',$2) || $3::jsonb WHERE id=$1",
+      ),
+    ).toBe(false);
+    expect(
+      metadataStatementClassified(
+        "UPDATE project_hosts SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), ARRAY[$2]::text[], $3) WHERE id=$1",
+      ),
+    ).toBe(false);
+    expect(
+      metadataStatementClassified(
+        "UPDATE project_hosts SET metadata = jsonb_set(metadata,'{billing}',$2) WHERE id=$1",
+      ),
+    ).toBe(true);
   });
 
   it("passes a real report at the code-bound sizes through unchanged", () => {
@@ -252,7 +264,7 @@ describe("pickHostReportedMetadata", () => {
     }
   });
 
-  it("keeps the total work bounded when every allowed key is large", () => {
+  it("keeps the total work bounded when every allowed key is large and of a valid kind", () => {
     const { maxNodes } = HOST_REPORT_METADATA_LIMITS;
     let reads = 0;
     const big = () =>
@@ -262,13 +274,29 @@ describe("pickHostReportedMetadata", () => {
           return Reflect.get(obj, key, receiver);
         },
       });
-    const report: Record<string, unknown> = {};
-    for (const key of HOST_REPORTED_METADATA_KEYS) report[key] = big();
-    pickHostReportedMetadata(report);
-    // Each allowed key reads at most one element past its remaining budget.
+    // A valid kind for every key: arrays where an array is allowed, an
+    // object holding a huge array where an object is allowed. Scalar keys
+    // cost one read each.
+    const report = hostReportFixture();
+    let large = 0;
+    for (const key of HOST_REPORTED_METADATA_KEYS) {
+      const value = report[key];
+      if (Array.isArray(value)) {
+        report[key] = big();
+        large += 1;
+      } else if (value != null && typeof value === "object") {
+        report[key] = { items: big() };
+        large += 1;
+      }
+    }
+    expect(large).toBeGreaterThanOrEqual(16);
+    const kept = pickHostReportedMetadata(report);
+    // Every value read, kept or dropped, is charged to the one node budget.
     expect(reads).toBeLessThanOrEqual(
       maxNodes + HOST_REPORTED_METADATA_KEYS.length,
     );
+    // Identity keys come first and are kept.
+    expect(kept.host_session_id).toBe(report.host_session_id);
   });
 
   // A transparent proxy counts the property reads the walk makes: they must

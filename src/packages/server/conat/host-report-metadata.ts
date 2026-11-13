@@ -233,8 +233,10 @@ function hasMoreKeysThan(value: Record<string, unknown>, max: number): boolean {
 // Anything that is not a plain object, or has too many keys, yields {}
 // (nothing is merged). Otherwise the allow-listed keys are checked in their
 // fixed order, each within its own share of the budgets and what the earlier
-// keys left; a value that fails is dropped and counted, and the rest are
-// still checked (cheaply, once the budgets are used up).
+// keys left: the node budget counts every value read, kept or dropped, so the
+// whole report costs at most maxNodes reads (plus one per key); the byte
+// budget counts what is kept. A value that fails is dropped and counted, and
+// the rest are still checked (cheaply, once the budgets are used up).
 export function pickHostReportedMetadata(
   metadata: unknown,
 ): Record<string, unknown> {
@@ -252,8 +254,10 @@ export function pickHostReportedMetadata(
     if (!hasOwn(HOST_REPORTED_METADATA, key)) countDrop("unknown_key");
   }
   const picked: Record<string, unknown> = {};
-  let usedNodes = 0;
-  let usedBytes = 0;
+  // Work: every value read, kept or dropped (bounds the time spent on a
+  // report). Accepted: what is kept (bounds what is stored).
+  let workNodes = 0;
+  let acceptedBytes = 0;
   for (const key of HOST_REPORTED_METADATA_KEYS) {
     if (!hasOwn(metadata, key)) continue;
     const value = metadata[key];
@@ -269,10 +273,15 @@ export function pickHostReportedMetadata(
     const budget: Budget = {
       nodes: 0,
       bytes: 0,
-      maxNodes: Math.min(limits.maxNodesPerKey, limits.maxNodes - usedNodes),
-      maxBytes: Math.min(limits.maxBytesPerKey, limits.maxBytes - usedBytes),
+      maxNodes: Math.min(limits.maxNodesPerKey, limits.maxNodes - workNodes),
+      maxBytes: Math.min(
+        limits.maxBytesPerKey,
+        limits.maxBytes - acceptedBytes,
+      ),
     };
-    if (!withinBudget(value, budget)) {
+    const ok = withinBudget(value, budget);
+    workNodes += Math.min(budget.nodes, budget.maxNodes);
+    if (!ok) {
       countDrop(
         budget.nodes > budget.maxNodes || budget.bytes > budget.maxBytes
           ? "over_budget"
@@ -281,8 +290,7 @@ export function pickHostReportedMetadata(
       );
       continue;
     }
-    usedNodes += budget.nodes;
-    usedBytes += budget.bytes;
+    acceptedBytes += budget.bytes;
     picked[key] = value;
   }
   return picked;

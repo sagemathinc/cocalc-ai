@@ -6,6 +6,7 @@
 // Shared by host-report-metadata.test.ts and host-registry.test.ts.
 
 import { readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import ts from "typescript";
 import {
@@ -17,8 +18,8 @@ import {
 // below finds the ones written in the detected SQL forms (see
 // metadataKeysWrittenIn) in server/database code that touches project_hosts;
 // the enumeration test fails if it finds one that is not listed here, and
-// wholeMetadataWriterFiles() fails closed on any new file that writes the
-// whole metadata object. Not detected: keys set in code before such a
+// metadataStatements() fails closed on any statement whose keys it cannot
+// see. Not detected: keys set in code before such a
 // whole-object write, e.g. an object literal over a metadata spread
 // (`{ ...metadata, bootstrap: ... }`, cloud/host-work.ts); bootstrap and
 // reconcile below are listed from a manual check of that form.
@@ -287,70 +288,97 @@ export function writtenProjectHostMetadataKeys(): Set<string> {
   return keys;
 }
 
-// Files with an `UPDATE project_hosts` that writes the whole metadata object
-// from a parameter (a read-modify-write in code, so no key is visible in the
-// SQL). Their keys come from the manual inventory; a new such file must be
-// reviewed and listed in REVIEWED_WHOLE_METADATA_WRITERS.
-export function wholeMetadataWriterFiles(): string[] {
-  const files = new Set<string>();
-  for (const { file, text } of projectHostSources()) {
-    for (const update of text.matchAll(
-      /UPDATE\s+project_hosts\b([\s\S]*?)(?:WHERE|RETURNING|`)/gi,
-    )) {
-      if (/\bmetadata\s*=\s*(?:\$\d+|COALESCE\(\s*\$\d+)/.test(update[1])) {
-        files.add(file);
-      }
-    }
-  }
-  return [...files].sort();
+// Every UPDATE/INSERT of project_hosts that touches metadata. A statement is
+// classified only when its metadata keys are all visible in a detected form:
+// it writes at least one detected key and has no parameter-supplied part (a
+// `|| $N` merge, a jsonb_set path from `ARRAY[$N]`, or a whole-object
+// `metadata = $N`), which could write any key. Every other statement must be
+// listed in REVIEWED_METADATA_STATEMENTS by file and the sha256 of its
+// whitespace-normalized text, so any change to it needs a new review.
+export function metadataStatementClassified(sql: string): boolean {
+  const parameterPart =
+    /\|\|\s*(?:COALESCE\(\s*)?\$\d+/.test(sql) ||
+    /ARRAY\[\s*\$\d+/.test(sql) ||
+    /\bmetadata\s*=\s*(?:\$\d+|COALESCE\(\s*\$\d+)/.test(sql) ||
+    /^\s*INSERT/i.test(sql);
+  return metadataKeysWrittenIn(sql).size > 0 && !parameterPart;
 }
 
-// Every UPDATE/INSERT of project_hosts that touches metadata must be
-// classified: keys visible in a detected form, a whole-object parameter write
-// (wholeMetadataWriterFiles), or listed here after review. Returns the
-// statements that are none of these, as "file: first 60 chars".
-export function unclassifiedMetadataStatements(): string[] {
-  const out: string[] = [];
+export function metadataStatements(): Array<{
+  file: string;
+  sha256: string;
+  text: string;
+  classified: boolean;
+}> {
+  const out: Array<{
+    file: string;
+    sha256: string;
+    text: string;
+    classified: boolean;
+  }> = [];
   for (const { file, text } of projectHostSources()) {
     for (const statement of text.matchAll(
       /(?:UPDATE\s+project_hosts\b[\s\S]*?(?:WHERE|RETURNING|`|;)|INSERT\s+INTO\s+project_hosts\b[\s\S]*?(?:VALUES|SELECT|`|;))/gi,
     )) {
-      const sql = statement[0];
+      const sql = statement[0].split(/\s+/).join(" ");
       if (!/\bmetadata\b/.test(sql)) continue;
-      if (metadataKeysWrittenIn(sql).size > 0) continue;
-      if (/\bmetadata\s*=\s*(?:\$\d+|COALESCE\(\s*\$\d+)/.test(sql)) continue;
-      out.push(`${file}: ${sql.split(/\s+/).join(" ").slice(0, 60)}`);
+      out.push({
+        file,
+        sha256: createHash("sha256").update(sql).digest("hex"),
+        text: sql,
+        classified: metadataStatementClassified(sql),
+      });
     }
   }
-  return out.sort();
+  return out;
 }
 
-// Reviewed by hand (076): a parameterized path or a trusted bay insert, never
-// a host report.
-export const REVIEWED_UNCLASSIFIED_METADATA_STATEMENTS = [
-  // upsertProjectHost: the merge this PR guards (host reports reach it only
-  // through sanitizeHostReport) and the bay's own upserts.
-  "database/postgres/project-hosts.ts: INSERT INTO project_hosts (id, bay_id, name, region, public_",
-  // setProjectHostMetadataKey-style helper: path from a bay caller.
-  "database/postgres/project-hosts.ts: UPDATE project_hosts SET metadata = jsonb_set( COALESCE(meta",
-  // public-route.ts: path is a bay-chosen public-route key.
-  "server/cloud/public-route.ts: UPDATE project_hosts SET metadata=jsonb_set(COALESCE(metadat",
-  // host create from the bay (cloud lifecycle) and rehome between bays.
-  "server/conat/api/hosts-cloud-lifecycle.ts: INSERT INTO project_hosts (id, name, region, status, metadat",
-  "server/project-host/rehome.ts: INSERT INTO project_hosts (id, bay_id, name, region, public_",
-] as const;
+export function unclassifiedMetadataStatements(): string[] {
+  return metadataStatements()
+    .filter(({ classified }) => !classified)
+    .map(({ file, sha256 }) => `${file}#${sha256}`)
+    .sort();
+}
 
-export const REVIEWED_WHOLE_METADATA_WRITERS = [
-  "server/conat/api/hosts-cloud-lifecycle.ts",
-  "server/conat/api/hosts-project-host-rollbacks.ts",
-  "server/conat/api/hosts.ts",
-  "server/conat/host-registry.ts",
-  "server/hosts/start-worker.ts",
-  "server/launchpad/onprem-sshd.ts",
-  "server/project-host/auto-grow.ts",
-  "server/self-host/connector-tokens.ts",
-  "server/self-host/ssh-target.ts",
-] as const;
+// Reviewed for 076 by file and exact statement hash (whitespace-normalized);
+// a changed or new statement fails the test until it is reviewed again.
+export const REVIEWED_METADATA_STATEMENTS: readonly string[] = [
+  // a bay-side insert of a new or rehomed host (no host report)
+  "server/conat/api/hosts-cloud-lifecycle.ts#5624d089b9aad8c2f7193a614b9cc09b15dad4afd844ebc4193f1c9df68d50a2",
+  "server/project-host/rehome.ts#376437c537233dc224b77681407c3598022830d40d8a963c3802eb24c45a7ea8",
+  // a parameter merged into ONE bay-owned subtree (its path is literal); cannot set another top-level key
+  "server/cloud/host-dns-reconciliation.ts#4004b84f8783f4a685444a36f62249e2ec028f8b066d89cdb8d033fe99f5d914",
+  "server/conat/host-registry.ts#e1753a0b8c9e476fd201fb5cec136c26afd50c2f1843654e315565d9bd3892b2",
+  // jsonb_set with a path chosen by bay code (no host report)
+  "database/postgres/project-hosts.ts#bb76d941ba157d55c73d0b7ac6c6ae382f69bd4b5f16b3f70bd7a019772cda0e",
+  "server/cloud/public-route.ts#5cc1b0c0ee00d93b388217d95d7918511edf8e6fc5f1c67c3d0a15067e226999",
+  // the bay's read-modify-write of the whole metadata object (keys set in code; listed in BAY_OWNED_METADATA_KEYS by manual check)
+  "server/conat/api/hosts-cloud-lifecycle.ts#2c429b7441156a413bbbaa04eecb61145fa935f4f68d3ba87bc2bd063f0362ec",
+  "server/conat/api/hosts-cloud-lifecycle.ts#2c429b7441156a413bbbaa04eecb61145fa935f4f68d3ba87bc2bd063f0362ec",
+  "server/conat/api/hosts-cloud-lifecycle.ts#2c429b7441156a413bbbaa04eecb61145fa935f4f68d3ba87bc2bd063f0362ec",
+  "server/conat/api/hosts-cloud-lifecycle.ts#6f216e9b79a30bf7c581cd88189034d2f76aa1040d68f14bd443a3d9be955daa",
+  "server/conat/api/hosts-cloud-lifecycle.ts#6f216e9b79a30bf7c581cd88189034d2f76aa1040d68f14bd443a3d9be955daa",
+  "server/conat/api/hosts-project-host-rollbacks.ts#13f44ca740c7049384c19aa1b25918380a40210dba67c8dcb5bb352fb0e06d06",
+  "server/conat/api/hosts-project-host-rollbacks.ts#90d0b097fb2b2b4513988ae01873c1a044c2dfe2e6484c9a9db9e671d725931e",
+  "server/conat/api/hosts.ts#13f44ca740c7049384c19aa1b25918380a40210dba67c8dcb5bb352fb0e06d06",
+  "server/conat/api/hosts.ts#13f44ca740c7049384c19aa1b25918380a40210dba67c8dcb5bb352fb0e06d06",
+  "server/conat/api/hosts.ts#6be39f00941fa3ee8d848b1324d629b085b11ca9f5d025704fcdbe2fcd58dec5",
+  "server/conat/api/hosts.ts#90d0b097fb2b2b4513988ae01873c1a044c2dfe2e6484c9a9db9e671d725931e",
+  "server/conat/api/hosts.ts#90d0b097fb2b2b4513988ae01873c1a044c2dfe2e6484c9a9db9e671d725931e",
+  "server/conat/api/hosts.ts#b22ac8f052ac48eb692978dcfe60224da14babcbb5442b42a73a8bea29500e74",
+  "server/conat/api/hosts.ts#b22ac8f052ac48eb692978dcfe60224da14babcbb5442b42a73a8bea29500e74",
+  "server/conat/host-registry.ts#13f44ca740c7049384c19aa1b25918380a40210dba67c8dcb5bb352fb0e06d06",
+  "server/hosts/start-worker.ts#9b766fe4d66ab8e45e344a96683b9497f498e29cda11c5eeb69688dc9271ec8e",
+  "server/hosts/start-worker.ts#e172036149302da35dc713f1f0f997567b6cc3161913fd0c33f66331f0f0efdc",
+  "server/hosts/start-worker.ts#e172036149302da35dc713f1f0f997567b6cc3161913fd0c33f66331f0f0efdc",
+  "server/launchpad/onprem-sshd.ts#13f44ca740c7049384c19aa1b25918380a40210dba67c8dcb5bb352fb0e06d06",
+  "server/project-host/auto-grow.ts#13f44ca740c7049384c19aa1b25918380a40210dba67c8dcb5bb352fb0e06d06",
+  "server/project-host/auto-grow.ts#13f44ca740c7049384c19aa1b25918380a40210dba67c8dcb5bb352fb0e06d06",
+  "server/self-host/connector-tokens.ts#b22ac8f052ac48eb692978dcfe60224da14babcbb5442b42a73a8bea29500e74",
+  "server/self-host/ssh-target.ts#13f44ca740c7049384c19aa1b25918380a40210dba67c8dcb5bb352fb0e06d06",
+  // upsertProjectHost: the merge #156 guards (host reports pass sanitizeHostReport first) and the bay's own upserts
+  "database/postgres/project-hosts.ts#83c41f18afec85d38dabe14e1ea0682da730aff1915113f64f6ac68aa68e6d55",
+];
 
 // master.ts must assemble the report with the pure builders, so that the
 // fixture above is the real assembly: basePayload.metadata is a call to
