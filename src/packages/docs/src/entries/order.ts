@@ -34,6 +34,7 @@ export const DOCS_ENTRY_IDS = [
   "ai.my-agents",
   "ai.agent-features",
   "ai.cocalc-access",
+  "ai.gcp-connector",
   "projects.research-handoff",
   "research.reproduce-analysis",
   "research.streaming-analysis",
