@@ -67,6 +67,7 @@ import {
   type AuthProfile,
   type GlobalAuthOptions,
 } from "../core/auth-config";
+import { clearAuthGrants } from "../core/auth-grants";
 import { resolveAgentTokenFromEnv } from "../core/agent-token";
 import {
   defaultApiBaseUrl,
@@ -3568,6 +3569,7 @@ const browserCommandDeps = {
       cookie: `remember_me=${remember_me}`,
     };
     saveAuthConfig(config);
+    clearAuthGrants(authConfigPath(), [profile]);
     const ctx = await contextForGlobals({
       profile,
       api,
