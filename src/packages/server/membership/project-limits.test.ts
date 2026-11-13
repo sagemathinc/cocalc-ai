@@ -400,6 +400,36 @@ describe("project membership limits", () => {
     ).resolves.toBe(40);
   });
 
+  it("keeps a sample exactly at its quota size, and falls back when every sample is over", async () => {
+    getStorageHistoryMock.mockResolvedValue({
+      points: [{ quota_used_bytes: 400, quota_size_bytes: 400 }],
+    });
+    const { estimateProvisionedRestoreBytesForProject } =
+      await import("./project-limits");
+    const estimate = () =>
+      estimateProvisionedRestoreBytesForProject({
+        project_id: "project-1",
+        account_id: "account-1",
+      });
+    await expect(estimate()).resolves.toBe(400);
+
+    getStorageHistoryMock.mockResolvedValue({
+      points: [
+        { quota_used_bytes: 500, quota_size_bytes: 400 },
+        { quota_used_bytes: 900, quota_size_bytes: 400 },
+      ],
+    });
+    getBackupsMock.mockResolvedValue([
+      {
+        id: "backup-1",
+        time: new Date("2026-04-24T00:00:00Z"),
+        summary: { total_bytes_processed: 321 },
+      },
+    ]);
+    await expect(estimate()).resolves.toBe(321);
+    expect(getBackupsMock).toHaveBeenCalled();
+  });
+
   it("never estimates more than the project's disk quota", async () => {
     // run_quota.disk_quota is in MB
     queryMock.mockResolvedValue({

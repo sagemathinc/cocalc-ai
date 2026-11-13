@@ -78,9 +78,9 @@ async function getProjectStorageQuotaFallbackBytes(
   return Math.floor(diskQuotaMb * 1_000_000);
 }
 
-// The latest settled sample.  A sample above its own quota size is not a
-// settled state: data was being copied in (a restore, an archive) and may be
-// counted twice, so it says nothing about what a restore needs.
+// The latest sample at or under its own quota size.  One above it may reflect
+// transient copying (a failed restore counts data mid-copy) or a previous,
+// lower quota, and is not a reliable estimate for the current restore.
 function estimateBytesFromStorageHistory(
   history: ProjectStorageHistory,
 ): number | undefined {
@@ -117,9 +117,10 @@ function estimateBytesFromBackupSummary(
   return Math.floor(Math.max(...candidates));
 }
 
-// What restoring an archived project will add to its owner's storage, at most
-// the project's disk quota: the restore can't keep more than that, so a larger
-// estimate (a stale sample, a backup that counted more) must not block it.
+// What restoring an archived project will add to its owner's storage.  As an
+// estimate policy, never more than the project's disk quota (what account
+// usage counts for a project), so a stale sample or a backup that counted
+// more can't block the start.
 export async function estimateProvisionedRestoreBytesForProject({
   project_id,
   account_id,
