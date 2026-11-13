@@ -664,6 +664,8 @@ export const REVIEWED_METADATA_WRITE_TEMPLATES: readonly string[] = [
   "server/hosts/runtime-transition.ts#6760bf4fa7f8cf95c0a49979da605ad7204f00bc547f12449c77fab90d175e25",
   // WRITE: keys visible in the SQL: UPDATE project_hosts SET metadata = jsonb_set( jsonb_set( COALES
   "server/hosts/runtime-transition.ts#f2037c531c30a08ee4f870055eac76d5205da49661ac52c7f2f1f01b7acb8c64",
+  // READ (pinned because detection is over-inclusive): SELECT id, name, metadata FROM project_hosts WHERE deleted IS NULL AND status = 'running' AND metadata ? 'spot_recovery_state' (spot fallback alert, #164)
+  "server/hosts/spot-fallback-alert.ts#0c6c5bd11c2e9689ac1051aaae4ddeb0ae1036ca0a5b53af9580333d6eed665c",
   // WRITE: whole metadata object from code (manual inventory): UPDATE project_hosts SET metadata=$2, ${BUMP_DESIRED_STATE_GENER
   "server/hosts/start-worker.ts#3bfacbd091c9f841af2f15e468791faea8e20804fe99a0777512db9fad29d2e4",
   // WRITE: whole metadata object from code (manual inventory): UPDATE project_hosts SET metadata=$2, ${BUMP_DESIRED_STATE_GENER
