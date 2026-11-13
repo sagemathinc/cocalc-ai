@@ -70,6 +70,7 @@ describe("project membership limits", () => {
     conatWithProjectRoutingForAccountMock.mockReturnValue({
       close: jest.fn(),
     });
+    queryMock.mockResolvedValue({ rows: [] });
     getStorageHistoryMock.mockResolvedValue({ points: [] });
     getBackupsMock.mockResolvedValue([]);
     getMembershipUsageStatusForAccountMock.mockResolvedValue({
@@ -380,6 +381,84 @@ describe("project membership limits", () => {
       }),
     ).resolves.toBe(75);
     expect(getBackupsMock).not.toHaveBeenCalled();
+  });
+
+  it("skips history samples above their own quota size (data being copied in)", async () => {
+    getStorageHistoryMock.mockResolvedValue({
+      points: [
+        { quota_used_bytes: 40, quota_size_bytes: 100 },
+        { quota_used_bytes: 850, quota_size_bytes: 400 },
+      ],
+    });
+    const { estimateProvisionedRestoreBytesForProject } =
+      await import("./project-limits");
+    await expect(
+      estimateProvisionedRestoreBytesForProject({
+        project_id: "project-1",
+        account_id: "account-1",
+      }),
+    ).resolves.toBe(40);
+  });
+
+  it("never estimates more than the project's disk quota", async () => {
+    // run_quota.disk_quota is in MB
+    queryMock.mockResolvedValue({
+      rows: [{ run_quota: { disk_quota: 4000 } }],
+    });
+    getStorageHistoryMock.mockResolvedValue({
+      points: [{ quota_used_bytes: 8_500_000_000 }],
+    });
+    const { estimateProvisionedRestoreBytesForProject } =
+      await import("./project-limits");
+    const estimate = () =>
+      estimateProvisionedRestoreBytesForProject({
+        project_id: "project-1",
+        account_id: "account-1",
+      });
+    await expect(estimate()).resolves.toBe(4_000_000_000);
+
+    getStorageHistoryMock.mockResolvedValue({ points: [] });
+    getBackupsMock.mockResolvedValue([
+      {
+        id: "backup-1",
+        time: new Date("2026-04-24T00:00:00Z"),
+        summary: { total_bytes_processed: 9_000_000_000 },
+      },
+    ]);
+    await expect(estimate()).resolves.toBe(4_000_000_000);
+
+    getBackupsMock.mockResolvedValue([]);
+    await expect(estimate()).resolves.toBe(4_000_000_000);
+  });
+
+  it("lets an archived project restore after failed restores left an inflated sample", async () => {
+    getProjectUsageAccountIdMock.mockResolvedValue("owner-1");
+    queryMock.mockResolvedValue({
+      rows: [{ run_quota: { disk_quota: 4000 } }],
+    });
+    getStorageHistoryMock.mockResolvedValue({
+      points: [
+        { quota_used_bytes: 3_000_000_000, quota_size_bytes: 4_000_000_000 },
+        { quota_used_bytes: 8_500_000_000, quota_size_bytes: 4_000_000_000 },
+      ],
+    });
+    getMembershipUsageStatusForAccountMock.mockResolvedValue({
+      total_storage_bytes: 7_200_000,
+    });
+    const { assertCanRestoreProvisionedProjectStorage } =
+      await import("./project-limits");
+    await expect(
+      assertCanRestoreProvisionedProjectStorage({
+        project_id: "project-1",
+        resolution: {
+          class: "free",
+          source: "free",
+          entitlements: {
+            usage_limits: { total_storage_hard_bytes: 8_000_000_000 },
+          },
+        },
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("falls back to the latest backup summary when no storage history is available", async () => {
