@@ -1,5 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { randomBytes } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 import { applyPrivateMode, cocalcCliConfigDir } from "./platform-paths";
 
@@ -131,11 +145,49 @@ export function saveAuthConfig(
     current_profile: config.current_profile,
     profiles: config.profiles ?? {},
   };
-  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: CONFIG_FILE_MODE,
-  });
-  applyPrivateMode(path, CONFIG_FILE_MODE);
+  writeFileAtomically(path, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+// The config file holds every profile's credentials, so it is never written
+// in place: a crash or a full disk mid-write must not truncate it. Write a
+// private temp file in the same directory, fsync it, then rename it over the
+// file. A symlinked config keeps its link: the rename replaces the link's
+// target, as the old in-place write did.
+function writeFileAtomically(path: string, text: string): void {
+  let target = path;
+  let isLink = false;
+  try {
+    isLink = lstatSync(path).isSymbolicLink();
+  } catch {
+    // does not exist yet
+  }
+  if (isLink) {
+    try {
+      target = realpathSync(path);
+    } catch {
+      // A dangling link: keep the previous behaviour of writing through it.
+      writeFileSync(path, text, { encoding: "utf8", mode: CONFIG_FILE_MODE });
+      applyPrivateMode(path, CONFIG_FILE_MODE);
+      return;
+    }
+  }
+  const tmp = join(
+    dirname(target),
+    `.${basename(target)}.${randomBytes(6).toString("hex")}.tmp`,
+  );
+  try {
+    const fd = openSync(tmp, "wx", CONFIG_FILE_MODE);
+    try {
+      writeSync(fd, text);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    applyPrivateMode(tmp, CONFIG_FILE_MODE);
+    renameSync(tmp, target);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 export function selectedProfileName(

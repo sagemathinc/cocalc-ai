@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -270,3 +281,85 @@ test("an explicit profile overrides the agent runtime default", () => {
     "prod",
   );
 });
+
+function sampleConfig(cookie: string): AuthConfig {
+  return {
+    current_profile: "dev",
+    profiles: { dev: { api: "https://cocalc.example.test", cookie } },
+  };
+}
+
+test("saveAuthConfig replaces the file atomically: 0600, no temp file left", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+  const file = join(dir, "config.json");
+  try {
+    writeFileSync(file, "{}\n", { mode: 0o644 });
+    saveAuthConfig(sampleConfig("remember_me=a"), file);
+    saveAuthConfig(sampleConfig("remember_me=b"), file);
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+    assert.deepEqual(readdirSync(dir), ["config.json"]);
+    assert.equal(loadAuthConfig(file).profiles.dev.cookie, "remember_me=b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("saveAuthConfig keeps a symlinked config's link and updates its target", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+  const real = join(dir, "real", "config.json");
+  const link = join(dir, "config.json");
+  try {
+    mkdirSync(join(dir, "real"));
+    writeFileSync(real, "{}\n");
+    symlinkSync(join("real", "config.json"), link);
+    saveAuthConfig(sampleConfig("remember_me=linked"), link);
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
+    assert.equal(
+      loadAuthConfig(real).profiles.dev.cookie,
+      "remember_me=linked",
+    );
+    assert.equal(statSync(real).mode & 0o777, 0o600);
+    assert.deepEqual(readdirSync(join(dir, "real")), ["config.json"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("saveAuthConfig writes through a dangling symlink, as before", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+  const link = join(dir, "config.json");
+  try {
+    symlinkSync("target.json", link);
+    saveAuthConfig(sampleConfig("remember_me=new"), link);
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
+    assert.equal(
+      loadAuthConfig(join(dir, "target.json")).profiles.dev.cookie,
+      "remember_me=new",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test(
+  "a failed save leaves the existing config intact",
+  { skip: process.getuid?.() === 0 },
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+    const file = join(dir, "config.json");
+    try {
+      saveAuthConfig(sampleConfig("remember_me=original"), file);
+      const before = readFileSync(file, "utf8");
+      chmodSync(dir, 0o500); // no new files can be created in the directory
+      assert.throws(() =>
+        saveAuthConfig(sampleConfig("remember_me=new"), file),
+      );
+      chmodSync(dir, 0o700);
+      assert.equal(readFileSync(file, "utf8"), before);
+      assert.deepEqual(readdirSync(dir), ["config.json"]);
+    } finally {
+      chmodSync(dir, 0o700);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
