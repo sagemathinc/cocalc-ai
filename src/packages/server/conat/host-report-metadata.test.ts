@@ -13,13 +13,13 @@ import {
 import {
   BAY_OWNED_METADATA_KEYS,
   NOT_METADATA_KEY_MATCHES,
-  REVIEWED_METADATA_STATEMENTS,
+  REVIEWED_METADATA_WRITE_TEMPLATES,
   SHARED_HOST_OWNED_METADATA_KEYS,
   masterUsesReportBuilders,
   hostReportFixture,
   metadataKeysWrittenIn,
-  metadataStatementClassified,
-  unclassifiedMetadataStatements,
+  metadataWriteTemplateIds,
+  metadataWriteTemplates,
   writtenProjectHostMetadataKeys,
 } from "./__tests__/host-report-metadata-fixtures";
 
@@ -77,29 +77,22 @@ describe("pickHostReportedMetadata", () => {
     }
   });
 
-  it("fails closed on a metadata statement the scanner cannot classify", () => {
-    // Each listed entry is file#sha256 of the exact normalized statement.
-    expect(unclassifiedMetadataStatements()).toEqual(
-      [...REVIEWED_METADATA_STATEMENTS].sort(),
+  it("pins every SQL template that writes project_hosts.metadata (fails on a new or changed one)", () => {
+    // Each entry is file#sha256 of the whole whitespace-normalized template.
+    expect(metadataWriteTemplateIds()).toEqual(
+      [...REVIEWED_METADATA_WRITE_TEMPLATES].sort(),
     );
   });
 
-  it("does not classify a statement that mixes a detected key with a parameter part", () => {
-    expect(
-      metadataStatementClassified(
-        "UPDATE project_hosts SET metadata = jsonb_set(metadata,'{billing}',$2) || $3::jsonb WHERE id=$1",
-      ),
-    ).toBe(false);
-    expect(
-      metadataStatementClassified(
-        "UPDATE project_hosts SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), ARRAY[$2]::text[], $3) WHERE id=$1",
-      ),
-    ).toBe(false);
-    expect(
-      metadataStatementClassified(
-        "UPDATE project_hosts SET metadata = jsonb_set(metadata,'{billing}',$2) WHERE id=$1",
-      ),
-    ).toBe(true);
+  it("hashes whole templates, including INSERT VALUES and ON CONFLICT parts", () => {
+    const upsert = metadataWriteTemplates().find(
+      ({ file, text }) =>
+        file === "database/postgres/project-hosts.ts" &&
+        /^INSERT INTO project_hosts/.test(text),
+    );
+    expect(upsert?.text).toMatch(/VALUES/);
+    expect(upsert?.text).toMatch(/ON CONFLICT/);
+    expect(upsert?.text).toMatch(/EXCLUDED\.metadata/);
   });
 
   it("passes a real report at the code-bound sizes through unchanged", () => {
