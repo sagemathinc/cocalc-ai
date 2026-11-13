@@ -92,6 +92,9 @@ jest.mock("@cocalc/server/projects/runtime-slots", () => ({
 
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
   createProjectHostMasterConatToken: jest.fn(),
+  exchangeProjectHostBootstrapToken: jest.fn(),
+  proveProjectHostMasterToken: jest.fn(),
+  rotateProjectHostMasterToken: jest.fn(),
   verifyProjectHostToken: jest.fn(),
 }));
 
@@ -1435,6 +1438,9 @@ describe("host-registry automatic convergence retry", () => {
   it("writes durable project log entries for pressure stops", async () => {
     currentMetadata = {};
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT host_id FROM projects WHERE project_id=$1")) {
+        return { rows: [{ host_id: "host-1" }] };
+      }
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
@@ -1496,6 +1502,35 @@ describe("host-registry automatic convergence retry", () => {
       },
     });
   });
+
+  it.each([
+    ["on another host", [{ host_id: "host-2" }]],
+    ["with no host", [{ host_id: null }]],
+    ["missing or deleted", []],
+  ])(
+    "refuses a pressure report for a project %s, and writes no log (068-2)",
+    async (_label, rows) => {
+      queryMock = jest.fn(async (sql: string, params: any[]) => {
+        if (sql.includes("SELECT host_id FROM projects WHERE project_id=$1")) {
+          expect(params).toEqual(["proj-b"]);
+          return { rows };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      await expect(
+        service.reportProjectPressureAction({
+          host_id: "host-1",
+          project_id: "proj-b",
+          action_status: "stopped",
+          pressure_zone: "pressure",
+          reason: "low_priority",
+        }),
+      ).rejects.toThrow("the project is not on the calling host");
+      expect(appendProjectLogRowBestEffortMock).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("host report sanitizer (054 C containment)", () => {
@@ -1871,6 +1906,189 @@ describe("host-registry runtime availability", () => {
       category: "unknown",
       summary: "Host is online.",
     });
+  });
+});
+
+describe("host-registry master token exchange", () => {
+  let tokens: any;
+  let service: any;
+  const masterInfo = {
+    token_id: "m",
+    host_id: "host-1",
+    purpose: "master-conat",
+    expires: new Date("2027-10-24T00:00:00Z"),
+  };
+
+  beforeAll(async () => {
+    tokens = await import("@cocalc/server/project-host/bootstrap-token");
+    const { initHostRegistryService } = await import("./host-registry");
+    service = await initHostRegistryService();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    tokens.verifyProjectHostToken.mockReset();
+    tokens.exchangeProjectHostBootstrapToken.mockReset();
+    tokens.proveProjectHostMasterToken.mockReset();
+    tokens.rotateProjectHostMasterToken.mockReset();
+    tokens.rotateProjectHostMasterToken.mockResolvedValue({
+      token: "new-master",
+    });
+  });
+
+  it("exchanges a bootstrap token, bound to the host, when there is no current token", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(null);
+    tokens.exchangeProjectHostBootstrapToken.mockResolvedValue({
+      ok: true,
+      host_id: "host-1",
+      master: { token: "exchanged-master" },
+    });
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "stale",
+        bootstrap_token: "boot",
+      }),
+    ).resolves.toEqual({ master_conat_token: "exchanged-master" });
+    expect(tokens.exchangeProjectHostBootstrapToken).toHaveBeenCalledWith(
+      "boot",
+      expect.objectContaining({ hostId: "host-1" }),
+    );
+    expect(tokens.rotateProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses a bootstrap token whose exchange is closed or that is invalid", async () => {
+    for (const reason of ["exchange_closed", "invalid"]) {
+      tokens.exchangeProjectHostBootstrapToken.mockResolvedValue({
+        ok: false,
+        reason,
+      });
+      await expect(
+        service.rotateMasterConatToken({
+          host_id: "host-1",
+          bootstrap_token: "boot",
+        }),
+      ).rejects.toThrow("token is invalid for host");
+    }
+    expect(tokens.rotateProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("rotates with a valid current token without touching the bootstrap token", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "master",
+        bootstrap_token: "boot",
+      }),
+    ).resolves.toEqual({ master_conat_token: "new-master" });
+    // The current token is re-checked under the lock by its id.
+    expect(tokens.rotateProjectHostMasterToken).toHaveBeenCalledWith(
+      "host-1",
+      "m",
+      expect.anything(),
+    );
+    expect(tokens.exchangeProjectHostBootstrapToken).not.toHaveBeenCalled();
+    expect(tokens.proveProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses a current token revoked between the check and the locked rotation", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    tokens.rotateProjectHostMasterToken.mockResolvedValue(undefined);
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).rejects.toThrow("token is invalid for host");
+  });
+
+  it("refuses a current token of another host", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue({
+      ...masterInfo,
+      host_id: "host-2",
+    });
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "other",
+      }),
+    ).rejects.toThrow("token is invalid for host");
+    expect(tokens.rotateProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("records the host's proof of its master token on a status check", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    tokens.proveProjectHostMasterToken.mockResolvedValue({
+      valid: true,
+      closed: 1,
+    });
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).resolves.toEqual({ expires_at: "2027-10-24T00:00:00.000Z" });
+    expect(tokens.proveProjectHostMasterToken).toHaveBeenCalledWith(
+      "host-1",
+      "m",
+    );
+  });
+
+  it("does not record a proof for an invalid or foreign master token", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(null);
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "stale",
+      }),
+    ).rejects.toThrow("token is invalid for this host");
+    tokens.verifyProjectHostToken.mockResolvedValue({
+      ...masterInfo,
+      host_id: "host-2",
+    });
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "other",
+      }),
+    ).rejects.toThrow("token is invalid for this host");
+    expect(tokens.proveProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("a valid token with nothing to close still succeeds; one revoked under the lock fails", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    tokens.proveProjectHostMasterToken.mockResolvedValue({
+      valid: true,
+      closed: 0,
+    });
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).resolves.toEqual({ expires_at: "2027-10-24T00:00:00.000Z" });
+    tokens.proveProjectHostMasterToken.mockResolvedValue({
+      valid: false,
+      closed: 0,
+    });
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).rejects.toThrow("token is invalid for this host");
+  });
+
+  it("a failure to record the proof never fails the status check", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    tokens.proveProjectHostMasterToken.mockRejectedValue(new Error("db down"));
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).resolves.toEqual({ expires_at: "2027-10-24T00:00:00.000Z" });
   });
 });
 

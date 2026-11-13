@@ -6,9 +6,8 @@
 import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
 import { v4 as uuid } from "uuid";
 
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { checkPassword } from "@cocalc/backend/auth/password-hash";
+import { newPasswordHash } from "@cocalc/database/settings/password-kdf";
 import getCustomize from "@cocalc/database/settings/customize";
 import {
   decryptSecretStorageValue,
@@ -23,6 +22,11 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
+import {
+  formatFreshAuthDuration,
+  freshAuthDurationNeedsStrongFactor,
+  isLongFreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
 import {
   getImpersonationBootstrapInfo,
   getCurrentImpersonationSession,
@@ -336,11 +340,15 @@ async function issueRecoveryCodesWithDb({
   factor_id: string;
 }): Promise<string[]> {
   const codes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
+  // Hash before writing: the KDF is slow, and db may be a transaction.
+  const code_hashes = await Promise.all(
+    codes.map((code) => newPasswordHash(normalizeRecoveryCode(code))),
+  );
   await db.query(
     "DELETE FROM account_second_factor_recovery_codes WHERE account_id = $1::UUID",
     [account_id],
   );
-  for (const code of codes) {
+  for (const code_hash of code_hashes) {
     await db.query(
       `
         INSERT INTO account_second_factor_recovery_codes(
@@ -349,13 +357,7 @@ async function issueRecoveryCodesWithDb({
           $1::UUID, $2::UUID, $3::UUID, $4::VARCHAR(173), NULL, NOW(), $5::JSONB
         )
       `,
-      [
-        uuid(),
-        account_id,
-        factor_id,
-        passwordHash(normalizeRecoveryCode(code)),
-        "{}",
-      ],
+      [uuid(), account_id, factor_id, code_hash, "{}"],
     );
   }
   return codes;
@@ -393,7 +395,7 @@ async function consumeRecoveryCodeWithDb({
     )
   ).rows;
   for (const row of rows) {
-    if (!verifyPassword(normalized, row.code_hash)) {
+    if (!(await checkPassword(normalized, row.code_hash))) {
       continue;
     }
     const update = await db.query(
@@ -443,13 +445,13 @@ function assertFreshAuthDurationMethodCompatible({
   duration?: FreshAuthDuration;
   method?: string;
 }): void {
-  if (duration !== "extended") {
+  if (!freshAuthDurationNeedsStrongFactor(duration)) {
     return;
   }
   const normalizedMethod = `${method ?? ""}`.trim();
   if (!normalizedMethod || normalizedMethod === "recovery_code") {
     throw new Error(
-      "extended fresh auth requires a TOTP or passkey verification in this browser session",
+      `${duration === "extended" ? "extended" : `a ${formatFreshAuthDuration(duration)}`} fresh auth requires a TOTP or passkey verification in this browser session`,
     );
   }
   if (normalizedMethod !== "totp" && normalizedMethod !== "passkey") {
@@ -513,7 +515,7 @@ async function verifyFreshAuthInputs({
       account_id,
     });
     const ok =
-      !!password_hash && verifyPassword(current_password, password_hash);
+      !!password_hash && (await checkPassword(current_password, password_hash));
     if (!ok) {
       throw new Error(
         password_hash
@@ -1244,6 +1246,9 @@ export async function freshAuthSession({
     const session_hash = getRememberMeHash(req);
     if (!session_hash) {
       throw new Error("browser sign-in is required");
+    }
+    if (isLongFreshAuthDuration(duration)) {
+      throw new Error("an impersonation verification lasts at most 8 hours");
     }
     const factor_level = await verifyFreshAuthCredentialsForAccount({
       account_id: impersonation.actor_account_id,

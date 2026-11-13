@@ -15,6 +15,7 @@ import {
   codexFreshAuthAttentionEnabled,
   registerCodexFreshAuthAttention,
 } from "@cocalc/server/auth/codex-attention";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 export default async function cliElevateStart(req, res) {
   if (!isPost(req, res)) {
@@ -38,8 +39,7 @@ export default async function cliElevateStart(req, res) {
       req,
       account_id,
       session_hash,
-      duration:
-        `${duration ?? ""}`.trim() === "extended" ? "extended" : "default",
+      duration: parseFreshAuthDuration(duration),
       codex_attention_context: attentionContext,
     });
     if (attentionContext != null) {

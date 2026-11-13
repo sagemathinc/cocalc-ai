@@ -7,6 +7,7 @@ const METHODS = new Set([
   "initialize",
   "session/new",
   "session/load",
+  "session/resume",
   "session/fork",
   "session/set_mode",
   "session/set_config_option",

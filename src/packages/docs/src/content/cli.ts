@@ -227,8 +227,11 @@ cocalc --profile cocalc-ai auth elevate
 ~~~
 
 Follow the printed browser approval and passkey or TOTP challenge. The default
-elevation lasts eight hours; \`--short\` requests fifteen minutes. To perform
-login, elevation, and verification together on your own computer:
+elevation lasts eight hours; \`--short\` requests fifteen minutes, and
+\`--duration 72h\` any whole number of hours up to 72. Longer than eight hours
+emails you, and every active elevation can be ended in your account's security
+settings. To perform login, elevation, and verification together on your own
+computer:
 
 ~~~sh
 cocalc --profile cocalc-ai --api https://cocalc.ai auth bootstrap
@@ -394,7 +397,8 @@ with \`--help\` for its arguments, selectors, defaults, and examples.
 | Work with a persistent terminal session | \`cocalc project terminal --help\` |
 | Inspect, edit, run, and save live notebooks | \`cocalc project jupyter --help\` |
 | Build supported documents | \`cocalc project build --help\` |
-| Work with project chats and scheduled agent tasks | \`cocalc project chat --help\` |
+| Work with project chats | \`cocalc project chat --help\` |
+| Propose scheduled scripts and prompts | \`cocalc sensor --help\` |
 | Find, copy, and manage named agents | \`cocalc agent --help\` |
 | Start project Codex work | \`cocalc project codex --help\` |
 | Inspect and control active Codex sessions | \`cocalc codex --help\` |

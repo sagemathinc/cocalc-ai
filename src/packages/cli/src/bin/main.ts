@@ -67,6 +67,7 @@ import {
   type AuthProfile,
   type GlobalAuthOptions,
 } from "../core/auth-config";
+import { clearAuthGrants } from "../core/auth-grants";
 import { resolveAgentTokenFromEnv } from "../core/agent-token";
 import {
   defaultApiBaseUrl,
@@ -286,6 +287,7 @@ import {
   registerPersistCommand,
   type PersistCommandDeps,
 } from "./commands/persist";
+import type { FreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -864,7 +866,7 @@ async function maybeCreateLocalDevRememberMeCookie({
   globals: GlobalOptions;
   apiBaseUrl: string;
   requestedAccountId: string;
-  freshAuthDuration?: "default" | "extended";
+  freshAuthDuration?: FreshAuthDuration;
 }): Promise<
   | {
       value: string;
@@ -3568,6 +3570,7 @@ const browserCommandDeps = {
       cookie: `remember_me=${remember_me}`,
     };
     saveAuthConfig(config);
+    clearAuthGrants(authConfigPath(), [profile]);
     const ctx = await contextForGlobals({
       profile,
       api,

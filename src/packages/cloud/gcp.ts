@@ -557,6 +557,31 @@ async function setStandardSchedulingViaRest(opts: {
   });
 }
 
+// The instance must be stopped (TERMINATED): GCP only changes scheduling then.
+async function setSchedulingForPricing(opts: {
+  client: InstancesClient;
+  credentials: any;
+  runtime: HostRuntime;
+  gpu: boolean;
+  pricingModel: NonNullable<HostSpec["pricing_model"]>;
+}) {
+  if (opts.pricingModel === "on_demand") {
+    await setStandardSchedulingViaRest(opts);
+    return;
+  }
+  const [response] = await opts.client.setScheduling({
+    project: opts.credentials.projectId,
+    zone: opts.runtime.zone,
+    instance: opts.runtime.instance_id,
+    schedulingResource: spotScheduling(),
+  });
+  await waitUntilOperationComplete({
+    response,
+    zone: opts.runtime.zone!,
+    credentials: opts.credentials,
+  });
+}
+
 async function resolveSharedScratchDiskName(opts: {
   runtime: HostRuntime;
   credentials: { projectId: string; credentials: any };
@@ -973,10 +998,15 @@ export class GcpProvider implements CloudProvider {
     return runtimeFromInstance(instance);
   }
 
-  async startHost(runtime: HostRuntime, creds: any): Promise<void> {
+  async startHost(
+    runtime: HostRuntime,
+    creds: any,
+    opts?: { pricing_model?: NonNullable<HostSpec["pricing_model"]> },
+  ): Promise<void> {
     logger.info("gcp.startHost", {
       instance_id: runtime.instance_id,
       zone: runtime.zone,
+      pricing_model: opts?.pricing_model,
     });
     const credentials = parseCredentials(creds ?? {});
     if (!runtime.zone) {
@@ -998,12 +1028,56 @@ export class GcpProvider implements CloudProvider {
       });
       return;
     }
+    let current = existing;
     if (initialStatus === "STOPPING") {
-      await waitForInstanceLifecycleStatus({
+      // The wait can time out with the instance still STOPPING.
+      current =
+        (await waitForInstanceLifecycleStatus({
+          client,
+          credentials,
+          runtime,
+          desired: ["TERMINATED"],
+        })) ?? current;
+    }
+    // A pricing change made while the host was stopped only updates the
+    // host's record; the stopped instance keeps its old scheduling until it
+    // is set here, before the start. GCP changes scheduling only on a
+    // TERMINATED instance; in any other state the start proceeds as before.
+    const currentStatus = `${current?.status ?? ""}`.trim().toUpperCase();
+    if (
+      opts?.pricing_model &&
+      pricingModelFromInstance(current) !== opts.pricing_model &&
+      currentStatus !== "TERMINATED"
+    ) {
+      logger.warn(
+        "gcp.startHost cannot apply pricing model; instance is not TERMINATED",
+        {
+          instance_id: runtime.instance_id,
+          zone: runtime.zone,
+          status: currentStatus,
+          from: pricingModelFromInstance(current),
+          to: opts.pricing_model,
+        },
+      );
+    } else if (
+      opts?.pricing_model &&
+      pricingModelFromInstance(current) !== opts.pricing_model
+    ) {
+      logger.info("gcp.startHost applying pricing model before start", {
+        instance_id: runtime.instance_id,
+        zone: runtime.zone,
+        from: pricingModelFromInstance(current),
+        to: opts.pricing_model,
+      });
+      await setSchedulingForPricing({
         client,
         credentials,
         runtime,
-        desired: ["TERMINATED"],
+        gpu:
+          Number(
+            (runtime.metadata as { gpu_count?: number } | undefined)?.gpu_count,
+          ) > 0,
+        pricingModel: opts.pricing_model,
       });
     }
     const maxAttempts = 3;
@@ -1424,25 +1498,12 @@ export class GcpProvider implements CloudProvider {
         desired: ["TERMINATED"],
       });
     }
-    if (pricingModel === "on_demand") {
-      await setStandardSchedulingViaRest({
-        client,
-        credentials,
-        runtime,
-        gpu,
-      });
-      return;
-    }
-    const [response] = await client.setScheduling({
-      project: credentials.projectId,
-      zone: runtime.zone,
-      instance: runtime.instance_id,
-      schedulingResource: spotScheduling(),
-    });
-    await waitUntilOperationComplete({
-      response,
-      zone: runtime.zone,
+    await setSchedulingForPricing({
+      client,
       credentials,
+      runtime,
+      gpu,
+      pricingModel,
     });
   }
 

@@ -13,6 +13,18 @@ import { describeProjectScopedAuth } from "../../core/auth-cookies";
 import { signOutSession } from "../core/support-as-user";
 import { resolveAgentTokenFromEnv } from "../../core/agent-token";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import {
+  FRESH_AUTH_MAX_HOURS,
+  parseFreshAuthDuration,
+  type FreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
+import {
+  clearAuthGrants,
+  recordFreshAuth,
+  recordSessionGrant,
+  recordedAuthStatus,
+  renameAuthGrant,
+} from "../../core/auth-grants";
 
 export type AuthCommandDeps = {
   env: NodeJS.ProcessEnv;
@@ -50,6 +62,23 @@ export function profileScopedFetch(
     relayFetch(input, init, undefined, {
       credentialSite: api,
     })) as typeof fetch;
+}
+
+// --duration wins; then --short (15 minutes); otherwise 8 hours, as before.
+// Accepts "72h", "72" (hours), "default" or "extended".
+export function elevationDuration(opts: {
+  short?: boolean;
+  extended?: boolean;
+  duration?: string;
+}): FreshAuthDuration {
+  const raw = `${opts.duration ?? ""}`.trim();
+  if (raw) {
+    if (opts.short) {
+      throw new Error("use either --short or --duration, not both");
+    }
+    return parseFreshAuthDuration(/^[0-9]+$/.test(raw) ? `${raw}h` : raw);
+  }
+  return opts.short ? "default" : "extended";
 }
 
 export function registerAuthCommand(
@@ -334,6 +363,16 @@ export function registerAuthCommand(
     .command("status")
     .description("show effective auth/profile status")
     .option("--check", "verify credentials by connecting to the configured hub")
+    .addHelpText(
+      "after",
+      `
+Without --check this makes no request. recorded_session_expires_at,
+recorded_fresh_auth_until and the *_remaining_s fields come from the last
+auth login / auth elevate made by this CLI config on this machine
+(<config file name>.auth-grants.json next to it, timestamps only). The server may end
+access earlier; remaining seconds use the local clock; null means unknown.
+`,
+    )
     .action(async (opts: { check?: boolean }, command: Command) => {
       await runLocalCommand(command, "auth status", async (globals: any) => {
         const configPath = authConfigPath();
@@ -507,6 +546,13 @@ export function registerAuthCommand(
           ),
           ...projectAuth,
           effective_remote_auth,
+          // Client-side record of the last grant (informational only).
+          recorded_profile: profile ? selected : null,
+          ...recordedAuthStatus(
+            configPath,
+            selected,
+            profile ? profile.api : null,
+          ),
           check: check ?? null,
         };
       });
@@ -595,6 +641,8 @@ export function registerAuthCommand(
       config.current_profile = profileName;
     }
     saveAuthConfig(config, configPath);
+    // Stored credentials replace the session the record described.
+    clearAuthGrants(configPath, [profileName]);
     return {
       profile: profileName,
       current_profile: config.current_profile ?? null,
@@ -618,7 +666,7 @@ export function registerAuthCommand(
   async function runBrowserLogin(
     globals: any,
     opts: {
-      duration?: "default" | "extended";
+      duration?: FreshAuthDuration;
       elevatedLogin?: boolean;
       email?: string;
       pollMs?: string;
@@ -713,6 +761,11 @@ export function registerAuthCommand(
       config.current_profile = profileName;
     }
     saveAuthConfig(config, configPath);
+    recordSessionGrant(configPath, profileName, {
+      api: profileApiBaseUrl,
+      session_expires_at: redeemed.expire,
+      fresh_auth_until: redeemed.fresh_auth_until,
+    });
     return {
       profile: profileName,
       current_profile: config.current_profile ?? null,
@@ -800,12 +853,55 @@ export function registerAuthCommand(
     opts: {
       extended?: boolean;
       short?: boolean;
+      duration?: string;
       dev?: boolean;
       pollMs?: string;
     },
   ): Promise<Record<string, unknown>> {
-    const freshAuthDuration = opts.short ? "default" : "extended";
+    const freshAuthDuration = elevationDuration(opts);
     const effective = resolveEffectiveGlobals(globals);
+    // The record is about a stored profile's session, so it is written only
+    // when the elevated cookie is that profile's own cookie.
+    const grantConfigPath = authConfigPath();
+    const grantConfig = loadAuthConfig(grantConfigPath);
+    const grantApplied = applyAuthProfile(globals, grantConfig);
+    const grantProfile: string | undefined =
+      grantApplied.fromProfile &&
+      !`${globals.cookie ?? ""}`.trim() &&
+      `${grantConfig.profiles[grantApplied.profile]?.cookie ?? ""}`.trim() &&
+      effective.cookie === grantConfig.profiles[grantApplied.profile]?.cookie
+        ? grantApplied.profile
+        : undefined;
+    // Compared in memory only, never persisted.
+    const grantCookie = grantProfile
+      ? grantConfig.profiles[grantProfile]?.cookie
+      : undefined;
+    const noteFreshAuth = (fresh_auth_until: unknown) => {
+      if (!grantProfile) return;
+      recordFreshAuth(
+        grantConfigPath,
+        grantProfile,
+        {
+          api: effective.api
+            ? normalizeUrl(effective.api)
+            : defaultApiBaseUrl(),
+          fresh_auth_until,
+        },
+        new Date(),
+        // A re-login or logout of this profile during the approval wait
+        // means the result is for the old session: record nothing.
+        () => {
+          try {
+            return (
+              loadAuthConfig(grantConfigPath).profiles[grantProfile]?.cookie ===
+              grantCookie
+            );
+          } catch {
+            return false;
+          }
+        },
+      );
+    };
     const apiBaseUrl = effective.api
       ? normalizeUrl(effective.api)
       : defaultApiBaseUrl();
@@ -890,6 +986,12 @@ export function registerAuthCommand(
       config.profiles[profileName] = next;
       config.current_profile = profileName;
       saveAuthConfig(config, configPath);
+      // A new session for this profile; its expiry is not returned here.
+      recordSessionGrant(configPath, profileName, {
+        api: bootstrappedApiBaseUrl,
+        session_expires_at: null,
+        fresh_auth_until: bootstrappedDevSession.fresh_auth_until,
+      });
     }
     if (!cookieHeader) {
       throw new Error("interactive CLI sign-in is required before elevation");
@@ -913,22 +1015,29 @@ export function registerAuthCommand(
           dev: true,
         };
       }
-      const status = await postCliAuthApi<{
+      let status: {
         dev?: boolean;
         factor_level?: string;
         fresh_auth_until?: string | Date | null;
-      }>({
-        apiBaseUrl,
-        endpoint: "auth/cli/elevate/dev",
-        body: {
-          duration: freshAuthDuration,
-        },
-        cookieHeader,
-        credentialSite:
-          !opts.dev && effective.disableEnvAuthDefaults
-            ? apiBaseUrl
-            : undefined,
-      });
+      };
+      try {
+        status = await postCliAuthApi({
+          apiBaseUrl,
+          endpoint: "auth/cli/elevate/dev",
+          body: {
+            duration: freshAuthDuration,
+          },
+          cookieHeader,
+          credentialSite:
+            !opts.dev && effective.disableEnvAuthDefaults
+              ? apiBaseUrl
+              : undefined,
+        });
+      } catch (err) {
+        noteFreshAuth(null);
+        throw err;
+      }
+      noteFreshAuth(status.fresh_auth_until);
       return {
         account_id: getExplicitAccountId(effective) ?? null,
         factor_level: `${status.factor_level ?? ""}`.trim() || null,
@@ -939,47 +1048,60 @@ export function registerAuthCommand(
         dev: status.dev === true,
       };
     }
-    const codexAttentionContext = codexAttentionContextFromEnv();
-    const start = await postCliAuthApi<CliChallengeStart>({
-      apiBaseUrl,
-      endpoint: "auth/cli/elevate/start",
-      body: {
-        duration: freshAuthDuration,
-        ...(codexAttentionContext
-          ? { codex_attention_context: codexAttentionContext }
-          : {}),
-      },
-      cookieHeader,
-      credentialSite: effective.disableEnvAuthDefaults ? apiBaseUrl : undefined,
-    });
-    if (codexAttentionContext) {
-      if (start.attention_registered !== true) {
-        throw new Error("CoCalc could not register the fresh-auth request");
+    // A failed elevation (an error from the start or poll request, or a
+    // non-approved result) must not leave an earlier fresh-auth window on
+    // record. An interrupted CLI (Ctrl-C) records nothing and keeps the
+    // earlier record: abandoning the wait does not change the server state.
+    let status: CliChallengeStatus;
+    try {
+      const codexAttentionContext = codexAttentionContextFromEnv();
+      const start = await postCliAuthApi<CliChallengeStart>({
+        apiBaseUrl,
+        endpoint: "auth/cli/elevate/start",
+        body: {
+          duration: freshAuthDuration,
+          ...(codexAttentionContext
+            ? { codex_attention_context: codexAttentionContext }
+            : {}),
+        },
+        cookieHeader,
+        credentialSite: effective.disableEnvAuthDefaults
+          ? apiBaseUrl
+          : undefined,
+      });
+      if (codexAttentionContext) {
+        if (start.attention_registered !== true) {
+          throw new Error("CoCalc could not register the fresh-auth request");
+        }
+        process.stderr.write(
+          "Approval requested in CoCalc. Waiting for authorization.\n",
+        );
+      } else {
+        if (!start.approval_url) {
+          throw new Error("CoCalc did not return an approval URL");
+        }
+        process.stderr.write(
+          `Open this URL in your browser to approve CLI elevation:\n${start.approval_url}\n`,
+        );
       }
-      process.stderr.write(
-        "Approval requested in CoCalc. Waiting for authorization.\n",
-      );
-    } else {
-      if (!start.approval_url) {
-        throw new Error("CoCalc did not return an approval URL");
+      status = await waitForCliChallenge({
+        apiBaseUrl,
+        endpoint: "auth/cli/elevate/status",
+        challenge_id: start.challenge_id,
+        expires_at: start.expires_at,
+        poll_token: start.poll_token,
+        pollMs: Math.max(200, durationToMs(opts.pollMs, 1_500)),
+      });
+      if (status.state !== "approved") {
+        throw new Error(
+          `unexpected CLI elevation challenge state '${status.state}'`,
+        );
       }
-      process.stderr.write(
-        `Open this URL in your browser to approve CLI elevation:\n${start.approval_url}\n`,
-      );
+    } catch (err) {
+      noteFreshAuth(null);
+      throw err;
     }
-    const status = await waitForCliChallenge({
-      apiBaseUrl,
-      endpoint: "auth/cli/elevate/status",
-      challenge_id: start.challenge_id,
-      expires_at: start.expires_at,
-      poll_token: start.poll_token,
-      pollMs: Math.max(200, durationToMs(opts.pollMs, 1_500)),
-    });
-    if (status.state !== "approved") {
-      throw new Error(
-        `unexpected CLI elevation challenge state '${status.state}'`,
-      );
-    }
+    noteFreshAuth(status.fresh_auth_until);
     return {
       account_id: getExplicitAccountId(effective) ?? null,
       factor_level: `${status.factor_level ?? ""}`.trim() || null,
@@ -1123,6 +1245,10 @@ Examples:
     .option("--short", "keep this elevation active for 15 minutes")
     .option("--extended", "keep this elevation active for 8 hours (default)")
     .option(
+      "--duration <hours>",
+      `keep this elevation active for 1h to ${FRESH_AUTH_MAX_HOURS}h (more than 8h sends you an email)`,
+    )
+    .option(
       "--dev",
       "dev-only: elevate using the hub password instead of browser approval",
     )
@@ -1132,6 +1258,7 @@ Examples:
         opts: {
           extended?: boolean;
           short?: boolean;
+          duration?: string;
           dev?: boolean;
           pollMs?: string;
         },
@@ -1149,6 +1276,10 @@ Examples:
     .option("--email <email>", "optional email hint shown during browser login")
     .option("--short", "keep this elevation active for 15 minutes")
     .option("--extended", "keep this elevation active for 8 hours (default)")
+    .option(
+      "--duration <hours>",
+      `keep this elevation active for 1h to ${FRESH_AUTH_MAX_HOURS}h (more than 8h sends you an email)`,
+    )
     .option(
       "--dev",
       "dev-only: elevate using the hub password instead of browser approval",
@@ -1169,6 +1300,7 @@ Examples:
           email?: string;
           extended?: boolean;
           short?: boolean;
+          duration?: string;
           dev?: boolean;
           pollMs?: string;
           setCurrent?: boolean;
@@ -1181,7 +1313,7 @@ Examples:
           async (globals: any) => {
             const usesStoredCredentials = hasLegacyStoredCredentials(globals);
             const combinedBrowserLogin = !usesStoredCredentials && !opts.dev;
-            const duration = opts.short ? "default" : "extended";
+            const duration = elevationDuration(opts);
             const login = usesStoredCredentials
               ? await saveAuthProfile(globals, opts)
               : await runBrowserLogin(globals, {
@@ -1285,6 +1417,7 @@ Examples:
           config.current_profile = to;
         }
         saveAuthConfig(config, configPath);
+        renameAuthGrant(configPath, from, to);
         return {
           renamed: from,
           to,
@@ -1400,6 +1533,7 @@ Examples:
               latest.current_profile = Object.keys(latest.profiles).sort()[0];
             }
             saveAuthConfig(latest, configPath);
+            clearAuthGrants(configPath, removed);
             return { latest, removed };
           };
 

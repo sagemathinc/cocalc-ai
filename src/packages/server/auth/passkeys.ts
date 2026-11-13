@@ -18,7 +18,7 @@ import {
   type AuthenticatorTransportFuture,
 } from "@simplewebauthn/server";
 
-import passwordHash from "@cocalc/backend/auth/password-hash";
+import { newPasswordHash } from "@cocalc/database/settings/password-kdf";
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import {
@@ -43,6 +43,7 @@ import {
   normalizeRecoveryCode,
 } from "@cocalc/server/auth/totp";
 import { isValidUUID } from "@cocalc/util/misc";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 export const FACTOR_TYPE_PASSKEY = "passkey";
 
@@ -151,7 +152,7 @@ function cleanLabel(value: unknown): string {
 }
 
 function cleanFreshAuthDuration(value: unknown): FreshAuthDuration {
-  return value === "extended" ? "extended" : "default";
+  return parseFreshAuthDuration(value);
 }
 
 function toBase64Url(value: Uint8Array): string {
@@ -323,11 +324,15 @@ async function issueRecoveryCodesWithDb({
   factor_id: string;
 }): Promise<string[]> {
   const codes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
+  // Hash before writing: the KDF is slow, and db may be a transaction.
+  const code_hashes = await Promise.all(
+    codes.map((code) => newPasswordHash(normalizeRecoveryCode(code))),
+  );
   await db.query(
     "DELETE FROM account_second_factor_recovery_codes WHERE account_id = $1::UUID",
     [account_id],
   );
-  for (const code of codes) {
+  for (const code_hash of code_hashes) {
     await db.query(
       `
         INSERT INTO account_second_factor_recovery_codes(
@@ -336,13 +341,7 @@ async function issueRecoveryCodesWithDb({
           $1::UUID, $2::UUID, $3::UUID, $4::VARCHAR(173), NULL, NOW(), $5::JSONB
         )
       `,
-      [
-        uuid(),
-        account_id,
-        factor_id,
-        passwordHash(normalizeRecoveryCode(code)),
-        "{}",
-      ],
+      [uuid(), account_id, factor_id, code_hash, "{}"],
     );
   }
   return codes;
