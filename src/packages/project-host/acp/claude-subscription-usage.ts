@@ -9,6 +9,7 @@ import {
   claudeRateLimitSnapshot,
   type ClaudeRateLimitSnapshot,
 } from "@cocalc/util/ai/claude-usage";
+import { codexRateLimitSnapshot } from "@cocalc/util/ai/codex-usage";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getMasterConatClient } from "../master-conat-client";
 import { getLocalHostId } from "../sqlite/hosts";
@@ -61,12 +62,18 @@ const writeToHomeBay: Write = async ({
 
 /**
  * Save the subscription limits reported during a turn to the credential's
- * metadata, so any CoCalc page can show them without asking Claude.
+ * metadata, so any CoCalc page can show them without asking Claude. With
+ * another snapshot function and write, the same for Codex.
  */
 export function createClaudeUsageRecorder({
   write = writeToHomeBay,
   minIntervalMs = MIN_INTERVAL_MS,
-}: { write?: Write; minIntervalMs?: number } = {}) {
+  snapshot = claudeRateLimitSnapshot,
+}: {
+  write?: Write;
+  minIntervalMs?: number;
+  snapshot?: (info: unknown) => ClaudeRateLimitSnapshot | undefined;
+} = {}) {
   // An entry outlives its last save by one interval, which spaces out saves,
   // and is then dropped: a long-lived host serves any number of accounts.
   const entries = new Map<string, Entry>();
@@ -100,7 +107,7 @@ export function createClaudeUsageRecorder({
       !isValidUUID(credentialId)
     )
       return;
-    const latest = claudeRateLimitSnapshot(options.info);
+    const latest = snapshot(options.info);
     if (!latest) return;
     const key = `${accountId}/${credentialId}`;
     const entry = entries.get(key) ?? {
@@ -144,5 +151,51 @@ export function recordHarnessRateLimit(
     accountId: binding.accountId,
     credentialId: credential.credentialId,
     info,
+  });
+}
+
+const writeCodexToHomeBay: Write = async ({
+  projectId,
+  accountId,
+  credentialId,
+  usage,
+}) => {
+  const client = getMasterConatClient();
+  const host_id = getLocalHostId();
+  if (!client || !host_id) return;
+  await callHub({
+    client,
+    host_id,
+    name: "hosts.recordCodexSubscriptionUsage",
+    args: [
+      {
+        project_id: projectId,
+        owner_account_id: accountId,
+        credential_id: credentialId,
+        usage,
+      },
+    ],
+    timeout: 15_000,
+  });
+};
+
+const recordCodex = createClaudeUsageRecorder({
+  write: writeCodexToHomeBay,
+  snapshot: codexRateLimitSnapshot,
+});
+
+/** ChatGPT plan limits Codex reported (during a turn, or when asked). */
+export function recordCodexRateLimits(report: {
+  projectId: string;
+  accountId: string;
+  credentialId?: string;
+  rateLimits: unknown;
+}): void {
+  if (!report.credentialId) return;
+  recordCodex({
+    projectId: report.projectId,
+    accountId: report.accountId,
+    credentialId: report.credentialId,
+    info: report.rateLimits,
   });
 }

@@ -72,6 +72,24 @@ import {
   trimTrailingChars,
 } from "@cocalc/util/linear-text";
 const logger = getLogger("ai:acp:codex-app-server");
+
+/** A ChatGPT plan's limits as Codex reported them during a turn. */
+export type CodexRateLimitReport = {
+  projectId: string;
+  accountId: string;
+  credentialId: string;
+  rateLimits: unknown;
+};
+let codexRateLimitRecorder:
+  | ((report: CodexRateLimitReport) => void)
+  | undefined;
+
+/** Where a turn's reported plan limits go (the project host saves them). */
+export function setCodexRateLimitRecorder(
+  next?: (report: CodexRateLimitReport) => void,
+): void {
+  codexRateLimitRecorder = next;
+}
 const REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_APP_SERVER_TIMEOUT_MS ?? 90_000),
@@ -1105,7 +1123,19 @@ export class AppServerClient {
     pending.resolve(message.result ?? {});
   }
 
+  /** Account-level plan limits Codex reports (no thread or turn). */
+  onRateLimits?: (params: unknown) => void;
+
   private handleNotification(message: RpcNotification): void {
+    if (message.method === "account/rateLimits/updated") {
+      try {
+        this.onRateLimits?.(message.params);
+      } catch (err) {
+        logger.debug("codex app-server: rate limits not recorded", {
+          err: String(err),
+        });
+      }
+    }
     if (message.method === "serverRequest/resolved") {
       const requestId = message.params?.requestId;
       if (requestId != null) {
@@ -2856,14 +2886,27 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       throw err;
     }
+    const runtimeCredentialId =
+      spawned.credentialId ?? request.config?.credentialId;
+    const runtimeProjectId = request.chat?.project_id ?? request.project_id;
+    // Plan limits Codex reports while this runtime runs a subscription's
+    // turns; the recorder and the hub revalidate everything.
+    if (runtimeCredentialId && request.account_id)
+      client.onRateLimits = (rateLimits) =>
+        codexRateLimitRecorder?.({
+          projectId: runtimeProjectId,
+          accountId: request.account_id!,
+          credentialId: runtimeCredentialId,
+          rateLimits,
+        });
     runtime = {
       key: session.sessionId,
       aliases: new Set(),
-      projectId: request.chat?.project_id ?? request.project_id,
+      projectId: runtimeProjectId,
       accountId: request.account_id,
       cwd,
       paymentSource: request.config?.paymentSource,
-      credentialId: spawned.credentialId ?? request.config?.credentialId,
+      credentialId: runtimeCredentialId,
       requestedCredentialId: request.config?.credentialId,
       maxConcurrentSubagents: normalizeMaxConcurrentSubagents(
         request.config?.maxConcurrentSubagents,

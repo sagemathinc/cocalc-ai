@@ -217,6 +217,12 @@ import {
   CLAUDE_USAGE_METADATA_KEY,
   parseClaudeRateLimitSnapshot,
 } from "@cocalc/util/ai/claude-usage";
+import { appendClaudeUsageHistory } from "@cocalc/util/ai/claude-pool";
+import {
+  CODEX_USAGE_HISTORY_METADATA_KEY,
+  CODEX_USAGE_METADATA_KEY,
+  mergeCodexUsage,
+} from "@cocalc/util/ai/codex-usage";
 import { type ExternalCredentialScope } from "@cocalc/server/external-credentials/store";
 import {
   ensureSelfHostReverseTunnel,
@@ -3455,6 +3461,84 @@ export async function recordClaudeSubscriptionUsage({
     key: CLAUDE_USAGE_METADATA_KEY,
     value: snapshot,
   });
+}
+
+export async function recordCodexSubscriptionUsage({
+  host_id,
+  project_id,
+  owner_account_id,
+  credential_id,
+  usage,
+}: {
+  host_id?: string;
+  project_id: string;
+  owner_account_id: string;
+  credential_id: string;
+  usage: unknown;
+}): Promise<boolean> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!project_id) throw new Error("project_id must be specified");
+  if (!isValidUUID(owner_account_id))
+    throw new Error("owner_account_id must be a UUID");
+  assertExternalCredentialId(credential_id);
+  if (!credential_id) throw new Error("credential_id must be specified");
+  // Store only revalidated numbers, never what the host sent.
+  const snapshot = parseClaudeRateLimitSnapshot(usage);
+  if (!snapshot) throw new Error("invalid Codex usage");
+  // Trusted-host attribution, exactly as for Claude usage: a host running one
+  // of the owner's projects may report usage for the owner's Codex
+  // subscriptions, so it can at worst misstate the numbers shown.
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id,
+  });
+  const selector = {
+    provider: "openai",
+    kind: CODEX_SUBSCRIPTION_KIND,
+    scope: "account" as const,
+    owner_account_id,
+  };
+  // The stored values, from the metadata-only listing (no credential payload
+  // leaves its bay). An unknown or revoked credential changes nothing.
+  const current = (
+    await listAccountExternalCredentialsRouted({
+      owner_account_id,
+      provider: selector.provider,
+      kind: selector.kind,
+      scope: selector.scope,
+    })
+  ).find((row) => row.id === credential_id && !row.revoked);
+  if (!current) return false;
+  const now = Date.now();
+  // Rolling updates may carry one window: keep the other until it resets.
+  // The history takes only what this report carries, so a kept weekly
+  // reading is never recorded as a new one. Concurrent reports for one
+  // subscription may each drop the other's history point (one in 30
+  // minutes); the snapshot itself is always a reported value.
+  const history = appendClaudeUsageHistory(
+    current.metadata?.[CODEX_USAGE_HISTORY_METADATA_KEY],
+    snapshot,
+    now,
+  );
+  const saved = await setExternalCredentialMetadataValueByIdRouted({
+    id: credential_id,
+    selector,
+    key: CODEX_USAGE_METADATA_KEY,
+    value: mergeCodexUsage(
+      current.metadata?.[CODEX_USAGE_METADATA_KEY],
+      snapshot,
+      now,
+    ),
+  });
+  if (saved && history)
+    await setExternalCredentialMetadataValueByIdRouted({
+      id: credential_id,
+      selector,
+      key: CODEX_USAGE_HISTORY_METADATA_KEY,
+      value: history,
+    });
+  return saved;
 }
 
 export async function touchExternalCredential({

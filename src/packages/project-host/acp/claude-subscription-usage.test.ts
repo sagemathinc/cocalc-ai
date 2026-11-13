@@ -57,3 +57,36 @@ test("forgets credentials that have been quiet for an interval", async () => {
   expect(record.size()).toBe(0);
   expect(write).toHaveBeenCalledTimes(100);
 });
+
+test("records Codex plan limits with the Codex snapshot", async () => {
+  const { codexRateLimitSnapshot } =
+    await import("@cocalc/util/ai/codex-usage");
+  const write = jest.fn(async () => {});
+  const record = createClaudeUsageRecorder({
+    write,
+    snapshot: codexRateLimitSnapshot,
+  });
+  const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+  // What account/rateLimits/updated carries, with fields that are not kept.
+  record({
+    projectId,
+    accountId,
+    credentialId,
+    info: {
+      rateLimits: {
+        primary: { usedPercent: 25, windowDurationMins: 300, resetsAt },
+        planType: "pro",
+        credits: { balance: "x" },
+      },
+    },
+  });
+  await jest.advanceTimersByTimeAsync(0);
+  expect(write).toHaveBeenCalledTimes(1);
+  expect((write.mock.calls[0] as any)[0].usage.windows).toEqual({
+    five_hour: { utilization: 0.25, resets_at: resetsAt },
+  });
+  // A Claude-shaped report is not Codex usage.
+  record({ projectId, accountId, credentialId: projectId, info: info(0.1) });
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(write).toHaveBeenCalledTimes(1);
+});

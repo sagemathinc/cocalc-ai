@@ -21,9 +21,15 @@ import {
   claudePoolReservedAmount,
   claudeTurnCostEstimate,
   parseClaudePoolReservations,
+  parseClaudeUsageHistory,
   parseTurnCostSamples,
   type ClaudePoolMember,
 } from "./claude-pool";
+import { parseClaudeRateLimitSnapshot } from "./claude-usage";
+import {
+  CODEX_USAGE_HISTORY_METADATA_KEY,
+  CODEX_USAGE_METADATA_KEY,
+} from "./codex-usage";
 import {
   ANTHROPIC_API_PROVIDER,
   CLAUDE_SUBSCRIPTION_KIND,
@@ -109,6 +115,12 @@ export interface AiSubscriptionStatus {
       plan_type?: string;
       default?: boolean;
       last_used?: string;
+      /** As Codex last reported during a turn or a usage check (ISO). */
+      observed_at?: string;
+      five_hour?: AiSubscriptionWindow;
+      week?: AiSubscriptionWindow;
+      week_percent_per_day?: number;
+      week_history?: { at: string; used_percent: number; resets_at: string }[];
     }[];
     note: string;
   };
@@ -136,6 +148,57 @@ const text = (value: unknown, max = 200) =>
 const percent = (fraction: number) => Math.round(fraction * 1000) / 10;
 
 const MAX_HISTORY_POINTS = 12;
+
+/** The windows a subscription last reported, as they stand now (a window
+ * whose reset passed is at 0). */
+function usageWindows(
+  member: ClaudePoolMember,
+  now: number,
+): { five?: AiSubscriptionWindow; week?: AiSubscriptionWindow } {
+  const windows = claudePoolWindows(member, now);
+  const reported = member.usage?.windows;
+  const window = (
+    present: boolean,
+    used: number,
+    resetsAt: number | undefined,
+  ): AiSubscriptionWindow | undefined =>
+    present
+      ? {
+          used_percent: percent(used),
+          ...(resetsAt ? { resets_at: iso(resetsAt) } : {}),
+        }
+      : undefined;
+  const five = window(
+    !!reported?.five_hour,
+    windows.five,
+    windows.fiveResetsAt,
+  );
+  const week = window(
+    !!reported?.seven_day,
+    windows.week,
+    windows.weekResetsAt,
+  );
+  return { ...(five ? { five } : {}), ...(week ? { week } : {}) };
+}
+
+/** A Codex subscription's stored usage, in the shape the Claude code reads. */
+function codexMember(
+  row: AiSubscriptionCredentialRow,
+  now: number,
+): ClaudePoolMember {
+  const usage = parseClaudeRateLimitSnapshot(
+    row.metadata?.[CODEX_USAGE_METADATA_KEY],
+    now,
+  );
+  const history = parseClaudeUsageHistory(
+    row.metadata?.[CODEX_USAGE_HISTORY_METADATA_KEY],
+  );
+  return {
+    credential_id: row.id,
+    ...(usage ? { usage } : {}),
+    ...(history.length ? { history } : {}),
+  };
+}
 
 function weekHistory(
   member: ClaudePoolMember,
@@ -198,30 +261,8 @@ export function aiSubscriptionStatus(
   };
   const subscriptions = claudeRows.map((row): ClaudeSubscriptionStatus => {
     const { running, ...m } = member(row);
-    const windows = claudePoolWindows(m, now);
-    const reported = m.usage?.windows;
     const availableAt = claudePoolAvailableAt(m, cost, now);
-    const window = (
-      present: boolean,
-      used: number,
-      resetsAt: number | undefined,
-    ): AiSubscriptionWindow | undefined =>
-      present
-        ? {
-            used_percent: percent(used),
-            ...(resetsAt ? { resets_at: iso(resetsAt) } : {}),
-          }
-        : undefined;
-    const five = window(
-      !!reported?.five_hour,
-      windows.five,
-      windows.fiveResetsAt,
-    );
-    const week = window(
-      !!reported?.seven_day,
-      windows.week,
-      windows.weekResetsAt,
-    );
+    const { five, week } = usageWindows(m, now);
     return {
       id: row.id,
       ...(text(row.metadata?.label)
@@ -246,6 +287,16 @@ export function aiSubscriptionStatus(
   const forecast = claudePoolForecast(members, now);
   const times = members.map((m) => claudePoolAvailableAt(m, cost, now));
   const availableNow = times.filter((t) => t <= now).length;
+  const codexUsage = (row: AiSubscriptionCredentialRow) => {
+    const m = codexMember(row, now);
+    const { five, week } = usageWindows(m, now);
+    return {
+      ...(m.usage ? { observed_at: m.usage.observed_at } : {}),
+      ...(five ? { five_hour: five } : {}),
+      ...(week ? { week } : {}),
+      ...weekHistory(m, now),
+    };
+  };
   return {
     checked_at: new Date(now).toISOString(),
     claude: {
@@ -285,8 +336,9 @@ export function aiSubscriptionStatus(
             : {}),
           ...(row.metadata?.cocalc_default === true ? { default: true } : {}),
           ...(isoOf(row.last_used) ? { last_used: isoOf(row.last_used) } : {}),
+          ...codexUsage(row),
         })),
-      note: "CoCalc does not store live ChatGPT Codex usage: Codex reports its own limits during a turn.",
+      note: "Codex limits are as Codex last reported them, during a CoCalc turn or a usage check (observed_at): they may be stale, and a subscription not used recently has none.",
     },
   };
 }
