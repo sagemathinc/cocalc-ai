@@ -317,6 +317,11 @@ an agent runs.
 
 ## Connect access for Codex
 
+On hosted CoCalc, ChatGPT device sign-in, subscription usage checks, and Codex
+turns using **ChatGPT Plan** need the project to reach OpenAI. Choose a project
+with internet access for sign-in. This is separate from signing the CoCalc CLI
+into your CoCalc account.
+
 1. Open Codex or the AI settings area.
 2. Choose **Sign in with ChatGPT** or configure an OpenAI API key.
 3. Complete the device authorization or key setup flow.
@@ -356,8 +361,11 @@ usage** appears when ChatGPT Plan is the resolved payment source. Click
 and reset timing for each reported usage window; they are not a per-thread
 spending total. Missing or unchecked usage data does not mean the allowance
 is zero. The displayed account and plan help identify the connection. Hosted
-usage checks and device sign-in need an available project; open one when
-prompted and retry.
+usage checks and device sign-in need an available project with internet access.
+If you see **This project has no internet access**, choose a project with internet
+access. If you enable internet access for the same project, restart the
+project before signing in again. Refreshing usage or repeating sign-in in the
+same offline project cannot confirm the connection.
 
 **Connection not verified** means a stored credential was found but the live
 check did not confirm access. **Sign-in needs refresh** means that connection
