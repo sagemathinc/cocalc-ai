@@ -248,6 +248,41 @@ test("with recent readings, the rate is measured over them", () => {
   );
 });
 
+test("a measured rate of zero is a rate: used earlier, idle lately", () => {
+  // office's week is at 60%, but unchanged over the last 12 hours.
+  const idle = credentials.map((row: any) =>
+    row.id === office
+      ? {
+          ...row,
+          metadata: {
+            ...row.metadata,
+            claude_usage_history: [
+              {
+                at: (now - 12 * hour) * 1000,
+                week: 0.6,
+                resets_at: now + 72 * hour,
+              },
+            ],
+          },
+        }
+      : row,
+  );
+  render(
+    <ClaudeCredentialList
+      credentials={idle}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  const status = screen.getByRole("status").textContent ?? "";
+  expect(status).toMatch(
+    /Using about 0\.00 weekly limits a day \(over the last 12 hours\)/,
+  );
+  expect(status).toMatch(/they don't all run out within a week/);
+  expect(status).not.toMatch(/No usage rate/);
+});
+
 test("with no usage to go by, there is no rate and no forecast", () => {
   const unused = credentials.map((row: any) => {
     const { claude_usage: _unused, ...metadata } = row.metadata;
@@ -262,7 +297,7 @@ test("with no usage to go by, there is no rate and no forecast", () => {
     />,
   );
   const status = screen.getByRole("status").textContent ?? "";
-  expect(status).toMatch(/No usage yet to forecast from\./);
+  expect(status).toMatch(/No usage rate is available to forecast from\./);
   expect(status).not.toMatch(/weekly limits a day|At that rate/);
 });
 

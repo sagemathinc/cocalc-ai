@@ -75,7 +75,9 @@ export function claudePoolSummary(
     members: members.length,
     available,
     remaining: forecast.remaining,
-    ...(forecast.ratePerHour > 0
+    // A measured recent rate counts even when it is 0 (used earlier in the
+    // week, idle lately); an estimate of 0 says nothing.
+    ...(forecast.ratePerHour > 0 || forecast.rateFrom === "recent"
       ? {
           usedPerDay: forecast.ratePerHour * 24,
           rateFrom: forecast.rateFrom,
@@ -145,7 +147,7 @@ export function ClaudePoolForecast({
       )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {summary.usedPerDay == null ? (
-          "No usage yet to forecast from."
+          "No usage rate is available to forecast from."
         ) : summary.runsOutAt != null ? (
           <>
             At that rate, counting the resets on the way, every weekly limit is
