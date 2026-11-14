@@ -7,6 +7,7 @@ import {
   installLiteHarnessLauncher,
   launchLocalHarness,
   localHarnessEnv,
+  stopTree,
   resolveClaudeAdapterEntry,
   resolveClaudeExecutable,
   resolveLocalHarnessCommand,
@@ -57,11 +58,26 @@ describe("resolveClaudeAdapterEntry", () => {
     ).toBe(shipped);
   });
 
+  it("finds the copy beside the compiled Bun launcher", () => {
+    // Its argv[1] is inside Bun's virtual filesystem.
+    const shipped =
+      "/opt/cocalc-plus/app/bundle/claude-agent-acp/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js";
+    expect(
+      resolveClaudeAdapterEntry({
+        env: {},
+        entryPoint: "/$bunfs/root/cocalc-plus",
+        execPath: "/opt/cocalc-plus/cocalc-plus",
+        exists: (f) => f === shipped,
+      }),
+    ).toBe(shipped);
+  });
+
   it("says the installation lacks the adapter", () => {
     expect(() =>
       resolveClaudeAdapterEntry({
         env: {},
         entryPoint: "/app/bundle/index.js",
+        execPath: "/usr/bin/node",
         exists: () => false,
       }),
     ).toThrow("does not include the Claude Code adapter");
@@ -334,5 +350,80 @@ describe("launchLocalHarness", () => {
     await expect(
       launchLocalHarness(b, { path: "a.chat", threadId: "t1" }),
     ).rejects.toThrow("does not exist");
+  });
+});
+
+describe("stopTree", () => {
+  const settled = () => {
+    let resolve!: () => void;
+    const closed = new Promise<void>((r) => (resolve = r));
+    return { closed, resolve };
+  };
+
+  it("on Windows, never names the pid after the harness exited", async () => {
+    const run = jest.fn();
+    await stopTree({
+      pid: 42,
+      exited: () => true,
+      closed: Promise.resolve(),
+      platform: "win32",
+      run,
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("on Windows, ends a running harness and its children once", async () => {
+    const run = jest.fn();
+    let exited = false;
+    const { closed, resolve } = settled();
+    const stopping = stopTree({
+      pid: 42,
+      exited: () => exited,
+      closed,
+      platform: "win32",
+      run,
+      graceMs: 10_000,
+    });
+    exited = true;
+    resolve();
+    await stopping;
+    expect(run.mock.calls).toEqual([
+      ["taskkill", ["/pid", "42", "/T", "/F"]],
+    ]);
+  });
+
+  it("on POSIX, signals only the process group, then sweeps it", async () => {
+    const kill = jest.fn();
+    await stopTree({
+      pid: 42,
+      exited: () => true,
+      closed: Promise.resolve(),
+      platform: "linux",
+      kill,
+    });
+    expect(kill.mock.calls).toEqual([[-42, "SIGKILL"]]);
+  });
+
+  it("forces a harness that ignores SIGTERM", async () => {
+    const kill = jest.fn();
+    let exited = false;
+    const { closed, resolve } = settled();
+    const stopping = stopTree({
+      pid: 7,
+      exited: () => exited,
+      closed,
+      platform: "linux",
+      kill,
+      graceMs: 10,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    exited = true;
+    resolve();
+    await stopping;
+    expect(kill.mock.calls).toEqual([
+      [-7, "SIGTERM"],
+      [-7, "SIGKILL"],
+      [-7, "SIGKILL"],
+    ]);
   });
 });

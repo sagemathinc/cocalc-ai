@@ -47,10 +47,12 @@ const ADAPTER_MISSING =
 export function resolveClaudeAdapterEntry({
   env = process.env,
   entryPoint = process.env.COCALC_LITE_DAEMON_ENTRYPOINT ?? process.argv[1],
+  execPath = process.execPath,
   exists = existsSync,
 }: {
   env?: NodeJS.ProcessEnv;
   entryPoint?: string;
+  execPath?: string;
   exists?: (file: string) => boolean;
 } = {}): string {
   const explicit = `${env.COCALC_CLAUDE_AGENT_ACP ?? ""}`.trim();
@@ -64,6 +66,17 @@ export function resolveClaudeAdapterEntry({
     candidates.push(
       path.join(path.dirname(entryPoint), "claude-agent-acp", ADAPTER_ENTRY),
     );
+  // The compiled Bun launcher (plus/bun/launcher.ts): its argv[1] is inside
+  // Bun's virtual filesystem, and the app is app/bundle beside the executable.
+  candidates.push(
+    path.join(
+      path.dirname(execPath),
+      "app",
+      "bundle",
+      "claude-agent-acp",
+      ADAPTER_ENTRY,
+    ),
+  );
   candidates.push(path.join("/opt/cocalc/bin2/claude-code/app", ADAPTER_ENTRY));
   const found = candidates.find((candidate) => exists(candidate));
   if (!found) throw Error(ADAPTER_MISSING);
@@ -274,18 +287,63 @@ export function localHarnessEnv({
   return env;
 }
 
+type TreeControl = {
+  platform?: NodeJS.Platform;
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
+  run?: (command: string, args: string[]) => void;
+};
+
 /** Ends the harness and everything it started (its shell commands too). */
-function terminateTree(pid: number | undefined, signal: NodeJS.Signals): void {
+export function terminateTree(
+  pid: number | undefined,
+  signal: NodeJS.Signals,
+  {
+    platform = process.platform,
+    kill = (pid, signal) => process.kill(pid, signal),
+    run = (command, args) => execFile(command, args, () => {}),
+  }: TreeControl = {},
+): void {
   if (!pid) return;
-  if (process.platform === "win32") {
-    execFile("taskkill", ["/pid", `${pid}`, "/T", "/F"], () => {});
+  if (platform === "win32") {
+    // Only while the harness runs (see stopTree): /T follows its children.
+    run("taskkill", ["/pid", `${pid}`, "/T", "/F"]);
     return;
   }
   try {
     // Negative: the whole process group (spawned detached, so it leads one).
     // Never the bare pid: after the harness exits it may belong to another.
-    process.kill(-pid, signal);
+    kill(-pid, signal);
   } catch {}
+}
+
+/**
+ * Stop a harness: ask, then force after 5 s. On POSIX, then also end what is
+ * left of its process group (commands the agent left running in the
+ * background). Never on Windows, where only a pid can be named and, after the
+ * harness exited, it may belong to an unrelated process.
+ */
+export async function stopTree({
+  pid,
+  exited,
+  closed,
+  graceMs = 5_000,
+  ...control
+}: TreeControl & {
+  pid: number | undefined;
+  exited: () => boolean;
+  closed: Promise<void>;
+  graceMs?: number;
+}): Promise<void> {
+  if (!exited()) {
+    terminateTree(pid, "SIGTERM", control);
+    const timer = setTimeout(() => {
+      if (!exited()) terminateTree(pid, "SIGKILL", control);
+    }, graceMs);
+    await closed;
+    clearTimeout(timer);
+  }
+  if ((control.platform ?? process.platform) !== "win32")
+    terminateTree(pid, "SIGKILL", control);
 }
 
 export const launchLocalHarness: HarnessLaunchFactory = async (
@@ -330,19 +388,7 @@ export const launchLocalHarness: HarnessLaunchFactory = async (
     stdout: child.stdout,
     stderr: child.stderr,
     closed,
-    stop: async () => {
-      if (!exited) {
-        terminateTree(child.pid, "SIGTERM");
-        const timer = setTimeout(
-          () => terminateTree(child.pid, "SIGKILL"),
-          5_000,
-        );
-        await closed;
-        clearTimeout(timer);
-      }
-      // Commands the agent left running in the background share the group.
-      terminateTree(child.pid, "SIGKILL");
-    },
+    stop: () => stopTree({ pid: child.pid, exited: () => exited, closed }),
   };
 };
 
