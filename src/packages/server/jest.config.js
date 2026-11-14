@@ -5,6 +5,9 @@ module.exports = {
     "^.+\\.tsx?$": ["ts-jest", { tsconfig: "<rootDir>/tsconfig.test.json" }],
   },
   testEnvironment: "node",
+  // Recycle workers between suites instead of accumulating module state across
+  // the whole server run, which otherwise outgrows a 16 GB CI runner.
+  workerIdleMemoryLimit: "1GB",
   setupFiles: ["./test/setup.js"], // Path to your setup file
   testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
   transformIgnorePatterns: [

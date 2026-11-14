@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import os from "node:os";
 import path from "node:path";
+import { execPathScriptEnv } from "../runtime";
 import type {
   ReflectForwardRow,
   ReflectLogRow,
@@ -292,8 +293,9 @@ function resolveNodeBinary(): string {
   return process.execPath;
 }
 
-function createSessionLogWriter(
-  mod: ReflectSync,
+// (exported for tests)
+export function createSessionLogWriter(
+  mod: Pick<ReflectSync, "openSessionDb">,
   sessionDb: string,
   sessionId: number,
 ) {
@@ -309,14 +311,22 @@ function createSessionLogWriter(
         message: string,
         meta?: Record<string, unknown>,
       ) => {
-        stmt.run(
-          sessionId,
-          Date.now(),
-          level,
-          "cocalc-plus",
-          message,
-          meta ? JSON.stringify(meta) : null,
-        );
+        // A log entry must never take the server down.  The session may be
+        // gone already: a scheduler's exit is logged after its session was
+        // terminated, and the insert then fails its foreign key; thrown in a
+        // child process's exit handler, that ended CoCalc Plus.
+        try {
+          stmt.run(
+            sessionId,
+            Date.now(),
+            level,
+            "cocalc-plus",
+            message,
+            meta ? JSON.stringify(meta) : null,
+          );
+        } catch {
+          // dropped
+        }
       },
       close: () => {
         try {
@@ -1097,7 +1107,7 @@ async function runReflectCliJson(
       [cliPath, "--session-db", sessionDb, ...args],
       {
         stdio: ["ignore", "pipe", "pipe"],
-        env: process.env,
+        env: execPathScriptEnv(),
       },
     );
     let stdout = "";

@@ -16,7 +16,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { exitCode } from "@cocalc/backend/sandbox/exec";
 import { join } from "node:path";
-import { EventEmitter } from "node:stream";
+import { EventEmitter } from "node:events";
 import shellEscape from "shell-escape";
 import getLogger from "@cocalc/backend/logger";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
