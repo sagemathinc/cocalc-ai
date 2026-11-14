@@ -91,6 +91,16 @@ type PersistClientInitReporter = (
 
 const logger = getLogger("persist:client");
 
+// 028 B-3a (ops0 3568): resending a request the server refused with
+// `rate_limited` (see PersistStreamClient.request); DStream's backoff
+export const RATE_LIMITED_RETRY = { start: 150, decay: 1.3, max: 10_000 };
+export let RATE_LIMITED_RETRY_MS = 60_000;
+export const rateLimitedRetryStats = { refused: 0, retried: 0, gaveUp: 0 };
+// tests only
+export function setRateLimitedRetryMsForTests(ms: number): void {
+  RATE_LIMITED_RETRY_MS = ms;
+}
+
 export type ChangefeedEvent = ChangefeedOperation[];
 export type Changefeed = EventIterator<ChangefeedEvent>;
 export type PersistRecoveryState =
@@ -1516,7 +1526,47 @@ class PersistStreamClient extends EventEmitter {
   // Every request says which instance this client last saw, and its answer
   // which one the stream is (persist_instance, see server.ts
   // assertCurrentInstance).  A refusal may come back as a thrown error.
+  //
+  // 028 B-3a (ops0 3568): a request the server refused with `rate_limited`
+  // (the owner's write budget) was NOT applied -- the budget is checked
+  // before the transaction or the request's savepoint -- so sending it again
+  // cannot apply it twice.  Every request is resent with DStream's backoff
+  // (150 ms, x1.3, at most 10 s; plus jitter, so refused clients don't come
+  // back together) until RATE_LIMITED_RETRY_MS have passed; only then does
+  // the caller get the error.
   private request = async (
+    data: any,
+    opts: Parameters<ConatSocketClient["request"]>[1] = {},
+  ) => {
+    const start = Date.now();
+    let wait = RATE_LIMITED_RETRY.start;
+    while (true) {
+      let refused: unknown;
+      try {
+        const resp = await this.requestOnce(data, opts);
+        if ((resp?.headers as any)?.code !== "rate_limited") {
+          return resp;
+        }
+        refused = errorFromHeaders(resp.headers);
+      } catch (err) {
+        if ((err as any)?.code !== "rate_limited") {
+          throw err;
+        }
+        refused = err;
+      }
+      rateLimitedRetryStats.refused += 1;
+      const pause = wait * (0.5 + Math.random() / 2);
+      if (this.isClosed() || Date.now() - start + pause > RATE_LIMITED_RETRY_MS) {
+        rateLimitedRetryStats.gaveUp += 1;
+        throw refused;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pause));
+      wait = Math.min(RATE_LIMITED_RETRY.max, wait * RATE_LIMITED_RETRY.decay);
+      rateLimitedRetryStats.retried += 1;
+    }
+  };
+
+  private requestOnce = async (
     data: any,
     opts: Parameters<ConatSocketClient["request"]>[1] = {},
   ) => {

@@ -31,6 +31,20 @@ transaction still writes a WAL frame).  Over budget: a retryable
 `rate_limited` error for that request only.
 
 The rates are server settings (env), never client-settable.
+
+"host" is NOT an aggregate ceiling: it is the owner of the host/hub/bay
+control streams, whose budget is 10x a project's.  There is no host-wide
+ceiling over all projects (ops0 3568).
+
+The client side (persist/client.ts, ops0 3568): every request refused with
+`rate_limited` is resent with DStream's backoff until its retry window has
+passed, on every write path; a refused request was not applied, so a resend
+never applies it twice.
+
+Provisional numbers (ops0 3550/3551/3568; William decides on the card): a
+project 200 txn/s, burst 10,000 txn (the only measured data point: a
+synthetic 8-editor conflict test peaks at 485 txn/s for 15 s); 8 MiB/s,
+burst 64 MiB.  The host owner 10x.
 */
 
 import { ConatError } from "@cocalc/conat/core/client";
@@ -52,11 +66,11 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-// Defaults pending @ops0's ruling (028 B-3a); every value is overridable.
+// Provisional defaults (ops0 3568); every value is overridable.
 export function projectBudgetLimits(): BudgetLimits {
   return {
     txnPerSecond: envNumber("COCALC_PERSIST_PROJECT_TXN_PER_SEC", 200),
-    txnBurst: envNumber("COCALC_PERSIST_PROJECT_TXN_BURST", 2000),
+    txnBurst: envNumber("COCALC_PERSIST_PROJECT_TXN_BURST", 10_000),
     bytesPerSecond: envNumber("COCALC_PERSIST_PROJECT_BYTES_PER_SEC", 8 * MiB),
     bytesBurst: envNumber("COCALC_PERSIST_PROJECT_BYTES_BURST", 64 * MiB),
   };
@@ -65,7 +79,7 @@ export function projectBudgetLimits(): BudgetLimits {
 export function hostBudgetLimits(): BudgetLimits {
   return {
     txnPerSecond: envNumber("COCALC_PERSIST_HOST_TXN_PER_SEC", 2000),
-    txnBurst: envNumber("COCALC_PERSIST_HOST_TXN_BURST", 20000),
+    txnBurst: envNumber("COCALC_PERSIST_HOST_TXN_BURST", 100_000),
     bytesPerSecond: envNumber("COCALC_PERSIST_HOST_BYTES_PER_SEC", 64 * MiB),
     bytesBurst: envNumber("COCALC_PERSIST_HOST_BYTES_BURST", 512 * MiB),
   };
