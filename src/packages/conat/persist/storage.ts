@@ -85,6 +85,12 @@ import {
 } from "./context";
 import { posix } from "path";
 import { isMainThread } from "worker_threads";
+import {
+  chargeFor,
+  ownerBudget,
+  rateLimitedError,
+  type Charge,
+} from "./write-budget";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
 import {
@@ -3202,6 +3208,13 @@ export class PersistentStream extends EventEmitter {
     this.finishClose(path);
   };
 
+  // The owner whose write budget this stream's transactions spend (028
+  // B-3a): disk streams, once open (the open-time writes are not charged).
+  private budgetOwner = (): string | undefined => {
+    if (this.storageKind != "disk" || !this.diagnosticsRegistered) return;
+    return streamOwners.get(this.logicalId!) ?? "host";
+  };
+
   // A parked stream's retry checkpointed it: now the real close.
   finishParkedClose = (): void => {
     const path = this.options?.path;
@@ -3361,13 +3374,22 @@ export class PersistentStream extends EventEmitter {
     { mutation = true }: { mutation?: boolean } = {},
   ): T => {
     this.drainWriteQueue();
+    // 028 B-3a: every mutating transaction costs the owner's budget, checked
+    // before it starts and charged only once its COMMIT returned OK
+    const budgetOwner = this.budgetOwner();
+    const budget = budgetOwner == null ? undefined : ownerBudget(budgetOwner);
+    if (budget != null && !budget.fits(chargeFor(0))) {
+      throw rateLimitedError(budgetOwner!);
+    }
     this.armBeforeWrite();
     this.pendingRows = 0;
     this.pendingBytes = 0;
     try {
       this.db.exec("BEGIN");
       const result = fn();
+      const written = this.pendingBytes;
       this.db.exec("COMMIT");
+      budget?.commit(chargeFor(written));
       if (mutation) this.markMaintenanceMutation();
       this.afterWrite();
       return result;
@@ -3833,6 +3855,10 @@ export class PersistentStream extends EventEmitter {
       return [];
     }
 
+    // the write budget of the stream's owner, and this batch's charges
+    const budgetOwner = this.budgetOwner();
+    const budget = budgetOwner == null ? undefined : ownerBudget(budgetOwner);
+    const pending: Charge = { txn: 0, bytes: 0 };
     // the requests (and ops) whose msgID is new in this batch, for the
     // duplicates later in it
     const owners = new Map<string, { request: WriteRequest; op: number }>();
@@ -3852,6 +3878,13 @@ export class PersistentStream extends EventEmitter {
       if (!this.db.isTransaction) {
         abort = { err: lostTransactionError() };
         break;
+      }
+      // 028 B-3a: the owner's write budget, against what it would have left
+      // after this batch's charges so far; nothing is applied if over
+      const charge = chargeFor(request.bytes);
+      if (budget != null && !budget.fits(charge, pending)) {
+        this.settle(request, { error: rateLimitedError(budgetOwner!) });
+        continue;
       }
       const name = `req_${n++}`;
       try {
@@ -3966,6 +3999,9 @@ export class PersistentStream extends EventEmitter {
       }
       results.set(request, requestResults);
       changes.set(request, requestChanges);
+      // batch-local until COMMIT returned OK (committed-work accounting)
+      pending.txn += charge.txn;
+      pending.bytes += charge.bytes;
     }
 
     if (abort != null) {
@@ -3999,6 +4035,7 @@ export class PersistentStream extends EventEmitter {
       for (const { msgID, seq, time } of newMsgIDs) {
         this.msgIDs.set(msgID, { seq, time });
       }
+      budget?.commit(pending);
     }
 
     // committed (= durable): ack, then emit, in arrival order
