@@ -884,6 +884,109 @@ describe("projects.copy-db snapshot cleanup", () => {
     await expect(queued!).resolves.toBeDefined();
   });
 
+  it("insert-if-missing waits for the snapshot's lock", async () => {
+    const { insertCopyRowIfMissing } = await import("./copy-db");
+    const release = await holdSnapshotLock();
+    let inserted: Promise<unknown> | undefined;
+    try {
+      inserted = insertCopyRowIfMissing({
+        ...key("/root/w1.txt"),
+        op_id: "88888888-8888-4888-8888-888888888882",
+        snapshot_id: "snap-x",
+        snapshot_created: false,
+        expires_at: new Date(Date.now() + 60_000),
+      });
+      // (no other query here: the test pool's two connections are held by
+      // the lock holder and the waiting insert)
+      expect(await settledWithin(inserted, 300)).toBe(false);
+    } finally {
+      await release();
+    }
+    // the insert went ahead once the lock was free
+    await expect(inserted!).resolves.toMatchObject({ snapshot_id: "snap-x" });
+    expect(await activeRowsFor("snap-x")).toHaveLength(1);
+  });
+
+  it("an insert paused after its claim check keeps a concurrent cleanup from claiming", async () => {
+    const { insertCopyRowIfMissing } = await import("./copy-db");
+    // copy A made snap-x; its row is the only reference so far
+    const a = await queue({
+      dest_path: "/root/i1.txt",
+      snapshot_created: true,
+    });
+    const pool = getPool();
+    const realConnect = pool.connect.bind(pool);
+    let reachedCheck!: () => void;
+    const atCheck = new Promise<void>((resolve) => (reachedCheck = resolve));
+    let resume!: () => void;
+    const resumed = new Promise<void>((resolve) => (resume = resolve));
+    let paused = false;
+    // pause the insert right after its claim check, before its INSERT
+    const connect = jest
+      .spyOn(pool, "connect")
+      .mockImplementation((async () => {
+        const client: any = await realConnect();
+        const realQuery = client.query.bind(client);
+        const realRelease = client.release.bind(client);
+        client.query = async (sql: any, params?: any) => {
+          const result = await realQuery(sql, params);
+          if (
+            !paused &&
+            `${sql}`.includes("FROM project_copy_snapshot_claims") &&
+            `${sql}`.trim().startsWith("SELECT 1")
+          ) {
+            paused = true;
+            reachedCheck();
+            await resumed;
+          }
+          return result;
+        };
+        client.release = (arg?: any) => {
+          client.query = realQuery;
+          client.release = realRelease;
+          return realRelease(arg);
+        };
+        return client;
+      }) as any);
+    let inserting: Promise<unknown> | undefined;
+    let cleanup: Promise<void> | undefined;
+    try {
+      inserting = insertCopyRowIfMissing({
+        ...key("/root/i2.txt"),
+        op_id: "88888888-8888-4888-8888-888888888883",
+        snapshot_id: "snap-x",
+        snapshot_created: false,
+        expires_at: new Date(Date.now() + 60_000),
+      });
+      await atCheck;
+      connect.mockRestore();
+      // copy A finishes now, so its cleanup races the paused insert
+      cleanup = finish(a.copy_id, "/root/i1.txt");
+      // with the lock, cleanup can't decide while the insert is paused
+      expect(await settledWithin(cleanup, 300)).toBe(false);
+    } finally {
+      connect.mockRestore();
+      resume();
+    }
+    const insertResult = await inserting!.then(
+      (row) => row,
+      (err) => err,
+    );
+    await cleanup;
+    const { rows: claims } = await getPool().query(
+      "SELECT 1 FROM project_copy_snapshot_claims WHERE src_project_id=$1 AND snapshot_id=$2",
+      [SRC_PROJECT_ID, "snap-x"],
+    );
+    const active = await activeRowsFor("snap-x");
+    // never both a deletion claim and a live row that references the snapshot
+    expect(claims.length > 0 && active.length > 0).toBe(false);
+    // the insert went first: cleanup saw its row and neither claimed nor deleted
+    expect(insertResult).not.toBeInstanceOf(Error);
+    expect(claims).toHaveLength(0);
+    expect(mockDeleteBackup).not.toHaveBeenCalled();
+    expect(active).toHaveLength(1);
+  });
+
   it("cleanup decides under the snapshot's lock", async () => {
     const a = await queue({ snapshot_created: true });
     const release = await holdSnapshotLock();
