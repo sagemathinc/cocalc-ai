@@ -290,7 +290,11 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
   const NOW = 1_800_000_000_000;
   // the columns a stream derives from Date.now (a control at another NOW
   // differs in these, and only these: proves the clock is mocked)
-  const TIME_COLUMNS = new Set(["messages.time", "history_epochs.time"]);
+  const TIME_COLUMNS = new Set([
+    "messages.time",
+    "history_epochs.time",
+    "stream_checkpoints.time",
+  ]);
   // run one batch on a fresh stream at a fixed Date.now: "many" = one
   // setMany, "requests" = separate requests in one batch
   const runBatch = async (
