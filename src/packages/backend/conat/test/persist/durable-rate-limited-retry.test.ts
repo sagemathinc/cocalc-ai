@@ -143,6 +143,31 @@ describe("028 B-3a: every write path resends a rate_limited refusal; one admissi
     });
   }
 
+  it("ORDER (SA-B3a-1): two pipelined writes, both refused, commit in the order they were issued, even when the later one's backoff ends first", async () => {
+    now += 1000;
+    host().commit({ txn: 1, bytes: 0 });
+    expect(host().snapshot().txn).toBe(0);
+    // the FIRST refused request gets the longest pause, the second the
+    // shortest: without the retry chain, B would resend (and commit) first
+    const pauses = [0.999, 0.0];
+    const spy = jest.spyOn(Math, "random").mockImplementation(() => pauses.shift() ?? 0.5);
+    try {
+      const before = rateLimitedRetryStats.refused;
+      const results: any[] = [];
+      const pA = s.set({ key: "order-a", messageData: messageData("A") }).then((r) => results.push(["A", r.seq]));
+      const pB = s.set({ key: "order-b", messageData: messageData("B") }).then((r) => results.push(["B", r.seq]));
+      await until(() => rateLimitedRetryStats.refused >= before + 2);
+      now += 1000; // ONE token: only one of them can commit
+      await until(() => results.length >= 1);
+      now += 1000; // the second token
+      await Promise.all([pA, pB]);
+      expect(results.map(([w]) => w)).toEqual(["A", "B"]);
+      expect(results[0][1]).toBeLessThan(results[1][1]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("the caller gets rate_limited only after the retry window, and nothing was applied", async () => {
     setRateLimitedRetryMsForTests(600);
     now += 1000;

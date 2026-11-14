@@ -3977,6 +3977,7 @@ export class PersistentStream extends EventEmitter {
     const budgetOwner = this.budgetOwner();
     const budget = budgetOwner == null ? undefined : ownerBudget(budgetOwner);
     const pending: Charge = { txn: 0, bytes: 0 };
+    let refusedInBatch = false;
     // the requests (and ops) whose msgID is new in this batch, for the
     // duplicates later in it
     const owners = new Map<string, { request: WriteRequest; op: number }>();
@@ -3998,9 +3999,14 @@ export class PersistentStream extends EventEmitter {
         break;
       }
       // 028 B-3a: the owner's write budget, against what it would have left
-      // after this batch's charges so far; nothing is applied if over
+      // after this batch's charges so far; nothing is applied if over.  Once
+      // one request of this stream is refused, every LATER request of the
+      // batch is refused too (SA-B3a-1): a smaller later write that would fit
+      // must not commit ahead of the refused one (the client resends both, in
+      // order).
       const charge = chargeFor(request.bytes);
-      if (budget != null && !budget.fits(charge, pending)) {
+      if (budget != null && (refusedInBatch || !budget.fits(charge, pending))) {
+        refusedInBatch = true;
         this.settle(request, { error: rateLimitedError(budgetOwner!) });
         continue;
       }

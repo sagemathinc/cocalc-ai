@@ -96,6 +96,24 @@ const logger = getLogger("persist:client");
 export const RATE_LIMITED_RETRY = { start: 150, decay: 1.3, max: 10_000 };
 export let RATE_LIMITED_RETRY_MS = 60_000;
 export const rateLimitedRetryStats = { refused: 0, retried: 0, gaveUp: 0 };
+// the commands that change a stream (as server.ts isWriteCommand): they wait
+// behind this client's refused writes, so their order holds (SA-B3a-1)
+const WRITE_CMDS = new Set([
+  "set",
+  "setMany",
+  "delete",
+  "setMetadata",
+  "patchMetadata",
+  "setCheckpoint",
+  "deleteCheckpoint",
+  "resetHistory",
+  "purgeArchivedHistory",
+]);
+function isWriteCmd(cmd: unknown, opts: any): boolean {
+  if (WRITE_CMDS.has(`${cmd}`)) return true;
+  const config = opts?.headers?.config;
+  return cmd === "config" && config != null && typeof config === "object" && Object.keys(config).length > 0;
+}
 // tests only
 export function setRateLimitedRetryMsForTests(ms: number): void {
   RATE_LIMITED_RETRY_MS = ms;
@@ -1534,35 +1552,72 @@ class PersistStreamClient extends EventEmitter {
   // (150 ms, x1.3, at most 10 s; plus jitter, so refused clients don't come
   // back together) until RATE_LIMITED_RETRY_MS have passed; only then does
   // the caller get the error.
+  //
+  // ORDER (SA-B3a-1): this client's writes stay in the order they were
+  // issued.  A refused request joins a FIFO retry chain and resends only once
+  // every earlier refused request has finished (admitted or given up); a
+  // write issued while the chain is non-empty waits behind it before its
+  // first send.  (The server refuses every later request of the stream in
+  // the same batch, so a write already in flight can't overtake either.)
+  private retryChain: Promise<void> = Promise.resolve();
+  private retrying = 0;
+
   private request = async (
     data: any,
     opts: Parameters<ConatSocketClient["request"]>[1] = {},
   ) => {
+    if (this.retrying > 0 && isWriteCmd((opts?.headers as any)?.cmd, opts)) {
+      await this.retryChain;
+    }
     const start = Date.now();
-    let wait = RATE_LIMITED_RETRY.start;
-    while (true) {
-      let refused: unknown;
-      try {
-        const resp = await this.requestOnce(data, opts);
-        if ((resp?.headers as any)?.code !== "rate_limited") {
-          return resp;
+    let first = await this.attemptOnce(data, opts);
+    if (!("refused" in first)) return first.resp;
+    // refused: join the FIFO retry chain
+    this.retrying += 1;
+    let release!: () => void;
+    const before = this.retryChain;
+    this.retryChain = new Promise<void>((resolve) => (release = resolve));
+    try {
+      await before;
+      let wait = RATE_LIMITED_RETRY.start;
+      let refused = first.refused;
+      while (true) {
+        rateLimitedRetryStats.refused += 1;
+        const pause = wait * (0.5 + Math.random() / 2);
+        if (this.isClosed() || Date.now() - start + pause > RATE_LIMITED_RETRY_MS) {
+          rateLimitedRetryStats.gaveUp += 1;
+          throw refused;
         }
-        refused = errorFromHeaders(resp.headers);
-      } catch (err) {
-        if ((err as any)?.code !== "rate_limited") {
-          throw err;
-        }
-        refused = err;
+        await new Promise((resolve) => setTimeout(resolve, pause));
+        wait = Math.min(RATE_LIMITED_RETRY.max, wait * RATE_LIMITED_RETRY.decay);
+        rateLimitedRetryStats.retried += 1;
+        const next = await this.attemptOnce(data, opts);
+        if (!("refused" in next)) return next.resp;
+        refused = next.refused;
       }
-      rateLimitedRetryStats.refused += 1;
-      const pause = wait * (0.5 + Math.random() / 2);
-      if (this.isClosed() || Date.now() - start + pause > RATE_LIMITED_RETRY_MS) {
-        rateLimitedRetryStats.gaveUp += 1;
-        throw refused;
+    } finally {
+      this.retrying -= 1;
+      release();
+    }
+  };
+
+  // one send: the response, or the rate_limited refusal; any other error is
+  // thrown
+  private attemptOnce = async (
+    data: any,
+    opts: Parameters<ConatSocketClient["request"]>[1],
+  ): Promise<{ resp: any } | { refused: unknown }> => {
+    try {
+      const resp = await this.requestOnce(data, opts);
+      if ((resp?.headers as any)?.code !== "rate_limited") {
+        return { resp };
       }
-      await new Promise((resolve) => setTimeout(resolve, pause));
-      wait = Math.min(RATE_LIMITED_RETRY.max, wait * RATE_LIMITED_RETRY.decay);
-      rateLimitedRetryStats.retried += 1;
+      return { refused: errorFromHeaders(resp.headers) };
+    } catch (err) {
+      if ((err as any)?.code !== "rate_limited") {
+        throw err;
+      }
+      return { refused: err };
     }
   };
 
