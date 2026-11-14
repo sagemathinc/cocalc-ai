@@ -8,6 +8,7 @@
 // one to the account's home bay. Recording is best effort and never fails or
 // delays a turn.
 
+import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { AgentTurnUsage } from "@cocalc/util/ai/agent-turn-usage";
 
@@ -30,7 +31,9 @@ export function recordAgentTurnUsage(
 ): void {
   if (!recorder || !account_id || !usage.models.length) return;
   try {
-    void Promise.resolve(recorder(account_id, usage)).catch((error) =>
+    // One identity per turn, so a report the host resends is stored once.
+    const report = usage.turn_id ? usage : { ...usage, turn_id: randomUUID() };
+    void Promise.resolve(recorder(account_id, report)).catch((error) =>
       logger.debug("turn usage not recorded", { error: `${error}` }),
     );
   } catch (error) {

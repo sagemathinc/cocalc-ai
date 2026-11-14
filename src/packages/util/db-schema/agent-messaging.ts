@@ -225,7 +225,8 @@ Table({
 });
 
 // What each agent turn used: tokens by model, as its runtime (Claude or
-// Codex) reported them, with the conversation and the credential that paid.
+// Codex) reported them, with the conversation (its chat path only as a hash)
+// and the credential that paid.
 // In the paying account's home bay, for usage by agent. Telemetry from this
 // site only; numbers, never prompts or output.
 Table({
@@ -235,13 +236,17 @@ Table({
     pg_custom_indexes: [
       { name: "agent_turn_usage_account_ended", query: "(account_id,ended_at)" },
       { name: "agent_turn_usage_received", query: "(received_at)" },
+      { name: "agent_turn_usage_host_received", query: "(host_id,received_at)" },
     ],
   },
   fields: {
     account_id: required("uuid", "Account whose agent ran the turn."),
-    id: required("uuid", "Turn record."),
+    id: required("uuid", "The turn's report identity (resends are stored once)."),
     project_id: required("uuid", "Agent project."),
-    path: required("string", "Agent chat path."),
+    path_hash: required(
+      "string",
+      "SHA-256 (hex) of the agent's chat path: matches an agent without storing file names.",
+    ),
     thread_id: required("string", "Agent thread."),
     provider: required("string", "claude or codex."),
     payment: required(
