@@ -168,6 +168,22 @@ describe("028 B-3a: every write path resends a rate_limited refusal; one admissi
     }
   });
 
+  it("any OTHER error is not resent: the caller gets it at once (a wrong previousSeq)", async () => {
+    now += 1000; // a token: the budget admits it; the precondition fails
+    expect(host().snapshot().txn).toBe(1);
+    const refused = rateLimitedRetryStats.refused;
+    const t0 = Date.now();
+    const err: any = await s
+      .set({ key: "k-prev", messageData: messageData("x"), previousSeq: 999_999 })
+      .then(() => undefined, (e) => e);
+    expect(err).toBeDefined();
+    expect(err.code).not.toBe("rate_limited");
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(rateLimitedRetryStats.refused).toBe(refused);
+    // a failed request spends nothing (committed-work accounting)
+    expect(host().snapshot().txn).toBe(1);
+  });
+
   it("the caller gets rate_limited only after the retry window, and nothing was applied", async () => {
     setRateLimitedRetryMsForTests(600);
     now += 1000;
