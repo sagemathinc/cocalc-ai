@@ -34,7 +34,6 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
-import { syncFiles } from "@cocalc/backend/data";
 import { createFairLimiter, OPEN_BARRIER_CONCURRENCY } from "./persist-open-barrier";
 import { integrityCheckClosedDatabase } from "./persist-durability";
 
@@ -274,9 +273,8 @@ export async function pagecacheHelperSelfTest(
   }
 }
 
-// What the persist server uses: the start-up self-test once (on the persist
-// data directory: a tmpfs scratch file can't be evicted, its pages ARE the
-// file), then each verification under the same cap as the open barrier's
+// What the persist server uses: the self-test once (at the first
+// verification, on that file's directory), then each verification under the same cap as the open barrier's
 // fsyncs.  If the self-test failed, every verification is refused (fail
 // closed): an image defect, which pages.
 const limiter = createFairLimiter(OPEN_BARRIER_CONCURRENCY);
@@ -284,7 +282,9 @@ let selfTest: Promise<boolean> | undefined;
 export async function checkedVerifiedEviction(
   dbPath: string,
 ): Promise<EvictionResult> {
-  selfTest ??= pagecacheHelperSelfTest(syncFiles.local || dirname(dbPath));
+  // on the filesystem of the files it will verify (a tmpfs scratch file
+  // can't be evicted: its pages ARE the file)
+  selfTest ??= pagecacheHelperSelfTest(dirname(dbPath));
   if (!(await selfTest)) {
     logger.error(
       "PERSIST ALERT (page): the page-cache helper self-test failed, so streams left mid-write stay refused (finding 028)",

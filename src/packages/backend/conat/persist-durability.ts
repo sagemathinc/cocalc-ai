@@ -187,8 +187,7 @@ try {
 } catch (err) {
   out = { ok: false, error: String(err && err.message || err).slice(0, 200) };
 }
-process.stdout.write(JSON.stringify(out) + "
-");
+process.stdout.write(JSON.stringify(out) + String.fromCharCode(10));
 process.exit(0);
 `;
 let integrityQueue: Promise<unknown> = Promise.resolve();
