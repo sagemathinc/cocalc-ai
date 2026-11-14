@@ -188,9 +188,15 @@ test("with Auto: which subscriptions it uses, and how long they last", async () 
     (screen.getByRole("radio", { name: /Auto/ }) as HTMLInputElement).checked,
   ).toBe(true);
   // Both subscriptions have room; office has used 60% of its week.
-  expect(screen.getByRole("status").textContent).toMatch(
+  const status = screen.getByRole("status").textContent;
+  expect(status).toMatch(
     /2 of 2 subscriptions with room now\. About 1\.4 of 2 weekly limits left/,
   );
+  // The rate, and how fast the subscriptions renew (2 a week), to compare.
+  expect(status).toMatch(
+    /Using about \d+\.\d+ weekly limits a day \(averaged over the current weeks\); 2 subscriptions renew about 0\.29 a day\./,
+  );
+  expect(status).toMatch(/counting the resets on the way/);
   const office = screen.getByRole("checkbox", { name: "office" });
   expect((office as HTMLInputElement).checked).toBe(true);
   // API keys are never in Auto.

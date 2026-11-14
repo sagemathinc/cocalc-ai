@@ -369,6 +369,7 @@ describe("recent rate", () => {
     expect(rate.ratePerHour * 24).toBeCloseTo(0.3 + 0.3);
     const forecast = claudePoolForecast([a, b], now);
     expect(forecast.rateFrom).toBe("recent");
+    expect(forecast.rateHours).toBeCloseTo(24);
     expect(forecast.ratePerHour).toBeCloseTo(0.6 / 24);
     // The week averages would claim far more: b alone used 0.3 of its week
     // in 8 hours, counted over 12.

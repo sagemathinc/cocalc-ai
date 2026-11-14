@@ -371,6 +371,8 @@ export interface ClaudePoolForecast {
    * a few subscriptions). */
   ratePerHour: number;
   rateFrom?: "recent" | "week";
+  /** For `recent`: how many hours the rate is measured over (at most a day). */
+  rateHours?: number;
   /** When every subscription would be at its weekly limit at that rate;
    * absent if not within a week. */
   runsOutAt?: number;
@@ -471,6 +473,7 @@ export function claudePoolForecast(
     remaining,
     ratePerHour,
     ...(members.length ? { rateFrom: recent ? "recent" : "week" } : {}),
+    ...(recent ? { rateHours: recent.hours } : {}),
   };
   if (!(ratePerHour > 0) || members.length === 0) return result;
   const rate = ratePerHour / HOUR_MS;

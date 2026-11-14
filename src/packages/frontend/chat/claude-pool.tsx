@@ -46,6 +46,10 @@ export interface ClaudePoolSummary {
   available: number;
   /** Weekly limits left, summed over the members. */
   remaining: number;
+  /** Weekly limits used per day at the recent rate (see rateFrom). */
+  usedPerDay?: number;
+  rateFrom?: "recent" | "week";
+  rateHours?: number;
   runsOutAt?: number;
   /** When one has room again, if none has now. */
   nextAvailableAt?: number;
@@ -71,6 +75,15 @@ export function claudePoolSummary(
     members: members.length,
     available,
     remaining: forecast.remaining,
+    ...(forecast.ratePerHour > 0
+      ? {
+          usedPerDay: forecast.ratePerHour * 24,
+          rateFrom: forecast.rateFrom,
+          ...(forecast.rateHours != null
+            ? { rateHours: forecast.rateHours }
+            : {}),
+        }
+      : {}),
     ...(forecast.runsOutAt != null ? { runsOutAt: forecast.runsOutAt } : {}),
     ...(available === 0 && times.length > 0
       ? { nextAvailableAt: Math.min(...times) }
@@ -78,7 +91,22 @@ export function claudePoolSummary(
   };
 }
 
-/** One or two lines: how much the pool has left, and how long it lasts. */
+// weekly limits a day: two decimals below one, so small rates don't read as 0
+function perDay(x: number): string {
+  return x < 1 ? x.toFixed(2) : x.toFixed(1);
+}
+
+// "the last 24 hours", "the last 3 hours", or the current weeks' average
+function rateWindow(summary: ClaudePoolSummary): string {
+  if (summary.rateFrom !== "recent" || summary.rateHours == null) {
+    return "averaged over the current weeks";
+  }
+  const hours = Math.round(summary.rateHours);
+  return `over the last ${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
+/** How much the pool has left, how fast it is used against how fast it
+ * renews, and how long it lasts. */
 export function ClaudePoolForecast({
   credentials,
 }: {
@@ -104,11 +132,19 @@ export function ClaudePoolForecast({
         . About {summary.remaining.toFixed(1)} of {summary.members} weekly
         limits left.
       </div>
+      {summary.usedPerDay != null && (
+        <div>
+          Using about {perDay(summary.usedPerDay)} weekly limits a day (
+          {rateWindow(summary)}); {summary.members} subscription
+          {summary.members === 1 ? " renews" : "s renew"} about{" "}
+          {perDay(summary.members / 7)} a day.
+        </div>
+      )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {summary.runsOutAt != null ? (
           <>
-            At the recent rate, every weekly limit is reached{" "}
-            <TimeAgo date={new Date(summary.runsOutAt)} /> (
+            At that rate, counting the resets on the way, every weekly limit is
+            reached <TimeAgo date={new Date(summary.runsOutAt)} /> (
             {new Date(summary.runsOutAt).toLocaleString(undefined, {
               weekday: "short",
               hour: "numeric",
@@ -117,7 +153,7 @@ export function ClaudePoolForecast({
             ).
           </>
         ) : (
-          "At the recent rate, the weekly limits last until they reset."
+          "At that rate, counting the resets on the way, they don't all run out within a week."
         )}
       </Typography.Text>
     </div>
