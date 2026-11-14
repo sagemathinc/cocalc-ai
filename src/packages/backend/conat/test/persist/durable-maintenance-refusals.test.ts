@@ -128,12 +128,12 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     // promotion's exclusive checkpoint
     [
       "backend/conat/persist-maintenance/coordinator.ts",
-      /assertPersistMaintenanceOpenAllowed\(checked\.path\);\s*const sourceDb = new DatabaseSync\(checked\.path\);/,
+      /this\.assertOpenAllowed\(checked\.path, row\);\s*const sourceDb = new DatabaseSync\(checked\.path\);/,
     ],
     // the quick_check of an output or source
     [
       "backend/conat/persist-maintenance/coordinator.ts",
-      /assertPersistMaintenanceOpenAllowed\(path\);\s*const db = new DatabaseSync\(path, \{ readOnly: true \}\);/,
+      /assertPersistMaintenanceOpenAllowed\(path, undefined, \(\) =>\s*this\.ownerOf\(databasePath\),\s*\);\s*const db = new DatabaseSync\(path, \{ readOnly: true \}\);/,
     ],
     // the trim's offline compaction and read
     [
@@ -145,6 +145,16 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*const db = new DatabaseSync\(`\$\{path\}\.db`\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
     ],
   ];
+  it("B2-M1: the coordinator keys the owner by the catalog's LOGICAL path, as the open path does", () => {
+    const src = fs.readFileSync(
+      join(packages, "backend/conat/persist-maintenance/coordinator.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(/return projectOfStoragePath\(logical\) \?\? "host";/);
+    expect(src).toMatch(/\? \(projectOfStoragePath\(row\.logical_path\) \?\? "host"\)/);
+    expect(src).toMatch(/assertPersistMaintenanceOpenAllowed\(path, undefined, \(\) => owner\);/);
+  });
+
   it("B2-M1: the trim passes the project it built the path for as the owner", () => {
     const src = fs.readFileSync(join(packages, "project-host/persist-storage.ts"), "utf8");
     expect(src).toMatch(/lastSeqBefore\(path, policy\.since, ctx\.project_id\)/);
@@ -165,7 +175,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     for (const d of dispatches) {
       const before = source.slice(Math.max(0, d.index! - 200), d.index);
       expect(before).toMatch(
-        /assertPersistMaintenanceOpenAllowed\(checked\.path\);\s*(const \w+ = )?$/,
+        /this\.assertOpenAllowed\(checked\.path, row\);\s*(const \w+ = )?$/,
       );
     }
   });
