@@ -6,7 +6,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { mkdirSync } from "node:fs";
-import { syncFiles } from "@cocalc/conat/persist/context";
+import { syncFiles } from "@cocalc/backend/data";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
