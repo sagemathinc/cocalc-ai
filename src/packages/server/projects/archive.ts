@@ -32,9 +32,18 @@ import { assertOversizedFilesAllowed } from "./oversized-files";
 import {
   clearProjectArchiveLifecycleFinalBackup,
   createProjectArchiveLifecycleJob,
+  claimManualArchiveJobForRecovery,
+  findUnresolvedManualArchiveJob,
   getProjectArchiveLifecycleFinalBackup,
+  listManualArchiveJobsToRecover,
+  MANUAL_ARCHIVE_FINALIZE_PENDING,
+  MANUAL_ARCHIVE_FREEZE_QUARANTINED,
+  MANUAL_ARCHIVE_FREEZE_UNCERTAIN,
   MANUAL_ARCHIVE_HEARTBEAT_MS,
+  type ManualArchiveJob,
   recordProjectArchiveLifecycleFinalBackup,
+  resumeManualArchiveJob,
+  settleManualArchiveJob,
   type ProjectArchiveLifecycleFinalBackup,
   touchRunningProjectArchiveLifecycleJob,
   updateProjectArchiveLifecycleJob,
@@ -601,7 +610,14 @@ export async function archiveProjectStorage({
 }: ArchiveProjectStorageOptions): Promise<void> {
   let row = await loadArchiveRow(project_id);
   const currentState = `${row.state?.state ?? ""}`.trim();
-  if (currentState === "archived" && row.provisioned === false) return;
+  if (currentState === "archived" && row.provisioned === false) {
+    if (mode !== "automatic") {
+      // A previous manual archive committed but its caller never heard back:
+      // close its job; nothing is released or reopened.
+      await reconcileArchivedManualJob(project_id);
+    }
+    return;
+  }
   if (
     require_deprovisioned_host_id != null &&
     (row.host_id !== require_deprovisioned_host_id ||
@@ -623,13 +639,38 @@ export async function archiveProjectStorage({
 
   let jobId = providedJobId;
   if (!automatic) {
-    const job = await createProjectArchiveLifecycleJob({
-      project: { ...row, active_published_path: false },
-      reason,
-      reportOnly: false,
-      actorAccountId: actor_account_id,
-    });
-    jobId = job?.id;
+    // A previous manual archive's final backup may still hold the volume
+    // frozen. Resume that job, so its recorded or durable final backup (and
+    // its dedupe key) is used again; never start a new backup key meanwhile.
+    const previous = await findUnresolvedManualArchiveJob(project_id);
+    if (previous) {
+      if (previous.failure_category === MANUAL_ARCHIVE_FREEZE_QUARANTINED) {
+        // Maintenance could not prove its state; only an engineer resolves it.
+        throw new Error(
+          "a previous archive of this project needs an engineer before it can be archived",
+        );
+      }
+      if (previous.status === "running" && !previous.stale) {
+        throw new Error("an archive of this project is already running");
+      }
+      if (previous.host_id && previous.host_id !== row.host_id) {
+        throw new Error(
+          "a previous archive of this project is still being recovered; try again later",
+        );
+      }
+      if (!(await resumeManualArchiveJob(previous.id))) {
+        throw new Error("an archive of this project is already running");
+      }
+      jobId = previous.id;
+    } else {
+      const job = await createProjectArchiveLifecycleJob({
+        project: { ...row, active_published_path: false },
+        reason,
+        reportOnly: false,
+        actorAccountId: actor_account_id,
+      });
+      jobId = job?.id;
+    }
   }
   if (!jobId) throw new Error("archive lifecycle job is required");
   // A manual archive's job shows it is alive while this call runs; only an
@@ -809,21 +850,39 @@ export async function archiveProjectStorage({
           expected: ownership,
         });
       };
-      finalBackup = await createFinalAutomaticArchiveBackup({
-        project_id,
-        job_id: jobId,
-        tag: finalBackupTag,
-        // The final-archive tag keeps automatic retention from replacing it.
-        tags: [FINAL_ARCHIVE_BACKUP_TAG, finalBackupTag],
-        replaceOldestAtLimit: false,
-        beforeCreateNew: assertManualPlacementCurrent,
-        onBackupBarrierMayExist: () => {
-          finalBackupBarrierMayExist = true;
-        },
-      });
-      assertFinalBackupMarkerIsValid(finalBackup);
-      expectedArchiveGeneration = Number(finalBackup.generation);
-      expectedArchiveBackupId = finalBackup.id;
+      const recorded = await getProjectArchiveLifecycleFinalBackup(jobId);
+      if (recorded && finalBackupMarkerIsValid(recorded)) {
+        // A resumed job recorded its final backup: finish with exactly it.
+        finalBackupBarrierMayExist = true;
+        finalBackup = recorded;
+        expectedArchiveGeneration = Number(finalBackup.generation);
+        expectedArchiveBackupId = finalBackup.id;
+      } else {
+        finalBackup = await createFinalAutomaticArchiveBackup({
+          project_id,
+          job_id: jobId,
+          tag: finalBackupTag,
+          // The final-archive tag keeps automatic retention from replacing it.
+          tags: [FINAL_ARCHIVE_BACKUP_TAG, finalBackupTag],
+          replaceOldestAtLimit: false,
+          beforeCreateNew: assertManualPlacementCurrent,
+          onBackupBarrierMayExist: () => {
+            finalBackupBarrierMayExist = true;
+          },
+        });
+        assertFinalBackupMarkerIsValid(finalBackup);
+        expectedArchiveGeneration = Number(finalBackup.generation);
+        expectedArchiveBackupId = finalBackup.id;
+        // Durable before anything is deleted: a lost response or a restart
+        // can then still release, or finish with, this exact backup.
+        await recordProjectArchiveLifecycleFinalBackup({
+          job_id: jobId,
+          backup_id: finalBackup.id,
+          backup_generation: expectedArchiveGeneration,
+          backup_time: finalBackup.time,
+          expected_previous_backup_id: recorded?.id ?? null,
+        });
+      }
       await assertManualPlacementCurrent();
     }
 
@@ -896,6 +955,7 @@ export async function archiveProjectStorage({
     // A manual archive's own final backup froze the volume too: release it
     // with the same checks, keeping the project's data in place.
     const freezeHostId = manualFreezeHostId ?? row.host_id;
+    let freezeReleased = false;
     if (!hostCleanupCompleted && expectedArchiveGeneration && freezeHostId) {
       reopenSafe = false;
       try {
@@ -927,6 +987,7 @@ export async function archiveProjectStorage({
                 status !== "succeeded" &&
                 !isArchiveBackupFailureReopenSafe(result),
             );
+            freezeReleased = true;
           }
           // Reopen only after the checked host release, durable LRO
           // attestation, marker rollback, and historical safety check agree.
@@ -940,10 +1001,40 @@ export async function archiveProjectStorage({
         });
       }
     }
+    if (!automatic && hostCleanupCompleted && expectedArchiveBackupId) {
+      // The checked delete of the host data completed: finish the archive
+      // from the recorded final backup rather than fail it.
+      try {
+        await setArchivedState({
+          project_id,
+          reason,
+          job_id: jobId,
+          automatic: false,
+          expected_host_id: freezeHostId ?? null,
+        });
+        await updateProjectArchiveLifecycleJob({
+          job_id: jobId,
+          status: "completed",
+        });
+        return;
+      } catch (finalizeErr) {
+        log.warn("unable to finish a manual archive whose host data is gone", {
+          project_id,
+          err: `${finalizeErr}`,
+        });
+      }
+    }
     await updateProjectArchiveLifecycleJob({
       job_id: jobId,
       status: "failed",
-      failure_category: "archive-storage",
+      failure_category: automatic
+        ? "archive-storage"
+        : manualFailureCategory({
+            hostCleanupCompleted,
+            freezeReleased,
+            freezeMayBeHeld:
+              finalBackupBarrierMayExist || expectedArchiveGeneration != null,
+          }),
       error: err,
     }).catch(() => undefined);
     if (automatic) {
@@ -958,3 +1049,324 @@ export async function archiveProjectStorage({
     if (heartbeat) clearInterval(heartbeat);
   }
 }
+
+function manualFailureCategory({
+  hostCleanupCompleted,
+  freezeReleased,
+  freezeMayBeHeld,
+}: {
+  hostCleanupCompleted: boolean;
+  freezeReleased: boolean;
+  freezeMayBeHeld: boolean;
+}): string {
+  if (hostCleanupCompleted) return MANUAL_ARCHIVE_FINALIZE_PENDING;
+  if (freezeReleased || !freezeMayBeHeld) return "archive-storage";
+  return MANUAL_ARCHIVE_FREEZE_UNCERTAIN;
+}
+
+async function reconcileArchivedManualJob(project_id: string): Promise<void> {
+  const job = await findUnresolvedManualArchiveJob(project_id).catch(
+    () => undefined,
+  );
+  if (!job || (job.status === "running" && !job.stale)) return;
+  await settleManualArchiveJob({
+    job_id: job.id,
+    status: "completed",
+    failure_category: null,
+    clear_final_backup: false,
+  }).catch(() => undefined);
+}
+
+export type ManualArchiveRecoveryOutcome =
+  | "reconciled"
+  | "backup-running"
+  | "finalized"
+  | "released"
+  | "nothing-held"
+  | "quarantined"
+  | "skipped"
+  | "error";
+
+/** Maintenance: recover failed manual archive jobs whose final backup may
+ * still hold the project volume frozen. Each ends in exactly one of: closing
+ * the job of a project that is archived already (nothing released), finishing
+ * the archive after a completed checked delete ("absent"), a checked release
+ * at the exact generation the job's backup froze plus its attestation, or
+ * quarantine for an engineer when the generation or outcome is not proven. */
+export async function recoverManualArchiveFreezes({
+  limit = 20,
+  releaseArchiveFreeze = releaseProjectDataArchiveFreezeOnHost,
+}: {
+  limit?: number;
+  releaseArchiveFreeze?: typeof releaseProjectDataArchiveFreezeOnHost;
+} = {}): Promise<
+  { job_id: string; outcome: ManualArchiveRecoveryOutcome; detail?: string }[]
+> {
+  const results: {
+    job_id: string;
+    outcome: ManualArchiveRecoveryOutcome;
+    detail?: string;
+  }[] = [];
+  for (const job of await listManualArchiveJobsToRecover(limit)) {
+    try {
+      results.push({
+        job_id: job.id,
+        ...(await recoverManualArchiveFreeze(job, releaseArchiveFreeze)),
+      });
+    } catch (err) {
+      log.warn("manual archive freeze recovery failed", {
+        job_id: job.id,
+        project_id: job.project_id,
+        err: `${err}`,
+      });
+      results.push({ job_id: job.id, outcome: "error", detail: `${err}` });
+    }
+  }
+  return results;
+}
+
+// Consecutive transient recovery errors (database or host unreachable)
+// before a job is quarantined for an engineer.
+export const MANUAL_ARCHIVE_RECOVERY_ERROR_LIMIT = 5;
+
+// The host's own answer refusing the release because the volume is frozen at
+// another generation (project-host archive-volume-barrier.ts): a proven
+// contradiction. Anything else (connection refused, timeouts) is transient.
+const HOST_REFUSAL =
+  /refusing to release archive freeze at generation \d+; expected \d+/;
+function isHostRefusal(err: unknown): boolean {
+  return HOST_REFUSAL.test(`${(err as any)?.message ?? err}`);
+}
+
+async function recoverManualArchiveFreeze(
+  job: ManualArchiveJob,
+  releaseArchiveFreeze: typeof releaseProjectDataArchiveFreezeOnHost,
+): Promise<{ outcome: ManualArchiveRecoveryOutcome; detail?: string }> {
+  // Claim the job first: while it is claimed a user's manual archive refuses
+  // instead of resuming it, and every settle below applies only to this claim.
+  const claimed_attempts = await claimManualArchiveJobForRecovery({
+    job_id: job.id,
+    attempts: Number(job.attempts ?? 0),
+  });
+  if (claimed_attempts == null) return { outcome: "skipped" };
+  const settle = async (
+    opts: Omit<
+      Parameters<typeof settleManualArchiveJob>[0],
+      "job_id" | "claimed_attempts"
+    >,
+  ) => {
+    const ok = await settleManualArchiveJob({
+      job_id: job.id,
+      claimed_attempts,
+      ...opts,
+    });
+    if (!ok) {
+      log.warn("manual archive recovery lost its claim before settling", {
+        job_id: job.id,
+      });
+    }
+    return ok;
+  };
+  const quarantine = async (detail: string) => {
+    await settle({
+      status: "failed",
+      failure_category: MANUAL_ARCHIVE_FREEZE_QUARANTINED,
+      clear_final_backup: false,
+      error: `manual archive freeze needs an engineer: ${detail}`,
+    });
+    return { outcome: "quarantined" as const, detail };
+  };
+  // A transient failure hands the job back unchanged, to be retried; after
+  // too many in a row it is quarantined.
+  const transient = async (detail: string) => {
+    if (
+      Number(job.recovery_errors ?? 0) + 1 >=
+      MANUAL_ARCHIVE_RECOVERY_ERROR_LIMIT
+    ) {
+      return await quarantine(`repeated recovery errors: ${detail}`);
+    }
+    await settle({
+      status: "failed",
+      failure_category: job.failure_category,
+      clear_final_backup: false,
+      error: detail,
+      recovery_error: true,
+    });
+    return { outcome: "error" as const, detail };
+  };
+  let row: ArchiveRow;
+  try {
+    row = await loadArchiveRow(job.project_id);
+  } catch (err) {
+    if (`${err}`.includes("project not found")) {
+      return await quarantine(`project unavailable: ${err}`);
+    }
+    return await transient(`project unreadable: ${err}`);
+  }
+  if (
+    `${row.state?.state ?? ""}`.trim() === "archived" &&
+    row.provisioned === false
+  ) {
+    // The archive committed; never release or reopen an archived project.
+    await settle({
+      status: "completed",
+      failure_category: null,
+      clear_final_backup: false,
+    });
+    return { outcome: "reconciled" };
+  }
+  if (job.host_id && row.host_id !== job.host_id) {
+    return await quarantine(
+      "project moved during an unresolved manual archive",
+    );
+  }
+  const dedupe_key = finalArchiveBackupDedupeKey(
+    job.id,
+    MANUAL_FINAL_ARCHIVE_BACKUP_TAG,
+  );
+  let history: LroSummary[];
+  try {
+    history = await listLrosByDedupe({
+      scope_type: "project",
+      scope_id: job.project_id,
+      dedupe_key,
+    });
+  } catch (err) {
+    return await transient(`backup history unreadable: ${err}`);
+  }
+  if (history.some(({ status }) => ["queued", "running"].includes(status))) {
+    await settle({
+      status: "failed",
+      failure_category: job.failure_category,
+      clear_final_backup: false,
+    });
+    return { outcome: "backup-running" };
+  }
+  // Successful final backups whose freeze is not attested released.
+  const holding = history.filter(
+    ({ status, result }) =>
+      status === "succeeded" && !isArchiveBackupFailureReopenSafe(result),
+  );
+  const uncertain = history.some(
+    ({ status, result }) =>
+      status !== "succeeded" && !isArchiveBackupFailureReopenSafe(result),
+  );
+  const recordedGeneration =
+    job.final_backup_id && job.backup_generation != null
+      ? Number(job.backup_generation)
+      : undefined;
+  let generation: number | undefined;
+  let backupId: string | undefined;
+  if (recordedGeneration != null) {
+    // The recorded backup must be a durable success, by id AND generation,
+    // and no other unreleased success may exist.
+    const resultId = (result: any) =>
+      `${result?.id ?? result?.backup_id ?? ""}`.trim();
+    const isRecorded = (result: any) =>
+      resultId(result) === job.final_backup_id &&
+      Number(result?.generation) === recordedGeneration;
+    if (holding.some(({ result }) => !isRecorded(result))) {
+      return await quarantine(
+        "the recorded final backup differs from a durable final backup",
+      );
+    }
+    if (
+      !history.some(
+        ({ status, result }) => status === "succeeded" && isRecorded(result),
+      )
+    ) {
+      return await quarantine(
+        "no durable final backup matches the recorded one",
+      );
+    }
+    generation = recordedGeneration;
+    backupId = job.final_backup_id ?? undefined;
+  } else if (holding.length === 1) {
+    generation = Number(holding[0].result?.generation);
+    backupId = `${holding[0].result?.id ?? holding[0].result?.backup_id ?? ""}`;
+  } else if (holding.length > 1) {
+    return await quarantine("more than one unreleased final backup");
+  }
+  if (uncertain) {
+    return await quarantine("a final backup attempt has an uncertain outcome");
+  }
+  if (generation == null) {
+    // No final backup succeeded and none is uncertain: nothing can hold it.
+    await settle({
+      status: "failed",
+      failure_category: "archive-storage",
+      clear_final_backup: true,
+    });
+    return { outcome: "nothing-held" };
+  }
+  if (!Number.isSafeInteger(generation) || generation <= 0 || !backupId) {
+    return await quarantine("the final backup has no valid id or generation");
+  }
+  const host_id = job.host_id ?? row.host_id;
+  if (!host_id) return await quarantine("no host recorded for the freeze");
+  let released: Awaited<ReturnType<typeof releaseArchiveFreeze>>;
+  try {
+    released = await releaseArchiveFreeze({
+      project_id: job.project_id,
+      host_id,
+      expected_generation: generation,
+    });
+  } catch (err) {
+    if (isHostRefusal(err)) {
+      return await quarantine(`the host refused the release: ${err}`);
+    }
+    return await transient(`the host did not answer the release: ${err}`);
+  }
+  if (
+    released.status !== "absent" &&
+    released.status !== "released" &&
+    released.status !== "already-writable"
+  ) {
+    return await quarantine(`the host answered ${released.status}`);
+  }
+  if (released.status === "absent") {
+    // The checked delete completed but the archive was never recorded:
+    // finish it from this backup.
+    try {
+      await setArchivedState({
+        project_id: job.project_id,
+        reason: "manual",
+        job_id: job.id,
+        automatic: false,
+        expected_host_id: host_id,
+      });
+    } catch (err) {
+      return await transient(`could not record the archive: ${err}`);
+    }
+    await settle({
+      status: "completed",
+      failure_category: null,
+      clear_final_backup: false,
+    });
+    return { outcome: "finalized" };
+  }
+  try {
+    await attestReleasedLroDedupeSuccesses({
+      scope_type: "project",
+      scope_id: job.project_id,
+      dedupe_key,
+      expected_result_id: backupId,
+      expected_generation: generation,
+    });
+  } catch (err) {
+    return await transient(`could not attest the release: ${err}`);
+  }
+  await settle({
+    status: "failed",
+    failure_category: "manual-archive-freeze-released",
+    clear_final_backup: true,
+  });
+  return { outcome: "released", detail: released.status };
+}
+
+/** Tests only: the placement locks and the archived-state transaction. */
+export const __test__ = {
+  lockCurrentManualArchivePlacement,
+  lockCurrentAutomaticArchiveClaim,
+  setArchivedState,
+};

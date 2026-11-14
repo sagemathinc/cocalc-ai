@@ -25,6 +25,11 @@ let createBackupMock: jest.Mock;
 let waitForDurableLroCompletionMock: jest.Mock;
 let listLrosByDedupeMock: jest.Mock;
 let attestReleasedLroDedupeSuccessesMock: jest.Mock;
+let findUnresolvedManualArchiveJobMock: jest.Mock;
+let resumeManualArchiveJobMock: jest.Mock;
+let listManualArchiveJobsToRecoverMock: jest.Mock;
+let settleManualArchiveJobMock: jest.Mock;
+let claimManualArchiveJobForRecoveryMock: jest.Mock;
 
 const AUTOMATIC_PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const AUTOMATIC_HOST_ID = "22222222-2222-4222-8222-222222222222";
@@ -103,6 +108,19 @@ jest.mock("@cocalc/server/projects/archive-lifecycle-db", () => ({
     recordProjectArchiveLifecycleFinalBackupMock(...args),
   clearProjectArchiveLifecycleFinalBackup: (...args: any[]) =>
     clearProjectArchiveLifecycleFinalBackupMock(...args),
+  findUnresolvedManualArchiveJob: (...args: any[]) =>
+    findUnresolvedManualArchiveJobMock(...args),
+  resumeManualArchiveJob: (...args: any[]) =>
+    resumeManualArchiveJobMock(...args),
+  listManualArchiveJobsToRecover: (...args: any[]) =>
+    listManualArchiveJobsToRecoverMock(...args),
+  settleManualArchiveJob: (...args: any[]) =>
+    settleManualArchiveJobMock(...args),
+  claimManualArchiveJobForRecovery: (...args: any[]) =>
+    claimManualArchiveJobForRecoveryMock(...args),
+  MANUAL_ARCHIVE_FREEZE_UNCERTAIN: "manual-archive-freeze-uncertain",
+  MANUAL_ARCHIVE_FINALIZE_PENDING: "manual-archive-finalize-pending",
+  MANUAL_ARCHIVE_FREEZE_QUARANTINED: "manual-archive-freeze-quarantined",
 }));
 
 jest.mock("@cocalc/server/projects/create", () => ({
@@ -327,6 +345,13 @@ describe("projects.archiveProject", () => {
     );
     listLrosByDedupeMock = jest.fn(async () => []);
     attestReleasedLroDedupeSuccessesMock = jest.fn(async () => []);
+    findUnresolvedManualArchiveJobMock = jest.fn(async () => undefined);
+    resumeManualArchiveJobMock = jest.fn(async () => true);
+    listManualArchiveJobsToRecoverMock = jest.fn(async () => []);
+    settleManualArchiveJobMock = jest.fn(async () => true);
+    claimManualArchiveJobForRecoveryMock = jest.fn(
+      async ({ attempts }) => attempts + 1,
+    );
     createBackupMock = jest.fn(async (_input, opts) => {
       opts?.on_lro_create_started?.();
       return {
@@ -778,6 +803,33 @@ describe("projects.archiveProject", () => {
 
     expect(deleteProjectDataOnHostAfterBackupMock).toHaveBeenCalledTimes(1);
     expect(rehomeFenceHeld).toBe(false);
+  });
+
+  it("automatic cleanup locks its claim with the exact host before deleting", async () => {
+    poolQueryMock.mockResolvedValue({ rows: [automaticArchiveRow()] });
+    const { archiveProjectStorage } =
+      await import("@cocalc/server/projects/archive");
+    await archiveProjectStorage({
+      project_id: AUTOMATIC_PROJECT_ID,
+      mode: "automatic",
+      job_id: AUTOMATIC_JOB_ID,
+      reason: "free-inactive",
+      expected_host_id: AUTOMATIC_HOST_ID,
+    });
+    const lockIndex = poolConnectQueryMock.mock.calls.findIndex(
+      ([sql]) =>
+        `${sql}`.includes("archive_lifecycle_job_id = $2") &&
+        `${sql}`.includes("FOR UPDATE"),
+    );
+    expect(lockIndex).toBeGreaterThanOrEqual(0);
+    const [lockSql, lockParams] = poolConnectQueryMock.mock.calls[lockIndex];
+    expect(lockSql).toContain("host_id IS NOT DISTINCT FROM $3::uuid");
+    expect(lockParams[2]).toBe(AUTOMATIC_HOST_ID);
+    expect(
+      poolConnectQueryMock.mock.invocationCallOrder[lockIndex],
+    ).toBeLessThan(
+      deleteProjectDataOnHostAfterBackupMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("does not delete after the fenced ownership claim becomes stale", async () => {
@@ -1662,9 +1714,22 @@ describe("projects.archiveProject", () => {
         deleteProjectDataOnHostAfterBackupMock.mock.invocationCallOrder[0],
       );
       expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      // recorded on the job before the host data is deleted
+      expect(recordProjectArchiveLifecycleFinalBackupMock).toHaveBeenCalledWith(
+        {
+          job_id: MANUAL_JOB_ID,
+          backup_id: "final-backup-id",
+          backup_generation: 10,
+          backup_time: "2026-06-15T05:30:00.000Z",
+          expected_previous_backup_id: null,
+        },
+      );
       expect(
-        recordProjectArchiveLifecycleFinalBackupMock,
-      ).not.toHaveBeenCalled();
+        recordProjectArchiveLifecycleFinalBackupMock.mock
+          .invocationCallOrder[0],
+      ).toBeLessThan(
+        deleteProjectDataOnHostAfterBackupMock.mock.invocationCallOrder[0],
+      );
       expect(updatedProjects()).toHaveLength(1);
     });
 
@@ -1904,6 +1969,524 @@ describe("projects.archiveProject", () => {
         }),
       );
       expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("manual archive freeze recovery", () => {
+    const succeeded = (generation = 10, id = "final-backup-id") => ({
+      op_id: `lro-${generation}`,
+      status: "succeeded",
+      result: { id, generation, time: "2026-06-15T05:30:00.000Z" },
+    });
+    const failedJob = (overrides: Record<string, any> = {}) => ({
+      id: MANUAL_JOB_ID,
+      project_id: "proj-1",
+      host_id: "host-1",
+      status: "failed",
+      failure_category: "manual-archive-freeze-uncertain",
+      final_backup_id: null,
+      backup_generation: null,
+      attempts: 3,
+      recovery_errors: 0,
+      stale: false,
+      ...overrides,
+    });
+    function updatedProjects() {
+      return poolConnectQueryMock.mock.calls.filter(([sql]) =>
+        `${sql}`.includes("UPDATE projects"),
+      );
+    }
+    function jobStatuses() {
+      return updateProjectArchiveLifecycleJobMock.mock.calls.map(
+        ([opts]) => `${opts.status}:${opts.failure_category ?? ""}`,
+      );
+    }
+
+    it("marks the job freeze-uncertain when the final backup's result is lost", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      waitForDurableLroCompletionMock.mockRejectedValue(
+        new Error("lost the backup result"),
+      );
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("lost the backup result");
+      expect(jobStatuses()).toEqual(["failed:manual-archive-freeze-uncertain"]);
+      expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+      expect(releaseProjectDataArchiveFreezeOnHostMock).not.toHaveBeenCalled();
+    });
+
+    it("a retry after a lost result resumes the same job and reuses its durable backup", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      findUnresolvedManualArchiveJobMock.mockResolvedValue(failedJob());
+      // the first attempt's backup succeeded durably
+      listLrosByDedupeMock.mockResolvedValue([succeeded()]);
+      const { archiveProject } = await import("./projects");
+      await archiveProject({ account_id: "owner-1", project_id: "proj-1" });
+
+      expect(resumeManualArchiveJobMock).toHaveBeenCalledWith(MANUAL_JOB_ID);
+      expect(createProjectArchiveLifecycleJobMock).not.toHaveBeenCalled();
+      expect(listLrosByDedupeMock).toHaveBeenCalledWith({
+        scope_type: "project",
+        scope_id: "proj-1",
+        dedupe_key: MANUAL_DEDUPE_KEY,
+      });
+      // no second backup, no new key
+      expect(createBackupMock).not.toHaveBeenCalled();
+      expect(recordProjectArchiveLifecycleFinalBackupMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          job_id: MANUAL_JOB_ID,
+          backup_id: "final-backup-id",
+          backup_generation: 10,
+        }),
+      );
+      expect(deleteProjectDataOnHostAfterBackupMock).toHaveBeenCalledWith({
+        project_id: "proj-1",
+        host_id: "host-1",
+        expected_backup_id: "final-backup-id",
+        expected_generation: 10,
+      });
+      expect(jobStatuses()).toEqual(["completed:"]);
+    });
+
+    it("refuses, never resuming, a previous archive that maintenance quarantined", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      findUnresolvedManualArchiveJobMock.mockResolvedValue(
+        failedJob({ failure_category: "manual-archive-freeze-quarantined" }),
+      );
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("needs an engineer");
+      expect(resumeManualArchiveJobMock).not.toHaveBeenCalled();
+      expect(createProjectArchiveLifecycleJobMock).not.toHaveBeenCalled();
+      expect(createBackupMock).not.toHaveBeenCalled();
+      expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses while another manual archive of the project is running", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      findUnresolvedManualArchiveJobMock.mockResolvedValue(
+        failedJob({ status: "running", stale: false }),
+      );
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("already running");
+      expect(createProjectArchiveLifecycleJobMock).not.toHaveBeenCalled();
+      expect(createBackupMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses to start a new backup while an old freeze is held on another host", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      findUnresolvedManualArchiveJobMock.mockResolvedValue(
+        failedJob({ host_id: "host-0" }),
+      );
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("still being recovered");
+      expect(resumeManualArchiveJobMock).not.toHaveBeenCalled();
+      expect(createProjectArchiveLifecycleJobMock).not.toHaveBeenCalled();
+      expect(createBackupMock).not.toHaveBeenCalled();
+    });
+
+    it("after a delete whose archive transaction failed, a retry finishes from the same marker", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      const defaultClientQuery = poolConnectQueryMock.getMockImplementation()!;
+      let failUpdate = true;
+      poolConnectQueryMock.mockImplementation(async (sql: string, params) => {
+        if (failUpdate && `${sql}`.includes("UPDATE projects")) {
+          throw new Error("database went away");
+        }
+        return defaultClientQuery(sql, params);
+      });
+      // the checked delete succeeds; afterwards the volume is gone
+      releaseProjectDataArchiveFreezeOnHostMock.mockResolvedValue({
+        status: "absent",
+      });
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("database went away");
+      expect(jobStatuses()).toEqual(["failed:manual-archive-finalize-pending"]);
+      expect(createBackupMock).toHaveBeenCalledTimes(1);
+
+      // retry: same job, recorded marker, no second backup
+      failUpdate = false;
+      updateProjectArchiveLifecycleJobMock.mockClear();
+      findUnresolvedManualArchiveJobMock.mockResolvedValue(
+        failedJob({
+          failure_category: "manual-archive-finalize-pending",
+          final_backup_id: "final-backup-id",
+          backup_generation: 10,
+        }),
+      );
+      getProjectArchiveLifecycleFinalBackupMock.mockResolvedValue({
+        id: "final-backup-id",
+        generation: 10,
+        time: "2026-06-15T05:30:00.000Z",
+      });
+      deleteProjectDataOnHostAfterBackupMock.mockRejectedValue(
+        new Error("volume not found"),
+      );
+      await archiveProject({ account_id: "owner-1", project_id: "proj-1" });
+      expect(createBackupMock).toHaveBeenCalledTimes(1);
+      expect(createProjectArchiveLifecycleJobMock).toHaveBeenCalledTimes(1);
+      expect(
+        releaseProjectDataArchiveFreezeOnHostMock,
+      ).toHaveBeenLastCalledWith({
+        project_id: "proj-1",
+        host_id: "host-1",
+        expected_generation: 10,
+      });
+      expect(jobStatuses()).toEqual(["completed:"]);
+      expect(updatedProjects().length).toBeGreaterThan(0);
+    });
+
+    it("an archive whose commit landed but whose caller never heard back is reconciled, not reopened", async () => {
+      poolQueryMock.mockResolvedValue({
+        rows: [
+          manualArchiveRow({
+            state: { state: "archived" },
+            provisioned: false,
+          }),
+        ],
+      });
+      findUnresolvedManualArchiveJobMock.mockResolvedValue(
+        failedJob({
+          final_backup_id: "final-backup-id",
+          backup_generation: 10,
+        }),
+      );
+      const { archiveProject } = await import("./projects");
+      await archiveProject({ account_id: "owner-1", project_id: "proj-1" });
+      expect(settleManualArchiveJobMock).toHaveBeenCalledWith({
+        job_id: MANUAL_JOB_ID,
+        status: "completed",
+        failure_category: null,
+        clear_final_backup: false,
+      });
+      expect(releaseProjectDataArchiveFreezeOnHostMock).not.toHaveBeenCalled();
+      expect(createBackupMock).not.toHaveBeenCalled();
+    });
+
+    describe("maintenance", () => {
+      async function recover(
+        job: Record<string, any>,
+        row = manualArchiveRow(),
+      ) {
+        listManualArchiveJobsToRecoverMock.mockResolvedValue([failedJob(job)]);
+        poolQueryMock.mockResolvedValue({ rows: [row] });
+        const { recoverManualArchiveFreezes } =
+          await import("@cocalc/server/projects/archive");
+        const [result] = await recoverManualArchiveFreezes();
+        return result;
+      }
+      const settled = () =>
+        settleManualArchiveJobMock.mock.calls.map(([o]) => o);
+
+      it("releases a stuck manual freeze at the generation recorded on the job", async () => {
+        listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+        const result = await recover({
+          failure_category: "stuck-manual-archive",
+          final_backup_id: "final-backup-id",
+          backup_generation: 10,
+        });
+        expect(result.outcome).toBe("released");
+        expect(listLrosByDedupeMock).toHaveBeenCalledWith({
+          scope_type: "project",
+          scope_id: "proj-1",
+          dedupe_key: MANUAL_DEDUPE_KEY,
+        });
+        expect(releaseProjectDataArchiveFreezeOnHostMock).toHaveBeenCalledWith({
+          project_id: "proj-1",
+          host_id: "host-1",
+          expected_generation: 10,
+        });
+        expect(attestReleasedLroDedupeSuccessesMock).toHaveBeenCalledWith({
+          scope_type: "project",
+          scope_id: "proj-1",
+          dedupe_key: MANUAL_DEDUPE_KEY,
+          expected_result_id: "final-backup-id",
+          expected_generation: 10,
+        });
+        expect(claimManualArchiveJobForRecoveryMock).toHaveBeenCalledWith({
+          job_id: MANUAL_JOB_ID,
+          attempts: 3,
+        });
+        expect(
+          claimManualArchiveJobForRecoveryMock.mock.invocationCallOrder[0],
+        ).toBeLessThan(
+          releaseProjectDataArchiveFreezeOnHostMock.mock.invocationCallOrder[0],
+        );
+        // fenced on the claim
+        expect(settled()).toEqual([
+          {
+            job_id: MANUAL_JOB_ID,
+            claimed_attempts: 4,
+            status: "failed",
+            failure_category: "manual-archive-freeze-released",
+            clear_final_backup: true,
+          },
+        ]);
+        expect(updatedProjects()).toHaveLength(0);
+      });
+
+      it("releases at the durable backup's generation when the marker was never recorded", async () => {
+        listLrosByDedupeMock.mockResolvedValue([succeeded(12, "backup-12")]);
+        const result = await recover({});
+        expect(result.outcome).toBe("released");
+        expect(releaseProjectDataArchiveFreezeOnHostMock).toHaveBeenCalledWith({
+          project_id: "proj-1",
+          host_id: "host-1",
+          expected_generation: 12,
+        });
+        expect(attestReleasedLroDedupeSuccessesMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            expected_result_id: "backup-12",
+            expected_generation: 12,
+          }),
+        );
+      });
+
+      it("finishes the archive when the checked delete already completed (hub exit before commit)", async () => {
+        listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+        releaseProjectDataArchiveFreezeOnHostMock.mockResolvedValue({
+          status: "absent",
+        });
+        const result = await recover({
+          failure_category: "stuck-manual-archive",
+          final_backup_id: "final-backup-id",
+          backup_generation: 10,
+        });
+        expect(result.outcome).toBe("finalized");
+        expect(updatedProjects()).toHaveLength(1);
+        expect(attestReleasedLroDedupeSuccessesMock).not.toHaveBeenCalled();
+        expect(settled()).toEqual([
+          {
+            job_id: MANUAL_JOB_ID,
+            claimed_attempts: 4,
+            status: "completed",
+            failure_category: null,
+            clear_final_backup: false,
+          },
+        ]);
+      });
+
+      it("never releases or reopens a project that is archived already", async () => {
+        listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+        const result = await recover(
+          { final_backup_id: "final-backup-id", backup_generation: 10 },
+          manualArchiveRow({
+            state: { state: "archived" },
+            provisioned: false,
+          }),
+        );
+        expect(result.outcome).toBe("reconciled");
+        expect(
+          releaseProjectDataArchiveFreezeOnHostMock,
+        ).not.toHaveBeenCalled();
+        expect(updatedProjects()).toHaveLength(0);
+      });
+
+      it.each([
+        [
+          "the recorded and durable generations differ",
+          { final_backup_id: "final-backup-id", backup_generation: 10 },
+          () => listLrosByDedupeMock.mockResolvedValue([succeeded(11)]),
+        ],
+        [
+          "the host refuses the release",
+          { final_backup_id: "final-backup-id", backup_generation: 10 },
+          () => {
+            listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+            releaseProjectDataArchiveFreezeOnHostMock.mockRejectedValue(
+              new Error(
+                "refusing to release archive freeze at generation 11; expected 10",
+              ),
+            );
+          },
+        ],
+        [
+          "an attempt's outcome is uncertain",
+          {},
+          () =>
+            listLrosByDedupeMock.mockResolvedValue([
+              {
+                op_id: "lro-u",
+                status: "failed",
+                result: { archive_freeze_recovery: "uncertain" },
+              },
+            ]),
+        ],
+        [
+          "the recorded backup id differs from the durable one at the same generation",
+          { final_backup_id: "final-backup-id", backup_generation: 10 },
+          () =>
+            listLrosByDedupeMock.mockResolvedValue([
+              succeeded(10, "other-backup"),
+            ]),
+        ],
+        [
+          "no durable final backup matches the recorded one",
+          { final_backup_id: "final-backup-id", backup_generation: 10 },
+          () => listLrosByDedupeMock.mockResolvedValue([]),
+        ],
+        [
+          "the host answers with an unknown status",
+          { final_backup_id: "final-backup-id", backup_generation: 10 },
+          () => {
+            listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+            releaseProjectDataArchiveFreezeOnHostMock.mockResolvedValue({
+              status: "frozen-elsewhere",
+            });
+          },
+        ],
+        [
+          "more than one durable backup is unreleased",
+          {},
+          () =>
+            listLrosByDedupeMock.mockResolvedValue([
+              succeeded(10),
+              succeeded(11, "backup-11"),
+            ]),
+        ],
+      ])("quarantines when %s", async (label, job, arrange) => {
+        arrange();
+        const result = await recover(job);
+        expect(result.outcome).toBe("quarantined");
+        if (!/host/.test(label)) {
+          // proven contradictions are quarantined before any host release
+          expect(
+            releaseProjectDataArchiveFreezeOnHostMock,
+          ).not.toHaveBeenCalled();
+        }
+        expect(updatedProjects()).toHaveLength(0);
+        expect(attestReleasedLroDedupeSuccessesMock).not.toHaveBeenCalled();
+        expect(settled()).toEqual([
+          expect.objectContaining({
+            job_id: MANUAL_JOB_ID,
+            status: "failed",
+            failure_category: "manual-archive-freeze-quarantined",
+            clear_final_backup: false,
+            claimed_attempts: 4,
+          }),
+        ]);
+      });
+
+      it("does nothing with a job it could not claim (a user's archive resumed it)", async () => {
+        claimManualArchiveJobForRecoveryMock.mockResolvedValue(undefined);
+        listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+        const result = await recover({
+          final_backup_id: "final-backup-id",
+          backup_generation: 10,
+        });
+        expect(result.outcome).toBe("skipped");
+        expect(
+          releaseProjectDataArchiveFreezeOnHostMock,
+        ).not.toHaveBeenCalled();
+        expect(settleManualArchiveJobMock).not.toHaveBeenCalled();
+      });
+
+      it("retries a transient host failure instead of quarantining it", async () => {
+        listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+        releaseProjectDataArchiveFreezeOnHostMock.mockRejectedValue(
+          new Error("connect ETIMEDOUT"),
+        );
+        const result = await recover({
+          failure_category: "stuck-manual-archive",
+          final_backup_id: "final-backup-id",
+          backup_generation: 10,
+        });
+        expect(result.outcome).toBe("error");
+        expect(settled()).toEqual([
+          expect.objectContaining({
+            job_id: MANUAL_JOB_ID,
+            claimed_attempts: 4,
+            status: "failed",
+            failure_category: "stuck-manual-archive",
+            clear_final_backup: false,
+            recovery_error: true,
+          }),
+        ]);
+        expect(attestReleasedLroDedupeSuccessesMock).not.toHaveBeenCalled();
+      });
+
+      it("retries a host that refuses the connection, unlike one that refuses the release", async () => {
+        listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+        releaseProjectDataArchiveFreezeOnHostMock.mockRejectedValue(
+          new Error("connect ECONNREFUSED 10.0.0.1:443"),
+        );
+        const result = await recover({
+          failure_category: "stuck-manual-archive",
+          final_backup_id: "final-backup-id",
+          backup_generation: 10,
+        });
+        expect(result.outcome).toBe("error");
+        expect(settled()).toEqual([
+          expect.objectContaining({
+            failure_category: "stuck-manual-archive",
+            recovery_error: true,
+            claimed_attempts: 4,
+          }),
+        ]);
+      });
+
+      it("quarantines after too many transient failures in a row", async () => {
+        listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+        releaseProjectDataArchiveFreezeOnHostMock.mockRejectedValue(
+          new Error("connect ETIMEDOUT"),
+        );
+        const result = await recover({
+          final_backup_id: "final-backup-id",
+          backup_generation: 10,
+          recovery_errors: 4,
+        });
+        expect(result.outcome).toBe("quarantined");
+        expect(settled()).toEqual([
+          expect.objectContaining({
+            failure_category: "manual-archive-freeze-quarantined",
+            claimed_attempts: 4,
+          }),
+        ]);
+      });
+
+      it("quarantines a project that moved during an unresolved manual archive", async () => {
+        listLrosByDedupeMock.mockResolvedValue([succeeded(10)]);
+        const result = await recover(
+          { final_backup_id: "final-backup-id", backup_generation: 10 },
+          manualArchiveRow({ host_id: "host-2" }),
+        );
+        expect(result.outcome).toBe("quarantined");
+        expect(
+          releaseProjectDataArchiveFreezeOnHostMock,
+        ).not.toHaveBeenCalled();
+        expect(updatedProjects()).toHaveLength(0);
+      });
+
+      it("leaves a final backup that is still running alone", async () => {
+        listLrosByDedupeMock.mockResolvedValue([
+          { op_id: "lro-r", status: "running", result: null },
+        ]);
+        const result = await recover({
+          failure_category: "stuck-manual-archive",
+        });
+        expect(result.outcome).toBe("backup-running");
+        expect(
+          releaseProjectDataArchiveFreezeOnHostMock,
+        ).not.toHaveBeenCalled();
+        // handed back unchanged
+        expect(settled()).toEqual([
+          {
+            job_id: MANUAL_JOB_ID,
+            claimed_attempts: 4,
+            status: "failed",
+            failure_category: "stuck-manual-archive",
+            clear_final_backup: false,
+          },
+        ]);
+      });
     });
   });
 });
