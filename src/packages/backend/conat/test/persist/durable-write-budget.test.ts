@@ -216,7 +216,7 @@ describe("028 B-3a: enforcement in the persist storage", () => {
     limits(100, 9096);
     const s = await open("order");
     await s.setQueued(msg(Buffer.alloc(4096, 1))); // 4096 spent: 5000 left
-    const before = s.getAll().length;
+    const before = [...s.getAll()].length;
     const r = await Promise.allSettled([
       s.setQueued(msg(Buffer.alloc(6000, 2))), // A
       s.setQueued(msg(Buffer.alloc(100, 3))), // B: alone it would fit
@@ -224,7 +224,7 @@ describe("028 B-3a: enforcement in the persist storage", () => {
     expect(r.map((x) => x.status)).toEqual(["rejected", "rejected"]);
     expect(r.map((x) => (x as any).reason?.code)).toEqual(["rate_limited", "rate_limited"]);
     // nothing of the batch was applied: B did not commit ahead of A
-    expect(s.getAll().length).toBe(before);
+    expect([...s.getAll()].length).toBe(before);
   });
 
   it("other mutating commands spend the budget too (config, metadata, delete)", async () => {
