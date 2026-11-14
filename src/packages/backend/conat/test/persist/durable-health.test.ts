@@ -52,11 +52,15 @@ describe("028 B-3a: durability health", () => {
     expect(pc.synchronous_full).toBe(pc.disk_connections);
     expect(pc.wal_autocheckpoint_off).toBe(pc.disk_connections);
     expect(pc.unreadable).toBe(0);
-    // can fail: a connection set back to OFF is counted as not FULL
-    (a as any).db.exec("PRAGMA synchronous=OFF");
+    // can fail: a connection that reads back OFF (0) / auto-checkpoint on is
+    // counted as not FULL (the test statement guard forbids setting it)
+    const spy = jest
+      .spyOn(a as any, "readDurabilityPragmas")
+      .mockReturnValue({ synchronous: 0, walAutocheckpoint: 1000 });
     const pc2 = (getPersistentStreamDiagnostics() as any).pragma_check;
     expect(pc2.synchronous_full).toBe(pc2.disk_connections - 1);
-    (a as any).db.exec("PRAGMA synchronous=FULL");
+    expect(pc2.wal_autocheckpoint_off).toBe(pc2.disk_connections - 1);
+    spy.mockRestore();
     a.close();
     b.close();
     eph.close();
