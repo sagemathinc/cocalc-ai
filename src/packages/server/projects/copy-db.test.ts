@@ -922,9 +922,15 @@ describe("projects.copy-db snapshot cleanup", () => {
     const resumed = new Promise<void>((resolve) => (resume = resolve));
     let paused = false;
     // pause the insert right after its claim check, before its INSERT
-    const connect = jest
-      .spyOn(pool, "connect")
-      .mockImplementation((async () => {
+    const connect = jest.spyOn(pool, "connect").mockImplementation(((
+      ...args: any[]
+    ) => {
+      // pool.query() checks out in callback form: pass it through untouched,
+      // so a query that bypasses the operation's connection never hangs here
+      if (typeof args[0] === "function") {
+        return (realConnect as any)(...args);
+      }
+      return (async () => {
         const client: any = await realConnect();
         const realQuery = client.query.bind(client);
         const realRelease = client.release.bind(client);
@@ -947,9 +953,11 @@ describe("projects.copy-db snapshot cleanup", () => {
           return realRelease(arg);
         };
         return client;
-      }) as any);
+      })();
+    }) as any);
     let inserting: Promise<unknown> | undefined;
     let cleanup: Promise<void> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       inserting = insertCopyRowIfMissing({
         ...key("/root/i2.txt"),
@@ -958,13 +966,22 @@ describe("projects.copy-db snapshot cleanup", () => {
         snapshot_created: false,
         expires_at: new Date(Date.now() + 60_000),
       });
-      await atCheck;
+      // the insert reaches its claim check on its own connection (bounded, so
+      // a claim check made any other way fails here instead of hanging)
+      const reached = await Promise.race([
+        atCheck.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 5000);
+        }),
+      ]);
+      expect(reached).toBe(true);
       connect.mockRestore();
       // copy A finishes now, so its cleanup races the paused insert
       cleanup = finish(a.copy_id, "/root/i1.txt");
       // with the lock, cleanup can't decide while the insert is paused
       expect(await settledWithin(cleanup, 300)).toBe(false);
     } finally {
+      clearTimeout(timer);
       connect.mockRestore();
       resume();
       // Both finish even when an assertion above failed, so the test never
