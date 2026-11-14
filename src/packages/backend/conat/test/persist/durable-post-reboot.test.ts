@@ -49,7 +49,17 @@ describe("028 B-2: the post-reboot record and integrity_check", () => {
   let dir: string;
   let streams: any[] = [];
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "persist-028-reboot-"));
+    // under the persist root: the maintenance check derives the owner (B2-M1)
+    require("node:fs").mkdirSync(
+      require("@cocalc/conat/persist/context").syncFiles.local,
+      { recursive: true },
+    );
+    dir = await mkdtemp(
+      join(
+        require("@cocalc/conat/persist/context").syncFiles.local,
+        "persist-028-reboot-",
+      ),
+    );
     streams = [];
   });
   afterEach(async () => {
