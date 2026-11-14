@@ -5,8 +5,10 @@
  * - Cloud-init/startup-script runs once at first boot using a short-lived
  *   bootstrap token to fetch a larger script from the hub.
  * - The bootstrap script prepares the host, writes logs, and never re-runs
- *   after a successful bootstrap (guarded by /mnt/cocalc/data/.bootstrap_done and
- *   /var/lib/cocalc/.bootstrap_done).
+ *   after a successful bootstrap (guarded by root-owned markers:
+ *   /var/lib/cocalc-host-bootstrap/.bootstrap_done, or on older hosts
+ *   /var/lib/cocalc/.bootstrap_done). Its state lives in the root-only
+ *   /var/lib/cocalc-host-bootstrap.
  *
  * What bootstrap does:
  * - Disables unattended upgrades during bootstrap (prevents apt locks), then
@@ -39,6 +41,7 @@
  * - cloudflared runs under systemd and restarts on reboot.
  */
 
+import { hostSshUser } from "./host-ssh-metadata";
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
@@ -52,7 +55,12 @@ import type {
 import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { resolveProjectContentDomain } from "./host-content-dns";
-import { loadEffectiveProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
+import {
+  isSafeHostSoftwareChannel,
+  isSafeHostSoftwareVersion,
+  loadTrustedEffectiveRuntimeDeployments,
+  safeHostSoftwareVersionOrUndefined,
+} from "@cocalc/server/conat/api/host-software-admin";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import getPool from "@cocalc/database/pool";
 import siteURL from "@cocalc/database/settings/site-url";
@@ -398,15 +406,25 @@ function resolveBootstrapSelector({
   const settingsVersion =
     settings.project_hosts_bootstrap_version?.trim() || "";
   const deploymentVersion = `${promotedVersion ?? ""}`.trim();
-  if (metaVersion) return { selector: metaVersion, source: "host-version" };
-  if (metaChannel) return { selector: metaChannel, source: "host-channel" };
-  if (deploymentVersion) {
-    return { selector: deploymentVersion, source: "deployment-version" };
+  // The selector goes into the host's bootstrap URLs, and the host's own
+  // metadata is host-reported: the first candidate that is a safe version or
+  // a known channel wins.
+  const candidates: Array<[string, string]> = [
+    [metaVersion, "host-version"],
+    [metaChannel, "host-channel"],
+    [deploymentVersion, "deployment-version"],
+    [settingsVersion, "site-version"],
+    [settingsChannel, "site-channel"],
+  ];
+  for (const [selector, source] of candidates) {
+    if (
+      selector &&
+      (isSafeHostSoftwareVersion(selector) ||
+        isSafeHostSoftwareChannel(selector))
+    ) {
+      return { selector, source };
+    }
   }
-  if (settingsVersion)
-    return { selector: settingsVersion, source: "site-version" };
-  if (settingsChannel)
-    return { selector: settingsChannel, source: "site-channel" };
   return { selector: "latest", source: "default" };
 }
 
@@ -709,7 +727,7 @@ export function buildProjectIoPolicy({
 async function loadBootstrapArtifactDesiredVersions(
   host_id: string,
 ): Promise<Partial<Record<BootstrapManagedArtifact, string>>> {
-  const deployments = await loadEffectiveProjectHostRuntimeDeployments({
+  const deployments = await loadTrustedEffectiveRuntimeDeployments({
     host_id,
   });
   const versions: Partial<Record<BootstrapManagedArtifact, string>> = {};
@@ -810,8 +828,18 @@ function chooseBootstrapArtifactVersion({
   desiredVersion?: string;
   observedVersion?: string;
 }): string | undefined {
-  const desired = `${desiredVersion ?? ""}`.trim() || undefined;
-  const observed = `${observedVersion ?? ""}`.trim() || undefined;
+  // A version goes into the host's download URLs and install paths; the
+  // observed one is host-reported. An unsafe one is ignored.
+  const desired = safeHostSoftwareVersionOrUndefined(
+    `${desiredVersion ?? ""}`.trim(),
+    host_id,
+    `bootstrap ${artifact} desired`,
+  );
+  const observed = safeHostSoftwareVersionOrUndefined(
+    `${observedVersion ?? ""}`.trim(),
+    host_id,
+    `bootstrap ${artifact} observed`,
+  );
   if (!desired) return observed;
   if (!observed) return desired;
   if (isBuildIdLike(desired) && /^\d+$/.test(observed)) {
@@ -1008,11 +1036,17 @@ export function resolveBootstrapStorageAdmissionMode(
     : "observe";
 }
 
+export function projectHostRuntimeUser(): string {
+  return (
+    `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
+    "cocalc-host"
+  );
+}
+
 export async function buildBootstrapScripts(
   row: ProjectHostRow,
   opts: {
     tunnel?: CloudflareTunnel;
-    conatPasswordCommand?: string;
     publicIpOverride?: string;
     launchpadBaseUrl?: string;
   } = {},
@@ -1027,10 +1061,8 @@ export async function buildBootstrapScripts(
   const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
   const bootstrapUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
-    : (runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu");
-  const runtimeUser =
-    `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
-    "cocalc-host";
+    : hostSshUser(runtime?.ssh_user ?? machine.metadata?.ssh_user);
+  const runtimeUser = projectHostRuntimeUser();
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
     isSelfHost && (!rawSelfHostMode || rawSelfHostMode === "local")
@@ -1549,6 +1581,159 @@ export async function buildBootstrapScripts(
   };
 }
 
+// Root runs bootstrap.py from here and reads its state (host facts, the desired
+// state with the bootstrap token) from here, so nothing on its path may belong
+// to the runtime user. /var/lib is root's, and this directory is outside every
+// root the storage wrapper lets the runtime user change.
+export const BOOTSTRAP_STATE_ROOT = "/var/lib/cocalc-host-bootstrap";
+
+// Defines the state paths, makes sure they are root's own 0700 directories
+// (exiting if not), and decides between first boot and reconcile from markers
+// only root can write.
+function bootstrapStateRootBlock(): string {
+  return `BOOTSTRAP_STATE_ROOT="${BOOTSTRAP_STATE_ROOT}"
+BOOTSTRAP_DIR="$BOOTSTRAP_STATE_ROOT/bootstrap"
+BOOTSTRAP_TMP="$BOOTSTRAP_STATE_ROOT/tmp"
+BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"
+require_bootstrap_state_dirs() {
+  local dir parent
+  parent="$(stat -c '%u:%a' /var/lib)"
+  if [ -L /var/lib ] || [ "\${parent%%:*}" != "0" ] || [ $(( 8#\${parent#*:} & 8#022 )) -ne 0 ]; then
+    echo "bootstrap: refusing bootstrap state: /var/lib is not root's" >&2
+    return 1
+  fi
+  for dir in "$BOOTSTRAP_STATE_ROOT" "$BOOTSTRAP_DIR" "$BOOTSTRAP_TMP"; do
+    if [ -L "$dir" ]; then
+      echo "bootstrap: refusing bootstrap state dir $dir: a symlink" >&2
+      return 1
+    fi
+    install -d -o root -g root -m 0700 "$dir"
+    if [ -L "$dir" ] || [ "$(stat -c '%u:%g %a %F' "$dir")" != "0:0 700 directory" ]; then
+      echo "bootstrap: refusing bootstrap state dir $dir: not root's 0700 directory" >&2
+      return 1
+    fi
+  done
+}
+if ! require_bootstrap_state_dirs; then
+  exit 1
+fi
+# Only root can have written the markers that count: the one in the state
+# root, or (older hosts) /var/lib/cocalc/.bootstrap_done, but only while that
+# directory is root's alone (it was the runtime user's before release r19).
+# The data disk's marker is in a directory the runtime user owns: it decides
+# nothing.
+legacy_bootstrap_done_marker_is_roots() {
+  local marker="/var/lib/cocalc/.bootstrap_done"
+  local dir="\${marker%/*}" info
+  [ -f "$marker" ] && [ ! -L "$marker" ] && [ ! -L "$dir" ] || return 1
+  info="$(stat -c '%u:%g:%a' "$dir")"
+  [ "\${info%:*}" = "0:0" ] && [ $(( 8#\${info##*:} & 8#022 )) -eq 0 ] || return 1
+  info="$(stat -c '%u:%h:%a' "$marker")"
+  [ "\${info%:*}" = "0:1" ] && [ $(( 8#\${info##*:} & 8#022 )) -eq 0 ]
+}
+BOOTSTRAP_ALREADY_DONE=0
+if [ -f "$BOOTSTRAP_STATE_ROOT/.bootstrap_done" ] && [ ! -L "$BOOTSTRAP_STATE_ROOT/.bootstrap_done" ]; then
+  BOOTSTRAP_ALREADY_DONE=1
+elif legacy_bootstrap_done_marker_is_roots; then
+  BOOTSTRAP_ALREADY_DONE=1
+elif [ -e /var/lib/cocalc/.bootstrap_done ] || [ -e /mnt/cocalc/data/.bootstrap_done ]; then
+  echo "bootstrap: ignoring a bootstrap marker that is not root's alone"
+fi`;
+}
+
+// The CA file goes in the verified state root under a fresh name, then is
+// renamed into place: a fixed name in /tmp could be a planted symlink.
+function bootstrapCaCertBlock(
+  caCert: string | undefined,
+  definePathWhenAbsent: boolean,
+): string {
+  if (!caCert) {
+    return definePathWhenAbsent
+      ? `BOOTSTRAP_CACERT_PATH=""
+CURL_CACERT_ARG=""`
+      : `CURL_CACERT_ARG=""`;
+  }
+  return `BOOTSTRAP_CACERT_PATH="$BOOTSTRAP_STATE_ROOT/bootstrap-ca.pem"
+BOOTSTRAP_CACERT_TMP="$(umask 077 && mktemp "$BOOTSTRAP_STATE_ROOT/.bootstrap-ca.XXXXXX")"
+cat <<'EOF_COCALC_BOOTSTRAP_CA' > "$BOOTSTRAP_CACERT_TMP"
+${caCert}
+EOF_COCALC_BOOTSTRAP_CA
+mv -f "$BOOTSTRAP_CACERT_TMP" "$BOOTSTRAP_CACERT_PATH"
+CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
+`;
+}
+
+// What the bay runs over ssh (as the ssh user, script on stdin) to reconcile a
+// host: root decodes the launcher into a fresh name in the root-only state
+// dir and runs it in the background. The ssh user writes nothing, and nothing
+// root opens is under a directory the runtime user owns. Root logs to the
+// state dir only (the cumulative log, and this run's own log); the copy that
+// "cocalc host logs" reads is written by the runtime user itself (so a
+// planted path there gains nothing), fed by a separate follower of this
+// run's log. The runtime user can stall or kill its copy, but that only
+// blocks the follower, never the reconcile; and both are ended a few seconds
+// after the reconcile (TERM, then KILL), or at RECONCILE_LOG_COPY_TIMEOUT.
+const RECONCILE_LOG_COPY_TIMEOUT = "1h";
+const RECONCILE_LOG_COPY_KILL_AFTER = "30s";
+
+export function buildBootstrapReconcileSshScript({
+  launcher,
+  scope,
+  runtimeUser = projectHostRuntimeUser(),
+}: {
+  launcher: string;
+  scope: "full" | "helpers" | "environment";
+  runtimeUser?: string;
+}): string {
+  if (!["full", "helpers", "environment"].includes(scope)) {
+    throw new Error(`invalid bootstrap reconcile scope: ${scope}`);
+  }
+  if (!/^[a-z_][a-z0-9_-]*$/.test(runtimeUser)) {
+    throw new Error(`invalid runtime user: ${runtimeUser}`);
+  }
+  const encoded = Buffer.from(launcher, "utf8").toString("base64");
+  return `set -euo pipefail
+sudo -n env COCALC_BOOTSTRAP_RECONCILE_SCOPE=${scope} bash -s <<'EOF_COCALC_RECONCILE_ROOT'
+set -euo pipefail
+${bootstrapStateRootBlock()}
+RECONCILE_LOG="$BOOTSTRAP_DIR/bootstrap-reconcile.log"
+RECONCILE_LAUNCHER="$(umask 077 && mktemp "$BOOTSTRAP_DIR/reconcile-launcher.XXXXXX")"
+base64 -d > "$RECONCILE_LAUNCHER" <<'EOF_COCALC_RECONCILE_LAUNCHER'
+${encoded}
+EOF_COCALC_RECONCILE_LAUNCHER
+RECONCILE_RUN_LOG="$(umask 077 && mktemp "$BOOTSTRAP_DIR/reconcile-run.XXXXXX")"
+nohup bash -c '
+  (bash "$1" 2>&1 | tee -a "$2" > "$4") &
+  pid=$!
+  exec 3> >(exec timeout --kill-after=${RECONCILE_LOG_COPY_KILL_AFTER} ${RECONCILE_LOG_COPY_TIMEOUT} runuser -u "$3" -- sh -c "mkdir -p /mnt/cocalc/data/logs && cat >> /mnt/cocalc/data/logs/bootstrap-reconcile.log" >/dev/null 2>&1)
+  copy=$!
+  timeout --kill-after=${RECONCILE_LOG_COPY_KILL_AFTER} ${RECONCILE_LOG_COPY_TIMEOUT} tail -c +1 -f --pid="$pid" "$4" >&3 2>/dev/null &
+  follower=$!
+  exec 3>&-
+  wait "$pid"
+  rm -f "$1"
+  # The follower ends by itself just after the reconcile. A copy that stopped
+  # reading would keep it (and itself) until the timeout, so after a few
+  # seconds both are ended: TERM (and CONT) from timeout, KILL 30 s later.
+  # This shell stays until they are gone: exiting at once orphans their
+  # process groups, and HUP and CONT from the kernel then race the TERM.
+  for p in "$follower" "$copy"; do
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      kill -0 "$p" 2>/dev/null || break
+      sleep 0.5
+    done
+    kill "$p" 2>/dev/null
+  done
+  for p in "$follower" "$copy"; do
+    while kill -0 "$p" 2>/dev/null; do sleep 0.5; done
+  done
+  rm -f "$4"
+' reconcile "$RECONCILE_LAUNCHER" "$RECONCILE_LOG" ${runtimeUser} "$RECONCILE_RUN_LOG" </dev/null >/dev/null 2>&1 &
+echo "started bootstrap reconcile pid=$! log=$RECONCILE_LOG"
+EOF_COCALC_RECONCILE_ROOT
+`;
+}
+
 export async function buildBootstrapScriptWithStatus(
   row: ProjectHostRow,
   token: string,
@@ -1557,26 +1742,8 @@ export async function buildBootstrapScriptWithStatus(
 ): Promise<string> {
   const statusUrl = `${baseUrl}/project-host/bootstrap/status`;
   const conatUrl = `${baseUrl}/project-host/bootstrap/conat`;
-  const caCertBlock = caCert
-    ? `BOOTSTRAP_CACERT_PATH="/tmp/cocalc-bootstrap-ca.pem"
-cat <<'EOF_COCALC_BOOTSTRAP_CA' > "$BOOTSTRAP_CACERT_PATH"
-${caCert}
-EOF_COCALC_BOOTSTRAP_CA
-CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
-`
-    : `BOOTSTRAP_CACERT_PATH=""
-CURL_CACERT_ARG=""`;
-  const conatPasswordCommand = `
-if [ -f /mnt/cocalc/data/secrets/master-conat-token ]; then
-  echo "bootstrap: master conat token already present"
-else
-  echo "bootstrap: fetching master conat token"
-  curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$CONAT_URL" | sudo tee /mnt/cocalc/data/secrets/master-conat-token >/dev/null
-  sudo chmod 600 /mnt/cocalc/data/secrets/master-conat-token
-fi
-`;
+  const caCertBlock = bootstrapCaCertBlock(caCert, true);
   const scripts = await buildBootstrapScripts(row, {
-    conatPasswordCommand,
     publicIpOverride: "$PUBLIC_IP",
     launchpadBaseUrl: baseUrl,
   });
@@ -1636,17 +1803,7 @@ if [ -z "$BOOTSTRAP_HOME" ]; then
   BOOTSTRAP_HOME="/root"
 fi
 BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
-BOOTSTRAP_STATE_ROOT="$BOOTSTRAP_ROOT"
-BOOTSTRAP_ALREADY_DONE=0
-if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /mnt/cocalc/data/.bootstrap_done ]; then
-  BOOTSTRAP_ALREADY_DONE=1
-fi
-if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ] && [ -d /mnt/cocalc/data ] && [ -w /mnt/cocalc/data ]; then
-  BOOTSTRAP_STATE_ROOT="/mnt/cocalc/data/.host-bootstrap"
-fi
-BOOTSTRAP_DIR="$BOOTSTRAP_STATE_ROOT/bootstrap"
-BOOTSTRAP_TMP="$BOOTSTRAP_STATE_ROOT/tmp"
-BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"
+${bootstrapStateRootBlock()}
 BOOTSTRAP_PY_URL="${scripts.bootstrapPyUrl}"
 BOOTSTRAP_PY_SHA_URL="${scripts.bootstrapPyShaUrl}"
 BOOTSTRAP_PY_FALLBACK_URL="${baseUrl}/project-host/bootstrap.py"
@@ -1693,9 +1850,10 @@ on_error() {
 }
 trap 'on_error "$?" "$LINENO"' ERR
 
-mkdir -p "$BOOTSTRAP_DIR" "$BOOTSTRAP_TMP"
-if [ -n "$BOOTSTRAP_USER" ]; then
-  chown -R "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_STATE_ROOT" || true
+# The state stays root's (no chown to the bootstrap user)
+if ! require_bootstrap_state_dirs; then
+  report_status "error" "bootstrap state directory is not root's"
+  exit 1
 fi
 
 cat <<EOF_COCALC_BOOTSTRAP_HOST_FACTS > "$BOOTSTRAP_DIR/bootstrap-host-facts.json"
@@ -1728,7 +1886,7 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
   "apt_packages": ${aptPackagesJson},
   "env_lines": ${envLinesJson},
   "node_version": "${scripts.nodeVersion}",
-  "bootstrap_done_paths": ["/mnt/cocalc/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"],
+  "bootstrap_done_paths": ["${BOOTSTRAP_STATE_ROOT}/.bootstrap_done"],
   "shared_scratch": {
     "enabled": ${scripts.sharedScratchEnabled ? "true" : "false"},
     "mount": "${scripts.sharedScratchHostMount}",
@@ -1792,41 +1950,33 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
 }
 EOF_COCALC_BOOTSTRAP_DESIRED_STATE
 
+# Downloads to a new name in the root-only state dir (from the software URL,
+# or the bay's token-authenticated fallback), checks the sha256 of exactly
+# those bytes against the published one either way, and only then replaces
+# bootstrap.py. Any failure keeps the previous bootstrap.py and returns nonzero.
 download_bootstrap_py() {
   local target="$BOOTSTRAP_DIR/bootstrap.py"
-  local sha_target="$BOOTSTRAP_DIR/bootstrap.py.sha256"
-  if [ -z "$BOOTSTRAP_PY_URL" ]; then
+  local fresh="$BOOTSTRAP_DIR/bootstrap.py.new"
+  local expected actual
+  [ -n "$BOOTSTRAP_PY_URL" ] || return 1
+  [ -n "$BOOTSTRAP_PY_SHA_URL" ] || return 1
+  require_bootstrap_state_dirs || return 1
+  rm -f "$fresh"
+  if ! curl -fsSL "$BOOTSTRAP_PY_URL" -o "$fresh"; then
+    if [ -z "$BOOTSTRAP_PY_FALLBACK_URL" ] || ! curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$BOOTSTRAP_PY_FALLBACK_URL" -o "$fresh"; then
+      rm -f "$fresh"
+      return 1
+    fi
+  fi
+  expected="$(curl -fsSL "$BOOTSTRAP_PY_SHA_URL" | awk 'NR == 1 { print $1 }')" || expected=""
+  actual="$(sha256sum "$fresh" | awk '{ print $1 }')"
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    echo "bootstrap: bootstrap.py sha256 does not match the published one (or it is unavailable)" >&2
+    rm -f "$fresh"
     return 1
   fi
-  if curl -fsSL "$BOOTSTRAP_PY_URL" -o "$target"; then
-    if [ -n "$BOOTSTRAP_PY_SHA_URL" ]; then
-      if curl -fsSL "$BOOTSTRAP_PY_SHA_URL" -o "$sha_target"; then
-        if command -v sha256sum >/dev/null 2>&1; then
-          (
-            cd "$BOOTSTRAP_DIR"
-            sha256sum -c "$(basename "$sha_target")"
-          ) || return 1
-        fi
-      fi
-    fi
-    chmod 755 "$target" || true
-    if [ -n "$BOOTSTRAP_USER" ]; then
-      chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$target" || true
-      if [ -f "$sha_target" ]; then
-        chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$sha_target" || true
-      fi
-    fi
-    return 0
-  fi
-  if [ -n "$BOOTSTRAP_PY_FALLBACK_URL" ]; then
-    curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$BOOTSTRAP_PY_FALLBACK_URL" -o "$target" || return 1
-    chmod 755 "$target" || true
-    if [ -n "$BOOTSTRAP_USER" ]; then
-      chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$target" || true
-    fi
-    return 0
-  fi
-  return 1
+  chmod 0700 "$fresh"
+  mv -f "$fresh" "$target"
 }
 
 if download_bootstrap_py; then
@@ -1834,6 +1984,10 @@ if download_bootstrap_py; then
 else
   echo "bootstrap: failed to download bootstrap.py"
   report_status "error" "bootstrap.py download failed"
+  exit 1
+fi
+if ! require_bootstrap_state_dirs; then
+  report_status "error" "bootstrap state directory is not root's"
   exit 1
 fi
 
@@ -1850,15 +2004,15 @@ if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ]; then
   case "$BOOTSTRAP_RECONCILE_SCOPE" in
     full)
       echo "bootstrap: already complete; reconciling host software"
-      python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --bootstrap-dir "$BOOTSTRAP_DIR" $BOOTSTRAP_RECONCILE_RESTART_ARG
+      python3 -I "$BOOTSTRAP_DIR/bootstrap.py" reconcile --bootstrap-dir "$BOOTSTRAP_DIR" $BOOTSTRAP_RECONCILE_RESTART_ARG
       ;;
     helpers)
       echo "bootstrap: already complete; reconciling privileged host helpers only"
-      python3 "$BOOTSTRAP_DIR/bootstrap.py" helpers --bootstrap-dir "$BOOTSTRAP_DIR"
+      python3 -I "$BOOTSTRAP_DIR/bootstrap.py" helpers --bootstrap-dir "$BOOTSTRAP_DIR"
       ;;
     environment)
       echo "bootstrap: already complete; reconciling managed project-host environment only"
-      python3 "$BOOTSTRAP_DIR/bootstrap.py" environment --bootstrap-dir "$BOOTSTRAP_DIR"
+      python3 -I "$BOOTSTRAP_DIR/bootstrap.py" environment --bootstrap-dir "$BOOTSTRAP_DIR"
       ;;
     *)
       echo "bootstrap: invalid reconcile scope: $BOOTSTRAP_RECONCILE_SCOPE" >&2
@@ -1869,7 +2023,7 @@ if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ]; then
 fi
 
 report_status "running" "Preparing bootstrap environment"
-python3 "$BOOTSTRAP_DIR/bootstrap.py" --bootstrap-dir "$BOOTSTRAP_DIR"
+python3 -I "$BOOTSTRAP_DIR/bootstrap.py" --bootstrap-dir "$BOOTSTRAP_DIR"
 report_status "done" "Bootstrap completed"
 cat <<'EOF_COCALC_DEPROVISION' > "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 #!/usr/bin/env bash
@@ -2012,7 +2166,7 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl disable --now cocalc-cloudflared.service >/dev/null 2>&1 || true
   systemctl daemon-reload >/dev/null 2>&1 || true
 fi
-rm -rf /var/lib/cocalc /etc/cocalc /opt/cocalc || true
+rm -rf /var/lib/cocalc /var/lib/cocalc-host-bootstrap /etc/cocalc /opt/cocalc || true
 rm -f /usr/local/sbin/cocalc-runtime-storage \
       /usr/local/sbin/cocalc-mount-data \
       /usr/local/sbin/cocalc-cloudflared-ctl \
@@ -2151,12 +2305,12 @@ cat <<'EOF_COCALC_README' > "$BOOTSTRAP_ROOT/README.md"
 CoCalc Project Host (Direct) Layout
 ===================================
 
-This directory is managed by CoCalc. It contains helper scripts and state for
-this host. The most important paths:
+This directory is managed by CoCalc. It contains helper scripts for this host.
+The most important paths:
 
-bootstrap/
-  bootstrap.sh       - main bootstrap script
-  bootstrap.log      - output from bootstrap.sh
+/var/lib/cocalc-host-bootstrap/bootstrap/ (root only; use sudo)
+  bootstrap.py       - host bootstrap and reconcile
+  bootstrap.log      - its log
 
 bin/
   ctl                     - start/stop/status helper (runs as runtime user)
@@ -2223,8 +2377,10 @@ export async function buildCloudInitStartupScript(
   let bootstrapBase = baseUrl;
   let tunnelScript = "";
   const machine: HostMachine = row.metadata?.machine ?? {};
-  const sshUser =
-    row.metadata?.runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+  // Interpolated into the bootstrap script, so only a plain login name.
+  const sshUser = hostSshUser(
+    row.metadata?.runtime?.ssh_user ?? machine.metadata?.ssh_user,
+  );
   const selfHostMode = machine?.metadata?.self_host_mode;
   const isSelfHostLocal =
     machine?.cloud === "self-host" &&
@@ -2261,14 +2417,7 @@ if [ -n "$SSH_KEYS" ]; then
 fi
 `
     : "";
-  const caCertBlock = caCert
-    ? `BOOTSTRAP_CACERT_PATH="/tmp/cocalc-bootstrap-ca.pem"
-cat <<'EOF_COCALC_BOOTSTRAP_CA' > "$BOOTSTRAP_CACERT_PATH"
-${caCert}
-EOF_COCALC_BOOTSTRAP_CA
-CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
-`
-    : `CURL_CACERT_ARG=""`;
+  const caCertBlock = bootstrapCaCertBlock(caCert, false);
   return `#!/bin/bash
 set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
@@ -2294,15 +2443,10 @@ if [ -z "$BOOTSTRAP_HOME" ]; then
 fi
 ${sshKeysBlock}
 BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
-BOOTSTRAP_STATE_ROOT="$BOOTSTRAP_ROOT"
-if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /mnt/cocalc/data/.bootstrap_done ]; then
-  if [ -d /mnt/cocalc/data ] && [ -w /mnt/cocalc/data ]; then
-    BOOTSTRAP_STATE_ROOT="/mnt/cocalc/data/.host-bootstrap"
-  fi
-fi
-BOOTSTRAP_DIR="$BOOTSTRAP_STATE_ROOT/bootstrap"
-BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"
-BOOTSTRAP_PAYLOAD="$BOOTSTRAP_DIR/bootstrap.payload.sh"
+${bootstrapStateRootBlock()}
+# A fresh name (created exclusively) in the root-only state dir, removed on exit
+BOOTSTRAP_PAYLOAD="$(umask 077 && mktemp "$BOOTSTRAP_DIR/bootstrap.payload.XXXXXX")"
+trap 'rm -f "$BOOTSTRAP_PAYLOAD"' EXIT
 ${
   inlineBootstrapPayload
     ? ""
@@ -2321,10 +2465,6 @@ if ! command -v curl >/dev/null 2>&1; then
   apt-get install -y curl
 fi
 
-mkdir -p "$BOOTSTRAP_DIR"
-if [ -n "$BOOTSTRAP_USER" ]; then
-  chown -R "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_STATE_ROOT" || true
-fi
 ${tunnelScript}
 report_status() {
   local status="$1"
@@ -2362,10 +2502,7 @@ ${
     ? `cat <<'EOF_COCALC_INLINE_BOOTSTRAP_PAYLOAD' > "$BOOTSTRAP_PAYLOAD"
 ${bootstrapPayloadScript}
 EOF_COCALC_INLINE_BOOTSTRAP_PAYLOAD
-chmod 700 "$BOOTSTRAP_PAYLOAD"
-if [ -n "$BOOTSTRAP_USER" ]; then
-  chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_PAYLOAD" || true
-fi`
+chmod 700 "$BOOTSTRAP_PAYLOAD"`
     : `download_bootstrap() {
   local attempts=8
   local delay=5
@@ -2417,6 +2554,10 @@ if ! download_bootstrap; then
   exit 1
 fi`
 }
+if ! require_bootstrap_state_dirs; then
+  report_status "error" "bootstrap state directory is not root's"
+  exit 1
+fi
 if ! bash "$BOOTSTRAP_PAYLOAD"; then
   tail_msg="$(bootstrap_log_tail)"
   if [ -n "$tail_msg" ]; then

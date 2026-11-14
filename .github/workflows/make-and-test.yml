@@ -13,10 +13,10 @@ on:
     branches:
       - main
       - next
+  # Every base branch, so stacked PRs get CI too. After re-pointing a PR's
+  # base, close and reopen it (or push a commit) to start a run: an `edited`
+  # trigger would put a skipped ci-ok on the head commit.
   pull_request:
-    branches:
-      - main
-      - next
   workflow_dispatch:
     inputs:
       debug_enabled:
@@ -237,6 +237,7 @@ jobs:
 
       - name: Install system packages
         run: |
+          .github/scripts/ci-apt-mirror.sh
           APT_RETRY=(
             -o Acquire::Retries=3
             -o Acquire::http::Timeout=15

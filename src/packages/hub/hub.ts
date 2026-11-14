@@ -37,6 +37,11 @@ import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import { eraseRevokedExternalCredentialPayloads } from "@cocalc/server/external-credentials/store";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
+import { initPasswordHashMigration } from "@cocalc/server/auth/password-hash-migration";
+import {
+  hasNoPasswordHashes,
+  initPasswordKdfDefault,
+} from "@cocalc/server/auth/password-kdf-default";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
 import {
@@ -228,22 +233,35 @@ async function startServer(): Promise<void> {
   });
   logger.info("connected to database.");
 
+  // Whether this is a fresh install, measured before startup creates any
+  // account (see server/auth/password-kdf-default.ts).
+  let passwordKdfFresh: boolean | undefined;
   if (program.updateDatabaseSchema) {
     setWorkerStartupPhase("database-schema");
     logger.info("Update database schema");
     await getDatabase().update_schema();
-
-    // in those cases where we initialize the database upon startup
-    // (essentially only relevant for kucalc's hub-websocket)
-    if (program.mode === "kucalc") {
-      // and for on-prem setups, also initialize the admin account, set a registration token, etc.
-      await initialOnPremSetup(getDatabase());
-    }
+    passwordKdfFresh = await hasNoPasswordHashes().catch(() => undefined);
   }
 
   // set server settings based on environment variables
   setWorkerStartupPhase("server-settings");
   await load_server_settings_from_env(getDatabase());
+  // After the environment (an explicit value wins) and before any account is
+  // created below, so the first password is hashed in the chosen format.
+  try {
+    passwordKdfFresh ??= await hasNoPasswordHashes();
+    await initPasswordKdfDefault({ fresh: passwordKdfFresh });
+  } catch (err) {
+    // Unset means "legacy", the safe default: never block startup on this.
+    logger.error("could not initialize password_kdf", err);
+  }
+
+  // in those cases where we initialize the database upon startup
+  // (essentially only relevant for kucalc's hub-websocket)
+  if (program.updateDatabaseSchema && program.mode === "kucalc") {
+    // and for on-prem setups, also initialize the admin account, set a registration token, etc.
+    await initialOnPremSetup(getDatabase());
+  }
   if (program.billingWorker) {
     // Reuse database/settings/routing initialization, not HTTP, subscriptions,
     // general maintenance, or browser-session handling.
@@ -427,6 +445,7 @@ async function startServer(): Promise<void> {
     initPurchasesMaintenanceLoop();
     initEphemeralMaintenance();
     initDeletedAccountRetention();
+    initPasswordHashMigration();
     initSalesloftMaintenance();
     initDeleteExpiredLoop();
     setInterval(trimLogFileSize, 1000 * 60 * 3);

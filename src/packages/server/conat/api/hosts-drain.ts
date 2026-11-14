@@ -131,7 +131,8 @@ export async function loadHostForDrainInternal({
   if (await isAdmin(owner)) {
     return row;
   }
-  if (row.metadata?.owner && row.metadata.owner !== owner) {
+  // A host without a recorded owner is managed by admins only.
+  if (`${row.metadata?.owner ?? ""}`.trim() !== owner) {
     throw new Error("not authorized");
   }
   return row;

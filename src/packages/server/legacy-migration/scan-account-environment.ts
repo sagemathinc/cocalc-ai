@@ -4,6 +4,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { scanHostSshArgs } from "./scan-ssh-args";
 import { writeFile } from "node:fs/promises";
 
 import getPool from "@cocalc/database/pool";
@@ -406,28 +407,15 @@ async function scanHost({
   maxFileBytes: number;
 }): Promise<ProjectScan[]> {
   const script = remoteScanner(projects, maxFileBytes);
-  const target = `${sshUser}@${host}`;
+  const args = scanHostSshArgs({ sshUser, host });
+  const target = args[args.indexOf("--") + 1];
   const { stdoutText, stderrText } = await new Promise<{
     stdoutText: string;
     stderrText: string;
   }>((resolve, reject) => {
-    const child = spawn(
-      "ssh",
-      [
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        target,
-        "python3",
-        "-",
-      ],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
+    const child = spawn("ssh", args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let stdoutText = "";
     let stderrText = "";
     let settled = false;

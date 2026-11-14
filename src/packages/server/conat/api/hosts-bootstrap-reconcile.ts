@@ -26,10 +26,17 @@ contains the cloud bootstrap reconcile mechanics.
 import { spawn } from "node:child_process";
 import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
+import {
+  safeSshDestination,
+  sshDestinationArgs,
+} from "@cocalc/backend/ssh-destination";
 import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { createProjectHostBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
-import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
+import {
+  buildBootstrapReconcileSshScript,
+  buildCloudInitStartupScript,
+} from "@cocalc/server/cloud/bootstrap-host";
 import {
   getHostOwnerBaySshIdentity,
   getHostSshPublicKeys,
@@ -73,9 +80,8 @@ async function runSshScript({
     "ConnectTimeout=10",
     "-i",
     identityFile,
-    target,
-    "bash",
-    "-se",
+    // "--" ends the options: the destination can never be read as one.
+    ...sshDestinationArgs(target, ["bash", "-se"]),
   ];
   return await new Promise((resolve, reject) => {
     const child = spawn("ssh", args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -395,7 +401,12 @@ async function waitForHostBootstrapReconcile({
   throw new Error("timeout waiting for host bootstrap reconcile");
 }
 
+// The ssh destination for a cloud host, from its stored metadata. Those values
+// could be written by host reports and by host creation, so the user must be a
+// plain login name and the address a plain IP outside the refused classes;
+// otherwise there is no target (logged without the values).
 function cloudHostSshTarget(row: {
+  id?: string;
   metadata?: Record<string, any>;
 }): string | undefined {
   const runtime = row.metadata?.runtime ?? {};
@@ -406,7 +417,19 @@ function cloudHostSshTarget(row: {
   const sshUser =
     `${runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu"}`.trim();
   if (!sshUser) return undefined;
-  return `${sshUser}@${publicIp}`;
+  const target = safeSshDestination(sshUser, publicIp, {
+    requireIp: true,
+    allowLoopback: false,
+  });
+  if (target == null) {
+    logger.warn(
+      "refusing host ssh target: stored user or address not allowed",
+      {
+        host_id: row.id,
+      },
+    );
+  }
+  return target;
 }
 
 async function trustHostOwnerBaySshKeyViaHostControl({
@@ -611,38 +634,10 @@ export async function reconcileCloudHostBootstrapOverSsh(opts: {
   if (!baseline) {
     throw new Error("host not found");
   }
-  const encodedBootstrapScript = Buffer.from(bootstrapScript, "utf8").toString(
-    "base64",
-  );
-  const script = `
-set -euo pipefail
-BOOTSTRAP_DIR=""
-for candidate in /mnt/cocalc/data/.host-bootstrap/bootstrap /home/ubuntu/cocalc-host/bootstrap /root/cocalc-host/bootstrap
-do
-  if [ -d "$candidate" ]; then
-    BOOTSTRAP_DIR="$candidate"
-    break
-  fi
-done
-if [ -z "$BOOTSTRAP_DIR" ]; then
-  echo "bootstrap directory not found" >&2
-  exit 1
-fi
-BOOTSTRAP_SH="$BOOTSTRAP_DIR/bootstrap.sh"
-python3 - "$BOOTSTRAP_SH" <<'PY'
-import base64, sys
-body = base64.b64decode("""${encodedBootstrapScript}""")
-with open(sys.argv[1], "wb") as handle:
-    handle.write(body)
-PY
-chmod 700 "$BOOTSTRAP_SH"
-LOG_DIR="/mnt/cocalc/data/logs"
-BOOTSTRAP_LOG="$LOG_DIR/bootstrap-reconcile.log"
-sudo -n install -d -m 0755 "$LOG_DIR"
-sudo -n touch "$BOOTSTRAP_LOG"
-BOOTSTRAP_PID="$(sudo -n bash -lc 'nohup env COCALC_BOOTSTRAP_RECONCILE_SCOPE="$3" bash "$1" >>"$2" 2>&1 </dev/null & echo $!' -- "$BOOTSTRAP_SH" "$BOOTSTRAP_LOG" "${scope}")"
-echo "started bootstrap reconcile pid=$BOOTSTRAP_PID log=$BOOTSTRAP_LOG"
-`;
+  const script = buildBootstrapReconcileSshScript({
+    launcher: bootstrapScript,
+    scope,
+  });
   logger.info("host upgrade: reconciling host bootstrap over ssh", {
     host_id: opts.host_id,
     target,
@@ -674,3 +669,5 @@ echo "started bootstrap reconcile pid=$BOOTSTRAP_PID log=$BOOTSTRAP_LOG"
     baseline,
   });
 }
+
+export const _test = { runSshScript, cloudHostSshTarget };

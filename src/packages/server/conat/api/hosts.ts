@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  assertHostSshMetadataAllowed,
+  canonicalSelfHostSshTarget,
+  withCanonicalSshTarget,
+} from "@cocalc/server/cloud/host-ssh-metadata";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import { delay } from "awaiting";
 import type {
@@ -146,6 +151,15 @@ import {
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import {
+  assertSafeHostSoftwareSelection,
+  HOST_SOFTWARE_ADMIN_ONLY,
+  loadTrustedEffectiveRuntimeDeployments,
+  safeHostSoftwareVersionOrUndefined,
+  UNSAFE_HOST_SOFTWARE_SELECTION,
+  unsafeHostSoftwareSelection,
+} from "./host-software-admin";
+import { isIP } from "node:net";
+import {
   gcpSafeName,
   getProviderPrefix,
   getServerProvider,
@@ -216,7 +230,6 @@ import {
   clearProjectHostRuntimeDeployments,
   ensureProjectHostRuntimeDeploymentsSchema,
   listProjectHostRuntimeDeployments,
-  loadEffectiveProjectHostRuntimeDeployments,
   setProjectHostRuntimeDeployments,
 } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import {
@@ -1051,10 +1064,108 @@ async function loadHostForRootfsManagement(
   if (await isAdmin(owner)) {
     return row;
   }
-  if (row.metadata?.owner && row.metadata.owner !== owner) {
+  // A host without a recorded owner is managed by admins only.
+  if (`${row.metadata?.owner ?? ""}`.trim() !== owner) {
     throw new Error("not authorized");
   }
   return row;
+}
+
+export { HOST_SOFTWARE_ADMIN_ONLY };
+
+// Checked first, before any host lookup, so that a non-admin learns nothing
+// about the host either.
+async function assertHostSoftwareAdmin(account_id?: string): Promise<string> {
+  const actor = requireAccount(account_id);
+  if (!(await isAdmin(actor))) {
+    throw new Error(HOST_SOFTWARE_ADMIN_ONLY);
+  }
+  return actor;
+}
+
+// The software lifecycle of a host -- what it runs or boots: upgrades,
+// reconciles, rollouts, rollbacks, runtime deployments, rootfs images and the
+// connector -- is managed by site admins only, whoever owns the host.
+async function loadHostForSoftwareLifecycle(
+  id: string,
+  account_id?: string,
+): Promise<any> {
+  const actor = await assertHostSoftwareAdmin(account_id);
+  return await loadHostForRootfsManagement(id, actor);
+}
+
+const HOST_SOFTWARE_LIFECYCLE_OP_KINDS = new Set<string>([
+  HOST_UPGRADE_LRO_KIND,
+  HOST_RECONCILE_LRO_KIND,
+  HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
+  HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
+  HOST_ROLLBACK_RUNTIME_DEPLOYMENTS_LRO_KIND,
+]);
+
+// Why a queued host operation must not run, checked again when it runs (an
+// operation may have been queued before the software lifecycle became
+// admin-only). A lifecycle operation runs only for an admin, or as the
+// site's own automatic convergence, which names no software source.
+export async function hostSoftwareLifecycleOpRefusal({
+  kind,
+  account_id,
+  input,
+}: {
+  kind: string;
+  account_id?: string;
+  input?: any;
+}): Promise<string | undefined> {
+  if (!HOST_SOFTWARE_LIFECYCLE_OP_KINDS.has(kind)) return undefined;
+  if (unsafeHostSoftwareSelection(input)) {
+    logger.warn("host software operation with an unsafe version refused", {
+      kind,
+      account_id,
+      host_id: input?.id,
+    });
+    return UNSAFE_HOST_SOFTWARE_SELECTION;
+  }
+  if (input?.automatic === true && input?.base_url == null) return undefined;
+  if (account_id && (await isAdmin(account_id))) return undefined;
+  logger.warn("host software operation refused", {
+    kind,
+    account_id,
+    host_id: input?.id,
+  });
+  return HOST_SOFTWARE_ADMIN_ONLY;
+}
+
+// The host of a software base URL for a log line: never the path or the
+// query, and a fixed token for a non-https URL or an address literal.
+function softwareBaseUrlHostForLog(value: unknown): string {
+  try {
+    const parsed = new URL(`${value}`);
+    if (parsed.protocol !== "https:") return "non-https";
+    if (isIP(parsed.hostname.replace(/^\[|\]$/g, ""))) return "ip-literal";
+    return parsed.hostname;
+  } catch {
+    return "invalid-url";
+  }
+}
+
+// Every software source an admin chooses is logged.
+function logAdminSoftwareBaseUrl({
+  account_id,
+  host_id,
+  base_url,
+  entry,
+}: {
+  account_id?: string;
+  host_id?: string;
+  base_url?: string;
+  entry: string;
+}): void {
+  if (base_url == null) return;
+  logger.warn("host software base url from admin", {
+    account_id,
+    host_id,
+    entry,
+    source_host: softwareBaseUrlHostForLog(base_url),
+  });
 }
 
 async function loadHostForStartStop(
@@ -5951,6 +6062,7 @@ export async function pullHostRootfsImage({
   id: string;
   image: string;
 }): Promise<HostRootfsImage> {
+  await assertHostSoftwareAdmin(account_id);
   await requireDangerousHostMutationAuth({
     account_id,
     session_hash,
@@ -5958,7 +6070,7 @@ export async function pullHostRootfsImage({
   });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
-  const row = await loadHostForRootfsManagement(id, account_id);
+  const row = await loadHostForSoftwareLifecycle(id, account_id);
   const availability = computeHostOperationalAvailability(row);
   if (!availability.operational) {
     throw new Error(
@@ -5994,6 +6106,7 @@ export async function deleteHostRootfsImage({
   id: string;
   image: string;
 }): Promise<{ removed: boolean }> {
+  await assertHostSoftwareAdmin(account_id);
   await requireDangerousHostMutationAuth({
     account_id,
     session_hash,
@@ -6001,7 +6114,7 @@ export async function deleteHostRootfsImage({
   });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
-  const row = await loadHostForRootfsManagement(id, account_id);
+  const row = await loadHostForSoftwareLifecycle(id, account_id);
   const availability = computeHostOperationalAvailability(row);
   if (!availability.operational) {
     throw new Error(
@@ -6024,6 +6137,7 @@ export async function gcDeletedHostRootfsImages({
   internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
 }): Promise<HostRootfsGcResult> {
+  await assertHostSoftwareAdmin(account_id);
   await requireDangerousHostMutationAuth({
     account_id,
     session_hash,
@@ -6031,7 +6145,7 @@ export async function gcDeletedHostRootfsImages({
   });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
-  const row = await loadHostForRootfsManagement(id, account_id);
+  const row = await loadHostForSoftwareLifecycle(id, account_id);
   const availability = computeHostOperationalAvailability(row);
   if (!availability.operational) {
     throw new Error(
@@ -6588,6 +6702,10 @@ export async function createHost({
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
+  // The bay later runs ssh with machine metadata values: refuse bad ones
+  // first, and store a self-host target in its canonical form.
+  assertHostSshMetadataAllowed(machine?.metadata);
+  machine = withCanonicalSshTarget(machine);
   const title = normalizeProjectHostTitle(name);
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
   await assertUserHostCreateAllowed({ account_id: owner });
@@ -6595,6 +6713,13 @@ export async function createHost({
     cloud: machine?.cloud,
     disk_type: machine?.disk_type,
   });
+  if (normalizeProviderId(machine?.cloud) === "local") {
+    // A development/test provider with no VM; its runtime comes from the
+    // request, so it is never offered to non-admins.
+    if (!(await isAdmin(owner))) {
+      throw new Error("local hosts are limited to admins");
+    }
+  }
   if (normalizeProviderId(machine?.cloud) === "self-host") {
     if (!(await isAdmin(owner))) {
       throw new Error("self-hosted hosts are limited to admins");
@@ -6913,6 +7038,14 @@ export async function startHost({
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, actor);
+  // A local host's runtime comes from its stored request values; only an
+  // admin may start one (the start worker checks this again).
+  if (
+    normalizeProviderId(row.metadata?.machine?.cloud) === "local" &&
+    !(await isAdmin(actor))
+  ) {
+    throw new Error("local hosts are limited to admins");
+  }
   assertHostNotUnderMaintenance(row);
   assertNoUnfinishedMachineChange(row);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
@@ -7702,6 +7835,18 @@ async function updateHostMachineLocked({
   ) {
     throw new Error("self-hosted hosts are limited to admins");
   }
+  if (
+    (requestedCloud === "local" || machineCloud === "local") &&
+    !(await isAdmin(actor))
+  ) {
+    throw new Error("local hosts are limited to admins");
+  }
+  // The bay later runs ssh with this target: refuse one that is not allowed,
+  // and store it in its canonical form.
+  const canonicalTarget =
+    typeof self_host_ssh_target === "string" && self_host_ssh_target.trim()
+      ? canonicalSelfHostSshTarget(self_host_ssh_target)
+      : "";
   if (requestedCloud === "self-host" && machineCloud !== "self-host") {
     const settings = await getServerSettings();
     if (settings.project_hosts_self_host_alpha_enabled !== true) {
@@ -7920,7 +8065,7 @@ async function updateHostMachineLocked({
     nonDiskChange = true;
   }
   if (isSelfHost && typeof self_host_ssh_target === "string") {
-    const nextTarget = self_host_ssh_target.trim();
+    const nextTarget = canonicalTarget;
     const currentTarget = String(machine.metadata?.self_host_ssh_target ?? "");
     if (nextTarget !== currentTarget) {
       nextMachine.metadata = {
@@ -9040,6 +9185,12 @@ export async function rolloutHostRuntimeFleet({
   account_id?: string;
 }): Promise<HostRuntimeFleetRolloutResponse> {
   const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
+  assertSafeHostSoftwareSelection({ version });
+  logAdminSoftwareBaseUrl({
+    account_id: requested_by,
+    base_url: `${base_url ?? ""}`.trim() || undefined,
+    entry: "rolloutHostRuntimeFleet",
+  });
   const latencyGate = normalizeFleetRolloutLatencyGate(latency_gate);
   if (artifact !== "project-host") {
     throw new Error("paced fleet rollout currently supports project-host only");
@@ -9254,10 +9405,18 @@ export async function upgradeHostSoftware({
   align_runtime_stack?: boolean;
   record_runtime_deployments?: boolean;
 }): Promise<HostLroResponse> {
+  await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ targets });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
-  const row = await loadHostForRootfsManagement(id, account_id);
+  const row = await loadHostForSoftwareLifecycle(id, account_id);
   assertHostRunningForUpgrade(row);
+  logAdminSoftwareBaseUrl({
+    account_id,
+    host_id: row.id,
+    base_url,
+    entry: "upgradeHostSoftware",
+  });
   return await createHostLro({
     kind: HOST_UPGRADE_LRO_KIND,
     row,
@@ -9290,6 +9449,7 @@ export async function reconcileHostSoftware({
   force_bootstrap?: boolean;
   bootstrap_scope?: HostBootstrapReconcileScope;
 }): Promise<HostLroResponse> {
+  await assertHostSoftwareAdmin(account_id);
   if (
     bootstrap_scope != null &&
     bootstrap_scope !== "full" &&
@@ -9303,7 +9463,7 @@ export async function reconcileHostSoftware({
   }
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
-  const row = await loadHostForRootfsManagement(id, account_id);
+  const row = await loadHostForSoftwareLifecycle(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_RECONCILE_LRO_KIND,
@@ -9599,7 +9759,7 @@ function bootstrapLifecycleSummaryStatus(row: any): string | undefined {
   return summary || undefined;
 }
 
-function desiredSoftwareTargetsForReconcile(
+export function desiredSoftwareTargetsForReconcile(
   row: any,
   desiredArtifacts?: HostRuntimeDesiredArtifactsSummary,
 ): HostSoftwareUpgradeTarget[] {
@@ -9616,7 +9776,13 @@ function desiredSoftwareTargetsForReconcile(
     observedArtifact: HostRuntimeArtifact,
     desiredVersion?: string,
   ) => {
-    const desired = `${desiredVersion ?? ""}`.trim();
+    // The fallbacks (row.version, metadata.software) are host-reported, so
+    // a version that is not safe is skipped, never sent.
+    const desired = safeHostSoftwareVersionOrUndefined(
+      `${desiredVersion ?? ""}`.trim(),
+      row?.id,
+      `reconcile ${artifact}`,
+    );
     if (!desired) return;
     if ((observed.get(observedArtifact) ?? "") === desired) return;
     targets.push({ artifact, version: desired });
@@ -9702,6 +9868,8 @@ export async function setHostRuntimeDeployments({
   replace?: boolean;
   align_runtime_stack?: boolean;
 }): Promise<HostRuntimeDeploymentRecord[]> {
+  await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ deployments });
   const expandedDeployments = (deployments ?? []).flatMap((deployment) => {
     if (
       align_runtime_stack &&
@@ -9739,7 +9907,7 @@ export async function setHostRuntimeDeployments({
   }
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id ?? "");
-  const row = await loadHostForRootfsManagement(id ?? "", account_id);
+  const row = await loadHostForSoftwareLifecycle(id ?? "", account_id);
   const before = await listProjectHostRuntimeDeployments({
     scope_type: "host",
     host_id: row.id,
@@ -9770,9 +9938,10 @@ export async function reconcileHostRuntimeDeployments({
   components?: ManagedComponentKind[];
   reason?: string;
 }): Promise<HostLroResponse> {
+  await assertHostSoftwareAdmin(account_id);
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
-  const row = await loadHostForRootfsManagement(id, account_id);
+  const row = await loadHostForSoftwareLifecycle(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
@@ -10001,9 +10170,11 @@ export async function rollbackHostRuntimeDeployments({
   last_known_good?: boolean;
   reason?: string;
 }): Promise<HostLroResponse> {
+  await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ version });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
-  const row = await loadHostForRootfsManagement(id, account_id);
+  const row = await loadHostForSoftwareLifecycle(id, account_id);
   assertHostRunningForUpgrade(row);
   const normalizedTarget =
     target_type === "component"
@@ -10072,10 +10243,18 @@ export async function rolloutHostManagedComponents({
   base_url?: string;
   reason?: string;
 }): Promise<HostLroResponse> {
+  await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ desired_version });
   // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
   await assertHostOwnedHere(id);
-  const row = await loadHostForRootfsManagement(id, account_id);
+  const row = await loadHostForSoftwareLifecycle(id, account_id);
   assertHostRunningForUpgrade(row);
+  logAdminSoftwareBaseUrl({
+    account_id,
+    host_id: row.id,
+    base_url,
+    entry: "rolloutHostManagedComponents",
+  });
   return await createHostLro({
     kind: HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
     row,
@@ -10109,11 +10288,13 @@ export async function upgradeHostConnector({
   id: string;
   version?: string;
 }): Promise<void> {
+  await assertHostSoftwareAdmin(account_id);
+  assertSafeHostSoftwareSelection({ version });
   await upgradeHostConnectorInternalHelper({
     account_id,
     id,
     version,
-    loadHostForStartStop: loadHostForRootfsManagement,
+    loadHostForStartStop: loadHostForSoftwareLifecycle,
     ensureSelfHostReverseTunnel,
     createPairingTokenForHost,
     getServerSettings,
@@ -10160,7 +10341,7 @@ export async function reconcileHostSoftwareInternal({
 
   if (availability.online) {
     try {
-      const effective = await loadEffectiveProjectHostRuntimeDeployments({
+      const effective = await loadTrustedEffectiveRuntimeDeployments({
         host_id: row.id,
       });
       const desiredArtifacts: HostRuntimeDesiredArtifactsSummary = {};
@@ -10436,7 +10617,18 @@ export async function listHostSoftwareVersions({
   arch?: "amd64" | "arm64";
   history_limit?: number;
 }): Promise<HostSoftwareAvailableVersion[]> {
-  requireAccount(account_id);
+  const actor = requireAccount(account_id);
+  if (base_url != null) {
+    // Only a site admin chooses where host software comes from.
+    if (!(await isAdmin(actor))) {
+      throw new Error(HOST_SOFTWARE_ADMIN_ONLY);
+    }
+    logAdminSoftwareBaseUrl({
+      account_id: actor,
+      base_url,
+      entry: "listHostSoftwareVersions",
+    });
+  }
   return await listHostSoftwareVersionsInternal({
     base_url,
     artifacts,
@@ -10701,7 +10893,7 @@ export async function rolloutHostManagedComponentsInternal({
     runtimeDeploymentsForComponentRollout,
     requestedByForRuntimeDeployments,
     setProjectHostRuntimeDeployments,
-    loadEffectiveRuntimeDeployments: loadEffectiveProjectHostRuntimeDeployments,
+    loadEffectiveRuntimeDeployments: loadTrustedEffectiveRuntimeDeployments,
     base_url,
     onProgress,
   });
