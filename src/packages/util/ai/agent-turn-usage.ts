@@ -29,6 +29,8 @@ export interface AgentTurnModelUsage {
 }
 
 export interface AgentTurnUsage {
+  /** Stable identity of the turn's report: a resent report is stored once. */
+  turn_id?: string;
   project_id: string;
   path: string;
   thread_id: string;
@@ -43,6 +45,9 @@ export interface AgentTurnUsage {
   ended_at: number;
   outcome: AgentTurnUsageOutcome;
 }
+
+/** Stored turns are deleted this long after the home bay received them. */
+export const AGENT_TURN_USAGE_RETENTION_DAYS = 90;
 
 export const MAX_TURN_USAGE_MODELS = 8;
 /** A report is refused if its turn ended more than this far in the future
@@ -104,6 +109,8 @@ export function parseAgentTurnUsage(
       v.outcome !== "interrupted")
   )
     return undefined;
+  const turn_id = v.turn_id == null ? undefined : text(v.turn_id, 64);
+  if (v.turn_id != null && (!turn_id || !isValidUUID(turn_id))) return undefined;
   const credential_id =
     v.credential_id == null ? undefined : text(v.credential_id, 64);
   if (
@@ -149,6 +156,7 @@ export function parseAgentTurnUsage(
   }
   if (!models.length) return undefined;
   return {
+    ...(turn_id ? { turn_id } : {}),
     project_id,
     path,
     thread_id,

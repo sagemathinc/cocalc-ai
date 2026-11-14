@@ -29,7 +29,11 @@ import {
   paymentSelectionsHome,
   recordAgentTurnUsageForAccount,
 } from "./payment-selections";
-import { setTurnUsageDbForTests } from "./turn-usage";
+import {
+  MAX_TURNS_PER_HOST_PER_HOUR,
+  setTurnUsageDbForTests,
+  turnUsagePathHash,
+} from "./turn-usage";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -94,7 +98,7 @@ describeDb("agent turn usage (account home bay)", () => {
     const row = rows[0];
     expect(row).toMatchObject({
       project_id: turn.project_id,
-      path: turn.path,
+      path_hash: turnUsagePathHash(turn.path),
       thread_id: "t1",
       provider: "claude",
       payment: "account-subscription",
@@ -108,6 +112,8 @@ describeDb("agent turn usage (account home bay)", () => {
     expect(Number(row.cache_write_tokens)).toBe(200);
     expect(Number(row.output_tokens)).toBe(51);
     expect(row.models).toEqual(turn.models);
+    // No file names are stored.
+    expect(JSON.stringify(row)).not.toContain("agents/a.chat");
     expect(new Date(row.ended_at).getTime()).toBeCloseTo(turn.ended_at, -3);
     expect(remote.recordTurnUsage).not.toHaveBeenCalled();
   });
@@ -134,22 +140,51 @@ describeDb("agent turn usage (account home bay)", () => {
     ).rejects.toThrow("stale");
   });
 
-  test("ages out rows by when the hub stored them, not host times", async () => {
+  test("a resent report (same turn) is stored once", async () => {
     const account_id = randomUUID();
-    await recordAgentTurnUsageForAccount(account_id, [{ usage: usage() }]);
-    await getPool().query(
-      "UPDATE agent_turn_usage SET received_at = now() - interval '91 days' WHERE account_id=$1",
-      [account_id],
-    );
-    setTurnUsageDbForTests(); // the next insert prunes again
-    await recordAgentTurnUsageForAccount(account_id, [
-      { usage: usage({ thread_id: "fresh" }) },
-    ]);
+    const turn = usage({ turn_id: randomUUID() });
+    await expect(
+      recordAgentTurnUsageForAccount(account_id, [{ usage: turn }]),
+    ).resolves.toBe(1);
+    await expect(
+      recordAgentTurnUsageForAccount(account_id, [
+        { usage: turn },
+        { usage: turn },
+      ]),
+    ).resolves.toBe(0);
     const { rows } = await getPool().query(
-      "SELECT thread_id FROM agent_turn_usage WHERE account_id=$1",
+      "SELECT id FROM agent_turn_usage WHERE account_id=$1",
       [account_id],
     );
-    expect(rows.map((r) => r.thread_id)).toEqual(["fresh"]);
+    expect(rows.map((r) => r.id)).toEqual([turn.turn_id]);
+  });
+
+  test("one host stores at most its hourly budget", async () => {
+    const account_id = randomUUID();
+    const host_id = randomUUID();
+    // The host already stored its budget less one turn this hour.
+    await getPool().query(
+      `INSERT INTO agent_turn_usage
+         (account_id,id,project_id,path_hash,thread_id,provider,payment,models,
+          outcome,started_at,ended_at,host_id)
+       SELECT $1, gen_random_uuid(), $2, 'h', 't', 'claude', 'x', '[]'::jsonb,
+              'completed', now(), now(), $3
+         FROM generate_series(1, $4::int)`,
+      [account_id, randomUUID(), host_id, MAX_TURNS_PER_HOST_PER_HOUR - 1],
+    );
+    await expect(
+      recordAgentTurnUsageForAccount(account_id, [
+        { usage: usage({ thread_id: "last" }), host_id },
+        { usage: usage({ thread_id: "over" }), host_id },
+        // Another host has its own budget.
+        { usage: usage({ thread_id: "other" }), host_id: randomUUID() },
+      ]),
+    ).resolves.toBe(2);
+    const { rows } = await getPool().query(
+      "SELECT thread_id FROM agent_turn_usage WHERE account_id=$1 AND thread_id<>'t' ORDER BY thread_id",
+      [account_id],
+    );
+    expect(rows.map((r) => r.thread_id)).toEqual(["last", "other"]);
   });
 
   test("refuses far-future turns, and one refused row keeps the rest", async () => {

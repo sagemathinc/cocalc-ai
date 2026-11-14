@@ -4520,6 +4520,8 @@ test("a Claude turn reports what it used, by model, with its subscription", asyn
   assert.equal(usage.thread_id, "conversation-a");
   assert.equal(usage.outcome, "completed");
   assert.ok(usage.ended_at >= usage.started_at);
+  // One identity per turn, so a resent report is stored once.
+  assert.match(usage.turn_id, /^[0-9a-f-]{36}$/);
   assert.deepEqual(usage.models, [
     {
       model: "claude-opus-5-5",

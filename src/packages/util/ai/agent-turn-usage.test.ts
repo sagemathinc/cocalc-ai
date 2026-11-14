@@ -41,6 +41,11 @@ describe("parseAgentTurnUsage", () => {
     expect(totalTurnTokens(parsed!)).toBe(1260);
   });
 
+  it("keeps a turn identity", () => {
+    const turn_id = "00000000-0000-4000-8000-0000000000aa";
+    expect(parseAgentTurnUsage(turn({ turn_id }))?.turn_id).toBe(turn_id);
+  });
+
   it("drops what it does not know and bounds numbers", () => {
     const parsed = parseAgentTurnUsage(
       turn({
@@ -77,6 +82,7 @@ describe("parseAgentTurnUsage", () => {
       turn({ provider: "gemini" }),
       turn({ outcome: "great" }),
       turn({ credential_id: "not-a-uuid" }),
+      turn({ turn_id: "not-a-uuid" }),
       turn({ ended_at: NOW - 120_000 }),
       turn({ path: "" }),
       turn({ models: [] }),
