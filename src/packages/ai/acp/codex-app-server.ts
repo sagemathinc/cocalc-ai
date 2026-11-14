@@ -1183,7 +1183,8 @@ export function observeSubagentUsage(
   message: RpcNotification,
   turn: {
     parentThread: () => string | undefined;
-    subagents: Set<string>;
+    /** Subagent thread -> its model, when the spawn call says. */
+    subagents: Map<string, string | undefined>;
     tokens: TurnTokenReports;
   },
 ): void {
@@ -1212,7 +1213,13 @@ export function observeSubagentUsage(
     for (const id of Array.isArray(item.receiverThreadIds)
       ? item.receiverThreadIds
       : [])
-      if (typeof id === "string" && id && id !== parent) turn.subagents.add(id);
+      if (typeof id === "string" && id && id !== parent)
+        turn.subagents.set(
+          id,
+          typeof item.model === "string" && item.model
+            ? item.model
+            : turn.subagents.get(id),
+        );
   }
 }
 
@@ -3070,6 +3077,8 @@ export class CodexAppServerAgent implements AcpAgent {
       >;
       startedAt: number;
       outcome: AgentTurnUsageOutcome;
+      /** Model of each subagent thread, if known. */
+      threadModels?: Map<string, string | undefined>;
     },
   ): void {
     try {
@@ -3077,9 +3086,15 @@ export class CodexAppServerAgent implements AcpAgent {
       const thread_id = request.chat?.thread_id;
       const project_id = request.chat?.project_id ?? request.project_id;
       if (!path || !thread_id || !project_id) return;
+      // Each thread under its own model: a subagent may run on another one
+      // than its parent (the turn's model is the fallback).
       const models = mergeTurnModelUsage(
-        [...turn.threads.values()].flatMap(({ first, latest }) =>
-          codexTurnModelUsage(turn.model, first, latest),
+        [...turn.threads].flatMap(([threadId, { first, latest }]) =>
+          codexTurnModelUsage(
+            turn.threadModels?.get(threadId) ?? turn.model,
+            first,
+            latest,
+          ),
         ),
       );
       const credential_id = turn.spawned.credentialId;
@@ -3293,8 +3308,9 @@ export class CodexAppServerAgent implements AcpAgent {
       }
     };
 
-    // Subagents of this turn: spawned by its thread (or by one of them).
-    const subagentThreads = new Set<string>();
+    // Subagents of this turn: spawned by its thread (or by one of them),
+    // with the model each was started on.
+    const subagentThreads = new Map<string, string | undefined>();
     const stopSubagentUsage = client.onNotification((message) =>
       observeSubagentUsage(message, {
         parentThread: () => currentThreadId,
@@ -4635,6 +4651,7 @@ export class CodexAppServerAgent implements AcpAgent {
         ),
         startedAt: turnStartedAt,
         outcome: turnOutcome,
+        threadModels: subagentThreads,
       });
       await spawned.endConnectorTurn?.().catch((error) => {
         logger.warn("managed CoCalc connector revocation unconfirmed", {

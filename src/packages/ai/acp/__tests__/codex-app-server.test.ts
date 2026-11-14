@@ -1005,6 +1005,8 @@ describe("CodexAppServerAgent", () => {
                 status: "inProgress",
                 senderThreadId: "thr-main",
                 receiverThreadIds: ["thr-sub"],
+                // The subagent runs on another model than its parent.
+                model: "gpt-6.1-mini",
               },
             });
             // ... which spawns another.
@@ -1104,14 +1106,27 @@ describe("CodexAppServerAgent", () => {
       setAgentTurnUsageRecorder();
     }
     expect(recorded).toHaveLength(1);
-    // Main 100/10 + subagent 70/9 + nested subagent 5/1; never the other thread.
-    expect(recorded[0].models).toEqual([
+    // Main 100/10 and the nested subagent 5/1 (no model given: the turn's)
+    // under the turn's model; the subagent 70/9 under its own; never the
+    // other thread. (Order is not significant.)
+    const byModel = [...recorded[0].models].sort((x: any, y: any) =>
+      x.model.localeCompare(y.model),
+    );
+    expect(byModel).toEqual([
       {
-        model: "gpt-6.1-sol",
-        input_tokens: 175,
+        model: "gpt-6.1-mini",
+        input_tokens: 70,
         cached_input_tokens: 0,
         cache_write_tokens: 0,
-        output_tokens: 20,
+        output_tokens: 9,
+        reasoning_output_tokens: 0,
+      },
+      {
+        model: "gpt-6.1-sol",
+        input_tokens: 105,
+        cached_input_tokens: 0,
+        cache_write_tokens: 0,
+        output_tokens: 11,
         reasoning_output_tokens: 0,
       },
     ]);
