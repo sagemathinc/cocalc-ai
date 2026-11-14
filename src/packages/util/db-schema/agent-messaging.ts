@@ -224,6 +224,47 @@ Table({
   },
 });
 
+// What each agent turn used: tokens by model, as its runtime (Claude or
+// Codex) reported them, with the conversation and the credential that paid.
+// In the paying account's home bay, for usage by agent. Telemetry from this
+// site only; numbers, never prompts or output.
+Table({
+  name: "agent_turn_usage",
+  rules: {
+    primary_key: ["account_id", "id"],
+    pg_custom_indexes: [
+      { name: "agent_turn_usage_account_ended", query: "(account_id,ended_at)" },
+      { name: "agent_turn_usage_ended", query: "(ended_at)" },
+    ],
+  },
+  fields: {
+    account_id: required("uuid", "Account whose agent ran the turn."),
+    id: required("uuid", "Turn record."),
+    project_id: required("uuid", "Agent project."),
+    path: required("string", "Agent chat path."),
+    thread_id: required("string", "Agent thread."),
+    provider: required("string", "claude or codex."),
+    payment: required(
+      "string",
+      "Claude credential mode or Codex auth source (e.g. account-subscription, site-funded, subscription).",
+    ),
+    credential_id: { type: "uuid", desc: "Credential that paid, if any." },
+    pool: { type: "boolean", desc: "Claude Auto picked the subscription." },
+    models: {
+      ...required("map", "Tokens by model (util/ai/agent-turn-usage)."),
+      pg_type: "JSONB",
+    },
+    input_tokens: { type: "number", pg_type: "BIGINT", desc: "Uncached input." },
+    cached_input_tokens: { type: "number", pg_type: "BIGINT", desc: "Cache reads." },
+    cache_write_tokens: { type: "number", pg_type: "BIGINT", desc: "Cache writes." },
+    output_tokens: { type: "number", pg_type: "BIGINT", desc: "Output, reasoning included." },
+    outcome: required("string", "completed, failed or interrupted."),
+    started_at: { ...timestamp("Turn start."), not_null: true },
+    ended_at: { ...timestamp("Turn end."), not_null: true },
+    host_id: { type: "uuid", desc: "Reporting project host." },
+  },
+});
+
 // Accounts that named an agent (in their home bays' name books). Kept with the
 // identity so its changes reach exactly those name books.
 Table({

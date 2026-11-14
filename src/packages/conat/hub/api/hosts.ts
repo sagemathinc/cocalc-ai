@@ -2085,6 +2085,7 @@ export const hosts = {
   getAgentMemoryContext: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
   recordClaudeSubscriptionUsage: authFirstRequireHost,
+  recordAgentTurnUsage: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
   releaseCodexDeviceAuthLease: authFirstRequireHost,
   refreshCodexSubscriptionAuth: authFirstRequireHost,
@@ -2575,6 +2576,12 @@ export interface Hosts {
     credential_id: string;
     usage: unknown;
   }) => Promise<boolean>;
+  // What agent turns on this host used (tokens by model, Claude and Codex),
+  // kept on each owner's home bay for usage by agent. Telemetry only.
+  recordAgentTurnUsage: (opts: {
+    host_id?: string;
+    reports: Array<{ owner_account_id: string; usage: unknown }>;
+  }) => Promise<{ recorded: number }>;
   touchExternalCredential: (opts: {
     host_id?: string;
     project_id: string;

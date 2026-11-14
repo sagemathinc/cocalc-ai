@@ -32,6 +32,7 @@ import {
   CodexAppServerAgent,
   forkCodexAppServerSession,
   getCodexAppServerAccountStatus,
+  setAgentTurnUsageRecorder,
   setCodexProjectSpawner,
 } from "..";
 import { AppServerClient, readLinesBackward } from "../codex-app-server";
@@ -838,6 +839,132 @@ describe("CodexAppServerAgent", () => {
     } finally {
       await agent.dispose();
     }
+  });
+
+  it("reports what a turn used, with the subscription", async () => {
+    const tokens = (
+      threadId: string,
+      total: Record<string, number>,
+      last: Record<string, number>,
+      turnId = "turn-usage",
+    ) => ({ threadId, turnId, tokenUsage: { total, last } });
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-usage" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-usage" } });
+          setImmediate(() => {
+            // The thread had used 1000 input / 100 output before this turn.
+            fake.sendNotification(
+              "thread/tokenUsage/updated",
+              tokens(
+                "thr-usage",
+                { inputTokens: 1300, cachedInputTokens: 500, outputTokens: 120 },
+                { inputTokens: 300, cachedInputTokens: 100, outputTokens: 20 },
+              ),
+            );
+            // A subagent's own thread and turn: not this turn's report.
+            fake.sendNotification(
+              "thread/tokenUsage/updated",
+              tokens(
+                "thr-child",
+                { inputTokens: 50, outputTokens: 5 },
+                { inputTokens: 50, outputTokens: 5 },
+                "turn-child",
+              ),
+            );
+            fake.sendNotification(
+              "thread/tokenUsage/updated",
+              tokens(
+                "thr-usage",
+                {
+                  inputTokens: 2000,
+                  cachedInputTokens: 900,
+                  outputTokens: 300,
+                  reasoningOutputTokens: 80,
+                },
+                { inputTokens: 700, cachedInputTokens: 400, outputTokens: 180 },
+              ),
+            );
+            fake.sendNotification("item/completed", {
+              threadId: "thr-usage",
+              turnId: "turn-usage",
+              item: { type: "agentMessage", id: "m1", text: "done", phase: null },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-usage", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+        authSource: "subscription",
+        credentialId: "00000000-0000-4000-8000-0000000000c1",
+      }),
+    });
+    const recorded: any[] = [];
+    setAgentTurnUsageRecorder((account_id, usage) => {
+      recorded.push({ account_id, usage });
+    });
+    try {
+      const agent = new CodexAppServerAgent();
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        prompt: "work",
+        chat: {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          path: "agent.chat",
+          thread_id: "thread-1",
+        } as any,
+        stream: async () => {},
+        config: {
+          workingDirectory: "/tmp/project",
+          model: "gpt-6.1-sol",
+        } as any,
+      });
+    } finally {
+      setAgentTurnUsageRecorder();
+    }
+    expect(recorded).toHaveLength(1);
+    const [{ account_id, usage }] = recorded;
+    expect(account_id).toBe("00000000-0000-4000-8000-000000000001");
+    expect(usage).toMatchObject({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      path: "agent.chat",
+      thread_id: "thread-1",
+      provider: "codex",
+      payment: "subscription",
+      credential_id: "00000000-0000-4000-8000-0000000000c1",
+      outcome: "completed",
+    });
+    // The turn: 1000 input (500 cached), 200 output (80 reasoning).
+    expect(usage.models).toEqual([
+      {
+        model: "gpt-6.1-sol",
+        input_tokens: 500,
+        cached_input_tokens: 500,
+        cache_write_tokens: 0,
+        output_tokens: 200,
+        reasoning_output_tokens: 80,
+      },
+    ]);
   });
 
   it("streams completed app-server agent messages when no delta was emitted", async () => {

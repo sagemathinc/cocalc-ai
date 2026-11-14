@@ -97,6 +97,8 @@ import {
   setHarnessLauncher,
 } from "@cocalc/lite/hub/acp/harness-runtime";
 import { recordHarnessRateLimit } from "./acp/claude-subscription-usage";
+import { setAgentTurnUsageRecorder } from "@cocalc/ai/acp";
+import { recordAgentTurnUsageOnHub } from "./acp/agent-turn-usage";
 import { launchHarnessInProject } from "./acp/harness-launcher";
 import { validateHarnessAuthority } from "./acp/harness-authority";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
@@ -569,6 +571,8 @@ export async function main(
   setHarnessLauncher(launchHarnessInProject);
   setHarnessAuthorityValidator(validateHarnessAuthority);
   setHarnessRateLimitRecorder(recordHarnessRateLimit);
+  // What each agent turn used, for usage by agent (Claude and Codex).
+  setAgentTurnUsageRecorder(recordAgentTurnUsageOnHub);
   initCodexSiteKeyGovernor();
   initAcpProjectMembership();
   setAcpAdmissionLimitsProvider(async ({ account_id, project_id }) => {

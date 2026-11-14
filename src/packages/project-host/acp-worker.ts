@@ -30,6 +30,8 @@ import {
   setHarnessLauncher,
 } from "@cocalc/lite/hub/acp/harness-runtime";
 import { recordHarnessRateLimit } from "./acp/claude-subscription-usage";
+import { setAgentTurnUsageRecorder } from "@cocalc/ai/acp";
+import { recordAgentTurnUsageOnHub } from "./acp/agent-turn-usage";
 import { launchHarnessInProject } from "./acp/harness-launcher";
 import { validateHarnessAuthority } from "./acp/harness-authority";
 import {
@@ -150,6 +152,8 @@ function configureProjectHostAcpRuntime(): void {
   setHarnessLauncher(launchHarnessInProject);
   setHarnessAuthorityValidator(validateHarnessAuthority);
   setHarnessRateLimitRecorder(recordHarnessRateLimit);
+  // What each agent turn used, for usage by agent (Claude and Codex).
+  setAgentTurnUsageRecorder(recordAgentTurnUsageOnHub);
   initCodexSiteKeyGovernor();
   initCodexAttachmentBlobReader();
   initCodexGeneratedImageBlobWriter();
@@ -304,6 +308,8 @@ export async function main(): Promise<void> {
   registerPidFile(pidFile, async () => {
     stopEventLoopStallMonitor();
     await disposeAcpAgents();
+    // Turns that just ended: send their usage before the hub link closes.
+    await recordAgentTurnUsageOnHub.flush();
     setAcpSessionPublisherOverride(undefined);
     try {
       masterClient?.close();
@@ -325,6 +331,7 @@ export async function main(): Promise<void> {
   } finally {
     stopEventLoopStallMonitor();
     await disposeAcpAgents();
+    await recordAgentTurnUsageOnHub.flush();
     setAcpSessionPublisherOverride(undefined);
     setMasterConatClient(undefined);
     try {
