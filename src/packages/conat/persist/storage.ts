@@ -652,7 +652,7 @@ async function verifyProjectLeftovers(
 ): Promise<void> {
   if (durability == null) return;
   if (owner === "host") {
-    if (durability.check(id) == "leftover") await verifyLeftover(id, dbPath);
+    if (durability.check(id, owner) == "leftover") await verifyLeftover(id, dbPath);
     return;
   }
   let pending = verifyingProject.get(owner);

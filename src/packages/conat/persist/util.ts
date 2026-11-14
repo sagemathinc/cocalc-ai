@@ -48,7 +48,7 @@ import {
   prepareDurableOpen,
   clearOpenBarrierPass,
 } from "./storage";
-import { join } from "path";
+import { join, posix } from "path";
 import {
   syncFiles,
   ensureContainingDirectoryExists,
@@ -154,6 +154,64 @@ export function resolveLocalPath(
   }
 
   return join(syncFiles.local, storagePath);
+}
+
+// The durability records' OWNER of a physical stream path (028 B-2, B2-M1):
+// the inverse of resolveLocalPath for the owner, i.e. what storeOwner gives
+// for the logical path.  A project's stream (under the project template's
+// root, or <local>/projects/<project_id>/) -> its project_id; any other
+// stream under a persist root (local, hub, hosts, accounts) -> "host";
+// anything else -> undefined (the caller refuses).
+export function ownerOfLocalPath(localPath: string): string | undefined {
+  const p = posix.normalize(localPath);
+  const under = (root: string) => {
+    const r = posix.normalize(root).replace(/\/+$/, "");
+    return r !== "" && r !== "." && (p === r || p.startsWith(`${r}/`));
+  };
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const validId = (id: string | undefined) =>
+    id != null && id !== "" && id !== "." && id !== ".." ? id : undefined;
+  // the subject id of p under a template root (as resolveTemplateBase builds
+  // it: the token replaced, or <base>/<id> without a token)
+  const idUnder = (template: string, token: string): string | undefined => {
+    const t = posix.normalize(template).replace(/\/+$/, "");
+    let m: RegExpMatchArray | null;
+    if (t.includes(token)) {
+      const [prefix, suffix] = t.split(token);
+      const suffixRoot = suffix.split("/")[0] ?? "";
+      m = p.match(
+        new RegExp(`^${escape(prefix)}([^/]+?)${escape(suffixRoot)}(?:/|$)`),
+      );
+    } else {
+      m = p.match(new RegExp(`^${escape(t)}/([^/]+)(?:/|$)`));
+    }
+    return validId(m?.[1]);
+  };
+  if (syncFiles.localProjects) {
+    const id = idUnder(syncFiles.localProjects, "[project_id]");
+    if (id != null) return id;
+  }
+  if (syncFiles.local) {
+    const m = p.match(
+      new RegExp(
+        `^${escape(posix.normalize(join(syncFiles.local, "projects")))}/([^/]+)(?:/|$)`,
+      ),
+    );
+    const id = validId(m?.[1]);
+    if (id != null) return id;
+  }
+  if (syncFiles.localHosts && idUnder(syncFiles.localHosts, "[host_id]") != null) {
+    return "host";
+  }
+  if (
+    syncFiles.localAccounts &&
+    idUnder(syncFiles.localAccounts, "[account_id]") != null
+  ) {
+    return "host";
+  }
+  return [syncFiles.local, syncFiles.localHub].some((r) => r && under(r))
+    ? "host"
+    : undefined;
 }
 
 function maintenanceScope(storagePath: string): {

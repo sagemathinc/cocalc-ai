@@ -18,13 +18,18 @@ import {
   sha256Hex,
 } from "@cocalc/backend/conat/persist-durability";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
+import { syncFiles } from "@cocalc/conat/persist/context";
+import { ownerOfLocalPath, resolveLocalPath } from "@cocalc/conat/persist/util";
 
 const packages = join(__dirname, "../../../..");
 
 describe("028 B-2: maintenance opens check the durability records first", () => {
   let dir: string;
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "persist-028-maint-"));
+    // under the persist root, so the stream's owner can be derived (B2-M1):
+    // a host-owned stream
+    fs.mkdirSync(syncFiles.local, { recursive: true });
+    dir = await mkdtemp(join(syncFiles.local, "persist-028-maint-"));
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
@@ -69,6 +74,53 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     expect(() => assertPersistMaintenanceOpenAllowed(alias)).toThrow(
       "poisoned",
     );
+  });
+
+  // B2-M1 (ops0 3587): the records are checked WITH the stream's owner
+  it("a stream of a project-POISONED project is refused, though it has no record of its own", () => {
+    const project = "aaaaaaaa-0288-4000-8000-000000000001";
+    const path = resolveLocalPath(`projects/${project}/b2m1-stream`, {
+      ephemeral: true,
+    });
+    expect(ownerOfLocalPath(path)).toBe(project);
+    expect(() => assertPersistMaintenanceOpenAllowed(`${path}.db`)).not.toThrow();
+    const records = persistDurabilityRecords();
+    records.poisonProject(project, { where: "test (B2-M1)" });
+    try {
+      expect(() => assertPersistMaintenanceOpenAllowed(`${path}.db`)).toThrow(
+        "the stream is poisoned",
+      );
+      // another project's stream is not affected
+      const other = resolveLocalPath(
+        "projects/aaaaaaaa-0288-4000-8000-000000000002/b2m1-stream",
+        { ephemeral: true },
+      );
+      expect(() => assertPersistMaintenanceOpenAllowed(`${other}.db`)).not.toThrow();
+    } finally {
+      records.clearProjectPoison?.(project);
+    }
+  });
+
+  it("a path whose owner can't be derived is refused", () => {
+    expect(ownerOfLocalPath(join(tmpdir(), "outside", "x"))).toBeUndefined();
+    expect(() =>
+      assertPersistMaintenanceOpenAllowed(join(tmpdir(), "outside", "x.db")),
+    ).toThrow("owner can't be derived");
+  });
+
+  it("ownerOfLocalPath is the owner the open path keys (projectOfStoragePath, else host)", () => {
+    const project = "aaaaaaaa-0288-4000-8000-000000000003";
+    for (const [logical, owner] of [
+      [`projects/${project}/a/b`, project],
+      ["hub/x", "host"],
+      ["accounts/bbbbbbbb-0000-4000-8000-000000000001/x", "host"],
+      ["something/else", "host"],
+    ] as const) {
+      expect(ownerOfLocalPath(resolveLocalPath(logical, { ephemeral: true }))).toBe(owner);
+    }
+    // normalized: a dot segment can't move a project stream out of its project
+    const p = resolveLocalPath(`projects/${project}/a`, { ephemeral: true });
+    expect(ownerOfLocalPath(`${p}/../../${project}/a`)).toBe(project);
   });
 
   // Source pins: each maintenance opener calls the check before it opens.

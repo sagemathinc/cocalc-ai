@@ -19,6 +19,7 @@ import {
   type PostRebootRecords,
 } from "@cocalc/conat/persist/durability-records";
 import { syncFiles } from "@cocalc/backend/data";
+import { ownerOfLocalPath } from "@cocalc/conat/persist/util";
 import { spawn } from "node:child_process";
 
 const logger = getLogger("persist:durability");
@@ -244,13 +245,24 @@ let records: DurabilityRecords | undefined;
 // refused unless the stream's records are clean: a poisoned file, or one a
 // process left mid-write (dead or alive), must not be opened, read, copied or
 // checkpointed outside the open path that verifies it.  dbPath: the physical
-// <path>.db, as the stream was opened.
+// <path>.db, as the stream was opened.  B2-M1 (ops0 3587): the records are
+// checked WITH the stream's owner, derived from the physical path as the open
+// path keys it, so a project-level poison (Q-F, §4A row 9) refuses too; a
+// path whose owner can't be derived is refused.
 export function assertPersistMaintenanceOpenAllowed(
   dbPath: string,
-  check: (id: string) => string = (id) => persistDurabilityRecords().check(id),
+  check: (id: string, owner: string) => string = (id, owner) =>
+    persistDurabilityRecords().check(id, owner),
+  ownerOf: (id: string) => string | undefined = ownerOfLocalPath,
 ): void {
   const id = posix.normalize(dbPath.replace(/\.db$/, ""));
-  const state = check(id);
+  const owner = ownerOf(id);
+  if (owner == null) {
+    throw new Error(
+      `persist maintenance open refused (finding 028): the stream's owner can't be derived from its path: ${dbPath}`,
+    );
+  }
+  const state = check(id, owner);
   if (state !== "ok") {
     throw new Error(
       `persist maintenance open refused (finding 028): the stream is ${state}: ${dbPath}`,
