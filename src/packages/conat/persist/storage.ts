@@ -3306,6 +3306,27 @@ export class PersistentStream extends EventEmitter {
     return streamOwners.get(this.logicalId!) ?? "host";
   };
 
+  // The connection's durability PRAGMAs, read back (undefined if poisoned
+  // or unreadable).  Diagnostics only.
+  readDurabilityPragmas = ():
+    | { synchronous: number; walAutocheckpoint: number }
+    | undefined => {
+    if (this.poisoned || this.db == null) return;
+    try {
+      return {
+        synchronous: Number(
+          (this.db.prepare("PRAGMA synchronous").get() as any)?.synchronous,
+        ),
+        walAutocheckpoint: Number(
+          (this.db.prepare("PRAGMA wal_autocheckpoint").get() as any)
+            ?.wal_autocheckpoint,
+        ),
+      };
+    } catch {
+      return;
+    }
+  };
+
   // A parked stream's retry checkpointed it: now the real close.
   finishParkedClose = (): void => {
     const path = this.options?.path;
@@ -6455,6 +6476,32 @@ export function closeDurably(stream: PersistentStream): void {
   stream.atWriteIdle(() => stream.close());
 }
 
+function pragmaCheck(): {
+  disk_connections: number;
+  synchronous_full: number;
+  wal_autocheckpoint_off: number;
+  unreadable: number;
+} {
+  const out = {
+    disk_connections: 0,
+    synchronous_full: 0,
+    wal_autocheckpoint_off: 0,
+    unreadable: 0,
+  };
+  for (const [stream, { kind }] of openStreams) {
+    if (kind !== "disk") continue;
+    out.disk_connections += 1;
+    const r = stream.readDurabilityPragmas();
+    if (r == null) {
+      out.unreadable += 1;
+      continue;
+    }
+    if (r.synchronous === 2) out.synchronous_full += 1;
+    if (r.walAutocheckpoint === 0) out.wal_autocheckpoint_off += 1;
+  }
+  return out;
+}
+
 export function getPersistentStreamDiagnostics() {
   const cacheInfo = cache.info();
   const referenceCounts = Object.values(cacheInfo.count);
@@ -6488,6 +6535,9 @@ export function getPersistentStreamDiagnostics() {
         durabilityHealth.device_poisons_total == 0 &&
         !(startupCheck?.()?.ok === false),
     },
+    // 028 B-3a: the runtime PRAGMA verification of every open disk
+    // connection (read back now): all must be FULL with auto-checkpoint 0
+    pragma_check: pragmaCheck(),
     // null: this process counts no commits (no write counter in the context)
     write_stats: writeCounter?.stats() ?? null,
   };

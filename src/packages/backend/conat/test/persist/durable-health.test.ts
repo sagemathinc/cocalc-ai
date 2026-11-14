@@ -43,6 +43,25 @@ describe("028 B-3a: durability health", () => {
     expect(typeof h.msgid_conflicts_total).toBe("number");
   });
 
+  it("the runtime PRAGMA check reads back every open disk connection: all FULL, auto-checkpoint 0", async () => {
+    const a = pstream({ path: join(dir, "p1") });
+    const b = pstream({ path: join(dir, "p2") });
+    const eph = pstream({ path: join(dir, "e"), ephemeral: true });
+    const pc = (getPersistentStreamDiagnostics() as any).pragma_check;
+    expect(pc.disk_connections).toBeGreaterThanOrEqual(2);
+    expect(pc.synchronous_full).toBe(pc.disk_connections);
+    expect(pc.wal_autocheckpoint_off).toBe(pc.disk_connections);
+    expect(pc.unreadable).toBe(0);
+    // can fail: a connection set back to OFF is counted as not FULL
+    (a as any).db.exec("PRAGMA synchronous=OFF");
+    const pc2 = (getPersistentStreamDiagnostics() as any).pragma_check;
+    expect(pc2.synchronous_full).toBe(pc2.disk_connections - 1);
+    (a as any).db.exec("PRAGMA synchronous=FULL");
+    a.close();
+    b.close();
+    eph.close();
+  });
+
   it("a quota (Q-F) poison counts as a project poison and keeps the host healthy", async () => {
     const path = join(dir, "qf");
     jest.spyOn(persistOpenBarrier, "run").mockResolvedValue({
@@ -71,6 +90,5 @@ describe("028 B-3a: durability health", () => {
     expect(health()).toMatchObject({ host_healthy: false });
     expect(health().device_poisons_total).toBeGreaterThanOrEqual(1);
     clearOpenBarrierPass(path);
-    void pstream;
   });
 });
