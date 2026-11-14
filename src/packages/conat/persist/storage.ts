@@ -773,6 +773,35 @@ const exitWithoutClosing = (): void => {
   );
   process.exit();
 };
+// 028 B-3a (DESIGN §3.2.4 (ii), SA F): a persist process without a signal
+// path of its own (the hub's persist servers, the forked persist nodes, the
+// standalone binary) still dies by a signal's DEFAULT action, which closes
+// nothing (good: no checkpoint), but drops the writes still QUEUED for a
+// group commit.  This commits them first (each COMMIT is durable), then
+// re-raises the signal so its default action ends the process as before.
+// A signal that already has a listener is left alone.
+let signalFlushInstalled = false;
+export const PERSIST_FLUSH_SIGNALS: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
+export function installPersistSignalFlush(): void {
+  if (signalFlushInstalled) return;
+  signalFlushInstalled = true;
+  const handlers = new Map<NodeJS.Signals, () => void>();
+  for (const sig of PERSIST_FLUSH_SIGNALS) {
+    if (process.listenerCount(sig) > 0) continue;
+    const handler = () => {
+      try {
+        flushAllPersistWrites();
+      } catch (err) {
+        logger.warn("persist: flush at a signal failed", { sig, err: `${err}` });
+      }
+      for (const [s, h] of handlers) process.removeListener(s, h);
+      process.kill(process.pid, sig);
+    };
+    handlers.set(sig, handler);
+    process.once(sig, handler);
+  }
+}
+
 export function installPersistExitGuard(): void {
   if (exitGuardInstalled) return;
   exitGuardInstalled = true;

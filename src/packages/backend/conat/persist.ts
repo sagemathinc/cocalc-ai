@@ -71,6 +71,7 @@ export {
   closeDurably,
   flushAllPersistWrites,
   installPersistExitGuard,
+  installPersistSignalFlush,
   prepareDurableOpen,
   clearOpenBarrierPass,
 } from "@cocalc/conat/persist/storage";
