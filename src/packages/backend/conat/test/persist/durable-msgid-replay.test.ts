@@ -288,12 +288,14 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
   // run one batch on a fresh stream at a fixed Date.now: "many" = one
   // setMany, "requests" = separate requests in one batch
   const runBatch = async (name: string, ops: any[], how: "many" | "requests") => {
-    const stream = open(name);
-    stream.config({ allow_msg_ttl: true });
-    const changes = watch(stream);
+    // the whole life of the stream at one Date.now (the open stamps the
+    // history epoch too)
     const now = jest.spyOn(Date, "now").mockReturnValue(NOW);
-    let results: any[];
+    let stream, changes, results: any[];
     try {
+      stream = open(name);
+      stream.config({ allow_msg_ttl: true });
+      changes = watch(stream);
       results =
         how == "many"
           ? await stream.setManyQueued(ops)
@@ -301,7 +303,7 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     } finally {
       now.mockRestore();
     }
-    return { stream, changes, results };
+    return { stream, changes: changes!, results };
   };
 
   for (const how of ["many", "requests"] as const) {
