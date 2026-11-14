@@ -35,7 +35,9 @@ function snapshot(stream) {
       .all(),
     ids: db.prepare("SELECT seq, msg_id FROM message_ids ORDER BY seq").all(),
     checkpoints: db
-      .prepare("SELECT name, seq, snapshot_seq FROM stream_checkpoints ORDER BY name")
+      .prepare(
+        "SELECT name, seq, time, data_json, revision FROM stream_checkpoints ORDER BY name",
+      )
       .all(),
   };
 }
