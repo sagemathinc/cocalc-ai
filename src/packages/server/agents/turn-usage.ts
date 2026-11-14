@@ -9,7 +9,6 @@
 // (maintenance.ts, by received_at).
 
 import { createHash, randomUUID } from "node:crypto";
-import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import {
   parseAgentTurnUsage,
@@ -33,11 +32,18 @@ type Queryable = {
   ): Promise<{ rows: any[]; rowCount?: number | null }>;
 };
 
-let db: () => Queryable = () => getPool();
+type Transaction = <T>(fn: (db: Queryable) => Promise<T>) => Promise<T>;
+
+const defaultTransaction: Transaction = async (fn) => {
+  const { agentStore } = await import("./store");
+  return await agentStore().transaction(fn);
+};
+
+let transaction: Transaction = defaultTransaction;
 
 /** Tests only. */
-export function setTurnUsageDbForTests(next?: () => Queryable) {
-  db = next ?? (() => getPool());
+export function setTurnUsageTransactionForTests(next?: Transaction) {
+  transaction = next ?? defaultTransaction;
 }
 
 /** The chat path is stored only as this: it matches an agent's path without
@@ -57,18 +63,12 @@ function totals(usage: AgentTurnUsage) {
   return sum;
 }
 
-async function hostBudget(host_id: string | undefined): Promise<number> {
-  if (!host_id) return MAX_TURNS_PER_HOST_PER_HOUR;
-  const { rows } = await db().query(
-    `SELECT count(*)::int AS n FROM agent_turn_usage
-      WHERE host_id=$1 AND received_at > now() - interval '1 hour'`,
-    [host_id],
-  );
-  return Math.max(0, MAX_TURNS_PER_HOST_PER_HOUR - (rows[0]?.n ?? 0));
-}
-
 /** Home-bay write. The caller has checked this is the account's home bay
- * and that the reporting host may report for it. Returns rows stored. */
+ * and that the reporting host may report for it. Returns rows stored.
+ *
+ * Each host's turns are counted against its hourly budget and inserted in
+ * one transaction under a host-scoped lock, so concurrent reports (parallel
+ * RPC handlers, several hubs) cannot all spend the same allowance. */
 export async function insertAgentTurnUsage({
   account_id,
   rows,
@@ -78,23 +78,62 @@ export async function insertAgentTurnUsage({
   rows: Array<{ usage: unknown; host_id?: string }>;
   now?: number;
 }): Promise<number> {
-  let stored = 0;
-  const budgets = new Map<string, number>();
+  const byHost = new Map<string, AgentTurnUsage[]>();
   for (const { usage: raw, host_id } of rows) {
     // Revalidated here too: never store what a remote bay passed on as is.
     const usage = parseAgentTurnUsage(raw, now);
     if (!usage) continue;
-    const hostKey = host_id ?? "";
-    if (!budgets.has(hostKey)) budgets.set(hostKey, await hostBudget(host_id));
-    const budget = budgets.get(hostKey)!;
-    if (budget <= 0) {
+    const list = byHost.get(host_id ?? "") ?? [];
+    list.push(usage);
+    byHost.set(host_id ?? "", list);
+  }
+  let stored = 0;
+  for (const [hostKey, turns] of byHost) {
+    const host_id = hostKey || undefined;
+    try {
+      stored += await transaction((db) =>
+        insertHostTurns(db, account_id, host_id, turns),
+      );
+    } catch (error) {
+      logger.debug("agent turn usage not stored", {
+        host_id,
+        error: `${error}`,
+      });
+    }
+  }
+  return stored;
+}
+
+async function insertHostTurns(
+  db: Queryable,
+  account_id: string,
+  host_id: string | undefined,
+  turns: AgentTurnUsage[],
+): Promise<number> {
+  let budget = MAX_TURNS_PER_HOST_PER_HOUR;
+  if (host_id) {
+    await db.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('agent-turn-usage-host:' || $1::text, 0))",
+      [host_id],
+    );
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS n FROM agent_turn_usage
+        WHERE host_id=$1 AND received_at > now() - interval '1 hour'`,
+      [host_id],
+    );
+    budget -= rows[0]?.n ?? 0;
+  }
+  let stored = 0;
+  for (const usage of turns) {
+    if (stored >= budget) {
       logger.debug("agent turn usage over the host budget", { host_id });
-      continue;
+      break;
     }
     const sum = totals(usage);
-    // One row that the database refuses must not lose the rest of the batch.
+    // One row that the database refuses must not lose the rest.
+    await db.query("SAVEPOINT turn_usage_row");
     try {
-      const { rowCount } = await db().query(
+      const { rowCount } = await db.query(
         `INSERT INTO agent_turn_usage
          (account_id, id, project_id, path_hash, thread_id, provider, payment,
           credential_id, pool, models, input_tokens, cached_input_tokens,
@@ -126,11 +165,10 @@ export async function insertAgentTurnUsage({
           host_id ?? null,
         ],
       );
-      if (rowCount) {
-        stored += 1;
-        budgets.set(hostKey, budget - 1);
-      }
+      await db.query("RELEASE SAVEPOINT turn_usage_row");
+      if (rowCount) stored += 1;
     } catch (error) {
+      await db.query("ROLLBACK TO SAVEPOINT turn_usage_row");
       logger.debug("agent turn usage row not stored", { error: `${error}` });
     }
   }
