@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { conat } from "@cocalc/backend/conat";
 import getLogger from "@cocalc/backend/logger";
@@ -15,8 +16,16 @@ import { createBackup as createBackupLro } from "@cocalc/server/conat/api/projec
 import { assertOversizedFilesAllowed } from "@cocalc/server/projects/oversized-files";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { waitForDurableLroCompletion } from "@cocalc/server/lro/wait";
+import { getLro } from "@cocalc/server/lro/lro-db";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { BACKUP_LRO_KIND } from "./backup-lro";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
-import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
+import {
+  CopySnapshotUnavailableError,
+  insertCopyRowIfMissing,
+  releaseCreatedCopySnapshot,
+  upsertCopyRow,
+} from "./copy-db";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import {
   normalizeProjectViewerPolicyPath,
@@ -156,20 +165,36 @@ async function runCopyStep<T>(
   }
 }
 
+// A copy's backups never share an operation with another backup of the
+// project (a user's, a move's, ...): such a backup is not the copy's to
+// delete.  A retry of the same copy may join its own backup.
+export function copyBackupDedupeKey({
+  project_id,
+  op_id,
+}: {
+  project_id: string;
+  op_id?: string;
+}): string {
+  return `${BACKUP_LRO_KIND}:copy:${project_id}:${op_id ?? randomUUID()}`;
+}
+
 async function createBackupAndWait({
   account_id,
   project_id,
   tags,
   skip_collab_check,
+  op_id,
 }: {
   account_id: string;
   project_id: string;
   tags?: string[];
   skip_collab_check?: boolean;
-}): Promise<{ id: string; time?: string }> {
+  op_id?: string;
+}): Promise<{ id: string; time?: string; created: boolean }> {
+  const dedupe_key = copyBackupDedupeKey({ project_id, op_id });
   const op = await createBackupLro(
     { account_id, project_id, tags },
-    { skip_collab_check, skip_rootfs_portability_check: true },
+    { skip_collab_check, skip_rootfs_portability_check: true, dedupe_key },
   );
   const summary = await waitForDurableLroCompletion({
     op_id: op.op_id,
@@ -187,7 +212,14 @@ async function createBackupAndWait({
   if (!id) {
     throw new Error("backup completed without snapshot id");
   }
-  return { id, time: result.time ?? result.backup_time };
+  // The copy owns the backup only if it ran as this copy's own operation, on
+  // this bay: another bay runs the backup itself and may share it.  The bay
+  // is the one createBackup routed this backup to, as recorded in its op.
+  const lro = await getLro(op.op_id).catch(() => undefined);
+  const created =
+    lro?.dedupe_key === dedupe_key &&
+    lro?.input?.owning_bay_id === getConfiguredBayId();
+  return { id, time: result.time ?? result.backup_time, created };
 }
 
 function normalizeCopyPath(raw: string, label: string): string {
@@ -1379,9 +1411,10 @@ export async function copyProjectFiles({
           project_id: src.project_id,
           tags,
           skip_collab_check: flush_collaborative || src_read_policy != null,
+          op_id,
         });
         snapshot_id = backup.id;
-        createdBackup = true;
+        createdBackup = backup.created;
       }
     }
     if (!snapshot_id) {
@@ -1420,10 +1453,11 @@ export async function copyProjectFiles({
           project_id: src.project_id,
           tags,
           skip_collab_check: flush_collaborative || src_read_policy != null,
+          op_id,
         });
         snapshot_id = backup.id;
         reusedBackup = false;
-        createdBackup = true;
+        createdBackup = backup.created;
         await assertSnapshotContainsSources();
       }
 
@@ -1433,41 +1467,89 @@ export async function copyProjectFiles({
         detail: { snapshot_id, destinations: remoteDests.length },
       });
       const expiresAt = new Date(Date.now() + COPY_TTL_MS);
-      const queuedByHost = new Map<string, number>();
-
-      for (const dest of remoteDests) {
-        if (shouldAbort && (await shouldAbort())) {
-          throw copyCanceledError();
+      const queuedBefore = queuedCount;
+      let queuedByHost = new Map<string, number>();
+      const queueRemoteCopies = async () => {
+        const queued_snapshot_id = snapshot_id;
+        if (!queued_snapshot_id) {
+          throw new Error("backup creation failed (missing snapshot id)");
         }
-        if (normalizedBasePath != null || srcPaths.length > 1) {
-          for (const sourcePlan of sourcePlans) {
-            const destLeaf =
-              sourcePlan.relativePath ??
-              path.posix.basename(sourcePlan.backupSrcPath);
-            const destPath = normalizeCopyPath(
-              path.posix.join(dest.path, destLeaf),
-              "dest.path",
-            );
+        queuedCount = queuedBefore;
+        queuedByHost = new Map<string, number>();
+        for (const dest of remoteDests) {
+          if (shouldAbort && (await shouldAbort())) {
+            throw copyCanceledError();
+          }
+          if (normalizedBasePath != null || srcPaths.length > 1) {
+            for (const sourcePlan of sourcePlans) {
+              const destLeaf =
+                sourcePlan.relativePath ??
+                path.posix.basename(sourcePlan.backupSrcPath);
+              const destPath = normalizeCopyPath(
+                path.posix.join(dest.path, destLeaf),
+                "dest.path",
+              );
+              const inserted =
+                queue_mode === "insert"
+                  ? await insertCopyRowIfMissing({
+                      src_project_id: src.project_id,
+                      src_path: sourcePlan.backupSrcPath,
+                      dest_project_id: dest.project_id,
+                      dest_path: destPath,
+                      op_id,
+                      snapshot_id: queued_snapshot_id,
+                      snapshot_created: createdBackup,
+                      options,
+                      exact: flush_collaborative,
+                      expires_at: expiresAt,
+                    })
+                  : await upsertCopyRow({
+                      src_project_id: src.project_id,
+                      src_path: sourcePlan.backupSrcPath,
+                      dest_project_id: dest.project_id,
+                      dest_path: destPath,
+                      op_id,
+                      snapshot_id: queued_snapshot_id,
+                      snapshot_created: createdBackup,
+                      options,
+                      exact: flush_collaborative,
+                      expires_at: expiresAt,
+                    });
+              if (queue_mode === "upsert" || inserted) {
+                queuedCount += 1;
+                queuedByHost.set(
+                  dest.host_id,
+                  (queuedByHost.get(dest.host_id) ?? 0) + 1,
+                );
+              }
+            }
+          } else {
+            const destPath = resolveRemoteSingleDestPath({
+              srcPath: backupSrcPaths[0],
+              destPath: dest.path,
+            });
             const inserted =
               queue_mode === "insert"
                 ? await insertCopyRowIfMissing({
                     src_project_id: src.project_id,
-                    src_path: sourcePlan.backupSrcPath,
+                    src_path: backupSrcPaths[0],
                     dest_project_id: dest.project_id,
                     dest_path: destPath,
                     op_id,
-                    snapshot_id,
+                    snapshot_id: queued_snapshot_id,
+                    snapshot_created: createdBackup,
                     options,
                     exact: flush_collaborative,
                     expires_at: expiresAt,
                   })
                 : await upsertCopyRow({
                     src_project_id: src.project_id,
-                    src_path: sourcePlan.backupSrcPath,
+                    src_path: backupSrcPaths[0],
                     dest_project_id: dest.project_id,
                     dest_path: destPath,
                     op_id,
-                    snapshot_id,
+                    snapshot_id: queued_snapshot_id,
+                    snapshot_created: createdBackup,
                     options,
                     exact: flush_collaborative,
                     expires_at: expiresAt,
@@ -1480,43 +1562,33 @@ export async function copyProjectFiles({
               );
             }
           }
-        } else {
-          const destPath = resolveRemoteSingleDestPath({
-            srcPath: backupSrcPaths[0],
-            destPath: dest.path,
-          });
-          const inserted =
-            queue_mode === "insert"
-              ? await insertCopyRowIfMissing({
-                  src_project_id: src.project_id,
-                  src_path: backupSrcPaths[0],
-                  dest_project_id: dest.project_id,
-                  dest_path: destPath,
-                  op_id,
-                  snapshot_id,
-                  options,
-                  exact: flush_collaborative,
-                  expires_at: expiresAt,
-                })
-              : await upsertCopyRow({
-                  src_project_id: src.project_id,
-                  src_path: backupSrcPaths[0],
-                  dest_project_id: dest.project_id,
-                  dest_path: destPath,
-                  op_id,
-                  snapshot_id,
-                  options,
-                  exact: flush_collaborative,
-                  expires_at: expiresAt,
-                });
-          if (queue_mode === "upsert" || inserted) {
-            queuedCount += 1;
-            queuedByHost.set(
-              dest.host_id,
-              (queuedByHost.get(dest.host_id) ?? 0) + 1,
-            );
-          }
         }
+      };
+      try {
+        await queueRemoteCopies();
+      } catch (err) {
+        // Cleanup claimed the reused backup before any row of this copy
+        // referenced it: make this copy's own backup instead.
+        if (!(err instanceof CopySnapshotUnavailableError) || createdBackup) {
+          throw err;
+        }
+        report(progress, {
+          step: "backup",
+          message: "recent backup is being removed; creating new backup",
+          detail: { snapshot_id },
+        });
+        const backup = await createBackupAndWait({
+          account_id,
+          project_id: src.project_id,
+          tags,
+          skip_collab_check: flush_collaborative || src_read_policy != null,
+          op_id,
+        });
+        snapshot_id = backup.id;
+        reusedBackup = false;
+        createdBackup = backup.created;
+        await assertSnapshotContainsSources();
+        await queueRemoteCopies();
       }
       report(progress, {
         step: "queue",
@@ -1531,10 +1603,12 @@ export async function copyProjectFiles({
       await triggerRemoteCopyApply({ queuedByHost, timeout_ms });
     } catch (err) {
       if (createdBackup && snapshot_id) {
+        // Rows this copy already queued, or another copy reusing the backup,
+        // keep it; those rows clean it up when they finish or expire.
         try {
-          await backupClient.deleteBackup({
-            project_id: src.project_id,
-            id: snapshot_id,
+          await releaseCreatedCopySnapshot({
+            src_project_id: src.project_id,
+            snapshot_id,
           });
         } catch (cleanupErr) {
           logger.warn("copyProjectFiles: backup cleanup failed", {
