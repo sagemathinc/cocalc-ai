@@ -96,13 +96,21 @@ function perDay(x: number): string {
   return x < 1 ? x.toFixed(2) : x.toFixed(1);
 }
 
-// "the last 24 hours", "the last 3 hours", or the current weeks' average
-function rateWindow(summary: ClaudePoolSummary): string {
-  if (summary.rateFrom !== "recent" || summary.rateHours == null) {
-    return "averaged over the current weeks";
+// How fast the weekly limits are used against how fast they renew.  The
+// recent rate is measured; before there is enough recent history it is
+// estimated from each current week's average, which runs high when the weeks
+// are staggered and the turns went to a few subscriptions.
+function rateLine(summary: ClaudePoolSummary, usedPerDay: number): string {
+  const renew = `${summary.members} subscription${
+    summary.members === 1 ? " renews" : "s renew"
+  } about ${perDay(summary.members / 7)} a day`;
+  if (summary.rateFrom === "recent" && summary.rateHours != null) {
+    const hours = Math.round(summary.rateHours);
+    return `Using about ${perDay(usedPerDay)} weekly limits a day (over the last ${hours} hour${
+      hours === 1 ? "" : "s"
+    }); ${renew}.`;
   }
-  const hours = Math.round(summary.rateHours);
-  return `over the last ${hours} hour${hours === 1 ? "" : "s"}`;
+  return `Estimated at about ${perDay(usedPerDay)} weekly limits a day from the current weeks' averages (likely high until there is more recent history); ${renew}.`;
 }
 
 /** How much the pool has left, how fast it is used against how fast it
@@ -133,15 +141,12 @@ export function ClaudePoolForecast({
         limits left.
       </div>
       {summary.usedPerDay != null && (
-        <div>
-          Using about {perDay(summary.usedPerDay)} weekly limits a day (
-          {rateWindow(summary)}); {summary.members} subscription
-          {summary.members === 1 ? " renews" : "s renew"} about{" "}
-          {perDay(summary.members / 7)} a day.
-        </div>
+        <div>{rateLine(summary, summary.usedPerDay)}</div>
       )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {summary.runsOutAt != null ? (
+        {summary.usedPerDay == null ? (
+          "No usage yet to forecast from."
+        ) : summary.runsOutAt != null ? (
           <>
             At that rate, counting the resets on the way, every weekly limit is
             reached <TimeAgo date={new Date(summary.runsOutAt)} /> (

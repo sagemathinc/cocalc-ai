@@ -194,7 +194,7 @@ test("with Auto: which subscriptions it uses, and how long they last", async () 
   );
   // The rate, and how fast the subscriptions renew (2 a week), to compare.
   expect(status).toMatch(
-    /Using about \d+\.\d+ weekly limits a day \(averaged over the current weeks\); 2 subscriptions renew about 0\.29 a day\./,
+    /Estimated at about \d+\.\d+ weekly limits a day from the current weeks' averages \(likely high until there is more recent history\); 2 subscriptions renew about 0\.29 a day\./,
   );
   expect(status).toMatch(/counting the resets on the way/);
   const office = screen.getByRole("checkbox", { name: "office" });
@@ -209,6 +209,61 @@ test("with Auto: which subscriptions it uses, and how long they last", async () 
   await waitFor(() => expect(onCredentials).toHaveBeenCalled());
   const rows = (onCredentials.mock.calls[0] as any[])[0];
   expect(rows[0].metadata.claude_pool_excluded).toBe(true);
+});
+
+test("with recent readings, the rate is measured over them", () => {
+  // office's week went from 30% to 60% over the last 24 hours.
+  const withHistory = credentials.map((row: any) =>
+    row.id === office
+      ? {
+          ...row,
+          metadata: {
+            ...row.metadata,
+            claude_usage_history: [
+              {
+                at: (now - 24 * hour) * 1000,
+                week: 0.3,
+                resets_at: now + 72 * hour,
+              },
+              {
+                at: (now - 12 * hour) * 1000,
+                week: 0.45,
+                resets_at: now + 72 * hour,
+              },
+            ],
+          },
+        }
+      : row,
+  );
+  render(
+    <ClaudeCredentialList
+      credentials={withHistory}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  expect(screen.getByRole("status").textContent).toMatch(
+    /Using about 0\.30 weekly limits a day \(over the last 24 hours\); 2 subscriptions renew about 0\.29 a day\./,
+  );
+});
+
+test("with no usage to go by, there is no rate and no forecast", () => {
+  const unused = credentials.map((row: any) => {
+    const { claude_usage: _unused, ...metadata } = row.metadata;
+    return { ...row, metadata };
+  });
+  render(
+    <ClaudeCredentialList
+      credentials={unused}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  const status = screen.getByRole("status").textContent ?? "";
+  expect(status).toMatch(/No usage yet to forecast from\./);
+  expect(status).not.toMatch(/weekly limits a day|At that rate/);
 });
 
 test("an Auto with nothing left to use says so", () => {
