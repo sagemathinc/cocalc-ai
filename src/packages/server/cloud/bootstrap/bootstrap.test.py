@@ -14773,7 +14773,9 @@ class PersistTmpfilesTest(unittest.TestCase):
         self.assertIn("PERSIST_TMPFILES_CONF", source)
         self.assertIn('"systemd-tmpfiles", "--create", PERSIST_TMPFILES_CONF', source)
         # no unit line provisions it (a restart would remove it)
-        self.assertIsNone(re.search(r"\\nRuntimeDirectory=", source))
+        pattern = re.compile(r"^\s*RuntimeDirectory=", re.M)
+        self.assertIsNotNone(pattern.search("[Service]\nRuntimeDirectory=x\n"))  # can fail
+        self.assertIsNone(pattern.search(source))
 
 
 if __name__ == "__main__":
