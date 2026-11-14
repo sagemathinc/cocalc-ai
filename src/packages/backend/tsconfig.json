@@ -21,7 +21,9 @@
     "**/*.spec.tsx",
     "**/*.spec.js",
     "**/*.spec.jsx",
-    "jest.config.js"
+    "jest.config.js",
+    "fault-test",
+    "dist-fault-test"
   ],
   "references": [{ "path": "../util", "path": "../conat", "path": "../sync" }]
 }

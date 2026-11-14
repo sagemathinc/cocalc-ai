@@ -277,6 +277,28 @@ export function poisonedStreamPaths(): string[] {
 const liveDiskConnections = new Set<PersistentStream>();
 
 // ---------------------------------------------------------------------------
+// Fault phases (028 B-3a, DESIGN §7).  Production code only ever calls this
+// no-op callback; it has no reset capability.  The STAGING fault-test build
+// (its own build target, never part of a production bundle) sets it, to time
+// a hard reset into a phase.
+export type FaultPhase =
+  | "commit"
+  | "acked"
+  | "checkpoint"
+  | "after-restart"
+  | "close";
+let faultPhase:
+  | ((phase: FaultPhase, info: Record<string, string | number>) => void)
+  | undefined = undefined;
+export function setFaultPhaseCallback(
+  cb:
+    | ((phase: FaultPhase, info: Record<string, string | number>) => void)
+    | undefined,
+): void {
+  faultPhase = cb;
+}
+
+// ---------------------------------------------------------------------------
 // The open barrier (028 B-2, DESIGN §3.2.6): before a disk-backed stream is
 // served, its -wal, .db and directory are fsync'd.  The persist server runs
 // it asynchronously (prepareDurableOpen) right before it constructs the
@@ -2034,6 +2056,8 @@ export class PersistentStream extends EventEmitter {
   poisonedPath?: string;
   private armed = false;
   private poisoned = false;
+  // a checkpoint completed since the last batch (028 B-3a fault phase F3)
+  private walRestarted = false;
   private walPageBytes = 4096;
   // group commit: the set/setMany requests not committed yet
   private writeQueue: WriteRequest[] = [];
@@ -2382,12 +2406,14 @@ export class PersistentStream extends EventEmitter {
       return this.poisoned ? "poisoned" : "unarmed";
     }
     try {
+      faultPhase?.("checkpoint", { path: `${this.options?.path}`, mode });
       const result = this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get() as
         | { busy: number; log: number; checkpointed: number }
         | undefined;
-      return result != null && !result.busy && result.checkpointed >= result.log
-        ? "ok"
-        : "busy";
+      const complete =
+        result != null && !result.busy && result.checkpointed >= result.log;
+      if (complete) this.walRestarted = true;
+      return complete ? "ok" : "busy";
     } catch (err) {
       if (isSqliteSyncError(err)) {
         this.poison(err, `checkpoint(${mode})`);
@@ -3241,6 +3267,7 @@ export class PersistentStream extends EventEmitter {
   // db.close() and the teardown (only if it really closed, or for an
   // ephemeral stream).
   private finishClose = (path: string): void => {
+    if (this.storageKind == "disk") faultPhase?.("close", { path });
     this.closing = true;
     // the restore fence and every close: nothing of this stream's trash work
     // runs after this, even if already selected for a tick (H1c §5)
@@ -3855,6 +3882,11 @@ export class PersistentStream extends EventEmitter {
       failAll(err);
       return [];
     }
+    if (this.walRestarted) {
+      // the first batch after a completed checkpoint (a WAL restart)
+      this.walRestarted = false;
+      faultPhase?.("after-restart", { path: `${this.options?.path}` });
+    }
     this.pendingRows = 0;
     this.pendingBytes = 0;
     try {
@@ -4034,12 +4066,14 @@ export class PersistentStream extends EventEmitter {
         }
       }
     } else {
+      faultPhase?.("commit", { path: `${this.options?.path}`, requests: batch.length });
       try {
         this.db.exec("COMMIT");
       } catch (err) {
         this.abortWriteBatch(batch, err);
         return [];
       }
+      faultPhase?.("acked", { path: `${this.options?.path}`, requests: batch.length });
       this.markMaintenanceMutation();
       for (const { msgID, seq, time } of newMsgIDs) {
         this.msgIDs.set(msgID, { seq, time });
