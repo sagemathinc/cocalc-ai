@@ -3455,12 +3455,17 @@ function AgentWorkspace({
                     },
                   ]
                 : []),
-              {
-                key: "workspace-collaborators",
-                label: sharing ?? "Collaborators",
-                icon: <Icon name="users" />,
-                onClick: () => openProject("settings", "people"),
-              },
+              // No other people in CoCalc Plus.
+              ...(lite
+                ? []
+                : [
+                    {
+                      key: "workspace-collaborators",
+                      label: sharing ?? "Collaborators",
+                      icon: <Icon name="users" />,
+                      onClick: () => openProject("settings", "people"),
+                    },
+                  ]),
               {
                 key: "workspace-controls",
                 icon: <Icon name="sliders" />,
@@ -4851,11 +4856,15 @@ export function MyAgentsWorkspacePage({
                 label: "Start fresh conversation…",
                 icon: <Icon name="plus-circle" />,
               },
-              {
-                key: "access",
-                label: "Collaborator access…",
-                icon: <Icon name="users" />,
-              },
+              ...(lite
+                ? []
+                : [
+                    {
+                      key: "access",
+                      label: "Collaborator access…",
+                      icon: <Icon name="users" />,
+                    },
+                  ]),
               {
                 key: hidden ? "show" : "hide",
                 icon: <Icon name={hidden ? "eye" : "eye-slash"} />,

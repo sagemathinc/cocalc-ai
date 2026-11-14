@@ -318,21 +318,31 @@ export function SetPaymentModal({
       label: c.isDefault ? `${c.label} (current default)` : c.label,
     })),
   ];
-  const claudeOptions = [
-    { value: KEEP, label: "Leave unchanged" },
-    { value: FOLLOW, label: "Follow my default credential" },
-    ...(claudeCredentials.some((c) => c.mode === "account-subscription")
-      ? [{ value: POOL, label: CLAUDE_POOL_OPTION_LABEL }]
-      : []),
-    ...claudeCredentials.map((c) => ({
-      value: `${c.mode}:${c.id}`,
-      label: c.label,
-    })),
-    ...(membership
-      ? [{ value: "membership", label: siteFundedClaudeLabel() }]
-      : []),
-    { value: "project-secret", label: "Project secret (ANTHROPIC_API_KEY)" },
-  ];
+  // CoCalc Plus: Claude Code runs with this computer's own sign-in, the only
+  // credential there.
+  const claudeOptions = lite
+    ? [
+        { value: KEEP, label: "Leave unchanged" },
+        { value: "project-secret", label: LITE_CLAUDE_LABEL },
+      ]
+    : [
+        { value: KEEP, label: "Leave unchanged" },
+        { value: FOLLOW, label: "Follow my default credential" },
+        ...(claudeCredentials.some((c) => c.mode === "account-subscription")
+          ? [{ value: POOL, label: CLAUDE_POOL_OPTION_LABEL }]
+          : []),
+        ...claudeCredentials.map((c) => ({
+          value: `${c.mode}:${c.id}`,
+          label: c.label,
+        })),
+        ...(membership
+          ? [{ value: "membership", label: siteFundedClaudeLabel() }]
+          : []),
+        {
+          value: "project-secret",
+          label: "Project secret (ANTHROPIC_API_KEY)",
+        },
+      ];
 
   function codexSelection(value: string): CodexPaymentSelection | null {
     if (value === FOLLOW) return null;

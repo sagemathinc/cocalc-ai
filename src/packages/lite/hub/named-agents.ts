@@ -35,7 +35,11 @@ import type { SetAgentPaymentSelectionsRequest } from "@cocalc/conat/inter-bay/a
 import {
   agentPaymentDefaultKey,
   agentPaymentTargetKey,
+  isAgentPaymentProvider,
+  MAX_AGENT_PAYMENT_BULK,
+  MAX_AGENT_PAYMENT_SELECTIONS,
   parseAgentPaymentSelection,
+  validateAgentPaymentTarget,
   type AgentPaymentDefaults,
   type AgentPaymentProvider,
   type AgentPaymentSelectionRecord,
@@ -704,76 +708,113 @@ export function createNamedAgents(ctx: NamedAgentsContext) {
     opts: { account_id?: string } & SetAgentPaymentSelectionsRequest,
   ): Promise<{ updated: number }> {
     const account_id = account(opts.account_id);
+    // The whole request is validated before anything is written, with the
+    // server's rules (server/agents/payment-selections.ts).
     const selection =
       opts.selection === null
         ? null
         : parseAgentPaymentSelection(opts.selection);
-    const provider = selection?.provider ?? opts.provider;
-    let updated = 0;
-    const at = now();
-    const write = (
-      key: string,
-      fields: {
-        project_id?: string;
-        path?: string;
-        thread_id?: string;
-        title?: string;
-      },
-    ) => {
-      if (selection === null) {
-        const result = db()
+    const rawTargets = opts.targets ?? [];
+    if (
+      !Array.isArray(rawTargets) ||
+      rawTargets.length > MAX_AGENT_PAYMENT_BULK
+    )
+      throw new Error("invalid agent payment targets");
+    const list = rawTargets.map((t) => {
+      const checked = validateAgentPaymentTarget(t);
+      project(checked.project_id);
+      return checked;
+    });
+    const titles = rawTargets.map((t) => {
+      const value = (t as { title?: unknown })?.title;
+      return typeof value === "string" && value.trim()
+        ? value.trim().slice(0, 200)
+        : null;
+    });
+    const defaults = (opts.defaults ?? []).map((p) => {
+      if (!isAgentPaymentProvider(p))
+        throw new Error("invalid agent payment provider");
+      return p;
+    });
+    if (defaults.length > 2) throw new Error("invalid agent payment defaults");
+    if (selection && defaults.some((p) => p !== selection.provider))
+      throw new Error("agent payment default provider mismatch");
+    if (selection?.mode === "default" && defaults.length > 0)
+      throw new Error("an account default cannot follow itself");
+    const only =
+      opts.provider === undefined
+        ? null
+        : isAgentPaymentProvider(opts.provider)
+          ? opts.provider
+          : (() => {
+              throw new Error("invalid agent payment provider");
+            })();
+    const keys = [
+      ...list.map((t) => ({ key: agentPaymentTargetKey(t), target: t })),
+      ...defaults.map((p) => ({
+        key: agentPaymentDefaultKey(p),
+        target: undefined,
+      })),
+    ];
+    if (selection) {
+      const count = (
+        db()
           .prepare(
-            `DELETE FROM lite_agent_payment_selections
-              WHERE account_id=? AND target_key=? AND (? IS NULL OR provider=?)`,
+            "SELECT count(*) AS n FROM lite_agent_payment_selections WHERE account_id=?",
           )
-          .run(account_id, key, provider ?? null, provider ?? null);
-        updated += Number(result?.changes ?? 0);
-        return;
-      }
-      const result = db()
-        .prepare(
-          `INSERT INTO lite_agent_payment_selections
-             (account_id, target_key, provider, project_id, path, thread_id,
-              selection, title, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(account_id, target_key, provider) DO ${
-             opts.only_if_absent
-               ? "NOTHING"
-               : `UPDATE SET selection=excluded.selection,
-                   path=COALESCE(excluded.path, path),
-                   title=COALESCE(excluded.title, title),
-                   updated_at=excluded.updated_at`
-           }`,
-        )
-        .run(
-          account_id,
-          key,
-          selection.provider,
-          fields.project_id ?? null,
-          fields.path ?? null,
-          fields.thread_id ?? null,
-          JSON.stringify(selection),
-          fields.title ?? null,
-          at,
-        );
-      updated += Number(result?.changes ?? 0);
-    };
-    for (const t of (opts.targets ?? []).slice(0, 1000)) {
-      const checked = target(t);
-      write(agentPaymentTargetKey(checked), {
-        ...checked,
-        title:
-          typeof (t as any).title === "string"
-            ? (t as any).title.slice(0, 200)
-            : undefined,
-      });
+          .get(account_id) as { n: number }
+      ).n;
+      if (count + list.length > MAX_AGENT_PAYMENT_SELECTIONS)
+        throw new Error("agent payment selection capacity reached");
     }
-    for (const p of opts.defaults ?? []) {
-      if (p !== "codex" && p !== "claude-code")
-        throw new Error("unsupported agent payment provider");
-      if (selection && selection.provider !== p)
-        throw new Error("a default must be for its own provider");
-      write(agentPaymentDefaultKey(p), {});
+    const at = now();
+    const handle = db();
+    let updated = 0;
+    handle.exec("BEGIN");
+    try {
+      keys.forEach(({ key, target }, i) => {
+        if (selection === null) {
+          const result = handle
+            .prepare(
+              `DELETE FROM lite_agent_payment_selections
+                WHERE account_id=? AND target_key=? AND (? IS NULL OR provider=?)`,
+            )
+            .run(account_id, key, only, only);
+          updated += Number(result?.changes ?? 0);
+          return;
+        }
+        const result = handle
+          .prepare(
+            `INSERT INTO lite_agent_payment_selections
+               (account_id, target_key, provider, project_id, path, thread_id,
+                selection, title, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(account_id, target_key, provider) DO ${
+               opts.only_if_absent
+                 ? "NOTHING"
+                 : `UPDATE SET selection=excluded.selection,
+                     path=COALESCE(excluded.path, path),
+                     title=COALESCE(excluded.title, title),
+                     updated_at=excluded.updated_at`
+             }`,
+          )
+          .run(
+            account_id,
+            key,
+            selection.provider,
+            target?.project_id ?? null,
+            target?.path ?? null,
+            target?.thread_id ?? null,
+            JSON.stringify(selection),
+            target ? titles[i] : null,
+            at,
+          );
+        updated += Number(result?.changes ?? 0);
+      });
+      handle.exec("COMMIT");
+    } catch (error) {
+      handle.exec("ROLLBACK");
+      throw error;
     }
     return { updated };
   }

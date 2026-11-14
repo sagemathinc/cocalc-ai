@@ -229,14 +229,24 @@ describe("payment selections", () => {
     ).toEqual({ updated: 1 });
     await agents.setPaymentSelections({
       defaults: ["codex"],
-      selection: { version: 1, provider: "codex", mode: "default" },
+      selection: {
+        version: 1,
+        provider: "codex",
+        mode: "credential",
+        credential_id: "00000000-0000-4000-8000-0000000000c0",
+      },
     });
     const got = await agents.getPaymentSelections({ targets: [t] });
     expect(got.selections).toEqual([
       expect.objectContaining({ thread_id: "t1", selection: claude }),
     ]);
     expect(got.defaults).toEqual({
-      codex: { version: 1, provider: "codex", mode: "default" },
+      codex: {
+        version: 1,
+        provider: "codex",
+        mode: "credential",
+        credential_id: "00000000-0000-4000-8000-0000000000c0",
+      },
     });
     // only_if_absent keeps an existing choice.
     await agents.setPaymentSelections({
@@ -266,5 +276,73 @@ describe("payment selections", () => {
         selection: { version: 1, provider: "codex", mode: "nope" } as any,
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("payment selection validation (as on the server)", () => {
+  const codex = {
+    version: 1 as const,
+    provider: "codex" as const,
+    mode: "default" as const,
+  };
+  const t = (thread_id: string, extra: Record<string, unknown> = {}) => ({
+    project_id: PROJECT,
+    thread_id,
+    ...extra,
+  });
+
+  it("validates the whole request before writing anything", async () => {
+    const { agents } = setup();
+    // The second target is invalid: the first is not written either.
+    await expect(
+      agents.setPaymentSelections({
+        targets: [t("ok"), t("bad", { path: "x\0y" })],
+        selection: codex,
+      }),
+    ).rejects.toThrow("invalid agent payment path");
+    await expect(
+      agents.setPaymentSelections({
+        targets: [t("ok"), t("x".repeat(201))],
+        selection: codex,
+      }),
+    ).rejects.toThrow("thread_id");
+    await expect(
+      agents.setPaymentSelections({
+        targets: [t("ok"), { project_id: OTHER, thread_id: "t" }],
+        selection: codex,
+      }),
+    ).rejects.toThrow("not available");
+    expect((await agents.listPaymentSelections({})).selections).toEqual([]);
+  });
+
+  it("refuses oversized requests, self-following defaults and mismatched providers", async () => {
+    const { agents } = setup();
+    await expect(
+      agents.setPaymentSelections({
+        targets: Array.from({ length: 1001 }, (_, i) => t(`t${i}`)),
+        selection: codex,
+      }),
+    ).rejects.toThrow("invalid agent payment targets");
+    await expect(
+      agents.setPaymentSelections({ defaults: ["codex"], selection: codex }),
+    ).rejects.toThrow("cannot follow itself");
+    await expect(
+      agents.setPaymentSelections({
+        defaults: ["claude-code"],
+        selection: {
+          version: 1,
+          provider: "codex",
+          mode: "credential",
+          credential_id: "00000000-0000-4000-8000-000000000009",
+        },
+      }),
+    ).rejects.toThrow("provider mismatch");
+    await expect(
+      agents.setPaymentSelections({
+        defaults: ["gemini" as any],
+        selection: null,
+      }),
+    ).rejects.toThrow("invalid agent payment provider");
+    expect((await agents.listPaymentSelections({})).selections).toEqual([]);
   });
 });
