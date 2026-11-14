@@ -22,7 +22,10 @@ export const AGENT_TURN_USAGE_RETENTION_DAYS = 90;
 const PRUNE_INTERVAL_MS = 60 * 60_000;
 
 type Queryable = {
-  query(sql: string, values?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }>;
+  query(
+    sql: string,
+    values?: unknown[],
+  ): Promise<{ rows: any[]; rowCount?: number | null }>;
 };
 
 let db: () => Queryable = () => getPool();
@@ -40,8 +43,9 @@ async function pruneOld(now: number): Promise<void> {
   lastPrune = now;
   try {
     await db().query(
+      // Hub time, never the reporting host's clock.
       `DELETE FROM agent_turn_usage
-        WHERE ended_at < now() - make_interval(days => $1)`,
+        WHERE received_at < now() - make_interval(days => $1)`,
       [AGENT_TURN_USAGE_RETENTION_DAYS],
     );
   } catch (error) {
@@ -74,11 +78,13 @@ export async function insertAgentTurnUsage({
   let stored = 0;
   for (const { usage: raw, host_id } of rows) {
     // Revalidated here too: never store what a remote bay passed on as is.
-    const usage = parseAgentTurnUsage(raw);
+    const usage = parseAgentTurnUsage(raw, now);
     if (!usage) continue;
     const sum = totals(usage);
-    await db().query(
-      `INSERT INTO agent_turn_usage
+    // One row that the database refuses must not lose the rest of the batch.
+    try {
+      await db().query(
+        `INSERT INTO agent_turn_usage
          (account_id, id, project_id, path, thread_id, provider, payment,
           credential_id, pool, models, input_tokens, cached_input_tokens,
           cache_write_tokens, output_tokens, outcome, started_at, ended_at,
@@ -86,28 +92,31 @@ export async function insertAgentTurnUsage({
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
                to_timestamp($16::double precision / 1000),
                to_timestamp($17::double precision / 1000),$18)`,
-      [
-        account_id,
-        randomUUID(),
-        usage.project_id,
-        usage.path,
-        usage.thread_id,
-        usage.provider,
-        usage.payment,
-        usage.credential_id ?? null,
-        usage.pool ?? null,
-        JSON.stringify(usage.models),
-        sum.input,
-        sum.cached,
-        sum.write,
-        sum.output,
-        usage.outcome,
-        usage.started_at,
-        usage.ended_at,
-        host_id ?? null,
-      ],
-    );
-    stored += 1;
+        [
+          account_id,
+          randomUUID(),
+          usage.project_id,
+          usage.path,
+          usage.thread_id,
+          usage.provider,
+          usage.payment,
+          usage.credential_id ?? null,
+          usage.pool ?? null,
+          JSON.stringify(usage.models),
+          sum.input,
+          sum.cached,
+          sum.write,
+          sum.output,
+          usage.outcome,
+          usage.started_at,
+          usage.ended_at,
+          host_id ?? null,
+        ],
+      );
+      stored += 1;
+    } catch (error) {
+      logger.debug("agent turn usage row not stored", { error: `${error}` });
+    }
   }
   await pruneOld(now);
   return stored;

@@ -134,19 +134,51 @@ describeDb("agent turn usage (account home bay)", () => {
     ).rejects.toThrow("stale");
   });
 
-  test("ages out rows past the retention", async () => {
+  test("ages out rows by when the hub stored them, not host times", async () => {
     const account_id = randomUUID();
-    const old = Date.now() - 100 * 24 * 60 * 60_000;
-    await recordAgentTurnUsageForAccount(account_id, [
-      { usage: usage({ started_at: old - 1000, ended_at: old }) },
-    ]);
-    // The insert above pruned first-thing; prune again with the next insert.
-    setTurnUsageDbForTests();
     await recordAgentTurnUsageForAccount(account_id, [{ usage: usage() }]);
-    const { rows } = await getPool().query(
-      "SELECT ended_at FROM agent_turn_usage WHERE account_id=$1",
+    await getPool().query(
+      "UPDATE agent_turn_usage SET received_at = now() - interval '91 days' WHERE account_id=$1",
       [account_id],
     );
-    expect(rows).toHaveLength(1);
+    setTurnUsageDbForTests(); // the next insert prunes again
+    await recordAgentTurnUsageForAccount(account_id, [
+      { usage: usage({ thread_id: "fresh" }) },
+    ]);
+    const { rows } = await getPool().query(
+      "SELECT thread_id FROM agent_turn_usage WHERE account_id=$1",
+      [account_id],
+    );
+    expect(rows.map((r) => r.thread_id)).toEqual(["fresh"]);
+  });
+
+  test("refuses far-future turns, and one refused row keeps the rest", async () => {
+    const account_id = randomUUID();
+    let inserts = 0;
+    setTurnUsageDbForTests(() => ({
+      query: async (sql: string, values?: unknown[]) => {
+        if (sql.includes("INSERT") && inserts++ === 0)
+          throw Error("value out of range");
+        return await getPool().query(sql, values as any[]);
+      },
+    }));
+    await expect(
+      recordAgentTurnUsageForAccount(account_id, [
+        { usage: usage({ thread_id: "refused-by-db" }) },
+        {
+          usage: usage({
+            thread_id: "future",
+            ended_at: Date.now() + 365 * 86_400_000,
+          }),
+        },
+        { usage: usage({ thread_id: "kept" }) },
+      ]),
+    ).resolves.toBe(1);
+    setTurnUsageDbForTests();
+    const { rows } = await getPool().query(
+      "SELECT thread_id FROM agent_turn_usage WHERE account_id=$1",
+      [account_id],
+    );
+    expect(rows.map((r) => r.thread_id)).toEqual(["kept"]);
   });
 });

@@ -5,6 +5,7 @@ import {
 } from "./agent-turn-usage";
 
 const OWNER = "00000000-0000-4000-8000-000000000002";
+const NOW = Date.now();
 const usage = (thread_id = "t1") => ({
   project_id: "00000000-0000-4000-8000-000000000001",
   path: "a.chat",
@@ -21,8 +22,8 @@ const usage = (thread_id = "t1") => ({
       reasoning_output_tokens: 0,
     },
   ],
-  started_at: 1,
-  ended_at: 2,
+  started_at: NOW - 60_000,
+  ended_at: NOW - 1_000,
   outcome: "completed" as const,
 });
 

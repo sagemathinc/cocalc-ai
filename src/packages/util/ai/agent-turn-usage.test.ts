@@ -7,6 +7,7 @@ import {
 } from "./agent-turn-usage";
 
 const PROJECT = "00000000-0000-4000-8000-000000000001";
+const NOW = Date.now();
 const CREDENTIAL = "00000000-0000-4000-8000-000000000003";
 
 const turn = (over: Record<string, unknown> = {}) => ({
@@ -27,8 +28,8 @@ const turn = (over: Record<string, unknown> = {}) => ({
       reasoning_output_tokens: 0,
     },
   ],
-  started_at: 1_000,
-  ended_at: 2_000,
+  started_at: NOW - 60_000,
+  ended_at: NOW - 1_000,
   outcome: "completed",
   ...over,
 });
@@ -76,7 +77,7 @@ describe("parseAgentTurnUsage", () => {
       turn({ provider: "gemini" }),
       turn({ outcome: "great" }),
       turn({ credential_id: "not-a-uuid" }),
-      turn({ ended_at: 500 }),
+      turn({ ended_at: NOW - 120_000 }),
       turn({ path: "" }),
       turn({ models: [] }),
       turn({ models: [{ model: "m", output_tokens: 0 }] }),
@@ -84,6 +85,41 @@ describe("parseAgentTurnUsage", () => {
       [],
     ])
       expect(parseAgentTurnUsage(bad)).toBeUndefined();
+  });
+});
+
+describe("parseAgentTurnUsage time bounds", () => {
+  it("refuses times a host could use to dodge retention or break storage", () => {
+    const hour = 60 * 60_000;
+    const day = 24 * hour;
+    for (const [started_at, ended_at] of [
+      // Far in the future: would never age out.
+      [NOW + 365 * day - 1000, NOW + 365 * day],
+      // Just past the skew allowance.
+      [NOW + 11 * 60_000, NOW + 11 * 60_000],
+      // Outside any database timestamp range.
+      [Number.MAX_VALUE, Number.MAX_VALUE],
+      [-Number.MAX_VALUE, NOW],
+      // Too old, or an impossibly long turn.
+      [NOW - 31 * day, NOW - 31 * day + 1000],
+      [NOW - 8 * day, NOW],
+    ])
+      expect(
+        parseAgentTurnUsage(turn({ started_at, ended_at }), NOW),
+      ).toBeUndefined();
+  });
+
+  it("allows some clock skew and late reports", () => {
+    expect(
+      parseAgentTurnUsage(turn({ started_at: NOW, ended_at: NOW + 5 * 60_000 }), NOW),
+    ).toBeDefined();
+    const day = 24 * 60 * 60_000;
+    expect(
+      parseAgentTurnUsage(
+        turn({ started_at: NOW - 20 * day, ended_at: NOW - 19 * day }),
+        NOW,
+      ),
+    ).toBeDefined();
   });
 });
 
