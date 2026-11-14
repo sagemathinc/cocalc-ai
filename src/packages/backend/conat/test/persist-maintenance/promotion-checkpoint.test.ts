@@ -37,21 +37,26 @@ describe("promotion barrier checkpoint (finding 088)", () => {
 
   afterEach(async () => {
     jest.restoreAllMocks();
+    // the reader is killed and reaped before its database is removed
+    await killReader();
     await rm(root, { recursive: true, force: true });
   });
 
   // The reader is a CHILD PROCESS that is killed at the end, like the
   // integrity_check child, which exits without closing its connection.  (An
   // in-process reader would checkpoint on close through its handle to the
-  // unlinked WAL and so hide a lost WAL.)
+  // unlinked WAL and so hide a lost WAL.)  It is tracked from the moment it is
+  // spawned, its readiness wait is bounded, and every exit path kills it
+  // through its own handle and waits for it to exit.
+  const READY_TIMEOUT_MS = 10_000;
   let reader: ChildProcess | undefined;
-  afterEach(() => {
-    reader?.kill("SIGKILL");
-    reader = undefined;
-  });
-  // holdSnapshot: keep a read transaction open (blocks the checkpoint);
-  // otherwise read once in autocommit and stay idle with the file open.
-  async function startReader(holdSnapshot = true): Promise<ChildProcess> {
+  let lastReader: ChildProcess | undefined;
+  // hold: keep a read transaction open (blocks the checkpoint); idle: read
+  // once in autocommit and stay idle with the file open; stall: never ready.
+  async function startReader(
+    mode: "hold" | "idle" | "stall" = "hold",
+    readyTimeoutMs = READY_TIMEOUT_MS,
+  ): Promise<void> {
     const child = spawn(
       process.execPath,
       [
@@ -59,31 +64,56 @@ describe("promotion barrier checkpoint (finding 088)", () => {
         `const { DatabaseSync } = require("node:sqlite");
 const db = new DatabaseSync(process.argv[1]);
 if (process.argv[2] === "hold") db.exec("BEGIN");
-db.prepare("SELECT count(*) AS n FROM marker").get();
-process.stdout.write("READY\\n");
+if (process.argv[2] !== "stall") {
+  db.prepare("SELECT count(*) AS n FROM marker").get();
+  process.stdout.write("READY\\n");
+}
 setInterval(() => {}, 1000);`,
         sourcePath,
-        holdSnapshot ? "hold" : "idle",
+        mode,
       ],
       { stdio: ["ignore", "pipe", "inherit"] },
     );
-    await new Promise<void>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code) => reject(new Error(`reader exited ${code}`)));
-      child.stdout!.on("data", (d) => {
-        if (`${d}`.includes("READY")) resolve();
+    reader = child;
+    lastReader = child;
+    let out = "";
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () =>
+            reject(new Error(`reader not ready after ${readyTimeoutMs} ms`)),
+          readyTimeoutMs,
+        );
+        const done = (err?: Error) => {
+          clearTimeout(timer);
+          if (err) reject(err);
+          else resolve();
+        };
+        child.once("error", done);
+        child.once("exit", (code, signal) =>
+          done(new Error(`reader exited before READY (${code ?? signal})`)),
+        );
+        child.stdout!.on("data", (d) => {
+          out += d;
+          if (out.includes("READY\n")) done();
+        });
       });
-    });
-    return child;
+    } catch (err) {
+      await killReader();
+      throw err;
+    }
   }
   async function killReader(): Promise<void> {
     const child = reader;
     reader = undefined;
-    if (child == null || child.exitCode != null) return;
-    await new Promise<void>((resolve) => {
-      child.once("exit", () => resolve());
-      child.kill("SIGKILL");
-    });
+    if (child == null) return;
+    if (child.exitCode == null && child.signalCode == null) {
+      await new Promise<void>((resolve) => {
+        child.once("exit", () => resolve());
+        child.kill("SIGKILL");
+      });
+    }
+    child.stdout?.destroy();
   }
 
   // A reader whose snapshot is OLDER than the marker rows, then the marker
@@ -94,7 +124,7 @@ setInterval(() => {}, 1000);`,
     setup.exec("PRAGMA journal_mode=WAL");
     setup.exec("CREATE TABLE marker(id INTEGER PRIMARY KEY)");
     setup.close();
-    reader = await startReader();
+    await startReader("hold");
     const writer = new DatabaseSync(sourcePath);
     writer.exec("PRAGMA wal_autocheckpoint=0");
     const insert = writer.prepare("INSERT INTO marker(id) VALUES (?)");
@@ -167,7 +197,7 @@ setInterval(() => {}, 1000);`,
     const insert = setup.prepare("INSERT INTO marker(id) VALUES (?)");
     for (let i = 1; i <= MARKERS; i++) insert.run(i);
     setup.close();
-    reader = await startReader(false);
+    await startReader("idle");
     const before = statSync(sourcePath);
     const coordinator = coordinatorWith();
     const promote = jest.spyOn(coordinator as any, "promote");
@@ -183,6 +213,15 @@ setInterval(() => {}, 1000);`,
     await killReader();
     coordinator.close();
     expect(markerCount()).toBe(MARKERS);
+  });
+
+  it("kills and reaps a reader that never becomes ready, within the bound", async () => {
+    await expect(startReader("stall", 500)).rejects.toThrow(
+      /not ready after 500 ms/,
+    );
+    expect(reader).toBeUndefined();
+    expect(lastReader?.signalCode).toBe("SIGKILL");
+    expect(() => process.kill(lastReader!.pid!, 0)).toThrow();
   });
 
   it("still promotes when no other connection holds the file", async () => {
@@ -244,15 +283,40 @@ setInterval(() => {}, 1000);`,
       ).toThrow(/checkpoint incomplete/);
     });
 
-    it("refuses a missing or malformed result", () => {
+    it("refuses a missing result", () => {
       expect(() =>
         assertPromotionCheckpointComplete(path(), undefined),
       ).toThrow(/checkpoint incomplete/);
+    });
+
+    it("refuses a busy value that is not exactly the number 0", () => {
+      for (const busy of ["0", 0n, null, false]) {
+        expect(() =>
+          assertPromotionCheckpointComplete(path(), {
+            busy,
+            log: 0,
+            checkpointed: 0,
+          }),
+        ).toThrow(/checkpoint incomplete/);
+      }
+    });
+
+    it("refuses a log that is not a number", () => {
       expect(() =>
         assertPromotionCheckpointComplete(path(), {
           busy: 0,
           log: "0",
           checkpointed: "0",
+        }),
+      ).toThrow(/checkpoint incomplete/);
+    });
+
+    it("refuses a log that is not an integer", () => {
+      expect(() =>
+        assertPromotionCheckpointComplete(path(), {
+          busy: 0,
+          log: 1.5,
+          checkpointed: 1.5,
         }),
       ).toThrow(/checkpoint incomplete/);
     });
