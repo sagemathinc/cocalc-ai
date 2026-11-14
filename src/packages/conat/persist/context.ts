@@ -116,6 +116,10 @@ export interface PersistDurabilityRecords {
   // poisoned project refuses all of its streams (Q-F)
   check: (id: string, owner?: string) => PersistDurabilityCheck;
   poisonProject: (owner: string, info: Record<string, string | number>) => void;
+  projectPoisonGeneration: (owner: string) => string | undefined;
+  clearProjectPoison: (owner: string) => string[];
+  // this process's generation
+  generation?: string;
   // after a verified eviction: remove dead processes' dirty records
   clearLeftovers: (id: string) => number;
   // the ids an owner's dead processes left mid-write (undefined: unbounded
@@ -161,6 +165,18 @@ export let verifiedEviction:
 // A full PRAGMA integrity_check of a closed database, off the main thread, time
 // bounded and one at a time per host (§3.2.6 POST-REBOOT, §3.2.9).  Without
 // it, a stream with a post-reboot record stays refused.
+// S-q (DESIGN §3.2.6): in a NEW persist process (no connection to the files
+// exists), verify a project poisoned by a quota error at fsync: a trusted,
+// bounded inventory of its store; for each file fsync, DONTNEED, mincore = 0,
+// remove the -shm; then an integrity_check of each database.  Any failure:
+// the project stays poisoned (no host effect).
+export let projectRecovery:
+  | ((
+      owner: string,
+      storeRoot: string,
+    ) => Promise<{ ok: boolean; files?: string[]; why?: string }>)
+  | undefined = undefined;
+
 export let integrityCheck:
   | ((dbPath: string) => Promise<{ ok: boolean; why?: string }>)
   | undefined = undefined;
@@ -215,6 +231,10 @@ export function initContext(opts: {
   openBarrier?: PersistOpenBarrier;
   verifiedEviction?: (dbPath: string) => Promise<VerifiedEvictionResult>;
   integrityCheck?: (dbPath: string) => Promise<{ ok: boolean; why?: string }>;
+  projectRecovery?: (
+    owner: string,
+    storeRoot: string,
+  ) => Promise<{ ok: boolean; files?: string[]; why?: string }>;
 }) {
   sqliteModule = opts.sqlite;
   compress = opts.compress;
@@ -234,6 +254,7 @@ export function initContext(opts: {
   openBarrier = opts.openBarrier;
   verifiedEviction = opts.verifiedEviction;
   integrityCheck = opts.integrityCheck;
+  projectRecovery = opts.projectRecovery;
 }
 
 export function createDatabase(...args): Database {

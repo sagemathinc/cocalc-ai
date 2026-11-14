@@ -81,6 +81,7 @@ import {
   verifiedEviction,
   type VerifiedEvictionResult,
   integrityCheck,
+  projectRecovery,
 } from "./context";
 import { posix } from "path";
 import { isMainThread } from "worker_threads";
@@ -288,7 +289,7 @@ function poisonProject(owner: string, info: Record<string, string | number>) {
   durability?.poisonProject(owner, info);
   for (const stream of [...openStreams.keys()]) {
     if (stream.logicalId != null && streamOwners.get(stream.logicalId) === owner) {
-      stream.poisonForProject(`${info.where ?? "project"}`);
+      stream.poisonForProject(`${info.where ?? "project"}`, owner);
     }
   }
   logger.warn(
@@ -354,8 +355,14 @@ function settleOpenBarrier(
   }
   // a sync error: the record stays and becomes the poison record
   armedConnections.delete(id);
-  durability?.poison(id, { where: "open-barrier", errno: result.errno });
-  if (owner != null && owner !== "host" && QUOTA_ERRNOS.has(result.errno)) {
+  const projectScope =
+    owner != null && owner !== "host" && QUOTA_ERRNOS.has(result.errno);
+  durability?.poison(id, {
+    where: "open-barrier",
+    errno: result.errno,
+    ...(projectScope ? { scope: "project", owner: owner! } : {}),
+  });
+  if (projectScope) {
     // Q-F: the project's quota, not this file: every stream of the project
     poisonProject(owner, { where: "open-barrier", errno: result.errno });
   }
@@ -390,6 +397,7 @@ function runOpenBarrierSync(id: string, dbPath: string): void {
 export async function prepareDurableOpen(
   path: string,
   owner: string,
+  storeRoot?: string,
 ): Promise<void> {
   if (cache.info().count[path] != null) {
     // a live connection: what it serves is committed, hence durable
@@ -403,7 +411,13 @@ export async function prepareDurableOpen(
   }
   const id = posix.normalize(path);
   streamOwners.set(id, owner);
-  const state = durability?.check(id, owner);
+  let state = durability?.check(id, owner);
+  if (state == "poisoned" && storeRoot != null) {
+    // a project poisoned by an EARLIER process (quota at fsync): S-q
+    if (await recoverProject(owner, storeRoot)) {
+      state = durability?.check(id, owner);
+    }
+  }
   if (state == "poisoned") throw retryableWriteError("poisoned");
   if (state == "unverified") throw unverifiedStreamError();
   if (state == "needs-check") {
@@ -613,6 +627,49 @@ async function verifyProjectLeftovers(
   if (durability.check(id, owner) == "leftover") {
     await verifyLeftover(id, dbPath);
   }
+}
+
+// S-q (§3.2.6): only in a process that holds no connection to the files,
+// i.e. one whose generation did not write the poison (after an exit-path
+// restart); once per project at a time.  True if the project was cleared.
+const recoveringProject = new Map<string, Promise<boolean>>();
+async function recoverProject(
+  owner: string,
+  storeRoot: string,
+): Promise<boolean> {
+  if (owner === "host" || durability == null || projectRecovery == null) {
+    return false;
+  }
+  const writer = durability.projectPoisonGeneration(owner);
+  if (writer == null || writer === durability.generation) return false;
+  let pending = recoveringProject.get(owner);
+  if (pending == null) {
+    const run = projectRecovery;
+    pending = (async () => {
+      let result: { ok: boolean; files?: string[]; why?: string };
+      try {
+        result = await run(owner, storeRoot);
+      } catch (err) {
+        result = { ok: false, why: `${err}` };
+      }
+      if (!result.ok) {
+        logger.warn(
+          "persist alert (non-paging): S-q could not verify a poisoned project; it stays poisoned (finding 028)",
+          { owner, why: result.why },
+        );
+        return false;
+      }
+      const cleared = durability!.clearProjectPoison(owner);
+      logger.info("persist: S-q verified a poisoned project (finding 028)", {
+        owner,
+        files: result.files?.length,
+        cleared: cleared.length,
+      });
+      return true;
+    })().finally(() => recoveringProject.delete(owner));
+    recoveringProject.set(owner, pending);
+  }
+  return await pending;
 }
 
 // One verification at a time per stream (concurrent opens wait for it).
@@ -2204,7 +2261,11 @@ export class PersistentStream extends EventEmitter {
   // this file, it is refused for good in this process, and its dirty record
   // becomes the poisoned-file record, so no later open in this boot serves
   // it either.  The connection is kept open and referenced, never closed.
-  private poison = (err: unknown, where: string): void => {
+  private poison = (
+    err: unknown,
+    where: string,
+    extra: Record<string, string> = {},
+  ): void => {
     if (this.poisoned) return;
     this.poisoned = true;
     const path = this.options?.path;
@@ -2214,6 +2275,7 @@ export class PersistentStream extends EventEmitter {
       durability?.poison(this.logicalId, {
         where,
         errcode: Number((err as any)?.errcode ?? 0),
+        ...extra,
       });
     }
     this.trashGeneration += 1;
@@ -2237,11 +2299,12 @@ export class PersistentStream extends EventEmitter {
   };
 
   // its project was poisoned (Q-F): this connection too, like a sync error
-  poisonForProject = (where: string): void => {
+  poisonForProject = (where: string, owner: string): void => {
     if (this.poisoned) return;
     this.poison(
       Object.assign(new Error("project poisoned (Q-F)"), { errcode: 0 }),
       `project:${where}`,
+      { scope: "project", owner },
     );
   };
 

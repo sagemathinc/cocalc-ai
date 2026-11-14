@@ -238,6 +238,7 @@ export function createDurabilityRecords({
           target,
           JSON.stringify({
             kind: "poisoned-file",
+            id,
             generation,
             pid,
             poisoned: Date.now(),
@@ -275,6 +276,56 @@ export function createDurabilityRecords({
       } catch (err) {
         warn("could not write a poisoned-project record", err);
       }
+    },
+
+    // The generation of the process that wrote owner's project poison, if any.
+    projectPoisonGeneration: (owner: string): string | undefined => {
+      const name = safeOwner(owner);
+      if (name == null) return;
+      try {
+        const record = JSON.parse(
+          fs.readFileSync(posix.join(poisonedProjectDir, name), "utf8"),
+        );
+        return `${record?.generation ?? ""}`;
+      } catch (err) {
+        return (err as any)?.code === "ENOENT" ? undefined : "unknown";
+      }
+    },
+
+    // After S-q verified the project (§3.2.6): its project record goes, and
+    // the poisoned-file records of its streams that were poisoned BECAUSE of
+    // the project (scope "project"), with their post-reboot records.  A file
+    // poisoned by a device error stays.  Returns the ids cleared.
+    clearProjectPoison: (owner: string): string[] => {
+      const name = safeOwner(owner);
+      if (name == null) return [];
+      const cleared: string[] = [];
+      let keys: string[] = [];
+      try {
+        keys = fs.readdirSync(poisonedDir);
+      } catch {}
+      for (const key of keys) {
+        if (key.endsWith(".tmp")) continue;
+        let record: any;
+        try {
+          record = JSON.parse(
+            fs.readFileSync(posix.join(poisonedDir, key), "utf8"),
+          );
+        } catch {
+          continue;
+        }
+        if (record?.scope !== "project" || record?.owner !== name) continue;
+        if (typeof record.id !== "string" || sha256(record.id) !== key) continue;
+        postReboot?.remove(key);
+        fs.unlinkSync(posix.join(poisonedDir, key));
+        cleared.push(record.id);
+      }
+      try {
+        fs.unlinkSync(posix.join(poisonedProjectDir, name));
+      } catch (err) {
+        if ((err as any)?.code !== "ENOENT") throw err;
+      }
+      return cleared;
     },
 
     retryPostReboot: (): number => {

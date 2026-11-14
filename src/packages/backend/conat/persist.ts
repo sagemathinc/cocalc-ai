@@ -31,7 +31,10 @@ import {
   persistDurabilityRecords,
 } from "./persist-durability";
 import { persistOpenBarrier } from "./persist-open-barrier";
-import { checkedVerifiedEviction } from "./persist-verified-eviction";
+import {
+  checkedVerifiedEviction,
+  recoverPoisonedProject,
+} from "./persist-verified-eviction";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
 
@@ -57,6 +60,7 @@ export const persistContextOptions: Parameters<typeof initContext>[0] = {
   openBarrier: persistOpenBarrier,
   verifiedEviction: checkedVerifiedEviction,
   integrityCheck: integrityCheckClosedDatabase,
+  projectRecovery: (owner, storeRoot) => recoverPoisonedProject(owner, storeRoot),
 };
 initContext(persistContextOptions);
 

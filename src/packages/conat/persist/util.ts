@@ -252,7 +252,7 @@ async function openStream({
   if (maintenance == null) {
     // 028 B-2: the open barrier, off the main thread, right before the get
     // (no await between it and the construction that consumes its pass)
-    await prepareDurableOpen(path, storeOwner(storage.path));
+    await prepareDurableOpen(path, storeOwner(storage.path), store?.root);
     try {
       return pstream({ ...storage, path, archive, backup, archiveInterval });
     } finally {
@@ -277,7 +277,7 @@ async function openStream({
     maintenance.trackingUnavailable?.(err);
   }
   try {
-    await prepareDurableOpen(path, storeOwner(storage.path));
+    await prepareDurableOpen(path, storeOwner(storage.path), store?.root);
     const stream = pstream({
       ...storage,
       path,

@@ -36,6 +36,7 @@ import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { syncFiles } from "@cocalc/backend/data";
 import { createFairLimiter, OPEN_BARRIER_CONCURRENCY } from "./persist-open-barrier";
+import { integrityCheckClosedDatabase } from "./persist-durability";
 
 const logger = getLogger("persist:verified-eviction");
 
@@ -291,4 +292,95 @@ export async function checkedVerifiedEviction(
     return notVerified(dbPath, "page-cache helper self-test failed");
   }
   return await limiter.run(dirname(dbPath), () => verifiedEviction(dbPath));
+}
+
+// S-q's INVENTORY (§3.2.6, review R5): the project's persist files, from its
+// store root, without following any symlink: only regular files named *.db
+// or *.db-wal on the root's device.  Anything ambiguous (a symlink, a
+// non-regular file other than a directory, another device) or more than max
+// files: undefined, and the project stays poisoned.
+export async function persistInventory(
+  root: string,
+  max = 10_000,
+): Promise<string[] | undefined> {
+  let rootStats: fs.Stats;
+  try {
+    rootStats = await fs.promises.lstat(root);
+  } catch {
+    return undefined;
+  }
+  if (!rootStats.isDirectory()) return undefined;
+  const dbs = new Set<string>();
+  let files = 0;
+  const walk = async (dir: string): Promise<boolean> => {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      let st: fs.Stats;
+      try {
+        st = await fs.promises.lstat(path);
+      } catch {
+        return false; // removed or replaced during the walk
+      }
+      if (st.dev !== rootStats.dev) return false;
+      if (st.isSymbolicLink()) return false;
+      if (st.isDirectory()) {
+        if (!(await walk(path))) return false;
+        continue;
+      }
+      if (!st.isFile()) return false;
+      if (entry.name.endsWith(".db")) {
+        dbs.add(path);
+      } else if (entry.name.endsWith(".db-wal")) {
+        dbs.add(path.slice(0, -"-wal".length));
+      } else {
+        continue; // -shm and anything else: not persist data
+      }
+      if (++files > max) return false;
+    }
+    return true;
+  };
+  if (!(await walk(root))) return undefined;
+  return [...dbs].sort();
+}
+
+// S-q (§3.2.6): steps 1-4 (verified eviction) for every database of the
+// inventory, then 5, a full integrity_check of each, off the main thread.
+export async function recoverPoisonedProject(
+  owner: string,
+  storeRoot: string,
+  {
+    evict = checkedVerifiedEviction,
+    check,
+  }: {
+    evict?: (dbPath: string) => Promise<EvictionResult>;
+    check?: (dbPath: string) => Promise<{ ok: boolean; why?: string }>;
+  } = {},
+): Promise<{ ok: boolean; files?: string[]; why?: string }> {
+  const inventory = await persistInventory(storeRoot);
+  if (inventory == null) {
+    return { ok: false, why: "inventory ambiguous or over its bound" };
+  }
+  const integrity = check ?? integrityCheckClosedDatabase;
+  for (const db of inventory) {
+    const evicted = await evict(db);
+    if (!evicted.verified) {
+      return { ok: false, why: `${evicted.path}: ${evicted.why}` };
+    }
+  }
+  for (const db of inventory) {
+    if (!fs.existsSync(db)) continue; // a -wal without its db: nothing to check
+    const r = await integrity(db);
+    if (!r.ok) return { ok: false, why: `${db}: integrity_check ${r.why}` };
+  }
+  logger.info("persist: S-q inventory verified (finding 028)", {
+    owner,
+    files: inventory.length,
+  });
+  return { ok: true, files: inventory };
 }
