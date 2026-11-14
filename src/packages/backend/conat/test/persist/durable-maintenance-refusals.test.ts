@@ -13,6 +13,9 @@ import { join } from "node:path";
 
 import {
   assertPersistMaintenanceOpenAllowed,
+  fsyncMaintenanceOutput,
+  MaintenanceFsyncError,
+  runArmedMaintenanceWrite,
   persistDurabilityRecords,
   persistRunDir,
   sha256Hex,
@@ -129,7 +132,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     // promotion's exclusive checkpoint
     [
       "backend/conat/persist-maintenance/coordinator.ts",
-      /this\.assertOpenAllowed\(checked\.path, row\);\s*const sourceDb = new DatabaseSync\(checked\.path\);/,
+      /const owner = this\.assertOpenAllowed\(checked\.path, row\);\s*\/\/ armed: a sync error here poisons the stream \(SA-B2-1\)\s*runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{\s*const sourceDb = new DatabaseSync\(checked\.path\);/,
     ],
     // the quick_check of an output or source
     [
@@ -139,7 +142,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     // the trim's offline compaction and read
     [
       "project-host/persist-storage.ts",
-      /function compact\(path: string, owner: string\): void \{\s*assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*const db = new DatabaseSync/,
+      /function compact\(path: string, owner: string\): void \{\s*assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*\/\/ armed: a sync error in the VACUUM, its checkpoints or the close poisons\s*\/\/ the stream \(SA-B2-1\)\s*runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:compact", \(\) => \{\s*const db = new DatabaseSync/,
     ],
     [
       "project-host/persist-storage.ts",
@@ -210,6 +213,80 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     const src = fs.readFileSync(join(packages, "project-host/persist-storage.ts"), "utf8");
     expect(src).toMatch(/lastSeqBefore\(path, policy\.since, ctx\.project_id\)/);
     expect(src).toMatch(/compact\(path, ctx\.project_id\);/);
+  });
+
+  describe("SA-B2-1: a maintenance WRITE runs with the stream's dirty record armed", () => {
+    const fake = () => {
+      const calls: string[] = [];
+      return {
+        calls,
+        records: {
+          arm: (id: string, owner?: string) => calls.push(`arm ${id} ${owner}`),
+          disarm: (id: string) => calls.push(`disarm ${id}`),
+          poison: (id: string, info: any) => calls.push(`poison ${id} ${info.where} ${info.errcode}`),
+        } as any,
+      };
+    };
+    it("success: armed around the write, then disarmed", () => {
+      const f = fake();
+      expect(runArmedMaintenanceWrite("/r/x.db", "P", "t", () => (f.calls.push("write"), 7), f.records)).toBe(7);
+      expect(f.calls).toEqual(["arm /r/x P", "write", "disarm /r/x"]);
+    });
+    it("a SQLite sync error: the record becomes the poisoned-file record, never disarmed, rethrown", () => {
+      const f = fake();
+      const err = Object.assign(new Error("disk I/O error"), { errcode: 1034 });
+      expect(() => runArmedMaintenanceWrite("/r/x.db", "P", "trim:compact", () => { throw err; }, f.records)).toThrow(err);
+      expect(f.calls).toEqual(["arm /r/x P", "poison /r/x maintenance:trim:compact 1034"]);
+    });
+    it("a dir-fsync error too (1290)", () => {
+      const f = fake();
+      const err = Object.assign(new Error("x"), { errcode: 1290 });
+      expect(() => runArmedMaintenanceWrite("/r/x.db", "P", "p", () => { throw err; }, f.records)).toThrow(err);
+      expect(f.calls[1]).toBe("poison /r/x maintenance:p 1290");
+    });
+    it("any other error (no sync error consumed): disarmed, rethrown", () => {
+      const f = fake();
+      const err = Object.assign(new Error("database is locked"), { errcode: 5 });
+      expect(() => runArmedMaintenanceWrite("/r/x.db", "P", "p", () => { throw err; }, f.records)).toThrow(err);
+      expect(f.calls).toEqual(["arm /r/x P", "disarm /r/x"]);
+    });
+    it("an fsync of ours (MaintenanceFsyncError) is a sync error; EDQUOT/ENOSPC also poisons the PROJECT (Q-F)", () => {
+      for (const [code, project] of [["EIO", false], ["EDQUOT", true], ["ENOSPC", true]] as const) {
+        const calls: string[] = [];
+        const records = {
+          arm: () => {}, disarm: () => calls.push("disarm"),
+          poison: (id: string, info: any) => calls.push(`poison ${id} ${info.errno}`),
+          poisonProject: (owner: string, info: any) => calls.push(`project ${owner} ${info.errno}`),
+        } as any;
+        const err = new MaintenanceFsyncError("/r/x.db", Object.assign(new Error(code), { code }) as any);
+        expect(() => runArmedMaintenanceWrite("/r/x.db", "P", "trim:compact", () => { throw err; }, records)).toThrow(err);
+        expect(calls).toEqual(project ? [`poison /r/x ${code}`, `project P ${code}`] : [`poison /r/x ${code}`]);
+      }
+    });
+    it("fsyncMaintenanceOutput fsyncs the file (O_NOFOLLOW), then its directory; an error is a MaintenanceFsyncError", () => {
+      const calls: string[] = [];
+      const fsx = {
+        openSync: (p: string, flags: number) => (calls.push(`open ${p} ${flags & fs.constants.O_NOFOLLOW ? "nofollow" : ""}${flags & fs.constants.O_DIRECTORY ? "dir" : ""}`), calls.length),
+        fsyncSync: (fd: number) => calls.push(`fsync ${fd}`),
+        closeSync: (fd: number) => calls.push(`close ${fd}`),
+      } as any;
+      fsyncMaintenanceOutput("/r/sub/x.db", fsx);
+      expect(calls).toEqual(["open /r/sub/x.db nofollow", "fsync 1", "close 1", "open /r/sub dir", "fsync 4", "close 4"]);
+      const bad = { ...fsx, fsyncSync: () => { throw Object.assign(new Error("EIO"), { code: "EIO" }); } };
+      expect(() => fsyncMaintenanceOutput("/r/sub/x.db", bad)).toThrow(MaintenanceFsyncError);
+    });
+    it("the trim's compact and promotion's checkpoint fsync their output inside the armed write", () => {
+      const trim = fs.readFileSync(join(packages, "project-host/persist-storage.ts"), "utf8");
+      expect(trim).toMatch(/runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:compact", \(\) => \{[\s\S]{0,400}db\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*\}\);/);
+      const coord = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/coordinator.ts"), "utf8");
+      expect(coord).toMatch(/runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{[\s\S]{0,400}sourceDb\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(checked\.path\);\s*\}\);/);
+    });
+    it("the record can't be created: refused, the write never runs", () => {
+      let ran = false;
+      const records = { arm: () => { throw new Error("EROFS"); }, disarm: () => {}, poison: () => {} } as any;
+      expect(() => runArmedMaintenanceWrite("/r/x.db", "P", "p", () => { ran = true; }, records)).toThrow("dirty record can't be created");
+      expect(ran).toBe(false);
+    });
   });
 
   it.each(pins)("%s checks before opening (%#)", (file, re) => {
