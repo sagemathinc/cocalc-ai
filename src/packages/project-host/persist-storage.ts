@@ -350,9 +350,11 @@ async function removeEmptyParents(root: string, path: string): Promise<void> {
   }
 }
 
-// Gives back the free pages of a closed database.
-function compact(path: string): void {
-  assertPersistMaintenanceOpenAllowed(`${path}.db`);
+// Gives back the free pages of a closed database.  owner: the project the
+// path was built for (the records' owner, as prepareDurableOpen gets it;
+// 028 B2-M1: a project-level poison refuses).
+function compact(path: string, owner: string): void {
+  assertPersistMaintenanceOpenAllowed(`${path}.db`, undefined, () => owner);
   const db = new DatabaseSync(`${path}.db`);
   try {
     db.exec("PRAGMA busy_timeout=5000");
@@ -365,9 +367,13 @@ function compact(path: string): void {
 
 // The newest seq of an entry written before `before` (ms), if any.  (The
 // storage keeps each entry's time in seconds.)
-function lastSeqBefore(path: string, before: number): number | undefined {
+function lastSeqBefore(
+  path: string,
+  before: number,
+  owner: string,
+): number | undefined {
   // (not read-only: that can't read a database in WAL mode without its -shm)
-  assertPersistMaintenanceOpenAllowed(`${path}.db`);
+  assertPersistMaintenanceOpenAllowed(`${path}.db`, undefined, () => owner);
   const db = new DatabaseSync(`${path}.db`);
   try {
     db.exec("PRAGMA busy_timeout=5000");
@@ -402,7 +408,9 @@ async function trim(
     throw new Error("trim: since must be a time in ms");
   }
   const cutoff =
-    policy.kind == "since" ? lastSeqBefore(path, policy.since) : undefined;
+    policy.kind == "since"
+      ? lastSeqBefore(path, policy.since, ctx.project_id)
+      : undefined;
   const archive = streamCopy(
     "COCALC_SYNC_ARCHIVE",
     ctx.project_id,
@@ -497,7 +505,7 @@ async function apply(
       await removeEmptyParents(ctx.root, path);
     } else if (action.op == "trim") {
       result.removed = await trim(ctx, path, action, env);
-      compact(path);
+      compact(path, ctx.project_id);
     } else {
       throw new Error(`unknown operation: ${(action as any)?.op}`);
     }

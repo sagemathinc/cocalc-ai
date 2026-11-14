@@ -138,13 +138,19 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     // the trim's offline compaction and read
     [
       "project-host/persist-storage.ts",
-      /function compact\(path: string\): void \{\s*assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`\);\s*const db = new DatabaseSync/,
+      /function compact\(path: string, owner: string\): void \{\s*assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*const db = new DatabaseSync/,
     ],
     [
       "project-host/persist-storage.ts",
-      /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`\);\s*const db = new DatabaseSync\(`\$\{path\}\.db`\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
+      /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*const db = new DatabaseSync\(`\$\{path\}\.db`\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
     ],
   ];
+  it("B2-M1: the trim passes the project it built the path for as the owner", () => {
+    const src = fs.readFileSync(join(packages, "project-host/persist-storage.ts"), "utf8");
+    expect(src).toMatch(/lastSeqBefore\(path, policy\.since, ctx\.project_id\)/);
+    expect(src).toMatch(/compact\(path, ctx\.project_id\);/);
+  });
+
   it.each(pins)("%s checks before opening (%#)", (file, re) => {
     expect(fs.readFileSync(join(packages, file), "utf8")).toMatch(re);
   });
