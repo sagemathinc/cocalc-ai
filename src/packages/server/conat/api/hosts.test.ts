@@ -8760,6 +8760,42 @@ describe("hosts.listHosts bootstrap normalization", () => {
     expect(hosts[0].id).toBe(HOST_ID);
   });
 
+  it("refuses a caller's admin view, whatever options it sends, before asking other bays", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    process.env.COCALC_BAY_ID = "bay-0";
+    isAdminMock = jest.fn(async () => false);
+    hostConnectionListMock = jest.fn(async () => []);
+    const { listHosts } = await import("./hosts");
+    for (const extra of [{}, { trusted_admin_view: true }]) {
+      await expect(
+        listHosts({
+          account_id: ACCOUNT_ID,
+          admin_view: true,
+          ...extra,
+        } as any),
+      ).rejects.toThrow("not authorized");
+    }
+    expect(hostConnectionListMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps trusted options for server code, but never forwards them", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    process.env.COCALC_BAY_ID = "bay-0";
+    isAdminMock = jest.fn(async () => false);
+    hostConnectionListMock = jest.fn(async () => []);
+    const { listHostsInternal } = await import("./hosts");
+    const hosts = await listHostsInternal({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      trusted_admin_view: true,
+    });
+    expect(hosts.map((host) => host.id)).toEqual([HOST_ID]);
+    expect(hostConnectionListMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+    });
+  });
+
   it("keeps machine and pricing fields for cross-owner admin host lists", async () => {
     getClusterAccountsByIdsDirectMock = jest.fn(async () => [
       {

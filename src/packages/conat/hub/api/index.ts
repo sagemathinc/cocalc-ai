@@ -285,8 +285,14 @@ export function transformArgs({
   // agent_auth is the server's own record of a verified agent credential: only
   // the agent policy builds it, from the authenticated connection. Never take
   // one from a caller's arguments, whoever the caller is.
+  // Likewise, trusted_* options are set only by server code that has already
+  // authorized the request, never by a caller.
   for (const arg of args ?? []) {
-    if (arg != null && typeof arg === "object") delete arg.agent_auth;
+    if (arg == null || typeof arg !== "object") continue;
+    delete arg.agent_auth;
+    for (const key of Object.keys(arg)) {
+      if (key.startsWith("trusted_")) delete arg[key];
+    }
   }
   if (!isHubApiMethodName(name)) {
     return Promise.reject(unknownHubApiFunctionError(name));
