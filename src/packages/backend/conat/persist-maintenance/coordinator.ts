@@ -4,8 +4,7 @@
  */
 
 import { assertPersistMaintenanceOpenAllowed } from "../persist-durability";
-import { projectOfStoragePath } from "@cocalc/conat/persist/project-fence";
-import { ownerOfLocalPath } from "@cocalc/conat/persist/util";
+import { maintenanceOwner } from "./owner";
 import { syncFiles } from "@cocalc/backend/data";
 import { randomUUID } from "node:crypto";
 import {
@@ -875,19 +874,29 @@ export class PersistMaintenanceCoordinator {
   // has recorded yet has no logical path: then the owner is derived from the
   // physical path under the roots the maintenance scans (the same syncFiles
   // the persist process opens with); if that fails too, the open is refused.
-  private ownerOf(physicalPath: string): string | undefined {
-    const logical = this.catalog.getDatabase(physicalPath)?.logical_path;
-    if (logical) return projectOfStoragePath(logical) ?? "host";
-    return ownerOfLocalPath(physicalPath, syncFiles);
+  // (owner.ts: logical primary, physical fallback, both must agree)
+  private ownerOf(physicalPath: string, logicalPath?: string): string {
+    const r = maintenanceOwner({
+      logicalPath:
+        logicalPath ?? this.catalog.getDatabase(physicalPath)?.logical_path,
+      physicalPath,
+      files: syncFiles,
+    });
+    if ("refused" in r) {
+      logger.warn("persist maintenance open refused", {
+        physicalPath,
+        reason: r.refused,
+      });
+      throw new Error(`persist maintenance open refused (finding 028): ${r.refused}`);
+    }
+    return r.owner;
   }
 
   private assertOpenAllowed(
     path: string,
     row: { physical_path: string; logical_path?: string },
   ): void {
-    const owner = row.logical_path
-      ? (projectOfStoragePath(row.logical_path) ?? "host")
-      : this.ownerOf(row.physical_path);
+    const owner = this.ownerOf(row.physical_path, row.logical_path);
     assertPersistMaintenanceOpenAllowed(path, undefined, () => owner);
   }
 
@@ -896,9 +905,8 @@ export class PersistMaintenanceCoordinator {
   private quickCheck(path: string, databasePath: string): boolean {
     if (!existsSync(path)) return false;
     try {
-      assertPersistMaintenanceOpenAllowed(path, undefined, () =>
-        this.ownerOf(databasePath),
-      );
+      const owner = this.ownerOf(databasePath);
+      assertPersistMaintenanceOpenAllowed(path, undefined, () => owner);
       const db = new DatabaseSync(path, { readOnly: true });
       try {
         const row = db.prepare("PRAGMA quick_check").get() as Record<

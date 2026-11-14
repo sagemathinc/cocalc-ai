@@ -20,6 +20,7 @@ import {
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { ownerOfLocalPath, resolveLocalPath } from "@cocalc/conat/persist/util";
+import { maintenanceOwner } from "@cocalc/backend/conat/persist-maintenance/owner";
 
 const packages = join(__dirname, "../../../..");
 
@@ -133,7 +134,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     // the quick_check of an output or source
     [
       "backend/conat/persist-maintenance/coordinator.ts",
-      /assertPersistMaintenanceOpenAllowed\(path, undefined, \(\) =>\s*this\.ownerOf\(databasePath\),\s*\);\s*const db = new DatabaseSync\(path, \{ readOnly: true \}\);/,
+      /const owner = this\.ownerOf\(databasePath\);\s*assertPersistMaintenanceOpenAllowed\(path, undefined, \(\) => owner\);\s*const db = new DatabaseSync\(path, \{ readOnly: true \}\);/,
     ],
     // the trim's offline compaction and read
     [
@@ -145,14 +146,40 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*const db = new DatabaseSync\(`\$\{path\}\.db`\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
     ],
   ];
-  it("B2-M1: the coordinator keys the owner by the catalog's LOGICAL path, as the open path does", () => {
-    const src = fs.readFileSync(
-      join(packages, "backend/conat/persist-maintenance/coordinator.ts"),
-      "utf8",
-    );
-    expect(src).toMatch(/return projectOfStoragePath\(logical\) \?\? "host";/);
-    expect(src).toMatch(/\? \(projectOfStoragePath\(row\.logical_path\) \?\? "host"\)/);
-    expect(src).toMatch(/assertPersistMaintenanceOpenAllowed\(path, undefined, \(\) => owner\);/);
+  describe("B2-M1: the maintained database's owner (logical primary, physical fallback, both must agree)", () => {
+    const A = "aaaaaaaa-0288-4000-8000-00000000000a";
+    const B = "aaaaaaaa-0288-4000-8000-00000000000b";
+    const physical = (logical: string) => resolveLocalPath(logical, { ephemeral: true });
+    it("logical and physical agree: that owner", () => {
+      expect(
+        maintenanceOwner({ logicalPath: `projects/${A}/x`, physicalPath: physical(`projects/${A}/x`), files: syncFiles }),
+      ).toEqual({ owner: A });
+      expect(
+        maintenanceOwner({ logicalPath: "hub/x", physicalPath: physical("hub/x"), files: syncFiles }),
+      ).toEqual({ owner: "host" });
+    });
+    it("logical says project A, physical says project B: REFUSED, naming both", () => {
+      const r = maintenanceOwner({ logicalPath: `projects/${A}/x`, physicalPath: physical(`projects/${B}/x`), files: syncFiles }) as any;
+      expect(r.owner).toBeUndefined();
+      expect(r.refused).toContain(A);
+      expect(r.refused).toContain(B);
+      // a project's logical path over a host-owned physical path too
+      expect((maintenanceOwner({ logicalPath: `projects/${A}/x`, physicalPath: physical("hub/x"), files: syncFiles }) as any).refused).toMatch(/ambiguous/);
+    });
+    it("no logical path: the physical path's owner; a physical path under no root: logical alone", () => {
+      expect(maintenanceOwner({ physicalPath: physical(`projects/${B}/x`), files: syncFiles })).toEqual({ owner: B });
+      expect(maintenanceOwner({ logicalPath: `projects/${A}/x`, physicalPath: join(tmpdir(), "outside", "x.db"), files: syncFiles })).toEqual({ owner: A });
+    });
+    it("neither: REFUSED", () => {
+      expect((maintenanceOwner({ physicalPath: join(tmpdir(), "outside", "x.db"), files: syncFiles }) as any).refused).toMatch(/can't be derived/);
+    });
+    it("the coordinator takes the owner only from this rule, and refuses on a refusal", () => {
+      const src = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/coordinator.ts"), "utf8");
+      expect(src).toMatch(/const r = maintenanceOwner\(\{/);
+      expect(src).toMatch(/if \("refused" in r\) \{[\s\S]{0,240}throw new Error\(`persist maintenance open refused \(finding 028\): \$\{r\.refused\}`\);/);
+      expect(src).toMatch(/assertPersistMaintenanceOpenAllowed\(path, undefined, \(\) => owner\);/);
+      expect(src).not.toMatch(/projectOfStoragePath|ownerOfLocalPath/);
+    });
   });
 
   it("B2-M1: the trim passes the project it built the path for as the owner", () => {
