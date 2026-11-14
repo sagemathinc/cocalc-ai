@@ -234,7 +234,7 @@ Table({
     primary_key: ["account_id", "id"],
     pg_custom_indexes: [
       { name: "agent_turn_usage_account_ended", query: "(account_id,ended_at)" },
-      { name: "agent_turn_usage_ended", query: "(ended_at)" },
+      { name: "agent_turn_usage_received", query: "(received_at)" },
     ],
   },
   fields: {
@@ -262,6 +262,7 @@ Table({
     started_at: { ...timestamp("Turn start."), not_null: true },
     ended_at: { ...timestamp("Turn end."), not_null: true },
     host_id: { type: "uuid", desc: "Reporting project host." },
+    received_at: created("When the home bay stored it; retention uses this."),
   },
 });
 

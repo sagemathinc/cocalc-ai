@@ -10025,8 +10025,8 @@ describe("hosts.recordAgentTurnUsage", () => {
         reasoning_output_tokens: 0,
       },
     ],
-    started_at: 1_000,
-    ended_at: 2_000,
+    started_at: Date.now() - 60_000,
+    ended_at: Date.now() - 1_000,
     outcome: "completed",
     ...over,
   });
@@ -10057,6 +10057,11 @@ describe("hosts.recordAgentTurnUsage", () => {
           { owner_account_id: OTHER, usage: usage() },
           // Invalid: dropped.
           { owner_account_id: OWNER, usage: usage({ models: [] }) },
+          // Dated far in the future: dropped.
+          {
+            owner_account_id: OWNER,
+            usage: usage({ ended_at: Date.now() + 365 * 86_400_000 }),
+          },
           { owner_account_id: "nope", usage: usage() },
         ],
       }),

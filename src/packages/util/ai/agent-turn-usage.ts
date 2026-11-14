@@ -45,6 +45,13 @@ export interface AgentTurnUsage {
 }
 
 export const MAX_TURN_USAGE_MODELS = 8;
+/** A report is refused if its turn ended more than this far in the future
+ * (clock skew allowance) ... */
+export const TURN_USAGE_MAX_FUTURE_MS = 10 * 60_000;
+/** ... or started more than this long ago (late reports, long goals) ... */
+export const TURN_USAGE_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
+/** ... or ran longer than this. */
+export const TURN_USAGE_MAX_DURATION_MS = 7 * 24 * 60 * 60_000;
 const MAX_TOKENS = 1e12;
 
 function count(value: unknown): number {
@@ -65,13 +72,19 @@ export function totalTurnTokens(usage: Pick<AgentTurnUsage, "models">): number {
   let total = 0;
   for (const m of usage.models)
     total +=
-      m.input_tokens + m.cached_input_tokens + m.cache_write_tokens + m.output_tokens;
+      m.input_tokens +
+      m.cached_input_tokens +
+      m.cache_write_tokens +
+      m.output_tokens;
   return total;
 }
 
 /** Revalidate a reported turn: undefined if it is not usable. Never trusts
  * what a host sent beyond these fields and bounds. */
-export function parseAgentTurnUsage(value: unknown): AgentTurnUsage | undefined {
+export function parseAgentTurnUsage(
+  value: unknown,
+  now = Date.now(),
+): AgentTurnUsage | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return undefined;
   const v = value as Record<string, unknown>;
@@ -93,15 +106,22 @@ export function parseAgentTurnUsage(value: unknown): AgentTurnUsage | undefined 
     return undefined;
   const credential_id =
     v.credential_id == null ? undefined : text(v.credential_id, 64);
-  if (v.credential_id != null && (!credential_id || !isValidUUID(credential_id)))
+  if (
+    v.credential_id != null &&
+    (!credential_id || !isValidUUID(credential_id))
+  )
     return undefined;
   const started_at = Number(v.started_at);
   const ended_at = Number(v.ended_at);
+  // Bounded around the checker's clock: a host cannot store a turn dated far
+  // in the future (it would never age out) or outside the database's range.
   if (
     !Number.isFinite(started_at) ||
     !Number.isFinite(ended_at) ||
-    started_at <= 0 ||
-    ended_at < started_at
+    ended_at < started_at ||
+    ended_at > now + TURN_USAGE_MAX_FUTURE_MS ||
+    started_at < now - TURN_USAGE_MAX_AGE_MS ||
+    ended_at - started_at > TURN_USAGE_MAX_DURATION_MS
   )
     return undefined;
   if (!Array.isArray(v.models)) return undefined;
@@ -147,9 +167,7 @@ export function parseAgentTurnUsage(value: unknown): AgentTurnUsage | undefined 
  * Claude's prompt response: `_meta.quota.model_usage` (per model, this turn)
  * from claude-agent-acp, else its `usage` totals under one unknown model.
  */
-export function claudeTurnModelUsage(
-  response: unknown,
-): AgentTurnModelUsage[] {
+export function claudeTurnModelUsage(response: unknown): AgentTurnModelUsage[] {
   const r = (response ?? {}) as Record<string, any>;
   const fromCount = (model: string, c: Record<string, unknown> | undefined) =>
     c
@@ -179,7 +197,10 @@ export function claudeTurnModelUsage(
   }
   return out.filter(
     (m) =>
-      m.input_tokens + m.cached_input_tokens + m.cache_write_tokens + m.output_tokens >
+      m.input_tokens +
+        m.cached_input_tokens +
+        m.cache_write_tokens +
+        m.output_tokens >
       0,
   );
 }
