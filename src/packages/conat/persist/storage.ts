@@ -276,6 +276,29 @@ const liveDiskConnections = new Set<PersistentStream>();
 // synchronously.  A pass is good for exactly one construction.
 const openBarrierPassed = new Set<string>();
 
+// The logical owner (a project id, or "host") of each disk stream the server
+// opened, for the project-scope poison (Q-F, §3.2.3, §3.2.4).
+const streamOwners = new Map<string, string>();
+
+// A quota error RETURNED BY an fsync of ours on a project path (Q-F): every
+// stream of that project is poisoned -- its record, and every open
+// connection of this process to one of its streams.
+function poisonProject(owner: string, info: Record<string, string | number>) {
+  if (owner === "host") return;
+  durability?.poisonProject(owner, info);
+  for (const stream of [...openStreams.keys()]) {
+    if (stream.logicalId != null && streamOwners.get(stream.logicalId) === owner) {
+      stream.poisonForProject(`${info.where ?? "project"}`);
+    }
+  }
+  logger.warn(
+    "persist alert (non-paging): a project's persist files are poisoned after a quota error at fsync (Q-F, finding 028)",
+    { owner, ...info },
+  );
+}
+
+const QUOTA_ERRNOS = new Set(["EDQUOT", "ENOSPC"]);
+
 // The barrier's fsyncs can consume a sync error, so the dirty record exists
 // around them (§3.2.6 (e)), held like a connection's arm.
 function armForBarrier(id: string): void {
@@ -308,7 +331,11 @@ function releaseBarrierArm(id: string): void {
 // What a barrier result means for the open: ok, or a refusal.  A sync error
 // poisons the file (its dirty record, armed before, becomes the poisoned-file
 // record); a discovery error proves nothing and is retried (§3.2.1 E0).
-function settleOpenBarrier(id: string, result: OpenBarrierResult): void {
+function settleOpenBarrier(
+  id: string,
+  result: OpenBarrierResult,
+  owner?: string,
+): void {
   if (result.kind == "ok") {
     releaseBarrierArm(id);
     return;
@@ -328,6 +355,10 @@ function settleOpenBarrier(id: string, result: OpenBarrierResult): void {
   // a sync error: the record stays and becomes the poison record
   armedConnections.delete(id);
   durability?.poison(id, { where: "open-barrier", errno: result.errno });
+  if (owner != null && owner !== "host" && QUOTA_ERRNOS.has(result.errno)) {
+    // Q-F: the project's quota, not this file: every stream of the project
+    poisonProject(owner, { where: "open-barrier", errno: result.errno });
+  }
   logger.error(
     "PERSIST FILE POISONED (finding 028): the open barrier's fsync returned an error; the file is refused until it is verified",
     { id, path: result.path, errno: result.errno },
@@ -371,7 +402,8 @@ export async function prepareDurableOpen(
     );
   }
   const id = posix.normalize(path);
-  const state = durability?.check(id);
+  streamOwners.set(id, owner);
+  const state = durability?.check(id, owner);
   if (state == "poisoned") throw retryableWriteError("poisoned");
   if (state == "unverified") throw unverifiedStreamError();
   if (state == "needs-check") {
@@ -391,7 +423,7 @@ export async function prepareDurableOpen(
   } catch (err) {
     result = { kind: "discovery", path, why: `${err}` };
   }
-  settleOpenBarrier(id, result);
+  settleOpenBarrier(id, result, owner);
   openBarrierPassed.add(id);
 }
 
@@ -2036,7 +2068,10 @@ export class PersistentStream extends EventEmitter {
         { code: 503 },
       );
     }
-    const state = durability.check(this.logicalId!);
+    const state = durability.check(
+      this.logicalId!,
+      streamOwners.get(this.logicalId!),
+    );
     if (state == "poisoned") {
       throw retryableWriteError("poisoned");
     }
@@ -2161,6 +2196,15 @@ export class PersistentStream extends EventEmitter {
         }
       }
     }
+  };
+
+  // its project was poisoned (Q-F): this connection too, like a sync error
+  poisonForProject = (where: string): void => {
+    if (this.poisoned) return;
+    this.poison(
+      Object.assign(new Error("project poisoned (Q-F)"), { errcode: 0 }),
+      `project:${where}`,
+    );
   };
 
   // another connection of this process to the same file got a sync error

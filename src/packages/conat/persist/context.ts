@@ -112,7 +112,10 @@ export interface PersistDurabilityRecords {
   arm: (id: string) => void;
   disarm: (id: string) => void;
   poison: (id: string, info: Record<string, string | number>) => void;
-  check: (id: string) => PersistDurabilityCheck;
+  // owner: the stream's logical owner (a project id, or "host"), if known: a
+  // poisoned project refuses all of its streams (Q-F)
+  check: (id: string, owner?: string) => PersistDurabilityCheck;
+  poisonProject: (owner: string, info: Record<string, string | number>) => void;
   // after a verified eviction: remove dead processes' dirty records
   clearLeftovers: (id: string) => number;
   // after a passed integrity_check: remove the post-reboot record (durably;

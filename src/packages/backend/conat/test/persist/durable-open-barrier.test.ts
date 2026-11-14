@@ -211,6 +211,62 @@ describe("028 B-2: the open barrier", () => {
     streams = [];
   });
 
+  it("Q-F: a quota errno returned by the barrier's fsync on a project path poisons every stream of that project", async () => {
+    const project = "11111111-2222-4333-8444-555555555555";
+    const a = join(dir, "qf-a");
+    const b = join(dir, "qf-b");
+    // b is open in this process, owned by the project
+    await prepareDurableOpen(b, project);
+    const sb = pstream({ path: b });
+    streams.push(sb);
+    clearOpenBarrierPass(b);
+    jest.spyOn(persistOpenBarrier, "run").mockResolvedValue({
+      kind: "sync-error",
+      path: `${a}.db`,
+      errno: "EDQUOT",
+      synced: [],
+    });
+    await expect(prepareDurableOpen(a, project)).rejects.toThrow(
+      "had a sync error",
+    );
+    jest.restoreAllMocks();
+    // the open connection of the same project is poisoned too
+    expect(sb.isPoisoned()).toBe(true);
+    // and a third stream of the project is refused at open
+    const c = join(dir, "qf-c");
+    await expect(prepareDurableOpen(c, project)).rejects.toThrow(
+      "had a sync error",
+    );
+    // another project is not affected
+    const other = join(dir, "qf-other");
+    await prepareDurableOpen(other, "99999999-2222-4333-8444-555555555555");
+    const so = pstream({ path: other });
+    streams.push(so);
+    clearOpenBarrierPass(other);
+    expect(so.isPoisoned()).toBe(false);
+  });
+
+  it("an EIO (not quota) from the barrier poisons only that file, and a host path never poisons a project", async () => {
+    const project = "22222222-2222-4333-8444-555555555555";
+    const a = join(dir, "eio-a");
+    jest.spyOn(persistOpenBarrier, "run").mockResolvedValue({
+      kind: "sync-error",
+      path: `${a}.db`,
+      errno: "EIO",
+      synced: [],
+    });
+    await expect(prepareDurableOpen(a, project)).rejects.toThrow(
+      "had a sync error",
+    );
+    jest.restoreAllMocks();
+    const b = join(dir, "eio-b");
+    await prepareDurableOpen(b, project);
+    const sb = pstream({ path: b });
+    streams.push(sb);
+    clearOpenBarrierPass(b);
+    expect(sb.isPoisoned()).toBe(false);
+  });
+
   it("the fair limiter caps concurrency and serves owners round-robin", async () => {
     const limiter = createFairLimiter(1);
     const order: string[] = [];

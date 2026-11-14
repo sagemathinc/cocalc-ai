@@ -12,6 +12,9 @@
 //                               removed at its next write idle
 //   <root>/poisoned-file/<key>  that process's dirty record, renamed when a
 //                               sync error was returned
+//   <root>/poisoned-project/<owner>  a quota error returned by an fsync of
+//                               ours on a project path (Q-F, §3.2.3): every
+//                               stream of that project is refused (B-2)
 //
 // Plus the SECONDARY, post-reboot record (B-2, §3.2.5 (b)), on a persistent
 // state directory (never the stream's own directory), written durably:
@@ -120,6 +123,10 @@ export function createDurabilityRecords({
   };
   const dirtyDir = posix.join(root, "dirty");
   const poisonedDir = posix.join(root, "poisoned-file");
+  const poisonedProjectDir = posix.join(root, "poisoned-project");
+  // owners are project ids (or "host"): never a path component otherwise
+  const safeOwner = (owner: string): string | undefined =>
+    /^[0-9a-zA-Z-]{1,64}$/.test(owner) && owner !== "host" ? owner : undefined;
   let ready = false;
   const ensureDirs = () => {
     if (ready) return;
@@ -243,6 +250,27 @@ export function createDurabilityRecords({
       );
     },
 
+    poisonProject: (owner: string, info: Record<string, string | number>) => {
+      const name = safeOwner(owner);
+      if (name == null) return;
+      try {
+        fs.mkdirSync(poisonedProjectDir, { recursive: true, mode: 0o700 });
+        writeAtomically(
+          posix.join(poisonedProjectDir, name),
+          JSON.stringify({
+            kind: "poisoned-project",
+            owner: name,
+            generation,
+            pid,
+            poisoned: Date.now(),
+            ...info,
+          }),
+        );
+      } catch (err) {
+        warn("could not write a poisoned-project record", err);
+      }
+    },
+
     retryPostReboot: (): number => {
       for (const [key, data] of [...pendingPostReboot]) {
         writePostReboot(key, data);
@@ -256,8 +284,12 @@ export function createDurabilityRecords({
       postReboot?.remove(sha256(id));
     },
 
-    check: (id: string): PersistDurabilityCheck => {
+    check: (id: string, owner?: string): PersistDurabilityCheck => {
       if (exists(poisonedPath(id))) return "poisoned";
+      const name = owner == null ? undefined : safeOwner(owner);
+      if (name != null && exists(posix.join(poisonedProjectDir, name))) {
+        return "poisoned";
+      }
       // poisoned in an earlier boot: a full integrity_check first (§3.2.6)
       if (postReboot != null) {
         let present = true;
