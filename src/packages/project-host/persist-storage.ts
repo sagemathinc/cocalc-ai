@@ -32,7 +32,10 @@ import {
   clearOpenBarrierPass,
 } from "@cocalc/backend/conat/persist";
 import { projectPersistTemplates } from "@cocalc/backend/conat/persist-volume-template";
-import { assertPersistMaintenanceOpenAllowed } from "@cocalc/backend/conat/persist-durability";
+import {
+  assertPersistMaintenanceOpenAllowed,
+  runArmedMaintenanceWrite,
+} from "@cocalc/backend/conat/persist-durability";
 import {
   MAX_PERSIST_STORAGE_ACTIONS,
   RETENTION_POLICY_KINDS,
@@ -355,14 +358,18 @@ async function removeEmptyParents(root: string, path: string): Promise<void> {
 // 028 B2-M1: a project-level poison refuses).
 function compact(path: string, owner: string): void {
   assertPersistMaintenanceOpenAllowed(`${path}.db`, undefined, () => owner);
-  const db = new DatabaseSync(`${path}.db`);
-  try {
-    db.exec("PRAGMA busy_timeout=5000");
-    db.exec("VACUUM");
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  } finally {
-    db.close();
-  }
+  // armed: a sync error in the VACUUM, its checkpoints or the close poisons
+  // the stream (SA-B2-1)
+  runArmedMaintenanceWrite(`${path}.db`, owner, "trim:compact", () => {
+    const db = new DatabaseSync(`${path}.db`);
+    try {
+      db.exec("PRAGMA busy_timeout=5000");
+      db.exec("VACUUM");
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } finally {
+      db.close();
+    }
+  });
 }
 
 // The newest seq of an entry written before `before` (ms), if any.  (The

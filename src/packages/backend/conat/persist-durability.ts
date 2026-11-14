@@ -20,6 +20,7 @@ import {
 } from "@cocalc/conat/persist/durability-records";
 import { syncFiles } from "@cocalc/backend/data";
 import { ownerOfLocalPath } from "@cocalc/conat/persist/util";
+import { isSqliteSyncError } from "@cocalc/conat/persist/storage";
 import { spawn } from "node:child_process";
 
 const logger = getLogger("persist:durability");
@@ -268,6 +269,51 @@ export function assertPersistMaintenanceOpenAllowed(
       `persist maintenance open refused (finding 028): the stream is ${state}: ${dbPath}`,
     );
   }
+}
+
+// SA-B2-1: a maintenance WRITE to a stream file (the trim's VACUUM and its
+// checkpoints, promotion's TRUNCATE checkpoint) can consume a sync error just
+// like a stream's own COMMIT.  So it runs with the stream's dirty record
+// armed (with its owner), exactly like a connection's write: a SQLite sync
+// error makes that record the poisoned-file record (refused until verified,
+// in this boot and after a reboot via the post-reboot record); the record
+// is disarmed only when fn returned or threw a non-sync error.  If the
+// record can't be created, the write does not start.
+export function runArmedMaintenanceWrite<T>(
+  dbPath: string,
+  owner: string,
+  where: string,
+  fn: () => T,
+  records: Pick<DurabilityRecords, "arm" | "disarm" | "poison"> = persistDurabilityRecords(),
+): T {
+  const id = posix.normalize(dbPath.replace(/\.db$/, ""));
+  try {
+    records.arm(id, owner);
+  } catch (err) {
+    throw new Error(
+      `persist maintenance write refused (finding 028): the dirty record can't be created: ${dbPath}: ${err}`,
+    );
+  }
+  let result: T;
+  try {
+    result = fn();
+  } catch (err) {
+    if (isSqliteSyncError(err)) {
+      records.poison(id, {
+        where: `maintenance:${where}`,
+        errcode: Number((err as any)?.errcode ?? 0),
+      });
+      logger.error(
+        "PERSIST FILE POISONED (finding 028): a sync error in a maintenance write; the file is refused until it is verified",
+        { dbPath, where, err: `${err}` },
+      );
+      throw err;
+    }
+    records.disarm(id);
+    throw err;
+  }
+  records.disarm(id);
+  return result;
 }
 
 // the records of this process (one generation per process)

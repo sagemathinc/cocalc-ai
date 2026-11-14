@@ -3,7 +3,10 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { assertPersistMaintenanceOpenAllowed } from "../persist-durability";
+import {
+  assertPersistMaintenanceOpenAllowed,
+  runArmedMaintenanceWrite,
+} from "../persist-durability";
 import { maintenanceOwner } from "./owner";
 import { syncFiles } from "@cocalc/backend/data";
 import { randomUUID } from "node:crypto";
@@ -712,14 +715,17 @@ export class PersistMaintenanceCoordinator {
     // With no owners and worker opens waiting for begin-open acknowledgement,
     // this checkpoint is exclusive. It removes stale WAL state before swapping
     // the main database inode.  (Never on a poisoned or unverified file: 028.)
-    this.assertOpenAllowed(checked.path, row);
-    const sourceDb = new DatabaseSync(checked.path);
-    try {
-      sourceDb.exec("PRAGMA busy_timeout=1000");
-      sourceDb.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
-    } finally {
-      sourceDb.close();
-    }
+    const owner = this.assertOpenAllowed(checked.path, row);
+    // armed: a sync error here poisons the stream (SA-B2-1)
+    runArmedMaintenanceWrite(checked.path, owner, "promote:checkpoint", () => {
+      const sourceDb = new DatabaseSync(checked.path);
+      try {
+        sourceDb.exec("PRAGMA busy_timeout=1000");
+        sourceDb.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+      } finally {
+        sourceDb.close();
+      }
+    });
     rmSync(`${checked.path}-wal`, { force: true });
     rmSync(`${checked.path}-shm`, { force: true });
 
@@ -892,12 +898,14 @@ export class PersistMaintenanceCoordinator {
     return r.owner;
   }
 
+  // -> the owner (for an armed maintenance write)
   private assertOpenAllowed(
     path: string,
     row: { physical_path: string; logical_path?: string },
-  ): void {
+  ): string {
     const owner = this.ownerOf(row.physical_path, row.logical_path);
     assertPersistMaintenanceOpenAllowed(path, undefined, () => owner);
+    return owner;
   }
 
   // databasePath: the catalog database the file belongs to (its source, or
