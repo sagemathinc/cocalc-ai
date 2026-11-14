@@ -232,42 +232,108 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     }
   }
 
-  // P3: a duplicate of an op earlier in the same batch
-  const p3variants: Array<[string, object]> = [
-    ["the same body", msg("a", { msgID: "m1" })],
-    ["a different raw", msg("DIFFERENT", { msgID: "m1" })],
-    ["different headers", msg("a", { msgID: "m1", headers: { forged: 1 } })],
-    ["a different key", msg("a", { msgID: "m1", key: "other-key" })],
+  // P3: a duplicate of an op earlier in the same batch.  Oracle (review
+  // B1-R4): the stream's whole state equals that of an OWNER-ONLY control,
+  // the same batch without the duplicate, run at the same Date.now.  Columns
+  // that differ between two identical controls are nondeterministic by
+  // construction; they are listed, must be few, and must not include any
+  // message body, key, header, ttl, ledger or checkpoint column.
+  const NONDETERMINISTIC_OK = new Set<string>([]);
+  const owner = () =>
+    msg("a", { msgID: "m1", key: "k", checkpoint: { name: "cp", data: { v: 1 } } }) as any;
+  const p3variants: Array<[string, () => any]> = [
+    ["the same body", () => owner()],
+    ["raw", () => ({ ...owner(), raw: Buffer.from("DIFFERENT") })],
+    ["encoding", () => ({ ...owner(), encoding: DataEncoding.MsgPack })],
+    ["headers", () => ({ ...owner(), headers: { forged: 1 } })],
+    ["key", () => ({ ...owner(), key: "other-key" })],
+    ["ttl", () => ({ ...owner(), ttl: 1 })],
+    ["checkpoint", () => ({ ...owner(), checkpoint: { name: "cp", data: { v: 2 } } })],
   ];
-  for (const [what, dup] of p3variants) {
-    it(`P3: in one setMany, a later op with the msgID and ${what} gets the first op's result, emits nothing of its own and stores nothing`, async () => {
-      const stream = open(`p3-many-${what}`);
-      const changes = watch(stream);
-      const [r1, r2] = await stream.setManyQueued([msg("a", { msgID: "m1" }), dup as any]);
-      // nothing after the owner's own change (the mapped assertion first)
-      assertNoEvents(changes.slice(1), "P3");
-      expect(r2).toEqual(r1);
-      // exactly the owner's change, carrying the owner's bytes
-      const sets = changes.filter((c) => c.seq != null);
-      expect(sets).toHaveLength(1);
-      expect(Buffer.from(sets[0].raw).toString()).toBe("a");
-      expect([...storedRaws(stream).values()]).toEqual(["a"]);
+  const p3changed = (op: any): string[] => {
+    const base = owner();
+    const enc = (v) => JSON.stringify(v instanceof Buffer ? v.toString("hex") : v);
+    return [...new Set([...Object.keys(base), ...Object.keys(op)])]
+      .filter((k) => enc(base[k]) !== enc(op[k]))
+      .sort();
+  };
+  // columns (table.column) whose values differ between two states
+  const differingColumns = (a: Record<string, any[]>, b: Record<string, any[]>) => {
+    const out = new Set<string>();
+    for (const t of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      const ra = a[t] ?? [];
+      const rb = b[t] ?? [];
+      if (ra.length !== rb.length) {
+        out.add(`${t}.*rows`);
+        continue;
+      }
+      for (let i = 0; i < ra.length; i++) {
+        for (const c of new Set([...Object.keys(ra[i]), ...Object.keys(rb[i])])) {
+          if (JSON.stringify(ra[i][c]) !== JSON.stringify(rb[i][c])) out.add(`${t}.${c}`);
+        }
+      }
+    }
+    return out;
+  };
+  const withoutColumns = (st: Record<string, any[]>, cols: Set<string>) =>
+    Object.fromEntries(
+      Object.entries(st).map(([t, rows]) => [
+        t,
+        rows.map((r) =>
+          Object.fromEntries(Object.entries(r).filter(([c]) => !cols.has(`${t}.${c}`))),
+        ),
+      ]),
+    );
+  const NOW = 1_800_000_000_000;
+  // run one batch on a fresh stream at a fixed Date.now: "many" = one
+  // setMany, "requests" = separate requests in one batch
+  const runBatch = async (name: string, ops: any[], how: "many" | "requests") => {
+    const stream = open(name);
+    stream.config({ allow_msg_ttl: true });
+    const changes = watch(stream);
+    const now = jest.spyOn(Date, "now").mockReturnValue(NOW);
+    let results: any[];
+    try {
+      results =
+        how == "many"
+          ? await stream.setManyQueued(ops)
+          : await Promise.allSettled(ops.map((op) => stream.setQueued(op)));
+    } finally {
+      now.mockRestore();
+    }
+    return { stream, changes, results };
+  };
+
+  for (const how of ["many", "requests"] as const) {
+    it(`P3 (${how}): two identical owner-only controls differ only in allowed nondeterministic columns`, async () => {
+      const a = await runBatch(`p3-ctl-a-${how}`, [owner()], how);
+      const b = await runBatch(`p3-ctl-b-${how}`, [owner()], how);
+      const noise = differingColumns(state(a.stream), state(b.stream));
+      expect([...noise].filter((c) => !NONDETERMINISTIC_OK.has(c))).toEqual([]);
     });
 
-    it(`P3: across requests in one batch, a later request with the msgID and ${what} gets the first's result, emits nothing of its own and stores nothing`, async () => {
-      const stream = open(`p3-batch-${what}`);
-      const changes = watch(stream);
-      const [r1, r2] = await Promise.all([
-        stream.setQueued(msg("a", { msgID: "m1" })),
-        stream.setQueued(dup as any),
-      ]);
-      assertNoEvents(changes.slice(1), "P3");
-      expect(r2).toEqual(r1);
-      const sets = changes.filter((c) => c.seq != null);
-      expect(sets).toHaveLength(1);
-      expect(Buffer.from(sets[0].raw).toString()).toBe("a");
-      expect([...storedRaws(stream).values()]).toEqual(["a"]);
-    });
+    for (const [what, make] of p3variants) {
+      it(`P3 (${how}): a later op with the msgID and ${what == "the same body" ? what : `a different ${what}`} gets the owner's result, emits nothing of its own, and the whole state equals the owner-only control`, async () => {
+        const dup = make();
+        expect(p3changed(dup)).toEqual(what == "the same body" ? [] : [what]);
+        const control = await runBatch(`p3-control-${how}-${what}`, [owner()], how);
+        const test = await runBatch(`p3-test-${how}-${what}`, [owner(), dup], how);
+        // nothing after the owner's own change (the mapped assertions first)
+        assertNoEvents(test.changes.slice(1), "P3");
+        assertStateUnchanged(
+          withoutColumns(state(control.stream), NONDETERMINISTIC_OK),
+          withoutColumns(state(test.stream), NONDETERMINISTIC_OK),
+          "P3",
+        );
+        // the duplicate's result is the owner's
+        const value = (r) => (how == "many" ? r : r.value);
+        expect(value(test.results[1])).toEqual(value(test.results[0]));
+        // exactly the owner's change, carrying the owner's bytes
+        const sets = test.changes.filter((c) => c.seq != null);
+        expect(sets).toHaveLength(1);
+        expectEmittedEqualsStored(test.stream, sets[0]);
+      });
+    }
   }
 
   it("P1/P2: replaying a stored msgID with the same checkpoint name and seq but other time and data leaves the whole checkpoint row (time, data_json, revision) unchanged", async () => {
