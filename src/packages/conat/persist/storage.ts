@@ -87,6 +87,7 @@ import {
 import { posix } from "path";
 import { isMainThread } from "worker_threads";
 import {
+  budgetStats,
   chargeFor,
   ownerBudget,
   rateLimitedError,
@@ -267,6 +268,26 @@ const armedConnections = new Map<string, number>();
 // connection is never closed, nor garbage collected, which would checkpoint
 // it (§3.2.4 step 5).  The process exits with them open.
 const poisonedStreams = new Set<PersistentStream>();
+// 028 B-3a: the durability health of this process (alert routing, DESIGN
+// §3.2.10; host health, §3.2.3 / §3.2.0).  Only a DEVICE-class poison of a
+// file the user cannot write marks the host unhealthy; a poison of a
+// user-writable (in-project) file, a quota (Q-F) poison or a failed
+// verification never does.
+const durabilityHealth = {
+  device_poisons_total: 0,
+  user_writable_poisons_total: 0,
+  project_poisons_total: 0,
+  verification_failures_total: 0,
+};
+function recordFilePoison(id: string | undefined, quota: boolean): void {
+  if (quota) return; // counted as a project poison
+  if (id != null && isProjectOwnedDatabasePath(`${id}.db`)) {
+    durabilityHealth.user_writable_poisons_total += 1;
+  } else {
+    durabilityHealth.device_poisons_total += 1;
+  }
+}
+
 export function poisonedStreamPaths(): string[] {
   return [...new Set([...poisonedStreams].map((s) => s.poisonedPath!))];
 }
@@ -316,6 +337,7 @@ const streamOwners = new Map<string, string>();
 function poisonProject(owner: string, info: Record<string, string | number>) {
   if (owner === "host") return;
   durability?.poisonProject(owner, info);
+  durabilityHealth.project_poisons_total += 1;
   for (const stream of [...openStreams.keys()]) {
     if (stream.logicalId != null && streamOwners.get(stream.logicalId) === owner) {
       stream.poisonForProject(`${info.where ?? "project"}`, owner);
@@ -391,6 +413,7 @@ function settleOpenBarrier(
     errno: result.errno,
     ...(projectScope ? { scope: "project", owner: owner! } : {}),
   });
+  recordFilePoison(id, projectScope);
   if (projectScope) {
     // Q-F: the project's quota, not this file: every stream of the project
     poisonProject(owner, { where: "open-barrier", errno: result.errno });
@@ -722,6 +745,7 @@ async function verifyLeftover(id: string, dbPath: string): Promise<void> {
   }
   const result = await pending;
   if (!result.verified) {
+    durabilityHealth.verification_failures_total += 1;
     // non-paging, names the stream; no host effect (§3.2.0, §3.2.10)
     logger.warn(
       "persist alert (non-paging): a stream left mid-write could not be verified; it stays refused and is retried (finding 028)",
@@ -2345,6 +2369,9 @@ export class PersistentStream extends EventEmitter {
         errcode: Number((err as any)?.errcode ?? 0),
         ...extra,
       });
+    }
+    if (this.storageKind == "disk") {
+      recordFilePoison(this.logicalId, extra.scope == "project");
     }
     this.trashGeneration += 1;
     unregisterTrashWork(this);
@@ -6446,6 +6473,21 @@ export function getPersistentStreamDiagnostics() {
       ephemeral_override_kib: resolveEphemeralSqliteCacheKiB(),
     },
     open_stream_inventory: summarizeOpenStreams(Date.now()),
+    // 028 B-2/B-3a
+    durability: {
+      ...durabilityHealth,
+      poisoned_open_connections: poisonedStreams.size,
+      parked_streams: parked.size,
+      budget_refused_total: budgetStats.refused_total,
+      msgid_conflicts_total: streamLifecycle.msgid_conflicts_total,
+      startup_refused: (() => {
+        const start = startupCheck?.();
+        return start != null && !start.ok ? (start.reason ?? "refused") : null;
+      })(),
+      host_healthy:
+        durabilityHealth.device_poisons_total == 0 &&
+        !(startupCheck?.()?.ok === false),
+    },
     // null: this process counts no commits (no write counter in the context)
     write_stats: writeCounter?.stats() ?? null,
   };
