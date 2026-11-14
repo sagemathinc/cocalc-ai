@@ -207,11 +207,11 @@ async function evictOne(
 // Steps 1-4 for one stream's files (dbPath = <path>.db).
 export async function verifiedEviction(
   dbPath: string,
-  {
-    program = readCheckedHelper(),
-    spawnFn = spawn,
-  }: { program?: Buffer; spawnFn?: typeof spawn } = {},
+  opts: { program?: Buffer; spawnFn?: typeof spawn } = {},
 ): Promise<EvictionResult> {
+  // an explicit program: undefined (a failed check) must not fall back
+  const program = "program" in opts ? opts.program : readCheckedHelper();
+  const spawnFn = opts.spawnFn ?? spawn;
   if (program == null) {
     return notVerified(dbPath, "helper missing or its sha256 differs");
   }

@@ -20,6 +20,7 @@ import {
   openBarrier,
   openBarrierSync,
   persistOpenBarrier,
+  setBarrierFsForTests,
 } from "@cocalc/backend/conat/persist-open-barrier";
 import { DataEncoding } from "@cocalc/conat/core/client";
 import {
@@ -76,19 +77,24 @@ describe("028 B-2: the open barrier", () => {
     await writeFile(db, "");
     await writeFile(`${db}-wal`, "");
     const fds = new Map<number, string>();
-    const realOpen = fs.openSync;
-    jest.spyOn(fs, "openSync").mockImplementation(((p: any, ...rest: any[]) => {
-      const fd = (realOpen as any)(p, ...rest);
-      fds.set(fd, `${p}`);
-      return fd;
-    }) as any);
-    const realFsync = fs.fsyncSync;
     const order: string[] = [];
-    jest.spyOn(fs, "fsyncSync").mockImplementation((fd: number) => {
-      order.push(fds.get(fd)!);
-      return realFsync(fd);
+    setBarrierFsForTests({
+      ...fs,
+      openSync: ((p: any, ...rest: any[]) => {
+        const fd = (fs.openSync as any)(p, ...rest);
+        fds.set(fd, `${p}`);
+        return fd;
+      }) as any,
+      fsyncSync: (fd: number) => {
+        order.push(fds.get(fd)!);
+        return fs.fsyncSync(fd);
+      },
     });
-    expect(openBarrierSync(db).kind).toBe("ok");
+    try {
+      expect(openBarrierSync(db).kind).toBe("ok");
+    } finally {
+      setBarrierFsForTests(fs);
+    }
     expect(order).toEqual([`${db}-wal`, db, dir]);
   });
 
@@ -98,10 +104,22 @@ describe("028 B-2: the open barrier", () => {
     const db = join(dir, "planted.db");
     await writeFile(db, "");
     await symlink(target, `${db}-wal`);
-    const fsync = jest.spyOn(fs, "fsyncSync");
-    const r = openBarrierSync(db);
+    let fsyncs = 0;
+    setBarrierFsForTests({
+      ...fs,
+      fsyncSync: (fd: number) => {
+        fsyncs += 1;
+        return fs.fsyncSync(fd);
+      },
+    });
+    let r;
+    try {
+      r = openBarrierSync(db);
+    } finally {
+      setBarrierFsForTests(fs);
+    }
     expect(r).toMatchObject({ kind: "discovery", path: `${db}-wal` });
-    expect(fsync).not.toHaveBeenCalled();
+    expect(fsyncs).toBe(0);
     expect(() => open("planted")).toThrow("could not be verified yet");
     const records = persistDurabilityRecords();
     expect(records.check(join(dir, "planted"))).toBe("ok");

@@ -66,7 +66,7 @@ function sameFile(a: fs.Stats, b: fs.Stats): boolean {
 
 function lstatSyncIfExists(path: string): fs.Stats | undefined {
   try {
-    return fs.lstatSync(path);
+    return barrierFs.lstatSync(path);
   } catch (err) {
     if (errnoCode(err) === "ENOENT") return;
     throw new Discovery(path, `lstat ${errnoCode(err)}`);
@@ -89,7 +89,7 @@ function syncFileSync(
   }
   let fd: number;
   try {
-    fd = fs.openSync(path, directory ? DIR_FLAGS : FILE_FLAGS);
+    fd = barrierFs.openSync(path, directory ? DIR_FLAGS : FILE_FLAGS);
   } catch (err) {
     if (errnoCode(err) === "ENOENT") return {};
     throw new Discovery(path, `open ${errnoCode(err)}`);
@@ -97,7 +97,7 @@ function syncFileSync(
   try {
     let opened: fs.Stats;
     try {
-      opened = fs.fstatSync(fd);
+      opened = barrierFs.fstatSync(fd);
     } catch (err) {
       throw new Discovery(path, `fstat ${errnoCode(err)}`);
     }
@@ -105,16 +105,25 @@ function syncFileSync(
       throw new Discovery(path, "replaced between lstat and open");
     }
     try {
-      fs.fsyncSync(fd);
+      barrierFs.fsyncSync(fd);
     } catch (err) {
       return { stats: opened, syncError: errnoCode(err) };
     }
     return { stats: opened };
   } finally {
     try {
-      fs.closeSync(fd);
+      barrierFs.closeSync(fd);
     } catch {}
   }
+}
+
+// (fsImpl: for tests, which can't spy on node:fs itself)
+export let barrierFs: Pick<
+  typeof fs,
+  "lstatSync" | "openSync" | "fstatSync" | "fsyncSync" | "closeSync"
+> = fs;
+export function setBarrierFsForTests(impl: typeof barrierFs): void {
+  barrierFs = impl;
 }
 
 export function openBarrierSync(dbPath: string): OpenBarrierResult {

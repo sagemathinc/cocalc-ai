@@ -3512,7 +3512,9 @@ export class PersistentStream extends EventEmitter {
   // "gone": the row is no longer there (deleted, trimmed, or expired): there
   // is nothing to compare, and the duplicate answer stores and emits nothing.
   // Compared: encoding, raw, headers (as serialized), key, ttl, and a
-  // checkpoint while its row still points at this message.  previousSeq is
+  // checkpoint the resend carries (its row must still be where this message
+  // put it).  A checkpoint the stored message had but the resend lacks can't
+  // be told from a later write's.  previousSeq is
   // not stored (a precondition checked at the first commit), so a committed
   // duplicate can't be compared on it; a duplicate in the same batch is.
   private storedWriteMatches = (
@@ -3543,21 +3545,16 @@ export class PersistentStream extends EventEmitter {
     if ((row.ttl == null ? null : Number(row.ttl)) !== (op.ttl ?? null)) {
       return "mismatch";
     }
-    const cp = this.db
-      .prepare(
-        "SELECT name FROM stream_checkpoints WHERE snapshot_seq = ? LIMIT 1",
-      )
-      .get(seq) as { name?: string } | undefined;
-    if (cp != null && (op.checkpoint == null || op.checkpoint.name !== cp.name)) {
-      return "mismatch";
-    }
-    if (cp == null && op.checkpoint != null) {
-      // the stored message never had one, or a later checkpoint of that name
-      // replaced it: only the first can be told apart
-      const named = this.db
-        .prepare("SELECT 1 AS x FROM stream_checkpoints WHERE name = ? LIMIT 1")
-        .get(op.checkpoint.name);
-      if (named == null) return "mismatch";
+    // a checkpoint: the named one must still be at the seq this message
+    // gave it (a later checkpoint of that name replaces it, and then a
+    // genuine resend is refused too: stated in the 087 item)
+    if (op.checkpoint != null) {
+      const cp = this.db
+        .prepare("SELECT seq FROM stream_checkpoints WHERE name = ?")
+        .get(op.checkpoint.name) as { seq?: number } | undefined;
+      if (cp == null || Number(cp.seq) !== (op.checkpoint.seq ?? seq)) {
+        return "mismatch";
+      }
     }
     return "match";
   };
