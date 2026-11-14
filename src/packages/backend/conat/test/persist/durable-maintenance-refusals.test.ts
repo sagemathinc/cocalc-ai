@@ -146,6 +146,30 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*const db = new DatabaseSync\(`\$\{path\}\.db`\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
     ],
   ];
+  it("ownerOfLocalPath inverts every project-template form resolveLocalPath builds", () => {
+    const id = "aaaaaaaa-0288-4000-8000-0000000000cc";
+    const cases: Array<[any, string, string | undefined]> = [
+      // [project_id] inside a segment, with a suffix (e.g. /mnt/cocalc/project-[project_id]-persist)
+      [{ local: "/srv/sync", localProjects: "/mnt/cocalc/project-[project_id]-persist" }, `/mnt/cocalc/project-${id}-persist/a/b`, id],
+      // [project_id] as a whole segment, with a sub-path after it
+      [{ local: "/srv/sync", localProjects: "/btrfs/project-[project_id]/.local/share/cocalc/persist" }, `/btrfs/project-${id}/.local/share/cocalc/persist/x`, id],
+      // no token: <template>/<id>
+      [{ local: "/srv/sync", localProjects: "/data/projects" }, `/data/projects/${id}/x`, id],
+      // the legacy <local>/projects/<id>/ layout
+      [{ local: "/srv/sync" }, `/srv/sync/projects/${id}/x`, id],
+      // host-owned roots
+      [{ local: "/srv/sync" }, "/srv/sync/hub/x", "host"],
+      [{ local: "/srv/sync", localHub: "/srv/hub" }, "/srv/hub/x", "host"],
+      [{ local: "/srv/sync", localAccounts: "/srv/acct-[account_id]" }, "/srv/acct-bbbbbbbb-0000-4000-8000-000000000001/x", "host"],
+      // outside every root, and a near-miss of a template prefix
+      [{ local: "/srv/sync", localProjects: "/mnt/cocalc/project-[project_id]-persist" }, "/mnt/other/x", undefined],
+      [{ local: "/srv/sync", localProjects: "/mnt/cocalc/project-[project_id]-persist" }, `/mnt/cocalc/project-${id}/x`, undefined],
+    ];
+    for (const [files, path, want] of cases) {
+      expect([path, ownerOfLocalPath(path, files)]).toEqual([path, want]);
+    }
+  });
+
   describe("B2-M1: the maintained database's owner (logical primary, physical fallback, both must agree)", () => {
     const A = "aaaaaaaa-0288-4000-8000-00000000000a";
     const B = "aaaaaaaa-0288-4000-8000-00000000000b";
