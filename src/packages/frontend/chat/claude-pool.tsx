@@ -102,17 +102,26 @@ function perDay(x: number): string {
 // recent rate is measured; before there is enough recent history it is
 // estimated from each current week's average, which runs high when the weeks
 // are staggered and the turns went to a few subscriptions.
+// How many subscriptions keep up with that rate: each renews one weekly limit
+// a week.  (Usage is a share of each subscription's own limit, so this counts
+// subscriptions like the ones in the pool.)
+export function claudePoolSubscriptionsNeeded(usedPerDay: number): number {
+  return Math.max(1, Math.ceil(usedPerDay * 7 - 1e-9));
+}
+
 function rateLine(summary: ClaudePoolSummary, usedPerDay: number): string {
   const renew = `${summary.members} subscription${
     summary.members === 1 ? " renews" : "s renew"
   } about ${perDay(summary.members / 7)} a day`;
+  const need = claudePoolSubscriptionsNeeded(usedPerDay);
+  const needed = `At that rate, ${need} subscription${need === 1 ? "" : "s"} like these would keep up; you have ${summary.members}.`;
   if (summary.rateFrom === "recent" && summary.rateHours != null) {
     const hours = Math.round(summary.rateHours);
     return `Using about ${perDay(usedPerDay)} weekly limits a day (over the last ${hours} hour${
       hours === 1 ? "" : "s"
-    }); ${renew}.`;
+    }); ${renew}. ${needed}`;
   }
-  return `Estimated at about ${perDay(usedPerDay)} weekly limits a day from the current weeks' averages (likely high until there is more recent history); ${renew}.`;
+  return `Estimated at about ${perDay(usedPerDay)} weekly limits a day from the current weeks' averages (likely high until there is more recent history); ${renew}. ${needed}`;
 }
 
 /** How much the pool has left, how fast it is used against how fast it

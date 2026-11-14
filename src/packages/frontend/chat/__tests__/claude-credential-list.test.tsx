@@ -244,7 +244,7 @@ test("with recent readings, the rate is measured over them", () => {
     />,
   );
   expect(screen.getByRole("status").textContent).toMatch(
-    /Using about 0\.30 weekly limits a day \(over the last 24 hours\); 2 subscriptions renew about 0\.29 a day\./,
+    /Using about 0\.30 weekly limits a day \(over the last 24 hours\); 2 subscriptions renew about 0\.29 a day\. At that rate, 3 subscriptions like these would keep up; you have 2\./,
   );
 });
 
@@ -314,4 +314,12 @@ test("an Auto with nothing left to use says so", () => {
     />,
   );
   expect(screen.getByText(/Auto has no subscription to use/)).toBeTruthy();
+});
+
+test("subscriptions needed: each renews one weekly limit a week", () => {
+  const { claudePoolSubscriptionsNeeded } = require("../claude-pool");
+  expect(claudePoolSubscriptionsNeeded(1.6)).toBe(12);
+  expect(claudePoolSubscriptionsNeeded(9 / 7)).toBe(9);
+  expect(claudePoolSubscriptionsNeeded(0.3)).toBe(3);
+  expect(claudePoolSubscriptionsNeeded(0)).toBe(1);
 });
