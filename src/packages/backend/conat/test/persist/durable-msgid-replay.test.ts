@@ -243,7 +243,8 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
   const NONDETERMINISTIC_OK = new Set<string>([]);
   const owner = () =>
     msg("a", { msgID: "m1", key: "k", checkpoint: { name: "cp", data: { v: 1 } } }) as any;
-  const p3variants: Array<[string, () => any]> = [
+  // [label, the duplicate, the field it changes (default: the label)]
+  const p3variants: Array<[string, () => any, string?]> = [
     ["the same body", () => owner()],
     ["raw", () => ({ ...owner(), raw: Buffer.from("DIFFERENT") })],
     ["encoding", () => ({ ...owner(), encoding: DataEncoding.MsgPack })],
@@ -252,6 +253,8 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     ["ttl", () => ({ ...owner(), ttl: 1 })],
     ["checkpoint", () => ({ ...owner(), checkpoint: { name: "cp", data: { v: 2 } } })],
     ["previousSeq", () => ({ ...owner(), previousSeq: 0 })],
+    // 0 is a PASSING precondition on the empty stream; 999 mismatches (SA 3288)
+    ["previousSeq (mismatching)", () => ({ ...owner(), previousSeq: 999 }), "previousSeq"],
   ];
   const p3changed = (op: any): string[] => {
     const base = owner();
@@ -335,10 +338,10 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
       expect([...shifted].filter((col) => !TIME_COLUMNS.has(col))).toEqual([]);
     });
 
-    for (const [what, make] of p3variants) {
+    for (const [what, make, field] of p3variants) {
       it(`P3 (${how}): a later op with the msgID and ${what == "the same body" ? what : `a different ${what}`} gets the owner's result, emits nothing of its own, and the whole state equals the owner-only control`, async () => {
         const dup = make();
-        expect(p3changed(dup)).toEqual(what == "the same body" ? [] : [what]);
+        expect(p3changed(dup)).toEqual(what == "the same body" ? [] : [field ?? what]);
         const control = await runBatch(`p3-control-${how}-${what}`, [owner()], how);
         const test = await runBatch(`p3-test-${how}-${what}`, [owner(), dup], how);
         // nothing after the owner's own change (the mapped assertions first)
