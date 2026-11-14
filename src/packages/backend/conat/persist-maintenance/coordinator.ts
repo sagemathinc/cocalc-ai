@@ -4,6 +4,7 @@
  */
 
 import { assertPersistMaintenanceOpenAllowed } from "../persist-durability";
+import { projectOfStoragePath } from "@cocalc/conat/persist/project-fence";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -454,7 +455,7 @@ export class PersistMaintenanceCoordinator {
   ): Promise<void> {
     try {
       const checked = this.safety.assertExistingRegularFile(row.physical_path);
-      assertPersistMaintenanceOpenAllowed(checked.path);
+      this.assertOpenAllowed(checked.path, row);
       const result = await this.runWorker({
         sourcePath: checked.path,
         timeoutMs: Math.min(this.config.jobTimeoutMs, 5 * 60 * 1000),
@@ -549,7 +550,7 @@ export class PersistMaintenanceCoordinator {
     let secondary: Array<{ temporary: string; destination: string }> = [];
     try {
       rmSync(outputPath, { force: true });
-      assertPersistMaintenanceOpenAllowed(checked.path);
+      this.assertOpenAllowed(checked.path, row);
       const result = await this.runWorker({
         sourcePath: checked.path,
         outputPath,
@@ -710,7 +711,7 @@ export class PersistMaintenanceCoordinator {
     // With no owners and worker opens waiting for begin-open acknowledgement,
     // this checkpoint is exclusive. It removes stale WAL state before swapping
     // the main database inode.  (Never on a poisoned or unverified file: 028.)
-    assertPersistMaintenanceOpenAllowed(checked.path);
+    this.assertOpenAllowed(checked.path, row);
     const sourceDb = new DatabaseSync(checked.path);
     try {
       sourceDb.exec("PRAGMA busy_timeout=1000");
@@ -777,8 +778,8 @@ export class PersistMaintenanceCoordinator {
         );
         let promoted = false;
         if (existsSync(rollbackPath)) {
-          const sourceValid = this.quickCheck(run.physical_path);
-          const rollbackValid = this.quickCheck(rollbackPath);
+          const sourceValid = this.quickCheck(run.physical_path, run.physical_path);
+          const rollbackValid = this.quickCheck(rollbackPath, run.physical_path);
           if (!sourceValid && rollbackValid) {
             rmSync(run.physical_path, { force: true });
             renameSync(rollbackPath, run.physical_path);
@@ -800,7 +801,7 @@ export class PersistMaintenanceCoordinator {
           if (!destination) continue;
           const staged = `${destination}.maintenance-${run.run_id}.tmp`;
           if (existsSync(staged)) {
-            if (promoted && this.quickCheck(staged)) {
+            if (promoted && this.quickCheck(staged, run.physical_path)) {
               renameSync(staged, destination);
             } else {
               rmSync(staged, { force: true });
@@ -814,7 +815,7 @@ export class PersistMaintenanceCoordinator {
           }
         }
         rmSync(outputPath, { force: true });
-        if (this.quickCheck(run.physical_path)) {
+        if (this.quickCheck(run.physical_path, run.physical_path)) {
           const identity = fileIdentity(lstatSync(run.physical_path));
           if (promoted) {
             this.catalog.recordSuccess(
@@ -865,10 +866,35 @@ export class PersistMaintenanceCoordinator {
     }
   }
 
-  private quickCheck(path: string): boolean {
+  // 028 B2-M1 (ops0 3587): a maintenance open checks the durability records
+  // WITH the stream's owner, keyed exactly as the open path keys it
+  // (util.ts storeOwner: the project of the LOGICAL path, else "host"), so a
+  // project-level poison refuses too.  No logical path in the catalog: the
+  // owner is unknown, and the open is refused.
+  private ownerOf(physicalPath: string): string | undefined {
+    const logical = this.catalog.getDatabase(physicalPath)?.logical_path;
+    if (!logical) return;
+    return projectOfStoragePath(logical) ?? "host";
+  }
+
+  private assertOpenAllowed(
+    path: string,
+    row: { physical_path: string; logical_path?: string },
+  ): void {
+    const owner = row.logical_path
+      ? (projectOfStoragePath(row.logical_path) ?? "host")
+      : this.ownerOf(row.physical_path);
+    assertPersistMaintenanceOpenAllowed(path, undefined, () => owner);
+  }
+
+  // databasePath: the catalog database the file belongs to (its source, or
+  // the rollback/staged copy of it)
+  private quickCheck(path: string, databasePath: string): boolean {
     if (!existsSync(path)) return false;
     try {
-      assertPersistMaintenanceOpenAllowed(path);
+      assertPersistMaintenanceOpenAllowed(path, undefined, () =>
+        this.ownerOf(databasePath),
+      );
       const db = new DatabaseSync(path, { readOnly: true });
       try {
         const row = db.prepare("PRAGMA quick_check").get() as Record<

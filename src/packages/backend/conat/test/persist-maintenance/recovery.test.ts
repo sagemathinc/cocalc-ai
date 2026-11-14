@@ -5,9 +5,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { mkdirSync } from "node:fs";
-import { syncFiles } from "@cocalc/conat/persist/context";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { createPersistMaintenanceCoordinator } from "@cocalc/backend/conat/persist-maintenance/coordinator";
@@ -17,16 +16,9 @@ import {
   quickCheck,
 } from "@cocalc/backend/conat/test/persist-maintenance/helpers";
 
-// under the persist root, so a maintenance open can derive the stream's
-// owner (finding 028 B2-M1); a host-owned stream
-function persistTestRoot(): string {
-  mkdirSync(syncFiles.local, { recursive: true });
-  return syncFiles.local;
-}
-
 describe("persist maintenance catalog recovery", () => {
   it("preserves a corrupt catalog and rebuilds disposable state", async () => {
-    const root = await mkdtemp(join(persistTestRoot(), "persist-maintenance-recovery-"));
+    const root = await mkdtemp(join(tmpdir(), "persist-maintenance-recovery-"));
     const catalogPath = join(root, "catalog.sqlite");
     writeFileSync(catalogPath, "not a sqlite database");
     const coordinator = createPersistMaintenanceCoordinator({
@@ -49,7 +41,7 @@ describe("persist maintenance catalog recovery", () => {
   });
 
   it("restores an exact rollback when the coordinator died mid-promotion", async () => {
-    const root = await mkdtemp(join(persistTestRoot(), "persist-maintenance-recovery-"));
+    const root = await mkdtemp(join(tmpdir(), "persist-maintenance-recovery-"));
     const sourcePath = join(root, "source.db");
     const catalogPath = join(root, "catalog", "catalog.sqlite");
     createBloatedDatabase(sourcePath, 32);
@@ -87,7 +79,7 @@ describe("persist maintenance catalog recovery", () => {
   });
 
   it("clears only owners whose PID start token is stale", async () => {
-    const root = await mkdtemp(join(persistTestRoot(), "persist-maintenance-recovery-"));
+    const root = await mkdtemp(join(tmpdir(), "persist-maintenance-recovery-"));
     const sourcePath = join(root, "source.db");
     const catalogPath = join(root, "catalog", "catalog.sqlite");
     createBloatedDatabase(sourcePath, 8);
