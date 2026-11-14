@@ -92,6 +92,9 @@ export function pathForSSO(id?: string): string {
   return id ? `${base}/sso/${id}` : `${base}/sso`;
 }
 
+const OAUTH_AUTHORIZE_PATH = "/auth/oauth/authorize";
+const MAX_OAUTH_TARGET_LENGTH = 2048;
+
 export function getPublicAuthRedirectTargetFromSearch(
   search: string,
   depth = 0,
@@ -108,6 +111,19 @@ export function getPublicAuthRedirectTargetFromSearch(
     const relative = appRelativePath(url.pathname);
     if (relative === "/") {
       return undefined;
+    }
+    // An OAuth client's sign-in (e.g. Sagebrush) resumes its authorize step
+    // after a new account is made: exactly that path under the app's base path,
+    // same-origin, with its query as given and no fragment. The authorize page checks everything again
+    // (client, redirect_uri, PKCE), as on a direct visit.
+    if (
+      url.pathname === `${basePathPrefix()}${OAUTH_AUTHORIZE_PATH}` &&
+      target.length <= MAX_OAUTH_TARGET_LENGTH &&
+      !target.includes("\\") &&
+      !url.hash &&
+      depth === 0
+    ) {
+      return `${url.pathname}${url.search}`;
     }
     if (/^\/(auth|sso)(\/|$)/.test(relative)) {
       return depth < 3
