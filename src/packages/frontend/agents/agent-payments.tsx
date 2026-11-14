@@ -8,6 +8,8 @@
 // The choices live on the server (account home bay); see
 // chat/payment-selection-store.
 
+import { lite } from "@cocalc/frontend/lite";
+import { LITE_CLAUDE_LABEL } from "@cocalc/frontend/chat/lite-claude";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -194,7 +196,8 @@ export function selectionLabel(
       ? `Default (${selectionLabel(fallback, payments)})`
       : "Default";
   }
-  if (selection.mode === "project-secret") return "Project secret";
+  if (selection.mode === "project-secret")
+    return lite ? LITE_CLAUDE_LABEL : "Project secret";
   if (selection.mode === "membership") return "CoCalc Membership";
   if (selection.mode === "subscription-pool") return CLAUDE_POOL_LABEL;
   return credentialLabel(payments.credentials, selection.credential_id);

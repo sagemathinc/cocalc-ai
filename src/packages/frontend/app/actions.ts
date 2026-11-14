@@ -42,7 +42,8 @@ import {
   hasReducedProjectState,
 } from "@cocalc/frontend/project/reduced-runtime";
 
-const LITE_TABS = new Set(["account", "admin", "docs", "ssh"]);
+// The Agents page works in CoCalc Plus too (lite/hub/named-agents.ts).
+const LITE_TABS = new Set(["account", "admin", "agents", "docs", "ssh"]);
 
 export class PageActions extends Actions<PageState> {
   private session_manager?: any;

@@ -2144,8 +2144,15 @@ function ChatPanelContent({
       codexPaymentPreference) as CodexPaymentSourcePreference;
     let submissionNewThreadSetup = fundedNewThreadSetup;
     let submissionExistingThreadConfig = existingThreadMetadata?.acp_config;
+    // A Claude (ACP harness) thread is not paid through Codex: its credential
+    // is checked when the turn is admitted, so Codex funding must not block it
+    // (in CoCalc Plus there may be no Codex at all).
+    const harnessThread =
+      !!reply_thread_id &&
+      (existingThreadMetadata as { agent_runtime?: unknown } | undefined)
+        ?.agent_runtime != null;
     if (isCodexSubmit) {
-      if (opts?.immediate !== true) {
+      if (opts?.immediate !== true && !harnessThread) {
         try {
           const verifiedSource = await fetchCodexPaymentSourceForSubmit({
             projectId: project_id,
@@ -2194,7 +2201,10 @@ function ChatPanelContent({
         }
       }
       try {
-        if (isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource)) {
+        if (
+          !harnessThread &&
+          isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource)
+        ) {
           refreshCodexPaymentSource?.();
           setCodexPaymentConfigOpen(true);
           return;
@@ -2363,6 +2373,7 @@ function ChatPanelContent({
     if (reply_thread_id) scrollToBottomRef.current?.(true);
     if (
       isCodexSubmit &&
+      !harnessThread &&
       opts?.immediate !== true &&
       !codexConnectionCheckPendingRef.current
     ) {

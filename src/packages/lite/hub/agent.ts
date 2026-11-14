@@ -24,6 +24,9 @@ import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
 import { resolveCurrentCodexModel } from "@cocalc/util/ai/codex";
 import { firstCodeFenceBody } from "@cocalc/util/linear-text";
 import { getLiteConatClient } from "./runtime-client";
+import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
+import { controlAcp } from "@cocalc/conat/ai/acp/client";
+import { createNamedAgents, type NamedAgents } from "./named-agents";
 
 function getProjectId(): string {
   return LOCAL_PROJECT_ID;
@@ -696,5 +699,98 @@ export async function run(opts: AgentRunRequest): Promise<AgentRunResponse> {
     requestId,
     state,
     error: `max steps reached (${maxSteps})`,
+  };
+}
+
+// --- Named agents (the Agents page and the CLI): hub/named-agents.ts ---
+
+let namedAgentsInstance: NamedAgents | undefined;
+
+function namedAgents(): NamedAgents {
+  namedAgentsInstance ??= createNamedAgents({
+    account_id: ACCOUNT_ID,
+    project_id: getProjectId(),
+    readThread: async ({ project_id, path, thread_id }) => {
+      const db = await acquireChatSyncDB({
+        client: getLiteConatClient(),
+        project_id,
+        path,
+        readyTimeoutMs: 20_000,
+      });
+      try {
+        const values = db.get();
+        const rows: any[] = Array.isArray(values)
+          ? values
+          : ((values as any)?.toJS?.() ?? []);
+        return rows.find(
+          (row) =>
+            row.event === "chat-thread-config" && row.thread_id === thread_id,
+        );
+      } finally {
+        await releaseChatSyncDB(project_id, path);
+      }
+    },
+    prepareFreshThread: async ({ account_id, project_id, path, thread_id }) => {
+      const prepared = await controlAcp(
+        {
+          project_id,
+          account_id,
+          path,
+          thread_id,
+          user_message_id: thread_id,
+          action: "prepare_fresh_conversation",
+        },
+        getLiteConatClient(),
+      );
+      if (!prepared.ok || !prepared.successor_thread_id)
+        throw Error("Could not prepare a fresh conversation; retry to finish");
+      return prepared.successor_thread_id;
+    },
+  });
+  return namedAgentsInstance;
+}
+
+/** Tests only. */
+export function setNamedAgentsForTests(next?: NamedAgents): void {
+  namedAgentsInstance = next;
+}
+
+export const registerIdentity: NamedAgents["registerIdentity"] = (opts) =>
+  namedAgents().registerIdentity(opts);
+export const getIdentity: NamedAgents["getIdentity"] = (opts) =>
+  namedAgents().getIdentity(opts);
+export const resolveIdentity: NamedAgents["resolveIdentity"] = (opts) =>
+  namedAgents().resolveIdentity(opts);
+export const startFreshConversation: NamedAgents["startFreshConversation"] = (
+  opts,
+) => namedAgents().startFreshConversation(opts);
+export const nameAgent: NamedAgents["nameAgent"] = (opts) =>
+  namedAgents().nameAgent(opts);
+export const retireNamedAgent: NamedAgents["retireNamedAgent"] = (opts) =>
+  namedAgents().retireNamedAgent(opts);
+export const listNamedAgents: NamedAgents["listNamedAgents"] = (opts) =>
+  namedAgents().listNamedAgents(opts);
+export const getPaymentSelections: NamedAgents["getPaymentSelections"] = (
+  opts,
+) => namedAgents().getPaymentSelections(opts);
+export const listPaymentSelections: NamedAgents["listPaymentSelections"] = (
+  opts,
+) => namedAgents().listPaymentSelections(opts);
+export const setPaymentSelections: NamedAgents["setPaymentSelections"] = (
+  opts,
+) => namedAgents().setPaymentSelections(opts);
+export const copyPaymentSelection: NamedAgents["copyPaymentSelection"] = (
+  opts,
+) => namedAgents().copyPaymentSelection(opts);
+
+// No Agent Networks in CoCalc Plus yet: an empty directory, not an error, so
+// the Agents page renders.
+export async function listAgentNetworks(_opts: { account_id?: string }) {
+  return {
+    enabled: false,
+    networks: [],
+    active_count: 0,
+    usage: { active_networks: 0, network_limit: 0, member_limit: 0 },
+    controls: { paused: false, generation: 0 },
   };
 }
