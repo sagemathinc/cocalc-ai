@@ -168,7 +168,13 @@ describe("028 B-3a: enforcement in the persist storage", () => {
   it("a client config cannot lift it (the per-stream conf limits are a different thing)", async () => {
     limits(4);
     const s = await open("conf");
-    s.config({ max_msgs_per_second: -1, max_bytes_per_second: -1 } as any); // 1 txn
+    // a real change of the per-stream limits (the defaults would write
+    // nothing): exactly 1 txn
+    const conf = s.config({
+      max_msgs_per_second: 1_000_000,
+      max_bytes_per_second: 1e12,
+    } as any);
+    expect(conf.max_msgs_per_second).toBe(1_000_000);
     for (let i = 0; i < 3; i++) await s.setQueued(msg(`${i}`));
     await expect(s.setQueued(msg("x"))).rejects.toMatchObject({
       code: "rate_limited",
