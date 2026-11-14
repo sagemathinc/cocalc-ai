@@ -6476,21 +6476,33 @@ export function closeDurably(stream: PersistentStream): void {
   stream.atWriteIdle(() => stream.close());
 }
 
+// Every LIVE disk connection (liveDiskConnections: from its creation until a
+// close returned OK), not only the registered streams: a connection whose
+// close failed or could not be armed, or whose open did not finish, is still
+// open and is read back too.  A poisoned or unreadable one counts as
+// unreadable (a failure for the acceptance gate).
 function pragmaCheck(): {
   disk_connections: number;
   synchronous_full: number;
   wal_autocheckpoint_off: number;
   unreadable: number;
+  registered_streams: number;
+  unregistered_live: number;
 } {
   const out = {
     disk_connections: 0,
     synchronous_full: 0,
     wal_autocheckpoint_off: 0,
     unreadable: 0,
+    registered_streams: 0,
+    unregistered_live: 0,
   };
-  for (const [stream, { kind }] of openStreams) {
-    if (kind !== "disk") continue;
+  for (const [, { kind }] of openStreams) {
+    if (kind === "disk") out.registered_streams += 1;
+  }
+  for (const stream of liveDiskConnections) {
     out.disk_connections += 1;
+    if (openStreams.get(stream)?.kind !== "disk") out.unregistered_live += 1;
     const r = stream.readDurabilityPragmas();
     if (r == null) {
       out.unreadable += 1;

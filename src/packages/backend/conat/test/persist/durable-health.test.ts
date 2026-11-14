@@ -53,7 +53,8 @@ describe("028 B-3a: durability health", () => {
     expect(pc.wal_autocheckpoint_off).toBe(pc.disk_connections);
     expect(pc.unreadable).toBe(0);
     // can fail: a connection that reads back OFF (0) / auto-checkpoint on is
-    // counted as not FULL (the test statement guard forbids setting it)
+    // counted as not FULL (a stubbed read-back; the next test sets a REAL
+    // wrong value)
     const spy = jest
       .spyOn(a as any, "readDurabilityPragmas")
       .mockReturnValue({ synchronous: 0, walAutocheckpoint: 1000 });
@@ -64,6 +65,51 @@ describe("028 B-3a: durability health", () => {
     a.close();
     b.close();
     eph.close();
+  });
+
+  it("the PRAGMA check reads back a REAL wrong setting on a registered stream", () => {
+    const a = pstream({ path: join(dir, "real1") });
+    const b = pstream({ path: join(dir, "real2") });
+    const pc = (getPersistentStreamDiagnostics() as any).pragma_check;
+    expect(pc.synchronous_full).toBe(pc.disk_connections);
+    // a connection setting (writes nothing): the read-back sees NORMAL (1)
+    (a as any).db.exec("PRAGMA synchronous=NORMAL");
+    expect((a as any).readDurabilityPragmas().synchronous).toBe(1);
+    const pc2 = (getPersistentStreamDiagnostics() as any).pragma_check;
+    expect(pc2.synchronous_full).toBe(pc2.disk_connections - 1);
+    (a as any).db.exec("PRAGMA synchronous=FULL");
+    a.close();
+    b.close();
+  });
+
+  it("every LIVE disk connection is read back, also one whose close failed (outside the registered streams)", () => {
+    const a = pstream({ path: join(dir, "live1") });
+    const b = pstream({ path: join(dir, "live2") });
+    const before = (getPersistentStreamDiagnostics() as any).pragma_check;
+    expect(before.unregistered_live).toBe(0);
+    expect(before.disk_connections).toBe(before.registered_streams);
+    // b: a wrong setting, then a close that can't be armed: its connection
+    // stays open (liveDiskConnections) but leaves the registered streams
+    (b as any).db.exec("PRAGMA synchronous=NORMAL");
+    const arm = jest
+      .spyOn(b as any, "armBeforeWrite")
+      .mockImplementation(() => {
+        throw Error("unarmed (test)");
+      });
+    (b as any).finishClose(join(dir, "live2"));
+    arm.mockRestore();
+    const pc = (getPersistentStreamDiagnostics() as any).pragma_check;
+    expect(pc.unregistered_live).toBe(1);
+    expect(pc.registered_streams).toBe(before.registered_streams - 1);
+    expect(pc.disk_connections).toBe(before.disk_connections);
+    // not green: the retained connection is measured (registered streams
+    // only would show every connection FULL)
+    expect(pc.synchronous_full).toBe(pc.disk_connections - 1);
+    // clean up: close b's connection for real
+    expect((b as any).closeConnection()).toBe(true);
+    const after = (getPersistentStreamDiagnostics() as any).pragma_check;
+    expect(after.unregistered_live).toBe(0);
+    a.close();
   });
 
   it("a quota (Q-F) poison counts as a project poison and keeps the host healthy", async () => {
