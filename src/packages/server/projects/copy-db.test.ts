@@ -967,6 +967,9 @@ describe("projects.copy-db snapshot cleanup", () => {
     } finally {
       connect.mockRestore();
       resume();
+      // Both finish even when an assertion above failed, so the test never
+      // leaves work running for the leak check.
+      await Promise.allSettled([inserting, cleanup]);
     }
     const insertResult = await inserting!.then(
       (row) => row,
@@ -1260,6 +1263,150 @@ describe("projects.copy-db snapshot cleanup", () => {
     );
     expect(await activeRowsFor("snap-a")).toHaveLength(0);
     expect(await activeRowsFor(replaced)).toHaveLength(0);
+  });
+
+  it("a requeue paused after reading its row keeps a concurrent requeue of that row waiting", async () => {
+    const op_id = "99999999-9999-4999-8999-999999999997";
+    await queue({ snapshot_id: "snap-a", snapshot_created: true, op_id });
+    const pool = getPool();
+    const realConnect = pool.connect.bind(pool);
+    let reachedRead!: () => void;
+    const atRead = new Promise<void>((resolve) => (reachedRead = resolve));
+    let resume!: () => void;
+    const resumed = new Promise<void>((resolve) => (resume = resolve));
+    let refusedRowLock!: () => void;
+    const rowLockRefused = new Promise<void>(
+      (resolve) => (refusedRowLock = resolve),
+    );
+    const realPg = !(
+      process.env.COCALC_TEST_USE_PGLITE || process.env.COCALC_DB === "pglite"
+    );
+    // The row's lock key, computed here from the row, not taken from the code.
+    const rowKey = `project-copy-row:${JSON.stringify([
+      op_id,
+      SRC_PROJECT_ID,
+      "a.txt",
+      DEST_PROJECT_ID,
+      "/root/a.txt",
+    ])}`;
+    let paused = false;
+    let pausedNow = false;
+    let firstHeldRowKey = false;
+    let firstPid: number | undefined;
+    // The first requeue pauses right after reading the row it replaces; a
+    // later connection reports when its try for that exact row key is refused
+    // while the first is paused.  The wrapper only observes: every query runs
+    // unchanged and its real result is returned as is.
+    const connect = jest
+      .spyOn(pool, "connect")
+      .mockImplementation((async () => {
+        const client: any = await realConnect();
+        const realQuery = client.query.bind(client);
+        const realRelease = client.release.bind(client);
+        const pauses = !paused;
+        client.query = async (sql: any, params?: any) => {
+          const result = await realQuery(sql, params);
+          const rowLockTry =
+            `${sql}`.includes("pg_try_advisory_lock") && params?.[0] === rowKey;
+          if (pauses && rowLockTry && result?.rows?.[0]?.locked === true) {
+            firstHeldRowKey = true;
+          }
+          if (
+            pauses &&
+            !paused &&
+            `${sql}`.includes("SELECT snapshot_id, snapshot_created")
+          ) {
+            paused = true;
+            if (realPg) {
+              firstPid = (await realQuery("SELECT pg_backend_pid() AS pid"))
+                .rows[0].pid;
+            }
+            pausedNow = true;
+            reachedRead();
+            await resumed;
+            pausedNow = false;
+          }
+          if (
+            !pauses &&
+            pausedNow &&
+            firstHeldRowKey &&
+            rowLockTry &&
+            result?.rows?.[0]?.locked === false
+          ) {
+            refusedRowLock();
+          }
+          return result;
+        };
+        client.release = (arg?: any) => {
+          client.query = realQuery;
+          client.release = realRelease;
+          return realRelease(arg);
+        };
+        return client;
+      }) as any);
+    let first: Promise<unknown> | undefined;
+    let second: Promise<unknown> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      first = queue({ snapshot_id: "snap-b", snapshot_created: true, op_id });
+      await atRead;
+      second = queue({ snapshot_id: "snap-c", snapshot_created: true, op_id });
+      // the second requeue is refused the row's lock while the first holds it
+      const refused = await Promise.race([
+        rowLockRefused.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 5000);
+        }),
+      ]);
+      expect(refused).toBe(true);
+      if (realPg) {
+        // The database agrees: that row's lock is granted to exactly the
+        // paused first requeue's backend.  One connection outside the pool.
+        const { Client } = await import("pg");
+        const witness = new Client({ database: "smc" });
+        let closeError: unknown;
+        try {
+          await witness.connect();
+          const { rows: holders } = await witness.query(
+            `SELECT pid FROM pg_locks
+              WHERE locktype = 'advisory' AND granted AND objsubid = 1
+                AND classid::bigint = ((hashtext($1)::bigint >> 32) & 4294967295)
+                AND objid::bigint = (hashtext($1)::bigint & 4294967295)`,
+            [rowKey],
+          );
+          expect(typeof firstPid).toBe("number");
+          expect(holders.map((row) => row.pid)).toEqual([firstPid]);
+        } finally {
+          try {
+            await witness.end();
+          } catch (err) {
+            closeError = err ?? new Error("witness end failed");
+          }
+        }
+        // the witness must be closed for sure, before the leak check
+        expect(closeError).toBeUndefined();
+      }
+      expect(await settledWithin(second, 300)).toBe(false);
+    } finally {
+      clearTimeout(timer);
+      connect.mockRestore();
+      resume();
+      // Both requeues finish even when an assertion above failed, so the
+      // test never leaves work running for the leak check.
+      await Promise.allSettled([first, second]);
+    }
+    await first;
+    await second;
+    const { rows } = await getPool().query(
+      "SELECT snapshot_id FROM project_copies WHERE op_id=$1",
+      [op_id],
+    );
+    expect(rows.map((row) => row.snapshot_id)).toEqual(["snap-c"]);
+    // each replaced snapshot is cleaned up exactly once
+    expect(mockDeleteBackup.mock.calls.map(([o]) => o.id).sort()).toEqual([
+      "snap-a",
+      "snap-b",
+    ]);
   });
 
   describe("a copy that fails after making its backup", () => {

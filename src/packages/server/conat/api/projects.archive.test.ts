@@ -2329,6 +2329,15 @@ describe("projects.archiveProject", () => {
             ]),
         ],
         [
+          "another durable backup is unreleased besides the recorded one",
+          { final_backup_id: "final-backup-id", backup_generation: 10 },
+          () =>
+            listLrosByDedupeMock.mockResolvedValue([
+              succeeded(10),
+              succeeded(11, "backup-11"),
+            ]),
+        ],
+        [
           "no durable final backup matches the recorded one",
           { final_backup_id: "final-backup-id", backup_generation: 10 },
           () => listLrosByDedupeMock.mockResolvedValue([]),
