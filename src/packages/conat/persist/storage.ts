@@ -82,6 +82,7 @@ import {
   type VerifiedEvictionResult,
   integrityCheck,
   projectRecovery,
+  startupCheck,
 } from "./context";
 import { posix } from "path";
 import { isMainThread } from "worker_threads";
@@ -2162,6 +2163,14 @@ export class PersistentStream extends EventEmitter {
     }
     if ([...poisonedStreams].some((s) => s.poisonedPath === path)) {
       throw retryableWriteError("poisoned");
+    }
+    // 028 B-3a: the host's start-up preconditions (records root, NOFILE)
+    const start = startupCheck?.();
+    if (start != null && !start.ok) {
+      throw new ConatError(
+        `persist: disk-backed streams are unavailable on this host (${start.reason})`,
+        { code: "persist_unavailable" },
+      );
     }
     if (durability == null) {
       throw new ConatError(

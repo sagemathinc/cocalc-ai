@@ -29,6 +29,7 @@ import { persistWriteCounter } from "./persist-write-rate";
 import {
   integrityCheckClosedDatabase,
   persistDurabilityRecords,
+  persistStartupCheck,
 } from "./persist-durability";
 import { persistOpenBarrier } from "./persist-open-barrier";
 import {
@@ -61,6 +62,7 @@ export const persistContextOptions: Parameters<typeof initContext>[0] = {
   verifiedEviction: checkedVerifiedEviction,
   integrityCheck: integrityCheckClosedDatabase,
   projectRecovery: (owner, storeRoot) => recoverPoisonedProject(owner, storeRoot),
+  startupCheck: persistStartupCheck,
 };
 initContext(persistContextOptions);
 

@@ -13,6 +13,11 @@ if (!process.env.COCALC_PERSIST_RUN_DIR) {
     join(tmpdir(), "cocalc-persist-run-"),
   );
 }
+// a test process's records root is in /tmp, not on tmpfs (028 B-3a's
+// start-up check would refuse it on a host)
+if (!process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS) {
+  process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS = "1";
+}
 // and its durable post-reboot records (028 B-2): also this test process's
 if (!process.env.COCALC_PERSIST_STATE_DIR) {
   const { mkdtempSync } = require("node:fs");
