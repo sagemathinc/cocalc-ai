@@ -162,7 +162,17 @@ export function resolveLocalPath(
 // root, or <local>/projects/<project_id>/) -> its project_id; any other
 // stream under a persist root (local, hub, hosts, accounts) -> "host";
 // anything else -> undefined (the caller refuses).
-export function ownerOfLocalPath(localPath: string): string | undefined {
+export function ownerOfLocalPath(
+  localPath: string,
+  files: {
+    local: string;
+    localProjects?: string;
+    localAccounts?: string;
+    localHosts?: string;
+    localHub?: string;
+  } = syncFiles,
+): string | undefined {
+  const syncFiles = files;
   const p = posix.normalize(localPath);
   const under = (root: string) => {
     const r = posix.normalize(root).replace(/\/+$/, "");

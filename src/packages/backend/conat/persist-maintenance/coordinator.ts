@@ -5,6 +5,8 @@
 
 import { assertPersistMaintenanceOpenAllowed } from "../persist-durability";
 import { projectOfStoragePath } from "@cocalc/conat/persist/project-fence";
+import { ownerOfLocalPath } from "@cocalc/conat/persist/util";
+import { syncFiles } from "@cocalc/backend/data";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -869,12 +871,14 @@ export class PersistMaintenanceCoordinator {
   // 028 B2-M1 (ops0 3587): a maintenance open checks the durability records
   // WITH the stream's owner, keyed exactly as the open path keys it
   // (util.ts storeOwner: the project of the LOGICAL path, else "host"), so a
-  // project-level poison refuses too.  No logical path in the catalog: the
-  // owner is unknown, and the open is refused.
+  // project-level poison refuses too.  A file the scanner found but no open
+  // has recorded yet has no logical path: then the owner is derived from the
+  // physical path under the roots the maintenance scans (the same syncFiles
+  // the persist process opens with); if that fails too, the open is refused.
   private ownerOf(physicalPath: string): string | undefined {
     const logical = this.catalog.getDatabase(physicalPath)?.logical_path;
-    if (!logical) return;
-    return projectOfStoragePath(logical) ?? "host";
+    if (logical) return projectOfStoragePath(logical) ?? "host";
+    return ownerOfLocalPath(physicalPath, syncFiles);
   }
 
   private assertOpenAllowed(
