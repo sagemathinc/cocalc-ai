@@ -30,6 +30,26 @@ const AUTOMATIC_PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const AUTOMATIC_HOST_ID = "22222222-2222-4222-8222-222222222222";
 const AUTOMATIC_JOB_ID = "77777777-7777-4777-8777-777777777777";
 
+const MANUAL_JOB_ID = "77777777-7777-4777-8777-777777777777";
+const MANUAL_DEDUPE_KEY = `manual-project-archive-final:${MANUAL_JOB_ID}`;
+
+// A project whose last recorded backup looks newer than its last edit, as
+// the client sees it before skipping its own backup.
+function manualArchiveRow(overrides: Record<string, any> = {}) {
+  return {
+    project_id: "proj-1",
+    host_id: "host-1",
+    backup_repo_id: "repo-1",
+    provisioned: true,
+    state: { state: "opened" },
+    host_status: "running",
+    last_edited: new Date("2026-06-15T04:00:00.000Z"),
+    last_backup: new Date("2026-06-15T05:00:00.000Z"),
+    last_backup_generation: 99,
+    ...overrides,
+  };
+}
+
 function automaticArchiveRow(overrides: Record<string, any> = {}) {
   return {
     project_id: AUTOMATIC_PROJECT_ID,
@@ -326,7 +346,7 @@ describe("projects.archiveProject", () => {
   });
 
   it("archives a provisioned project with durable backup metadata", async () => {
-    poolQueryMock.mockResolvedValueOnce({
+    poolQueryMock.mockResolvedValue({
       rows: [
         {
           host_id: "host-1",
@@ -358,10 +378,13 @@ describe("projects.archiveProject", () => {
       project_id: "proj-1",
       epoch: 7,
     });
-    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+    expect(deleteProjectDataOnHostAfterBackupMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       host_id: "host-1",
+      expected_backup_id: "final-backup-id",
+      expected_generation: 10,
     });
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
     expect(assertProjectNotRehomingMock).toHaveBeenCalledWith({
       db: expect.any(Object),
       project_id: "proj-1",
@@ -417,7 +440,7 @@ describe("projects.archiveProject", () => {
   });
 
   it("passes the user's confirmation to the oversized file check", async () => {
-    poolQueryMock.mockResolvedValueOnce({
+    poolQueryMock.mockResolvedValue({
       rows: [
         {
           host_id: "host-1",
@@ -440,7 +463,7 @@ describe("projects.archiveProject", () => {
     );
   });
 
-  it("refuses to archive when no backups exist yet", async () => {
+  it("refuses to archive from an off host when no backups exist yet", async () => {
     poolQueryMock.mockResolvedValueOnce({
       rows: [
         {
@@ -448,7 +471,7 @@ describe("projects.archiveProject", () => {
           backup_repo_id: "repo-1",
           provisioned: true,
           state: { state: "opened" },
-          host_status: "running",
+          host_status: "off",
         },
       ],
     });
@@ -462,7 +485,9 @@ describe("projects.archiveProject", () => {
       "project must have at least one backup before it can be archived",
     );
 
+    expect(createBackupMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
     expect(poolConnectQueryMock).not.toHaveBeenCalledWith(
       expect.stringContaining("UPDATE projects"),
       expect.anything(),
@@ -492,7 +517,9 @@ describe("projects.archiveProject", () => {
 
     expect(getExplicitProjectRoutedClientMock).not.toHaveBeenCalled();
     expect(interBayStopMock).not.toHaveBeenCalled();
+    expect(createBackupMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
     expect(poolConnectQueryMock).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE projects"),
       expect.anything(),
@@ -601,7 +628,9 @@ describe("projects.archiveProject", () => {
 
     expect(getExplicitProjectRoutedClientMock).not.toHaveBeenCalled();
     expect(interBayStopMock).not.toHaveBeenCalled();
+    expect(createBackupMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
     expect(poolConnectQueryMock).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE projects"),
       expect.anything(),
@@ -1588,5 +1617,293 @@ describe("projects.archiveProject", () => {
     expect(interBayStopMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+  });
+
+  describe("manual archive final backup", () => {
+    function updatedProjects() {
+      return poolConnectQueryMock.mock.calls.filter(([sql]) =>
+        `${sql}`.includes("UPDATE projects"),
+      );
+    }
+
+    it("deletes only against the frozen final backup it makes, even when an earlier backup looks current", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).resolves.toBeUndefined();
+
+      expect(createBackupMock).toHaveBeenCalledTimes(1);
+      const [input, opts] = createBackupMock.mock.calls[0];
+      expect(input).toEqual({
+        project_id: "proj-1",
+        tags: [
+          "automatic-project-archive-final",
+          "manual-project-archive-final",
+        ],
+      });
+      expect(opts).toEqual(
+        expect.objectContaining({
+          freeze_source: true,
+          replace_oldest_at_limit: false,
+          dedupe_key: MANUAL_DEDUPE_KEY,
+        }),
+      );
+      expect(deleteProjectDataOnHostAfterBackupMock).toHaveBeenCalledTimes(1);
+      expect(deleteProjectDataOnHostAfterBackupMock).toHaveBeenCalledWith({
+        project_id: "proj-1",
+        host_id: "host-1",
+        expected_backup_id: "final-backup-id",
+        expected_generation: 10,
+      });
+      expect(
+        waitForDurableLroCompletionMock.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        deleteProjectDataOnHostAfterBackupMock.mock.invocationCallOrder[0],
+      );
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      expect(
+        recordProjectArchiveLifecycleFinalBackupMock,
+      ).not.toHaveBeenCalled();
+      expect(updatedProjects()).toHaveLength(1);
+    });
+
+    it("tags its final backup so automatic retention never replaces it", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      const { archiveProject } = await import("./projects");
+      await archiveProject({ account_id: "owner-1", project_id: "proj-1" });
+      const { tags } = createBackupMock.mock.calls[0][0];
+      // the host's retention replaces only untagged or cocalc-automatic
+      // snapshots (file-server/btrfs/subvolume-rustic.ts)
+      expect(tags).toContain("automatic-project-archive-final");
+      expect(tags).not.toContain("cocalc-automatic");
+      expect(tags.length).toBeGreaterThan(0);
+    });
+
+    it("(control) each manual archive job gets its own final backup key", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      createProjectArchiveLifecycleJobMock
+        .mockResolvedValueOnce({ id: "job-a" })
+        .mockResolvedValueOnce({ id: "job-b" });
+      const { archiveProject } = await import("./projects");
+      await archiveProject({ account_id: "owner-1", project_id: "proj-1" });
+      await archiveProject({ account_id: "owner-1", project_id: "proj-1" });
+      expect(
+        createBackupMock.mock.calls.map(([, opts]) => opts.dedupe_key),
+      ).toEqual([
+        "manual-project-archive-final:job-a",
+        "manual-project-archive-final:job-b",
+      ]);
+    });
+
+    it("refuses and keeps the data when its final backup fails", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      waitForDurableLroCompletionMock.mockResolvedValue({
+        status: "failed",
+        error: "R2 unavailable",
+      });
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("R2 unavailable");
+
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+      expect(updatedProjects()).toHaveLength(0);
+      expect(updateProjectArchiveLifecycleJobMock).toHaveBeenCalledWith(
+        expect.objectContaining({ job_id: MANUAL_JOB_ID, status: "failed" }),
+      );
+    });
+
+    it("refuses at the backup limit without replacing an existing backup", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      waitForDurableLroCompletionMock.mockResolvedValue({
+        status: "failed",
+        error: "backup limit reached (507)",
+      });
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("backup limit reached");
+
+      // the host replaces older backups only when asked to
+      expect(createBackupMock).toHaveBeenCalledTimes(1);
+      expect(createBackupMock.mock.calls[0][1].replace_oldest_at_limit).toBe(
+        false,
+      );
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+      expect(updatedProjects()).toHaveLength(0);
+    });
+
+    it("ignores anything the client says about its own backup", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      const { archiveProject } = await import("./projects");
+      await archiveProject({
+        account_id: "owner-1",
+        project_id: "proj-1",
+        // not part of the API; a client cannot vouch for a backup
+        backup_id: "client-backup",
+        backup_time: new Date("2026-06-15T06:00:00.000Z"),
+        expected_backup_id: "client-backup",
+        expected_generation: 99,
+        reused: true,
+      } as any);
+      expect(createBackupMock).toHaveBeenCalledTimes(1);
+      expect(deleteProjectDataOnHostAfterBackupMock).toHaveBeenCalledWith({
+        project_id: "proj-1",
+        host_id: "host-1",
+        expected_backup_id: "final-backup-id",
+        expected_generation: 10,
+      });
+    });
+
+    it("refuses when its final backup reports no filesystem generation", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      waitForDurableLroCompletionMock.mockResolvedValue({
+        status: "succeeded",
+        result: { id: "final-backup-id", time: "2026-06-15T05:30:00.000Z" },
+      });
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("without a filesystem generation");
+
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+      expect(updatedProjects()).toHaveLength(0);
+    });
+
+    it("releases its freeze and keeps the data when the host's checked delete refuses", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      // e.g. the final backup was forgotten before the delete
+      deleteProjectDataOnHostAfterBackupMock.mockRejectedValue(
+        new Error("archive backup snapshot final-backup-id not found"),
+      );
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("not found");
+
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      expect(updatedProjects()).toHaveLength(0);
+      expect(poolConnectQueryMock).toHaveBeenCalledWith("ROLLBACK");
+      expect(releaseProjectDataArchiveFreezeOnHostMock).toHaveBeenCalledWith({
+        project_id: "proj-1",
+        host_id: "host-1",
+        expected_generation: 10,
+      });
+      expect(attestReleasedLroDedupeSuccessesMock).toHaveBeenCalledWith({
+        scope_type: "project",
+        scope_id: "proj-1",
+        dedupe_key: MANUAL_DEDUPE_KEY,
+        expected_result_id: "final-backup-id",
+        expected_generation: 10,
+      });
+      expect(clearProjectArchiveLifecycleFinalBackupMock).toHaveBeenCalledWith({
+        job_id: MANUAL_JOB_ID,
+        backup_id: "final-backup-id",
+        backup_generation: 10,
+      });
+    });
+
+    it("refuses when the project's host changes during its final backup", async () => {
+      for (const moved of [
+        manualArchiveRow({ host_id: "host-2" }),
+        manualArchiveRow({ host_status: "off" }),
+      ]) {
+        releaseProjectDataArchiveFreezeOnHostMock.mockClear();
+        poolQueryMock
+          .mockResolvedValueOnce({ rows: [manualArchiveRow()] })
+          .mockResolvedValueOnce({ rows: [manualArchiveRow()] })
+          .mockResolvedValue({ rows: [moved] });
+        const { archiveProject } = await import("./projects");
+        await expect(
+          archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+        ).rejects.toThrow("host changed during the archive");
+        // the freeze is released on the host whose volume was frozen
+        expect(releaseProjectDataArchiveFreezeOnHostMock).toHaveBeenCalledWith({
+          project_id: "proj-1",
+          host_id: "host-1",
+          expected_generation: 10,
+        });
+      }
+      expect(createBackupMock).toHaveBeenCalledTimes(2);
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+      expect(updatedProjects()).toHaveLength(0);
+    });
+
+    it("deletes nothing when ownership moves before the fenced cleanup", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      // A rehome completed after the final backup and the placement checks:
+      // under the rehome fence the project row is no longer this bay's.
+      const defaultClientQuery = poolConnectQueryMock.getMockImplementation()!;
+      poolConnectQueryMock.mockImplementation(async (sql: string, params) =>
+        `${sql}`.includes("FOR UPDATE") && `${sql}`.includes("owning_bay_id")
+          ? { rowCount: 0, rows: [] }
+          : defaultClientQuery(sql, params),
+      );
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).rejects.toThrow("owner or host changed during the archive");
+
+      const [lockSql, lockParams] = poolConnectQueryMock.mock.calls.find(
+        ([sql]) => `${sql}`.includes("FOR UPDATE"),
+      )!;
+      expect(lockSql).toContain("host_id IS NOT DISTINCT FROM $2::uuid");
+      expect(lockParams).toEqual(["proj-1", "host-1", "bay-1"]);
+      expect(
+        poolConnectQueryMock.mock.invocationCallOrder[
+          poolConnectQueryMock.mock.calls.findIndex(([sql]) =>
+            `${sql}`.includes("FOR UPDATE"),
+          )
+        ],
+      ).toBeGreaterThan(
+        assertProjectNotRehomingMock.mock.invocationCallOrder[0],
+      );
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+      expect(updatedProjects()).toHaveLength(0);
+      expect(releaseProjectDataArchiveFreezeOnHostMock).toHaveBeenCalledWith({
+        project_id: "proj-1",
+        host_id: "host-1",
+        expected_generation: 10,
+      });
+    });
+
+    it("finalizes only while the owning bay and host are unchanged", async () => {
+      poolQueryMock.mockResolvedValue({ rows: [manualArchiveRow()] });
+      const { archiveProject } = await import("./projects");
+      await archiveProject({ account_id: "owner-1", project_id: "proj-1" });
+      const [sql, params] = updatedProjects()[0];
+      expect(sql).toContain("host_id IS NOT DISTINCT FROM $7::uuid");
+      expect(sql).toContain(
+        "COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $9) = $9",
+      );
+      expect(params[6]).toBe("host-1");
+      expect(params[8]).toBe("bay-1");
+    });
+
+    it("never deletes without a final backup when no earlier backup exists", async () => {
+      poolQueryMock.mockResolvedValue({
+        rows: [
+          manualArchiveRow({ last_backup: null, last_backup_generation: null }),
+        ],
+      });
+      const { archiveProject } = await import("./projects");
+      await expect(
+        archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+      ).resolves.toBeUndefined();
+      expect(createBackupMock).toHaveBeenCalledTimes(1);
+      expect(deleteProjectDataOnHostAfterBackupMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expected_backup_id: "final-backup-id",
+          expected_generation: 10,
+        }),
+      );
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    });
   });
 });

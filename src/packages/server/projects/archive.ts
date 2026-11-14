@@ -24,7 +24,6 @@ import {
 } from "@cocalc/server/lro/lro-db";
 import { waitForDurableLroCompletion } from "@cocalc/server/lro/wait";
 import {
-  deleteProjectDataOnHost,
   deleteProjectDataOnHostAfterBackup,
   releaseProjectDataArchiveFreezeOnHost,
 } from "@cocalc/server/project-host/control";
@@ -99,9 +98,13 @@ type ArchiveRow = Omit<
 >;
 
 const FINAL_ARCHIVE_BACKUP_TAG = "automatic-project-archive-final";
+const MANUAL_FINAL_ARCHIVE_BACKUP_TAG = "manual-project-archive-final";
 
-function finalArchiveBackupDedupeKey(job_id: string): string {
-  return `${FINAL_ARCHIVE_BACKUP_TAG}:${job_id}`;
+function finalArchiveBackupDedupeKey(
+  job_id: string,
+  tag: string = FINAL_ARCHIVE_BACKUP_TAG,
+): string {
+  return `${tag}:${job_id}`;
 }
 
 class FinalAutomaticArchiveBackupError extends Error {
@@ -226,6 +229,40 @@ async function lockCurrentAutomaticArchiveClaim({
   }
 }
 
+// Called with the rehome fence held: a rehome that completed after the
+// archive's earlier checks shows here as another owning bay or host.
+async function lockCurrentManualArchivePlacement({
+  db,
+  project_id,
+  expected_host_id,
+}: {
+  db: {
+    query: (
+      sql: string,
+      params?: any[],
+    ) => Promise<{ rows: any[]; rowCount?: number | null }>;
+  };
+  project_id: string;
+  expected_host_id: string | null;
+}): Promise<void> {
+  const localBayId = getConfiguredBayId();
+  const result = await db.query(
+    `SELECT 1
+       FROM projects
+      WHERE project_id = $1
+        AND deleted IS NULL
+        AND COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $3) = $3
+        AND host_id IS NOT DISTINCT FROM $2::uuid
+      FOR UPDATE`,
+    [project_id, expected_host_id, localBayId],
+  );
+  if ((result.rowCount ?? 0) !== 1) {
+    throw new Error(
+      "the project's owner or host changed during the archive; retry the archive",
+    );
+  }
+}
+
 async function recordFinalAutomaticArchiveBackup({
   project_id,
   job_id,
@@ -289,12 +326,20 @@ async function createFinalAutomaticArchiveBackup({
   beforeCreateNew,
   onBackupBarrierMayExist,
   waitMs,
+  tag = FINAL_ARCHIVE_BACKUP_TAG,
+  tags = [tag],
+  replaceOldestAtLimit = true,
 }: {
   project_id: string;
   job_id: string;
   beforeCreateNew: () => Promise<void>;
   onBackupBarrierMayExist?: () => void;
   waitMs?: number;
+  tag?: string;
+  tags?: string[];
+  // Manual archives keep the user's existing backups: at the limit their
+  // final backup is refused and the archive with it.
+  replaceOldestAtLimit?: boolean;
 }): Promise<ProjectArchiveLifecycleFinalBackup> {
   const bounded = waitMs != null && waitMs > 0;
   const waitFor = async (op: {
@@ -318,7 +363,7 @@ async function createFinalAutomaticArchiveBackup({
       throw err;
     }
   };
-  const dedupeKey = finalArchiveBackupDedupeKey(job_id);
+  const dedupeKey = finalArchiveBackupDedupeKey(job_id, tag);
   let history: LroSummary[];
   try {
     history = await listLrosByDedupe({
@@ -369,12 +414,12 @@ async function createFinalAutomaticArchiveBackup({
     const op = await createBackup(
       {
         project_id,
-        tags: [FINAL_ARCHIVE_BACKUP_TAG],
+        tags,
       },
       {
         skip_collab_check: true,
         skip_rootfs_portability_check: true,
-        replace_oldest_at_limit: true,
+        replace_oldest_at_limit: replaceOldestAtLimit,
         freeze_source: true,
         dedupe_key: dedupeKey,
         on_lro_create_started: onBackupBarrierMayExist,
@@ -471,6 +516,12 @@ async function setArchivedState({
         job_id,
         expected_host_id: expected_host_id ?? null,
       });
+    } else {
+      await lockCurrentManualArchivePlacement({
+        db: client,
+        project_id,
+        expected_host_id: expected_host_id ?? null,
+      });
     }
     if (require_deprovisioned_host_id != null) {
       // the host row stays share-locked until the archived state commits, so
@@ -503,7 +554,9 @@ async function setArchivedState({
             AND archive_lifecycle_job_id = $5
             AND host_id IS NOT DISTINCT FROM $7::uuid
           ))
-          AND ($8::uuid IS NULL OR host_id = $8::uuid)`,
+          AND ($8::uuid IS NULL OR host_id = $8::uuid)
+          AND host_id IS NOT DISTINCT FROM $7::uuid
+          AND COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $9) = $9`,
       [
         project_id,
         { state: "archived", time: checkedAt.toISOString() },
@@ -513,6 +566,7 @@ async function setArchivedState({
         automatic,
         expected_host_id ?? null,
         require_deprovisioned_host_id ?? null,
+        getConfiguredBayId(),
       ],
     );
     if ((result.rowCount ?? 0) === 0) {
@@ -561,6 +615,9 @@ export async function archiveProjectStorage({
   }
 
   const automatic = mode === "automatic";
+  const finalBackupTag = automatic
+    ? FINAL_ARCHIVE_BACKUP_TAG
+    : MANUAL_FINAL_ARCHIVE_BACKUP_TAG;
   const reason = automatic ? providedReason : (providedReason ?? "manual");
   if (!reason) throw new Error("automatic archive reason is required");
 
@@ -592,6 +649,8 @@ export async function archiveProjectStorage({
   let expectedArchiveBackupId: string | undefined;
   let finalBackupBarrierMayExist = false;
   let finalBackup: ProjectArchiveLifecycleFinalBackup | undefined;
+  // The host whose volume a manual final backup froze.
+  let manualFreezeHostId: string | undefined;
   try {
     if (!row.backup_repo_id) {
       throw new Error(
@@ -602,6 +661,10 @@ export async function archiveProjectStorage({
     const hostDeprovisioned = hostStatus === "deprovisioned";
     const hostCanRunMutations =
       !hostStatus || hostStatus === "active" || hostStatus === "running";
+    // A manual archive deletes host data only against a frozen final backup
+    // it makes itself in this call; no earlier backup is evidence for that.
+    const manualFinalBackupNeeded =
+      !automatic && row.provisioned !== false && hostCanRunMutations;
 
     if (automatic) {
       assertAutomaticArchiveClaimCurrent({
@@ -616,7 +679,11 @@ export async function archiveProjectStorage({
         expectedArchiveGeneration = Number(finalBackup.generation);
         expectedArchiveBackupId = finalBackup.id;
       }
-    } else if (!hostDeprovisioned && row.last_backup == null) {
+    } else if (
+      !hostDeprovisioned &&
+      !manualFinalBackupNeeded &&
+      row.last_backup == null
+    ) {
       throw new Error(
         "project must have at least one backup before it can be archived",
       );
@@ -714,6 +781,50 @@ export async function archiveProjectStorage({
         expectedArchiveGeneration = Number(finalBackup.generation);
         expectedArchiveBackupId = finalBackup.id;
       }
+    } else if (manualFinalBackupNeeded) {
+      const manualHostId = row.host_id;
+      manualFreezeHostId = manualHostId ?? undefined;
+      const assertManualPlacementCurrent = async () => {
+        row = await loadArchiveRow(project_id);
+        hostStatus = `${row.host_status ?? ""}`.trim().toLowerCase();
+        if (!manualHostId) {
+          throw new Error("project has no assigned host to archive from");
+        }
+        if (
+          row.host_id !== manualHostId ||
+          row.provisioned === false ||
+          !["active", "running"].includes(hostStatus)
+        ) {
+          throw new Error(
+            "the project's host changed during the archive; retry the archive",
+          );
+        }
+        if (!row.backup_repo_id) {
+          throw new Error(
+            "project backup repository disappeared during the archive",
+          );
+        }
+        await assertAutomaticArchiveOwnershipCurrent({
+          project_id,
+          expected: ownership,
+        });
+      };
+      finalBackup = await createFinalAutomaticArchiveBackup({
+        project_id,
+        job_id: jobId,
+        tag: finalBackupTag,
+        // The final-archive tag keeps automatic retention from replacing it.
+        tags: [FINAL_ARCHIVE_BACKUP_TAG, finalBackupTag],
+        replaceOldestAtLimit: false,
+        beforeCreateNew: assertManualPlacementCurrent,
+        onBackupBarrierMayExist: () => {
+          finalBackupBarrierMayExist = true;
+        },
+      });
+      assertFinalBackupMarkerIsValid(finalBackup);
+      expectedArchiveGeneration = Number(finalBackup.generation);
+      expectedArchiveBackupId = finalBackup.id;
+      await assertManualPlacementCurrent();
     }
 
     const refreshedHostCanRunMutations =
@@ -725,33 +836,25 @@ export async function archiveProjectStorage({
         throw new Error("project has no assigned host to archive from");
       }
       const cleanupHostId = row.host_id;
-      if (automatic) {
-        if (!expectedArchiveGeneration) {
-          throw new Error("automatic archive backup generation is missing");
-        }
-        if (!expectedArchiveBackupId) {
-          throw new Error("automatic archive backup snapshot id is missing");
-        }
-        const cleanupGeneration = expectedArchiveGeneration;
-        const cleanupBackupId = expectedArchiveBackupId;
-        cleanupHostData = async () => {
-          await deleteProjectDataOnHostAfterBackup({
-            project_id,
-            host_id: cleanupHostId,
-            expected_backup_id: cleanupBackupId,
-            expected_generation: cleanupGeneration,
-          });
-          hostCleanupCompleted = true;
-        };
-      } else {
-        cleanupHostData = async () => {
-          await deleteProjectDataOnHost({
-            project_id,
-            host_id: cleanupHostId,
-          });
-          hostCleanupCompleted = true;
-        };
+      // Every deletion is checked by the host against the exact final backup
+      // made for this job and the volume it froze.
+      if (!expectedArchiveGeneration) {
+        throw new Error("archive final backup generation is missing");
       }
+      if (!expectedArchiveBackupId) {
+        throw new Error("archive final backup snapshot id is missing");
+      }
+      const cleanupGeneration = expectedArchiveGeneration;
+      const cleanupBackupId = expectedArchiveBackupId;
+      cleanupHostData = async () => {
+        await deleteProjectDataOnHostAfterBackup({
+          project_id,
+          host_id: cleanupHostId,
+          expected_backup_id: cleanupBackupId,
+          expected_generation: cleanupGeneration,
+        });
+        hostCleanupCompleted = true;
+      };
     } else if (row.provisioned !== false) {
       log.info("archive finalized from backup without host mutation", {
         project_id,
@@ -790,17 +893,15 @@ export async function archiveProjectStorage({
     let reopenSafe =
       !finalBackupBarrierMayExist ||
       (err instanceof FinalAutomaticArchiveBackupError && err.reopenSafe);
-    if (
-      automatic &&
-      !hostCleanupCompleted &&
-      expectedArchiveGeneration &&
-      row.host_id
-    ) {
+    // A manual archive's own final backup froze the volume too: release it
+    // with the same checks, keeping the project's data in place.
+    const freezeHostId = manualFreezeHostId ?? row.host_id;
+    if (!hostCleanupCompleted && expectedArchiveGeneration && freezeHostId) {
       reopenSafe = false;
       try {
         const release = await releaseProjectDataArchiveFreezeOnHost({
           project_id,
-          host_id: row.host_id,
+          host_id: freezeHostId,
           expected_generation: expectedArchiveGeneration,
         });
         if (release.status === "absent") {
@@ -812,7 +913,7 @@ export async function archiveProjectStorage({
             const history = await attestReleasedLroDedupeSuccesses({
               scope_type: "project",
               scope_id: project_id,
-              dedupe_key: finalArchiveBackupDedupeKey(jobId),
+              dedupe_key: finalArchiveBackupDedupeKey(jobId, finalBackupTag),
               expected_result_id: expectedArchiveBackupId,
               expected_generation: expectedArchiveGeneration,
             });
@@ -833,7 +934,7 @@ export async function archiveProjectStorage({
       } catch (releaseErr) {
         log.warn("unable to release automatic archive volume freeze", {
           project_id,
-          host_id: row.host_id,
+          host_id: freezeHostId,
           expected_generation: expectedArchiveGeneration,
           err: `${releaseErr}`,
         });
