@@ -78,14 +78,22 @@ async function getProjectStorageQuotaFallbackBytes(
   return Math.floor(diskQuotaMb * 1_000_000);
 }
 
+// The latest sample at or under its own quota size.  One above it may reflect
+// transient copying (a failed restore counts data mid-copy) or a previous,
+// lower quota, and is not a reliable estimate for the current restore.
 function estimateBytesFromStorageHistory(
   history: ProjectStorageHistory,
 ): number | undefined {
   for (let i = history.points.length - 1; i >= 0; i -= 1) {
     const used = history.points[i]?.quota_used_bytes;
-    if (typeof used === "number" && Number.isFinite(used) && used > 0) {
-      return Math.floor(used);
+    if (typeof used !== "number" || !Number.isFinite(used) || used <= 0) {
+      continue;
     }
+    const size = history.points[i]?.quota_size_bytes;
+    if (typeof size === "number" && Number.isFinite(size) && size > 0) {
+      if (used > size) continue;
+    }
+    return Math.floor(used);
   }
   return undefined;
 }
@@ -109,7 +117,27 @@ function estimateBytesFromBackupSummary(
   return Math.floor(Math.max(...candidates));
 }
 
+// What restoring an archived project will add to its owner's storage.  As an
+// estimate policy, never more than the project's disk quota (what account
+// usage counts for a project), so a stale sample or a backup that counted
+// more can't block the start.
 export async function estimateProvisionedRestoreBytesForProject({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id: string;
+}): Promise<number | undefined> {
+  const quota = await getProjectStorageQuotaFallbackBytes(project_id);
+  const estimate = await estimateRestoreBytesFromStorage({
+    project_id,
+    account_id,
+  });
+  if (estimate == null) return quota;
+  return quota == null ? estimate : Math.min(estimate, quota);
+}
+
+async function estimateRestoreBytesFromStorage({
   project_id,
   account_id,
 }: {
@@ -163,8 +191,7 @@ export async function estimateProvisionedRestoreBytesForProject({
       // ignore close errors
     }
   }
-
-  return await getProjectStorageQuotaFallbackBytes(project_id);
+  return undefined;
 }
 
 function extractMaxProjects(

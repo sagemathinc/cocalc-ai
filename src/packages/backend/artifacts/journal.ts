@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import {
   deferWalCheckpoints,
   forgetWalCheckpoints,

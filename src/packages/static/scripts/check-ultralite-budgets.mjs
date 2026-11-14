@@ -329,8 +329,9 @@ const surfaces = [
     // collaborator" guide (#1243) brings it to 335.8 KiB, and markdown-it
     // 14.3.3 (#1291, a security fix) to 336.0 KiB. The Jupyter notebook
     // security guide (Trust switch removal) brings it to about 342.4 KiB.
-    // "How long a verification lasts" (#1550) brings it to 345.1 KiB.
-    max: 346 * KiB,
+    // "How long a verification lasts" (#1550) brings it to 345.1 KiB, and the
+    // guide to Claude subscriptions run in the project (#1590) to 348.0 KiB.
+    max: 349 * KiB,
   },
   {
     label: "minimal project settings",

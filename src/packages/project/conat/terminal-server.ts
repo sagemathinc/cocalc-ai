@@ -1,5 +1,5 @@
 import { terminalServer, type Options } from "@cocalc/conat/project/terminal";
-import { spawn } from "node-pty";
+import { spawn } from "./terminal/pty";
 import { getIdentity } from "./connection";
 import { getLogger } from "@cocalc/project/logger";
 import { SpoolWatcher } from "@cocalc/backend/spool-watcher";

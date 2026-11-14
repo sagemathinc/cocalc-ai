@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import { codexAuthJsonToAppServerLogin } from "@cocalc/ai/acp";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 

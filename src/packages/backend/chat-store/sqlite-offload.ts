@@ -35,7 +35,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import { Worker } from "node:worker_threads";
 import { searchAdmission } from "./search-admission";
 import getLogger from "@cocalc/backend/logger";

@@ -58,6 +58,73 @@ describe("HarnessIdleDisposer", () => {
     expect(idle.size).toBe(0);
   });
 
+  test("an idle agent with running background work is not disposed until that work ends", async () => {
+    const dispose = jest.fn(async () => {});
+    let running = true;
+    const busy = jest.fn(async () => running);
+    const idle = new HarnessIdleDisposer({
+      idleMs: 1000,
+      busyPollMs: 500,
+      retire,
+      dispose,
+      busy,
+    });
+    idle.acquire("k");
+    idle.release("k", "agent");
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(busy).toHaveBeenCalledWith("agent");
+    expect(dispose).not.toHaveBeenCalled();
+    // still running an hour later
+    await jest.advanceTimersByTimeAsync(60 * 60_000);
+    expect(dispose).not.toHaveBeenCalled();
+    expect(idle.size).toBe(1);
+    // the job exits: disposed at the next check
+    running = false;
+    await jest.advanceTimersByTimeAsync(500);
+    expect(dispose).toHaveBeenCalledWith("agent");
+    expect(idle.size).toBe(0);
+  });
+
+  test("a turn that takes the agent during the background-work check keeps it", async () => {
+    const dispose = jest.fn(async () => {});
+    let answer!: (busy: boolean) => void;
+    const busy = jest.fn(
+      () => new Promise<boolean>((resolve) => (answer = resolve)),
+    );
+    const idle = new HarnessIdleDisposer({
+      idleMs: 1000,
+      retire,
+      dispose,
+      busy,
+    });
+    idle.acquire("k");
+    idle.release("k", "agent");
+    await jest.advanceTimersByTimeAsync(1000);
+    idle.acquire("k");
+    answer(false);
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(dispose).not.toHaveBeenCalled();
+  });
+
+  test("an agent whose background work cannot be checked is disposed", async () => {
+    const dispose = jest.fn(async () => {});
+    const onError = jest.fn();
+    const idle = new HarnessIdleDisposer({
+      idleMs: 1000,
+      retire,
+      dispose,
+      onError,
+      busy: async () => {
+        throw Error("project stopped");
+      },
+    });
+    idle.acquire("k");
+    idle.release("k", "agent");
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(onError).toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledWith("agent");
+  });
+
   test("keys are independent", () => {
     const dispose = jest.fn(async () => {});
     const idle = new HarnessIdleDisposer({ idleMs: 1000, retire, dispose });

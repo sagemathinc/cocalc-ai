@@ -16,7 +16,7 @@ import { open } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { createJsonLineReader } from "@cocalc/util/json-lines";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import { CodexGoalSync } from "./codex-goal";
 import { assertSameTurnPrincipal } from "./turn-principal";
 import {

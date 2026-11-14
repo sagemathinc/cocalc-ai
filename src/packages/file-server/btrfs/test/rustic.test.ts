@@ -17,8 +17,12 @@ describe("test rustic backups", () => {
 
   it("confirm the backup is listed", async () => {
     const v = await vol.rustic.snapshots();
-    expect(v.length == 1);
-    expect(v[0]).toEqual(x);
+    expect(v.length).toBe(1);
+    // The listing comes from the repository. The btrfs generation of the
+    // snapshot a backup read is known only to the backup that made it.
+    const { snapshotGeneration, ...listed } = x;
+    expect(snapshotGeneration).toBeGreaterThan(0);
+    expect(v[0]).toEqual(listed);
     expect(Math.abs(Date.now() - v[0].time.valueOf())).toBeLessThan(10000);
   });
 

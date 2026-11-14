@@ -795,6 +795,13 @@ check project and host status before deciding how to recover. Host maintenance,
 provider interruptions, and billing enforcement can interrupt availability
 independently of the browser-idle policy.
 
+During host-pressure cleanup, CoCalc treats a detected running agent turn as
+activity. This does not prevent stopping a project that is causing resource
+pressure, or a last-resort stop in a memory emergency. Browser-idle limits,
+explicit operator stops, and maintenance can still interrupt the turn. Save
+checkpoints to project files and inspect the last saved result before
+resubmitting work.
+
 ## Deprovision and delete
 
 Deprovisioning is destructive for provider resources. It removes the cloud

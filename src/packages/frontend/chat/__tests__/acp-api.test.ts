@@ -139,6 +139,52 @@ describe("processAcpLLM", () => {
     resetAcpApiStateForTests();
   });
 
+  it("sends nothing when the collaborator warning is not accepted", async () => {
+    const sharing = require("../claude-subscription-sharing");
+    const needs = jest
+      .spyOn(sharing, "needsClaudeSubscriptionSharingConfirm")
+      .mockReturnValue(true);
+    const confirm = jest
+      .spyOn(sharing, "confirmClaudeSubscriptionSharing")
+      .mockResolvedValue(false);
+    const state = new FakeAcpState();
+    const actions: any = {
+      syncdb: { commit: jest.fn(), save: jest.fn(async () => {}) },
+      store: {
+        get: (key) =>
+          ({ project_id: "proj", path: "x.chat", acpState: state })[key],
+        setState: jest.fn(),
+      },
+      chatStreams: new Set(),
+      getAllMessages: () => new Map(),
+      getThreadMetadata: () => ({}),
+      getMessagesInThread: () => [],
+      getCodexConfig: jest.fn(() => ({})),
+      sendReply: jest.fn(),
+    };
+    await expect(
+      processAcpLLM({
+        actions,
+        model: "codex-agent",
+        input: "hello",
+        message: {
+          event: "chat",
+          sender_id: "user-1",
+          date: new Date(12345),
+          message_id: "user-msg",
+          thread_id: "thread-1",
+          history: [{ author_id: "user-1", content: "hello" }],
+        } as any,
+      }),
+    ).rejects.toThrow(/Not sent/);
+    expect(needs).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "proj" }),
+    );
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(mockStreamAcp).not.toHaveBeenCalled();
+    expect(actions.syncdb.save).not.toHaveBeenCalled();
+  });
+
   it("resubmits a failed request with the current payment choice", async () => {
     mockControlAcp.mockResolvedValue({ ok: true, state: "queued" });
     const acpState = new FakeAcpState();

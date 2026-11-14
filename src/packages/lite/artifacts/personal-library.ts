@@ -4,7 +4,7 @@
  */
 import { chmodSync, closeSync, openSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import type {
   PersonalLibraryApi,
   PersonalLibrarySnapshot,
