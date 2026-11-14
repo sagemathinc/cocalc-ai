@@ -50,7 +50,12 @@ function deadPid(): number {
 }
 
 // a dirty record for id, written by another process generation with pid
-function plantDirtyRecord(id: string, pid: number, procStart?: string) {
+function plantDirtyRecord(
+  id: string,
+  pid: number,
+  procStart?: string,
+  owner?: string,
+) {
   createDurabilityRecords({
     root: persistRunDir(),
     generation: `planted-${pid}-${Math.random()}`,
@@ -58,7 +63,7 @@ function plantDirtyRecord(id: string, pid: number, procStart?: string) {
     sha256: sha256Hex,
     pid,
     procStart,
-  }).arm(id);
+  }).arm(id, owner);
 }
 
 describe("028 B-2: verified eviction of a stream left mid-write", () => {
@@ -251,6 +256,67 @@ describe("028 B-2: verified eviction of a stream left mid-write", () => {
     streams.push(s);
     clearOpenBarrierPass(path);
     expect(records.check(path)).toBe("ok");
+  });
+
+  it("a project's leftovers are verified together: opening one stream verifies every file the project left mid-write first", async () => {
+    const project = "33333333-2222-4333-8444-555555555555";
+    const a = join(dir, "proj-a");
+    const b = join(dir, "proj-b");
+    for (const p of [a, b]) {
+      const s0 = pstream({ path: p });
+      s0.set(msg(p));
+      s0.close();
+    }
+    const pid = deadPid();
+    plantDirtyRecord(a, pid, undefined, project);
+    plantDirtyRecord(b, pid, undefined, project);
+    const ctx = context as any;
+    const real = ctx.verifiedEviction;
+    const verified: string[] = [];
+    ctx.verifiedEviction = async (db: string) => {
+      verified.push(db);
+      return real(db);
+    };
+    try {
+      await prepareDurableOpen(a, project);
+      const s = pstream({ path: a });
+      streams.push(s);
+      clearOpenBarrierPass(a);
+    } finally {
+      ctx.verifiedEviction = real;
+    }
+    expect(verified.sort()).toEqual([`${a}.db`, `${b}.db`].sort());
+    const records = persistDurabilityRecords();
+    expect(records.check(a)).toBe("ok");
+    expect(records.check(b)).toBe("ok");
+  });
+
+  it("if one file of the project fails verification, no stream of the project is served", async () => {
+    const project = "44444444-2222-4333-8444-555555555555";
+    const a = join(dir, "projf-a");
+    const b = join(dir, "projf-b");
+    for (const p of [a, b]) {
+      const s0 = pstream({ path: p });
+      s0.set(msg(p));
+      s0.close();
+    }
+    const pid = deadPid();
+    plantDirtyRecord(a, pid, undefined, project);
+    plantDirtyRecord(b, pid, undefined, project);
+    const ctx = context as any;
+    const real = ctx.verifiedEviction;
+    ctx.verifiedEviction = async (db: string) =>
+      db === `${b}.db`
+        ? { verified: false, path: db, why: "resident pages" }
+        : real(db);
+    try {
+      await expect(prepareDurableOpen(a, project)).rejects.toThrow(
+        "not verified yet",
+      );
+    } finally {
+      ctx.verifiedEviction = real;
+    }
+    expect(persistDurabilityRecords().check(b)).toBe("leftover");
   });
 
   it("a LIVE writer's record keeps refusing: no verification, no removal", async () => {

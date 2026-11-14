@@ -306,7 +306,7 @@ function armForBarrier(id: string): void {
   const holders = armedConnections.get(id) ?? 0;
   if (holders == 0) {
     try {
-      durability.arm(id);
+      durability.arm(id, streamOwners.get(id));
     } catch (err) {
       logger.error("persist: could not create a dirty record (finding 028)", {
         id,
@@ -409,13 +409,11 @@ export async function prepareDurableOpen(
   if (state == "needs-check") {
     // poisoned in an earlier boot: a full integrity_check first (§3.2.6)
     await checkAfterReboot(id, `${path}.db`);
-  } else if (state == "leftover") {
-    // a dead process left it mid-write: verify, then open normally (H-b)
-    await verifyLeftover(id, `${path}.db`);
   }
-  if (durability?.check(id) == "leftover") {
-    await verifyLeftover(id, `${path}.db`);
-  }
+  // a dead process left this stream, or another of its project, mid-write:
+  // every such file of the project is verified before any is served (H-b,
+  // single-flight per project, §3.2.5 (b)); then open normally
+  await verifyProjectLeftovers(id, `${path}.db`, owner);
   armForBarrier(id);
   let result: OpenBarrierResult;
   try {
@@ -575,6 +573,46 @@ async function checkAfterReboot(id: string, dbPath: string): Promise<void> {
   logger.info("persist: integrity_check passed after a poison (finding 028)", {
     id,
   });
+}
+
+// The project's leftovers (all of them, this stream's included), verified
+// together and once: concurrent opens of any of its streams wait for the
+// same verification.  Host-owned streams are verified one by one.
+const verifyingProject = new Map<string, Promise<void>>();
+async function verifyProjectLeftovers(
+  id: string,
+  dbPath: string,
+  owner: string,
+): Promise<void> {
+  if (durability == null) return;
+  if (owner === "host") {
+    if (durability.check(id) == "leftover") await verifyLeftover(id, dbPath);
+    return;
+  }
+  let pending = verifyingProject.get(owner);
+  if (pending == null) {
+    pending = (async () => {
+      const ids = durability!.leftoverIdsOf(owner);
+      if (ids == null) {
+        logger.warn(
+          "persist alert (non-paging): a project's leftover records can't be listed; its streams stay refused (finding 028)",
+          { owner },
+        );
+        throw unverifiedStreamError();
+      }
+      for (const other of ids) {
+        if (durability!.check(other, owner) == "leftover") {
+          await verifyLeftover(other, `${other}.db`);
+        }
+      }
+    })().finally(() => verifyingProject.delete(owner));
+    verifyingProject.set(owner, pending);
+  }
+  await pending;
+  // a leftover of this stream without an owner in its record (B-1's)
+  if (durability.check(id, owner) == "leftover") {
+    await verifyLeftover(id, dbPath);
+  }
 }
 
 // One verification at a time per stream (concurrent opens wait for it).
@@ -2119,7 +2157,7 @@ export class PersistentStream extends EventEmitter {
     const holders = armedConnections.get(id) ?? 0;
     if (holders == 0) {
       try {
-        durability.arm(id);
+        durability.arm(id, streamOwners.get(id));
       } catch (err) {
         logger.error("persist: could not create a dirty record (finding 028)", {
           path: this.options?.path,

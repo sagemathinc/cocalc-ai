@@ -109,7 +109,7 @@ export type PersistDurabilityCheck =
   | "leftover"
   | "needs-check";
 export interface PersistDurabilityRecords {
-  arm: (id: string) => void;
+  arm: (id: string, owner?: string) => void;
   disarm: (id: string) => void;
   poison: (id: string, info: Record<string, string | number>) => void;
   // owner: the stream's logical owner (a project id, or "host"), if known: a
@@ -118,6 +118,9 @@ export interface PersistDurabilityRecords {
   poisonProject: (owner: string, info: Record<string, string | number>) => void;
   // after a verified eviction: remove dead processes' dirty records
   clearLeftovers: (id: string) => number;
+  // the ids an owner's dead processes left mid-write (undefined: unbounded
+  // or unreadable, so not verifiable now)
+  leftoverIdsOf: (owner: string, max?: number) => string[] | undefined;
   // after a passed integrity_check: remove the post-reboot record (durably;
   // throws on failure)
   clearPostReboot: (id: string) => void;

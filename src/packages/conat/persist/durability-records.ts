@@ -53,6 +53,10 @@ export interface DurabilityFs {
 interface DirtyRecord {
   kind: "dirty";
   generation: string;
+  // the stream's logical id and owner (B-2: a project's leftovers are
+  // verified together)
+  id?: string;
+  owner?: string;
   pid: number;
   // the process's start time (Linux: /proc/<pid>/stat field 22), so a reused
   // pid is not mistaken for the writer (B-2)
@@ -179,11 +183,13 @@ export function createDurabilityRecords({
     dirtyPath,
     poisonedPath,
 
-    arm: (id: string): void => {
+    arm: (id: string, owner?: string): void => {
       ensureDirs();
       const record: DirtyRecord = {
         kind: "dirty",
         generation,
+        id,
+        owner,
         pid,
         procStart,
         created: Date.now(),
@@ -320,6 +326,54 @@ export function createDurabilityRecords({
         leftover = true;
       }
       return leftover ? "leftover" : "ok";
+    },
+
+    // The logical ids with a dead generation's dirty record, of one owner (a
+    // project's leftovers are verified together, §3.2.5 (b)).  undefined if
+    // more than max are found, or a record can't be read: can't bound it,
+    // fail closed.
+    leftoverIdsOf: (owner: string, max = 10_000): string[] | undefined => {
+      let keys: string[];
+      try {
+        keys = fs.readdirSync(dirtyDir);
+      } catch (err) {
+        return (err as any)?.code === "ENOENT" ? [] : undefined;
+      }
+      const ids = new Set<string>();
+      let seen = 0;
+      for (const key of keys) {
+        let names: string[];
+        try {
+          names = fs.readdirSync(posix.join(dirtyDir, key));
+        } catch {
+          continue; // removed meanwhile
+        }
+        for (const name of names) {
+          if (name.endsWith(".tmp") || name === generation) continue;
+          if (++seen > max) return undefined;
+          let record: Partial<DirtyRecord>;
+          try {
+            record = JSON.parse(
+              fs.readFileSync(posix.join(dirtyDir, key, name), "utf8"),
+            );
+          } catch (err) {
+            if ((err as any)?.code === "ENOENT") continue;
+            return undefined;
+          }
+          if (record.owner !== owner || typeof record.id !== "string") continue;
+          if (sha256(record.id) !== key) return undefined; // inconsistent
+          const recordPid = Number(record.pid);
+          let alive = true;
+          try {
+            alive =
+              !Number.isInteger(recordPid) ||
+              recordPid <= 0 ||
+              isWriterAlive(recordPid, record.procStart);
+          } catch {}
+          if (!alive) ids.add(record.id);
+        }
+      }
+      return [...ids];
     },
 
     // After a verified eviction: the records of dead generations go (never a
