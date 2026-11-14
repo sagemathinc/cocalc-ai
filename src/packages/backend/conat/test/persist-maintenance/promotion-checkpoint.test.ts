@@ -49,18 +49,21 @@ describe("promotion barrier checkpoint (finding 088)", () => {
     reader?.kill("SIGKILL");
     reader = undefined;
   });
-  async function startReader(): Promise<ChildProcess> {
+  // holdSnapshot: keep a read transaction open (blocks the checkpoint);
+  // otherwise read once in autocommit and stay idle with the file open.
+  async function startReader(holdSnapshot = true): Promise<ChildProcess> {
     const child = spawn(
       process.execPath,
       [
         "-e",
         `const { DatabaseSync } = require("node:sqlite");
 const db = new DatabaseSync(process.argv[1]);
-db.exec("BEGIN");
+if (process.argv[2] === "hold") db.exec("BEGIN");
 db.prepare("SELECT count(*) AS n FROM marker").get();
 process.stdout.write("READY\\n");
 setInterval(() => {}, 1000);`,
         sourcePath,
+        holdSnapshot ? "hold" : "idle",
       ],
       { stdio: ["ignore", "pipe", "inherit"] },
     );
@@ -116,7 +119,8 @@ setInterval(() => {}, 1000);`,
       root,
       catalogPath: join(root, ".maintenance", "catalog.sqlite"),
     });
-    if (promotionBarrierMs != null) config.promotionBarrierMs = promotionBarrierMs;
+    if (promotionBarrierMs != null)
+      config.promotionBarrierMs = promotionBarrierMs;
     const coordinator = new PersistMaintenanceCoordinator({
       expectedWorkerIds: ["0"],
       config,
@@ -148,6 +152,34 @@ setInterval(() => {}, 1000);`,
     await coordinator.tick();
     expect(coordinator.status()).toMatchObject({ successes: 0, failures: 1 });
     expect(statSync(sourcePath).ino).toBe(before.ino);
+    await killReader();
+    coordinator.close();
+    expect(markerCount()).toBe(MARKERS);
+  });
+
+  it("aborts the promotion while an idle connection in another process has the file open", async () => {
+    // the checkpoint itself completes (nothing blocks it), so only the
+    // WAL-still-present check can refuse: our close leaves the WAL in place
+    // because the other process still has the database open
+    const setup = new DatabaseSync(sourcePath);
+    setup.exec("PRAGMA journal_mode=WAL");
+    setup.exec("CREATE TABLE marker(id INTEGER PRIMARY KEY)");
+    const insert = setup.prepare("INSERT INTO marker(id) VALUES (?)");
+    for (let i = 1; i <= MARKERS; i++) insert.run(i);
+    setup.close();
+    reader = await startReader(false);
+    const before = statSync(sourcePath);
+    const coordinator = coordinatorWith();
+    const promote = jest.spyOn(coordinator as any, "promote");
+    await coordinator.tick();
+    // refused by the WAL-still-present check, not by the checkpoint result
+    expect(promote).toHaveBeenCalledTimes(1);
+    expect(promote.mock.results[0].type).toBe("throw");
+    expect(String(promote.mock.results[0].value)).toMatch(/still present/);
+    expect(coordinator.status()).toMatchObject({ successes: 0, failures: 1 });
+    expect(statSync(sourcePath).ino).toBe(before.ino);
+    expect(existsSync(`${sourcePath}-wal`)).toBe(true);
+    expect(existsSync(`${sourcePath}-shm`)).toBe(true);
     await killReader();
     coordinator.close();
     expect(markerCount()).toBe(MARKERS);
@@ -213,9 +245,9 @@ setInterval(() => {}, 1000);`,
     });
 
     it("refuses a missing or malformed result", () => {
-      expect(() => assertPromotionCheckpointComplete(path(), undefined)).toThrow(
-        /checkpoint incomplete/,
-      );
+      expect(() =>
+        assertPromotionCheckpointComplete(path(), undefined),
+      ).toThrow(/checkpoint incomplete/);
       expect(() =>
         assertPromotionCheckpointComplete(path(), {
           busy: 0,
