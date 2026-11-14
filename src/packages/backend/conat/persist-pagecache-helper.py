@@ -5,18 +5,20 @@
 # It acts ONLY on file descriptor 3, which the persist server opened itself
 # (with its hostile-path checks) and passed in.  It reads no path, no argv and
 # no environment.  It drops the file's pages from the page cache
-# (POSIX_FADV_DONTNEED), then counts the pages still resident (mmap + mincore)
-# and prints exactly one line:
+# (POSIX_FADV_DONTNEED), then counts the pages still resident (mmap + mincore,
+# through libc) and prints exactly one line:
 #   {"v":1,"page_size":4096,"pages":<int>,"resident_after":<int>}
 # Run as `/usr/bin/python3 -I -S -`, with these exact bytes on stdin (the
 # server checks their sha256 first).  Stdlib only.
 import ctypes
-import mmap
 import os
 import sys
 
 FD = 3
 PAGE = 4096
+PROT_READ = 1
+MAP_SHARED = 1
+MAP_FAILED = ctypes.c_void_p(-1).value
 
 
 def main():
@@ -26,22 +28,29 @@ def main():
     resident = 0
     if size > 0:
         libc = ctypes.CDLL(None, use_errno=True)
+        libc.mmap.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_long,
+        ]
+        libc.mmap.restype = ctypes.c_void_p
         libc.mincore.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_char_p]
         libc.mincore.restype = ctypes.c_int
-        m = mmap.mmap(FD, size, mmap.MAP_SHARED, mmap.PROT_READ)
+        libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        libc.munmap.restype = ctypes.c_int
+        addr = libc.mmap(None, size, PROT_READ, MAP_SHARED, FD, 0)
+        if addr is None or addr == MAP_FAILED:
+            raise OSError(ctypes.get_errno(), "mmap")
         try:
             vec = ctypes.create_string_buffer(pages)
-            addr = ctypes.addressof(ctypes.c_char.from_buffer(m))
             if libc.mincore(ctypes.c_void_p(addr), ctypes.c_size_t(size), vec) != 0:
                 raise OSError(ctypes.get_errno(), "mincore")
-            resident = sum(1 for i in range(pages) if vec.raw[i] & 1)
-            del addr
+            resident = sum(1 for b in vec.raw[:pages] if b & 1)
         finally:
-            try:
-                m.close()
-            except BufferError:
-                # an exported pointer: exit without closing (the process ends)
-                pass
+            libc.munmap(ctypes.c_void_p(addr), ctypes.c_size_t(size))
     sys.stdout.write(
         '{"v":1,"page_size":%d,"pages":%d,"resident_after":%d}\n'
         % (PAGE, pages, resident)

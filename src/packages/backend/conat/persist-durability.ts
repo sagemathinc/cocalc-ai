@@ -199,6 +199,7 @@ export function integrityCheckClosedDatabase(
   const run = () =>
     new Promise<{ ok: boolean; why?: string }>((resolve) => {
       let stdout = "";
+      let stderr = "";
       const child = spawn(
         process.execPath,
         ["-e", INTEGRITY_CHECK_SOURCE, dbPath],
@@ -208,6 +209,9 @@ export function integrityCheckClosedDatabase(
       child.stdout.on("data", (d) => {
         if (stdout.length < 4096) stdout += d.toString();
       });
+      child.stderr.on("data", (d) => {
+        if (stderr.length < 1024) stderr += d.toString();
+      });
       child.on("error", (err) => {
         clearTimeout(timer);
         resolve({ ok: false, why: `${err}` });
@@ -215,7 +219,10 @@ export function integrityCheckClosedDatabase(
       child.on("close", (code, signal) => {
         clearTimeout(timer);
         if (code !== 0 || signal != null) {
-          resolve({ ok: false, why: `exit ${code} ${signal}` });
+          resolve({
+            ok: false,
+            why: `exit ${code} ${signal} ${stderr.slice(0, 300)}`,
+          });
           return;
         }
         try {
