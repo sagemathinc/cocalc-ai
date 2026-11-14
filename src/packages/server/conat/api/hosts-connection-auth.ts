@@ -22,6 +22,7 @@ What does not belong here:
 owns the local connection and token mechanics.
 */
 
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import { normalizeHostMaintenanceNotice } from "@cocalc/server/hosts/maintenance";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
@@ -596,9 +597,9 @@ export async function resolveHostConnectionLocalHelper({
     : undefined;
   if (isLocalSelfHost) {
     local_proxy = true;
-    ready = !!metadata?.self_host?.http_tunnel_port;
-    const sshPort = metadata?.self_host?.ssh_tunnel_port;
-    if (sshPort) {
+    ready = safeTunnelPort(metadata?.self_host?.http_tunnel_port) != null;
+    const sshPort = safeTunnelPort(metadata?.self_host?.ssh_tunnel_port);
+    if (sshPort != null) {
       const sshHost = resolveOnPremHost();
       ssh_server = `${sshHost}:${sshPort}`;
     }

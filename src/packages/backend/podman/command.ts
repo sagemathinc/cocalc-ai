@@ -26,6 +26,9 @@ const STALE_PODMAN_STATE_HINT_PATTERNS = [
 ];
 const MAX_PODMAN_DEBUG_ARG_PREVIEW = 1024;
 const MAX_PODMAN_DEBUG_IO_PREVIEW = 512;
+const MAX_PODMAN_ERROR_ARGS = 2048;
+const PODMAN_ERROR_STDERR_HEAD = 512;
+const PODMAN_ERROR_STDERR_TAIL = 2048;
 let migrateInFlight: Promise<void> | undefined;
 
 function normalizeTimeoutSeconds(timeout?: number): number {
@@ -125,15 +128,25 @@ function formatPodmanExitError(
   exitCode: number,
   stderr: string,
 ): string {
+  // Podman and crun print the cause last, and the logger cuts strings at
+  // 10000 characters, so long argument lists are shortened and stderr keeps
+  // its start and its end.
+  const joined = truncate(args.join(" "), MAX_PODMAN_ERROR_ARGS);
   const x =
     command === "sudo"
-      ? `'podman' (args=${args.join(" ")})`
-      : `'${command}' (args=${args.join(" ")})`;
-  return `command '${x}' exited with nonzero code ${exitCode} -- stderr='${truncate(stderr, 1024)}'`;
+      ? `'podman' (args=${joined})`
+      : `'${command}' (args=${joined})`;
+  return `command '${x}' exited with nonzero code ${exitCode} -- stderr='${headAndTail(stderr, PODMAN_ERROR_STDERR_HEAD, PODMAN_ERROR_STDERR_TAIL)}'`;
 }
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function headAndTail(text: string, head: number, tail: number): string {
+  if (text.length <= head + tail) return text;
+  const omitted = text.length - head - tail;
+  return `${text.slice(0, head)}…[${omitted} characters omitted]…${text.slice(-tail)}`;
 }
 
 function isStalePodmanStateResult(result: {

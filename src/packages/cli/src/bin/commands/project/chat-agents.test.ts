@@ -223,9 +223,11 @@ test("network proposal and broadcast carry explicit bounded topology", async () 
   const transport = mock.method(
     require("../../core/agent-message"),
     "sendIdentityMessage",
-    async (request: unknown) => {
+    async (request: any) => {
       requests.push(request);
-      return request;
+      return request.action === "broadcast"
+        ? broadcastResult(request)
+        : request;
     },
   );
   const source = { project_id: randomUUID(), agent_id: randomUUID() };
@@ -331,9 +333,44 @@ function fakeHub(directory: unknown, requests: any[]) {
           observed_at: Date.now(),
           chat_effect: "saved",
         };
+      if (request.action === "broadcast") return broadcastResult(request);
       return request;
     },
   );
+}
+
+/** A hub's broadcast result; each child's outcome is given by its index. */
+function broadcastResult(
+  request: any,
+  outcomes: (Record<string, unknown> | undefined)[] = [],
+) {
+  const children = request.targets.flatMap((target: unknown, index: number) =>
+    outcomes[index] === undefined && index < outcomes.length
+      ? []
+      : [
+          {
+            version: 3,
+            attempt_id: randomUUID(),
+            agent_network_id: request.agent_network_id,
+            target,
+            observed_at: Date.now(),
+            ...(outcomes[index] ?? {
+              outcome: "accepted",
+              chat_effect: "saved",
+            }),
+          },
+        ],
+  );
+  return {
+    version: 3,
+    broadcast_id: request.broadcast_id,
+    agent_network_id: request.agent_network_id,
+    outcome: children.every((child: any) => child.outcome === "accepted")
+      ? "accepted"
+      : "unknown",
+    observed_at: Date.now(),
+    children,
+  };
 }
 
 test("cocalc agent send takes a name and reports a readable outcome", async () => {
@@ -453,6 +490,152 @@ test("broadcast --to resolves names and the shared network", async () => {
     ]);
     assert.equal(broadcast.body, "Release tonight");
     assert.match(broadcast.broadcast_id, /^[0-9a-f-]{36}$/);
+  } finally {
+    transport.mock.restore();
+  }
+});
+
+test("broadcast names every recipient and exits non-zero unless all accepted", async () => {
+  const network = randomUUID();
+  const names = ["reviewer", "tester", "builder", "auditor", "writer"];
+  const directory = {
+    peers: names.map((name) => ({
+      member: {
+        kind: "registered",
+        member_id: randomUUID(),
+        endpoint: { project_id: randomUUID(), agent_id: randomUUID() },
+        name,
+        project_title: "Support",
+        available: true,
+        added_at: new Date().toISOString(),
+      },
+      networks: [
+        {
+          agent_network_id: network,
+          title: "cocalc",
+          delivery_mode: "live",
+          generation: randomUUID(),
+        },
+      ],
+    })),
+  };
+  const marker = `private-body-marker-${randomUUID()}`;
+  const run = async (outcomes: (Record<string, unknown> | undefined)[]) => {
+    const output: any[] = [];
+    const transport = mock.method(
+      require("../../core/agent-message"),
+      "sendIdentityMessage",
+      async (request: any) =>
+        request.action === "destinations"
+          ? directory
+          : broadcastResult(request, outcomes),
+    );
+    try {
+      process.exitCode = 0;
+      await topLevel(output).parseAsync(
+        ["agent", "broadcast", "--to", names.join(","), marker],
+        { from: "user" },
+      );
+      return { result: output[0], exitCode: process.exitCode };
+    } finally {
+      transport.mock.restore();
+      process.exitCode = 0;
+    }
+  };
+  const busy = {
+    outcome: "rejected",
+    code: "host_overloaded",
+    chat_effect: "none",
+    reason: "host_overloaded",
+  };
+  const refused = {
+    outcome: "rejected",
+    code: "autostart_disabled",
+    chat_effect: "none",
+  };
+  const accepted = { outcome: "accepted", chat_effect: "saved" };
+
+  // accepted + busy + refused + unknown + no result at all
+  const mixed = await run([
+    accepted,
+    busy,
+    refused,
+    { outcome: "unknown", reason: "timeout" },
+    undefined,
+  ]);
+  assert.equal(mixed.exitCode, 3);
+  assert.deepEqual(
+    mixed.result.recipients.map(({ name, outcome, retryable }: any) => [
+      name,
+      outcome,
+      retryable,
+    ]),
+    [
+      ["reviewer", "accepted", false],
+      ["tester", "rejected", true],
+      ["builder", "rejected", false],
+      ["auditor", "unknown", false],
+      ["writer", "unknown", false],
+    ],
+  );
+  assert.deepEqual(
+    mixed.result.recipients.map(({ target }: any) => target),
+    directory.peers.map(({ member }) => member.endpoint),
+  );
+  assert.match(mixed.result.summary, /^Delivered to 1 of 5: @reviewer\./);
+  assert.match(
+    mixed.result.summary,
+    /Busy, nothing saved \(retryable\): @tester;/,
+  );
+  assert.match(
+    mixed.result.summary,
+    /Not delivered \(not retryable\): @builder\./,
+  );
+  assert.match(mixed.result.summary, /UNCONFIRMED: @auditor, @writer;/);
+  assert.match(mixed.result.summary, /sends nothing/);
+  assert.doesNotMatch(JSON.stringify(mixed.result), new RegExp(marker));
+
+  // Rejections only, no unknown: 2.
+  const rejected = await run([accepted, busy, refused, accepted, accepted]);
+  assert.equal(rejected.exitCode, 2);
+
+  // Everyone accepted: 0, and the summary names them all.
+  const all = await run([]);
+  assert.equal(all.exitCode, 0);
+  assert.equal(
+    all.result.summary,
+    `Delivered to 5 of 5: ${names.map((name) => `@${name}`).join(", ")}.`,
+  );
+  assert.ok(all.result.recipients.every(({ retryable }: any) => !retryable));
+});
+
+test("group-like names that match no peer say how to message several peers", async () => {
+  const { directory } = peers();
+  const transport = fakeHub(directory, []);
+  try {
+    for (const name of ["all", "@everyone", "All", "*", "group"])
+      await assert.rejects(
+        topLevel([]).parseAsync(["agent", "send", name, "hello"], {
+          from: "user",
+        }),
+        /There are no group destinations; use `cocalc agent broadcast --to a,b`/,
+        name,
+      );
+    await assert.rejects(
+      topLevel([]).parseAsync(["agent", "send", "nobody", "hello"], {
+        from: "user",
+      }),
+      (error: Error) =>
+        /No approved destination/.test(error.message) &&
+        !/group destinations/.test(error.message),
+    );
+    await assert.rejects(
+      topLevel([]).parseAsync(
+        ["agent", "broadcast", "--to", "reviewer,all", "hello"],
+        { from: "user" },
+      ),
+      /no network peer named @all.*There are no group destinations; list each peer by name/,
+    );
   } finally {
     transport.mock.restore();
   }

@@ -81,6 +81,7 @@ echo "- Bundle entry point with @vercel/ncc"
   --external utf-8-validate \
   --external reflect-sync \
   --external @cocalc/http-api \
+  --external ws \
   --minify
 
 copy_native_pkg() {
@@ -106,6 +107,20 @@ copy_native_pkg() {
 
 echo "- Copy node-pty package"
 copy_native_pkg "node-pty"
+
+# ws stays outside the bundle: Node loads this copy, while Bun replaces any
+# require("ws") with its own implementation, which is the only one that can
+# take over Bun's HTTP upgrade sockets.  It is the ws that engine.io uses.
+echo "- Copy ws package"
+WS_DIR="$(cd "$ROOT/packages/conat" && node -e '
+  const { createRequire } = require("node:module");
+  const { dirname } = require("node:path");
+  const fromSocketIo = createRequire(require.resolve("socket.io"));
+  const fromEngineIo = createRequire(fromSocketIo.resolve("engine.io"));
+  console.log(dirname(fromEngineIo.resolve("ws/package.json")));
+')"
+mkdir -p "$OUT"/bundle/node_modules/ws
+cp -r "$WS_DIR"/. "$OUT"/bundle/node_modules/ws/
 
 echo "- Prune node-pty package"
 NODE_PTY_DIR="$OUT/bundle/node_modules/node-pty"

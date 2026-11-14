@@ -31,7 +31,7 @@ flowchart TD
     C --> S
     R --> S
 
-    P --> G["Codex and Claude Code agents"]
+    P --> G["Integrated agents"]
     D --> G
     L --> G
     C --> G
@@ -64,7 +64,9 @@ Compared to the older CoCalc architecture, the important shift is this:
 - Rocket is the scale-out target
 - Codex, Claude Code, and agent tooling are core parts of the platform
 
-For current setup instructions and runtime differences, see
+Plus currently integrates Codex. Managed project-host deployments also support
+Claude Code when the site has enabled and configured it. For setup instructions
+and runtime differences, see
 [Agent features: Codex and Claude Code](https://cocalc.ai/docs/ai/agent-features)
 and [Work with Claude Code](https://cocalc.ai/docs/ai/claude-code).
 

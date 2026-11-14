@@ -36,11 +36,22 @@ import getLogger from "@cocalc/backend/logger";
 import getPort from "@cocalc/backend/get-port";
 import { startManagedSshPluginServer } from "./ssh-plugin";
 import { startManagedSshEdgeProxy } from "./ssh-edge-proxy";
+import { withGodebug } from "./godebug";
 import type { SshTarget } from "./ssh-target";
 import type { Server as NetServer } from "node:net";
 import type { Server as HttpServer } from "node:http";
 
 const logger = getLogger("project-proxy:ssh:ssh-server");
+
+// sshpiperd is a Go program, and Go listeners use MPTCP by default when the
+// kernel allows it. It only listens on loopback, but MPTCP is surface it
+// doesn't need: keep it off for this child alone.
+function sshpiperdEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GODEBUG: withGodebug(process.env.GODEBUG, "multipathtcp=0"),
+  };
+}
 
 export function secretsPath() {
   return join(secrets, "sshpiperd");
@@ -234,7 +245,7 @@ export async function init({
   // specific error to avoid flakiness without masking real failures.
   const tryStart = async () => {
     logger.debug(`${sshpiper} ${args.join(" ")}`);
-    const child = spawn(sshpiper, args);
+    const child = spawn(sshpiper, args, { env: sshpiperdEnv() });
     children.push(child);
     try {
       await waitForStartup(child, port);

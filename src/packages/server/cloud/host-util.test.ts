@@ -47,6 +47,29 @@ describe("buildHostSpec", () => {
     ]);
   });
 
+  it("refuses a spec whose ssh user or public ip is not allowed (057)", async () => {
+    for (const metadata of [
+      { ssh_user: "-oProxyCommand=touch /tmp/x" },
+      { ssh_user: "x;id" },
+      { public_ip: "169.254.169.254" },
+      { public_ip: "-oProxyCommand=id" },
+    ]) {
+      await expect(
+        buildHostSpec({
+          id: "832da43c-d18e-406d-8e1d-c28973378b24",
+          metadata: { machine: { cloud: "local", metadata } },
+        }),
+      ).rejects.toThrow(/ssh_user|public_ip|login name/);
+    }
+    const spec = await buildHostSpec({
+      id: "832da43c-d18e-406d-8e1d-c28973378b24",
+      metadata: {
+        machine: { metadata: { ssh_user: "ubuntu", public_ip: "10.0.0.5" } },
+      },
+    });
+    expect(spec.metadata.ssh_user).toBe("ubuntu");
+  });
+
   it("defaults new hosts to a 50GB boot disk", async () => {
     const spec = await buildHostSpec({
       id: "832da43c-d18e-406d-8e1d-c28973378b24",

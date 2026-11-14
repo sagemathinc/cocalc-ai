@@ -72,6 +72,34 @@ test("exit codes distinguish accepted, rejected and unknown", () => {
   assert.equal(agentSendExitCode("unknown"), 3);
 });
 
+test("a busy rejection says it is safe to send again; others do not", () => {
+  for (const code of [
+    "host_overloaded",
+    "project_overloaded",
+    "rpc_admission_capacity",
+  ])
+    assert.match(
+      agentSendSummary(
+        sent({ outcome: "rejected", code, reason: code, chat_effect: "none" }),
+      ),
+      /Nothing was saved\. Busy, so it is safe to send again after a few seconds \(retryable\)\.$/,
+    );
+  assert.doesNotMatch(
+    agentSendSummary(
+      sent({
+        outcome: "rejected",
+        code: "autostart_disabled",
+        chat_effect: "none",
+      }),
+    ),
+    /retryable/,
+  );
+  assert.doesNotMatch(
+    agentSendSummary(sent({ outcome: "unknown", code: "host_overloaded" })),
+    /retryable|safe to send again/,
+  );
+});
+
 test("external inboxes and external senders get accurate summaries", () => {
   const external = {
     kind: "external" as const,

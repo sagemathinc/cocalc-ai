@@ -25,6 +25,7 @@ The goal is to isolate the project-host-specific write path from the larger
 runtime deployment flow in `hosts.ts`.
 */
 
+import { assertSafeHostSoftwareSelectionForHost } from "./host-software-admin";
 import type { HostRuntimeArtifact } from "@cocalc/conat/hub/api/hosts";
 import getPool from "@cocalc/database/pool";
 import { setProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
@@ -163,6 +164,11 @@ export async function rollbackProjectHostOverSshInternal({
   if (!rollbackVersion) {
     throw new Error("rollback version is required");
   }
+  assertSafeHostSoftwareSelectionForHost(
+    { version: rollbackVersion },
+    row?.id,
+    "ssh rollback",
+  );
   const previousVersion =
     `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
     undefined;

@@ -11,6 +11,43 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 import { getExplicitHostControlClient } from "@cocalc/server/conat/route-client";
+import { assertSafeHostSoftwareSelectionForHost } from "@cocalc/server/conat/api/host-software-admin";
+
+// Every software version or channel this bay sends to a host passes here,
+// whatever its source, so an unsafe one never reaches the host. The client
+// is often a dynamic proxy whose methods are not own properties, so this
+// intercepts only the three software calls and passes everything else
+// (every other method, and properties like `conat`) through unchanged.
+export function guardHostSoftwareCalls(
+  client: HostControlApi,
+  host_id: string,
+): HostControlApi {
+  const guarded: Partial<HostControlApi> = {
+    upgradeSoftware: async (upgrade) => {
+      assertSafeHostSoftwareSelectionForHost(upgrade, host_id, "upgrade");
+      return await client.upgradeSoftware(upgrade);
+    },
+    stageProjectHostArtifact: async (stage) => {
+      assertSafeHostSoftwareSelectionForHost(stage, host_id, "stage");
+      return await client.stageProjectHostArtifact(stage);
+    },
+    rolloutManagedComponents: async (rollout) => {
+      assertSafeHostSoftwareSelectionForHost(rollout, host_id, "rollout");
+      return await client.rolloutManagedComponents(rollout);
+    },
+  };
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      if (
+        typeof prop === "string" &&
+        Object.prototype.hasOwnProperty.call(guarded, prop)
+      ) {
+        return guarded[prop as keyof HostControlApi];
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
 
 export async function getRoutedHostControlClient({
   host_id,
@@ -28,7 +65,7 @@ export async function getRoutedHostControlClient({
     const bridge = getInterBayBridge().hostControl(hostOwnership.bay_id, {
       timeout_ms: timeout,
     });
-    return {
+    const routed: HostControlApi = {
       verifyActiveAcpConnectorTurn: async () => {
         throw new Error("remote ACP turn verification is unavailable");
       },
@@ -192,10 +229,14 @@ export async function getRoutedHostControlClient({
       buildProjectRootfsManifest: async (build) =>
         await bridge.buildProjectRootfsManifest({ host_id, build }),
     };
+    return guardHostSoftwareCalls(routed, host_id);
   }
-  return createHostControlClient({
+  return guardHostSoftwareCalls(
+    createHostControlClient({
+      host_id,
+      client: await getExplicitHostControlClient({ host_id, fresh }),
+      timeout,
+    }),
     host_id,
-    client: await getExplicitHostControlClient({ host_id, fresh }),
-    timeout,
-  });
+  );
 }

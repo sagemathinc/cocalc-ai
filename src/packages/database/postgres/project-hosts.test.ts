@@ -25,6 +25,44 @@ describe("upsertProjectHost", () => {
     await getPool().query("DELETE FROM project_hosts WHERE id=$1", [HOST_ID]);
   });
 
+  it("keeps a bay-seeded self_host and local-proxy keys (the Star seed path) across a later observation", async () => {
+    // scripts/star-poc/seed-star-poc.cjs writes these bay-side through this
+    // function; host reports have them stripped before they get here (054 C).
+    await upsertProjectHost({
+      id: HOST_ID,
+      bay_id: "bay-0",
+      status: "running",
+      internal_url: "http://127.0.0.1:9002",
+      metadata: {
+        provider: "star",
+        cloud_provider: "star",
+        local: true,
+        machine: { cloud: "self-host", metadata: { self_host_mode: "local" } },
+        self_host: { http_tunnel_port: 9002, ssh_tunnel_port: 2222 },
+      },
+    });
+    // a later host observation, already stripped of the denied keys
+    await upsertProjectHost({
+      id: HOST_ID,
+      status: "running",
+      metadata: { host_session_id: "s1", software: { project_host: "1.0.0" } },
+    });
+    const { rows } = await getPool().query(
+      "SELECT metadata FROM project_hosts WHERE id=$1",
+      [HOST_ID],
+    );
+    const md = rows[0]?.metadata;
+    expect(md.self_host).toEqual({ http_tunnel_port: 9002, ssh_tunnel_port: 2222 });
+    expect(md.provider).toBe("star");
+    expect(md.cloud_provider).toBe("star");
+    expect(md.local).toBe(true);
+    expect(md.machine).toEqual({
+      cloud: "self-host",
+      metadata: { self_host_mode: "local" },
+    });
+    expect(md.host_session_id).toBe("s1");
+  });
+
   it("preserves hub-owned metadata across observations", async () => {
     await upsertProjectHost({
       id: HOST_ID,

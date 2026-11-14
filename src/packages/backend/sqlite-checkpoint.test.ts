@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { spawnSync } from "node:child_process";
 import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -287,6 +288,52 @@ describe("deferWalCheckpoints", () => {
       db.close();
     },
     30_000,
+  );
+
+  // The same under Bun (CoCalc Plus on Bun), where the worker uses the
+  // bun:sqlite adapter (./sqlite): its errors must carry node:sqlite's errcode,
+  // or the readonly case is never recognized.  Runs the built module.
+  const bun = spawnSync("bun", ["--version"], { encoding: "utf8" });
+  (bun.status === 0 && process.getuid?.() !== 0 ? it : it.skip)(
+    "gives checkpoints back to a database the worker cannot write, under Bun",
+    () => {
+      const file = join(dir, "readonly-bun.db");
+      const script = `
+        const { chmodSync } = require("node:fs");
+        const { DatabaseSync } = require(${JSON.stringify(join(__dirname, "dist", "sqlite.js"))});
+        const cp = require(${JSON.stringify(join(__dirname, "dist", "sqlite-checkpoint.js"))});
+        const file = ${JSON.stringify(file)};
+        const db = new DatabaseSync(file);
+        db.exec("PRAGMA journal_mode=WAL");
+        db.exec("CREATE TABLE t (k INTEGER PRIMARY KEY, v BLOB)");
+        const deferred = cp.deferWalCheckpoints(db, file, { enableInTests: true });
+        for (const suffix of ["", "-wal", "-shm"]) chmodSync(file + suffix, 0o444);
+        (async () => {
+          await cp.runCheckpointPass();
+          const until = Date.now() + 10000;
+          while (cp.walCheckpointStatus(file) != null && Date.now() < until) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          const autocheckpoint = db.prepare("PRAGMA wal_autocheckpoint").get().wal_autocheckpoint;
+          console.log(JSON.stringify({ deferred, released: cp.walCheckpointStatus(file) == null, autocheckpoint }));
+          db.close();
+          process.exit(0);
+        })();
+      `;
+      // (from the temp directory: no tsconfig.json for bun to read)
+      const r = spawnSync("bun", ["-e", script], {
+        encoding: "utf8",
+        cwd: dir,
+        timeout: 30_000,
+      });
+      const lines = r.stdout.trim().split("\n");
+      expect(JSON.parse(lines[lines.length - 1])).toEqual({
+        deferred: true,
+        released: true,
+        autocheckpoint: 1000,
+      });
+    },
+    40_000,
   );
 
   it("forgets a connection before it closes", () => {

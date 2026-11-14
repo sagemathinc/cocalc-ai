@@ -25,8 +25,10 @@ type HostLike =
       | "spot_recovery_policy"
       | "recovery_phase"
       | "spot_recovery_state"
+      | "machine"
     >
   | {
+      machine?: { machine_type?: string | null } | null;
       pricing_model?: HostPricingModel | string;
       desired_pricing_model?: HostPricingModel | string;
       effective_pricing_model?: HostPricingModel | string;
@@ -58,6 +60,59 @@ export function isSpotStandardFallbackHost(host?: HostLike | null): boolean {
     phase === "running_standard_fallback" ||
     phase === "probing_spot"
   );
+}
+
+export interface HostMachineFallback {
+  kind: "spot_alternate" | "standard_fallback";
+  desired_machine_type: string;
+  active_machine_type: string;
+  since?: string;
+}
+
+// What a Spot host runs on instead of its configured machine: another
+// machine type on Spot (the recovery phase is then idle, so nothing else
+// shows it) or Standard pricing, and since when.
+export function hostMachineFallback(
+  host?: HostLike | null,
+): HostMachineFallback | undefined {
+  if (!host || !isSpotHost(host)) return undefined;
+  const state = host.spot_recovery_state;
+  const desired = `${host.machine?.machine_type ?? ""}`.trim();
+  const active = `${state?.active_machine_type ?? ""}`.trim() || desired;
+  if (isSpotStandardFallbackHost(host)) {
+    return {
+      kind: "standard_fallback",
+      desired_machine_type: desired,
+      active_machine_type: active,
+      since: state?.fallback_started_at,
+    };
+  }
+  if (!desired || active === desired) return undefined;
+  return {
+    kind: "spot_alternate",
+    desired_machine_type: desired,
+    active_machine_type: active,
+    since: state?.machine_type_attempt_started_at,
+  };
+}
+
+export function hostMachineFallbackLabel(
+  fallback: HostMachineFallback,
+): string {
+  const {
+    kind,
+    desired_machine_type: desired,
+    active_machine_type: active,
+  } = fallback;
+  const running =
+    active && active !== desired
+      ? `Running ${active} instead of ${desired}`
+      : `Running ${active || desired}`;
+  const how = kind === "standard_fallback" ? "on Standard pricing" : "on Spot";
+  const since = fallback.since ? Date.parse(fallback.since) : NaN;
+  return `${running} ${how} (spot fallback${
+    Number.isFinite(since) ? ` since ${new Date(since).toLocaleString()}` : ""
+  })`;
 }
 
 function formatProbeTime(value: string | number | undefined): string {
@@ -147,6 +202,7 @@ function spotDescription({
     catalog && host
       ? getHostDisplayedPrice(host as Host, catalog, pricingSettings)
       : undefined;
+  const machineFallback = hostMachineFallback(host);
   if (isSpotStandardFallbackHost(host)) {
     return (
       <div style={{ maxWidth: 360 }}>
@@ -154,6 +210,11 @@ function spotDescription({
           This host is configured for spot pricing, but is currently running as
           Standard fallback while CoCalc probes for Spot capacity.
         </div>
+        {machineFallback ? (
+          <div style={{ marginTop: 8 }}>
+            {hostMachineFallbackLabel(machineFallback)}
+          </div>
+        ) : null}
         {display?.current_estimate ? (
           <div style={{ marginTop: 8 }}>
             Current standard rate: {display.current_estimate.hourly_label} ·{" "}
@@ -175,6 +236,12 @@ function spotDescription({
       Spot hosts are cheaper, but the cloud provider can interrupt them at any
       time. CoCalc will try to restart them automatically, but active work can
       still be disrupted.
+      {machineFallback ? (
+        <div style={{ marginTop: 8 }}>
+          {hostMachineFallbackLabel(machineFallback)}. CoCalc moves it back to
+          the configured machine type later.
+        </div>
+      ) : null}
     </div>
   );
 }

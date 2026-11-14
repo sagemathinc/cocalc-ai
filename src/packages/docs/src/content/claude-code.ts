@@ -64,13 +64,21 @@ In settings, expand the help sections for access, billing, and runtime details.
 
 claude.ai connectors are not available with subscriptions connected now: the
 long-lived token CoCalc stores (see below) can run models but cannot load your
-claude.ai connectors. Subscriptions connected earlier, with a full sign-in,
-still load them by default; for those, turn off **Use my claude.ai
-connectors** in Claude settings to exclude them from your next turn. That
-choice does not affect a running or already queued turn, disconnect services
-on claude.ai, or disable CoCalc's project tools.
+claude.ai connectors. In the default controller runtime, older full sign-ins
+can load them by default. Turn off **Use my claude.ai connectors** in Claude
+settings to exclude them from your next turn. That choice does not affect a
+running or queued turn, disconnect services on claude.ai, or disable CoCalc's
+project tools. If your site runs Claude Code in the project, reconnect an
+older subscription in Claude settings. The project runtime can use the
+project's configured MCP servers and skills and leaves claude.ai account
+connectors disabled.
 
 ## Security model
+
+When your site runs subscription-paid Claude Code in the project itself, see
+[Claude subscriptions when Claude Code runs in the project](/docs/ai/claude-subscription-in-project)
+for how your subscription stays outside the project and what sharing the
+project with collaborators means.
 
 ### Project access and approvals
 
@@ -143,12 +151,13 @@ Since CoCalc cannot read the plan, you can name the subscription (for example
 Disconnecting removes CoCalc's copy; revoke the token itself from your Claude
 account if you suspect it was exposed.
 
-Subscription credentials are account-owned and used in a separate controller,
-outside the project filesystem. Claude's project commands execute through a
-scoped tool bridge into the project. Ordinary project commands should not be
-able to read or export that login state. This boundary does not prevent Claude
-from accessing project files or using other credentials exposed inside the
-project.
+Your Claude subscription credential belongs to your CoCalc account and stays
+outside the project. By default, Claude Code runs in a separate controller and
+uses CoCalc's scoped tool bridge to reach the project. If your site selects the
+project runtime, Claude Code runs as the project user and model requests go
+through a host relay. In shared projects, review the collaborator warning
+before continuing. The [project-runtime guide](/docs/ai/claude-subscription-in-project)
+explains the sharing risks and the separate CoCalc CLI credential.
 
 Work accepted by this agent consumes the selected subscription's usage
 allowance. Agent Network authorization and recipient payment authorization
@@ -173,10 +182,12 @@ at their limits, it waits for the first to have room. Auto's settings choose
 which subscriptions it may use and show how long your weekly limits last.
 Pinned agents never move.
 
-CoCalc checks credential authority when admitting and running work and before
-mediated project commands. Disconnect prevents future authorized use; it
-cannot undo completed work or provider usage. Provider-side session revocation
-is also appropriate if you suspect credential compromise.
+CoCalc checks credential authority when admitting and running work. The
+controller also checks authorization for its mediated project commands. See
+the [project-runtime guide](/docs/ai/claude-subscription-in-project) for how
+disconnecting affects relay requests. Disconnecting cannot undo completed work
+or provider usage. Revoke the token in your Claude account if you suspect
+credential compromise.
 
 ### Billing and cancellation
 
@@ -185,62 +196,66 @@ Provider plan limits and any enabled extra-usage billing apply; CoCalc does
 not promise a hard spending cap. Configure limits at the provider and monitor
 usage there. Subscription access and API-key billing are distinct choices.
 
-Cancel stops the current turn and cancels its mediated project commands.
-Controller disposal disables the project bridge and closes the scoped CLI
-lease even if container removal needs retry: credential renewal stops and
-the lease files are removed. This is not a promise that a CLI token previously
-copied by project code becomes instantly invalid; its existing expiry and
-revocation rules still apply. Cancellation cannot roll back file changes,
-external requests, or charges already incurred. Managed-command descendants
-are terminated even if they detach into another session. Project-owned terminal
-services have a separate lifecycle and may require separate cleanup.
+Cancel stops the current turn. In the controller runtime, it also cancels the
+turn's mediated project commands. Controller disposal disables the project
+bridge and closes the scoped CLI lease even if container removal needs retry:
+credential renewal stops and the lease files are removed. A CLI token
+previously copied by project code retains its existing expiry and revocation
+rules. Managed-command descendants are terminated even if they detach into
+another session. For what happens to commands when an in-project agent ends,
+see the [project-runtime guide](/docs/ai/claude-subscription-in-project).
+
+Cancellation cannot roll back file changes, external requests, or charges
+already incurred. Project-owned terminal services have a separate lifecycle
+and may require separate cleanup.
 
 ## Capabilities and current limits
 
 - Text and pasted images are supported.
-- The CoCalc skill supplies project-aware CLI guidance. In subscription mode,
-  it is preloaded as instructions rather than registered as a separate Skill
-  tool. Skill references and project CLAUDE.md files are read through the
-  project command tool.
+- The CoCalc skill supplies project-aware CLI guidance. The controller
+  preloads it as instructions and reads skill references and project CLAUDE.md
+  files through the project command tool.
 - Project commands receive a scoped CoCalc CLI credential. This is separate
   from the Anthropic credential; CLI actions remain limited by its authority.
-- Subscription project commands are managed jobs. A short tool wait does not
-  kill a running build. See the execution lifecycle below.
-- In subscription mode Claude can search the web (WebSearch, run by
-  Anthropic), read web pages (WebFetch) and keep a task list, shown as a
-  checklist in the activity log. WebFetch also works in projects without
-  internet access: Claude's controller reaches public web hosts through a
-  host proxy, while project commands stay offline. Claude Code's own
-  file-based auto-memory is off; use CoCalc agent memory instead.
+- The controller runs project commands as managed jobs. A short tool wait does
+  not kill a running build. See the execution lifecycle below.
+- In the controller runtime, Claude can search the web (WebSearch, run by
+  Anthropic), read web pages (WebFetch), and keep a task list shown as a
+  checklist in the activity log. Its WebFetch can reach public web hosts
+  through a host proxy when the project itself is offline.
+- Claude Code's own file-based auto-memory is off in both subscription runtimes.
+  Use CoCalc agent memory instead.
 - Guidance you send while Claude works is delivered at its next step, the same
   as in the Claude Code CLI. It does not cut off the current reply or tool call.
 - Live guidance requires adapter support; other messages queue. Automations
   and goal workflows are not yet supported by this integration.
 - A background subprocess finishing does not automatically wake a completed
   CoCalc turn. Ask Claude to wait for completion or explicitly check its status.
-- Registered Claude agents can discover network peers and exchange messages
-  through project tools on updated hosts. Live messages can guide busy Claude
-  recipients; idle recipients resume with their own subscription selection.
-  Claude-to-Claude delivery is live-verified; mixed Claude/Codex and cross-project
-  paths have automated coverage but still need live qualification.
-  Account API-key network turns are rejected by admission. See the
+- In the controller runtime, registered Claude agents can discover network
+  peers and exchange messages through project tools on updated hosts. Live
+  messages can guide busy Claude recipients; idle recipients resume with
+  their own subscription selection. Claude-to-Claude delivery is live-verified
+  for the controller. Mixed Claude/Codex and cross-project paths have automated
+  coverage but still need live qualification. Account API-key network turns
+  are rejected by admission. See the
   [coordination comparison](/docs/ai/agent-features#agent-coordination).
 
 ### Questions while work continues
 
-Claude can ask nonblocking questions using the same durable question cards as
-Codex. You can choose a suggested answer or enter your own while Claude keeps
-working. Your answer is delivered to the active turn, or starts a continuation
-if that turn has already finished. The continuation keeps the original turn's
-subscription selection and rechecks authorization; it does not switch to Codex.
+In the controller runtime, Claude can ask nonblocking questions using the
+same durable question cards as Codex. You can choose a suggested answer or
+enter your own while Claude keeps working. Your answer is delivered to the
+active turn, or starts a continuation if that turn has already finished. The
+continuation keeps the original turn's subscription selection and rechecks
+authorization; it does not switch to Codex.
 
-The subscription tool \`request_user_input_async\` saves up to three questions
+The controller's \`request_user_input_async\` tool saves up to three questions
 and returns immediately. Claude should use it when other useful work can
 continue, rather than waiting or polling for an answer. Questions are for
 clarification, not passwords, login codes, authentication, or permission
 escalation. See [goals and questions](/docs/ai/codex-goals) for the shared cards.
 
-The subscription tool \`project_read_image\` lets Claude look at an image
+The controller's \`project_read_image\` tool lets Claude look at an image
 saved in the project, such as a screenshot, plot, or rendered page, instead of
 only reading text output. It accepts PNG, JPEG, GIF, and WebP files up to
 800 KB and uses the same project access as \`project_exec\`. For SVG or PDF,
@@ -251,7 +266,7 @@ copy.
 
 ### Long commands and background services
 
-In subscription mode, \`project_exec\` starts a command in the project and
+In the controller runtime, \`project_exec\` starts a command in the project and
 returns its \`job_id\`, status, output, and \`next_cursor\`. Run builds and
 tests in the foreground: do not add \`&\`, \`nohup\`, or \`setsid\` merely
 to get past a tool wait. \`status: running\` means the command is still running,
@@ -331,7 +346,7 @@ report them to the site administrator. Avoid blindly resending a turn whose
 execution outcome is uncertain. Missing model options, expired credentials,
 and unavailable runtime setup should be resolved before retrying.
 
-Resumed subscription turns receive current managed-job guidance. Project MCP
+Resumed controller sessions receive current managed-job guidance. Project MCP
 tool names include a version derived from the helper source so cached tool
 definitions from an older controller do not reuse the same tool identity.
 

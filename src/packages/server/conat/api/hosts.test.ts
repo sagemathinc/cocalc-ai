@@ -169,11 +169,12 @@ jest.mock("@cocalc/server/lro/stream", () => ({
   publishLroSummary: jest.fn(async () => undefined),
 }));
 
+const loggerWarnMock = jest.fn();
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
     debug: jest.fn(),
     info: jest.fn(),
-    warn: jest.fn(),
+    warn: (...args: any[]) => loggerWarnMock(...args),
     error: jest.fn(),
   });
   return {
@@ -350,6 +351,14 @@ jest.mock("@cocalc/server/cloud/bootstrap-host", () => ({
   __esModule: true,
   buildCloudInitStartupScript: (...args: any[]) =>
     buildCloudInitStartupScriptMock(...args),
+  // the real one is tested in cloud/bootstrap-host.test.ts
+  buildBootstrapReconcileSshScript: ({
+    launcher,
+    scope,
+  }: {
+    launcher: string;
+    scope: string;
+  }) => `ssh-reconcile scope=${scope}\n${launcher}`,
 }));
 
 jest.mock("@cocalc/server/cloud/ssh-key", () => ({
@@ -1809,6 +1818,48 @@ describe("hosts.createHost", () => {
     expect(insertedMetadata.bootstrap_version).toBeUndefined();
   });
 
+  it("stores a self-host ssh target in canonical form (057)", async () => {
+    let insertedMetadata: any;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("INSERT INTO project_hosts")) {
+        insertedMetadata = params[4];
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO cloud_vm_work")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: insertedMetadata,
+              bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { createHost } = await import("./hosts");
+    await createHost({
+      account_id: ACCOUNT_ID,
+      name: "host-name",
+      region: "us-central1",
+      size: "small",
+      machine: {
+        cloud: "local",
+        metadata: { self_host_ssh_target: "  ubuntu@[2001:db8::1]:022 " },
+      },
+    });
+    expect(insertedMetadata.machine.metadata.self_host_ssh_target).toBe(
+      "ubuntu@[2001:db8::1]:22",
+    );
+  });
+
   it("preserves explicit per-host bootstrap overrides", async () => {
     let insertedMetadata: any;
     getServerSettingsMock = jest.fn(async () => ({
@@ -1948,6 +1999,98 @@ describe("hosts.createHost", () => {
       }),
     ).rejects.toThrow("self-hosted hosts are limited to admins");
     expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects local host creation for non-admins (057)", async () => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { createHost } = await import("./hosts");
+
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        name: "local",
+        region: "pending",
+        size: "custom",
+        machine: { cloud: "local", metadata: {} },
+      }),
+    ).rejects.toThrow("local hosts are limited to admins");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects machine ssh fields that are not allowed, for every cloud (057)", async () => {
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { createHost } = await import("./hosts");
+    const cases: [string, any, string][] = [
+      ["gcp", { ssh_user: "-oProxyCommand=touch /tmp/x" }, "ssh_user"],
+      ["gcp", { ssh_user: "Ubuntu" }, "ssh_user"],
+      ["local", { ssh_user: "x;id" }, "ssh_user"],
+      ["gcp", { public_ip: "169.254.169.254" }, "public_ip"],
+      ["local", { public_ip: "-oProxyCommand=id" }, "public_ip"],
+      ["lambda", { public_ip: "host.example.com" }, "public_ip"],
+      [
+        "self-host",
+        { self_host_ssh_target: "-oProxyCommand=id" },
+        "self_host_ssh_target",
+      ],
+      [
+        "self-host",
+        { self_host_ssh_target: "u@-oProxyCommand=id" },
+        "self_host_ssh_target",
+      ],
+    ];
+    for (const [cloud, metadata, field] of cases) {
+      await expect(
+        createHost({
+          account_id: ACCOUNT_ID,
+          name: "h",
+          region: "pending",
+          size: "custom",
+          machine: { cloud, metadata },
+        }),
+      ).rejects.toThrow(field);
+    }
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to start a local host for non-admins (057)", async () => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "local",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "local",
+                  metadata: { ssh_user: "local", public_ip: "10.0.0.5" },
+                },
+              },
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { startHost, startHostInternal } = await import("./hosts");
+    await expect(
+      startHost({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ).rejects.toThrow("local hosts are limited to admins");
+    expect(createLroMock).not.toHaveBeenCalled();
+    // the start worker checks again, for a start queued some other way
+    await expect(
+      startHostInternal({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ).rejects.toThrow("local hosts are limited to admins");
   });
 
   it("rejects self-hosted host creation when disabled in site settings", async () => {
@@ -2236,6 +2379,147 @@ describe("hosts browser fresh auth gating", () => {
         disk_gb: 100,
       }),
     ).rejects.toThrow("self-hosted hosts are limited to admins");
+  });
+
+  it("rejects local host machine updates for non-admins (057)", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "local", metadata: {} },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({ account_id: ACCOUNT_ID, id: HOST_ID, disk_gb: 100 }),
+    ).rejects.toThrow("local hosts are limited to admins");
+  });
+
+  it("rejects switching a host to local for non-admins (057)", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-west1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "gcp", metadata: {} },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        cloud: "local",
+      }),
+    ).rejects.toThrow("local hosts are limited to admins");
+  });
+
+  it("stores an updated self-host ssh target in canonical form (057)", async () => {
+    isAdminMock = jest.fn(async () => true);
+    const seen: string[] = [];
+    let stored: any;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      seen.push(sql.replace(/\s+/g, " ").slice(0, 80));
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "self-host",
+                  metadata: { self_host_ssh_target: "old@10.0.0.1" },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (/UPDATE project_hosts/.test(sql)) {
+        for (const p of params ?? []) {
+          const m = typeof p === "string" ? safeJson(p) : p;
+          const t = m?.machine?.metadata?.self_host_ssh_target;
+          if (t != null) stored = t;
+        }
+      }
+      return { rows: [] };
+    });
+    const { updateHostMachine } = await import("./hosts");
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      self_host_ssh_target: "  ubuntu@[2001:db8::1]:022 ",
+    }).catch((err) => {
+      throw new Error(`${err}\n${seen.join("\n")}`);
+    });
+    expect(stored).toBe("ubuntu@[2001:db8::1]:22");
+  });
+
+  it("rejects a self-host ssh target that is not allowed (057)", async () => {
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "self-host", metadata: {} },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { updateHostMachine } = await import("./hosts");
+    for (const target of [
+      "-oProxyCommand=touch /tmp/x",
+      "user@-oProxyCommand=id",
+      "User@host",
+      "user@host:0",
+      "user@169.254.169.254",
+    ]) {
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          self_host_ssh_target: target,
+        }),
+      ).rejects.toThrow("self_host_ssh_target");
+    }
   });
 
   it("rejects converting a host to self-hosted when disabled", async () => {
@@ -6347,6 +6631,507 @@ describe("hosts.upgradeHostSoftware", () => {
       }),
     );
   });
+
+  // The host's owner (or anyone else) who is not a site admin.
+  const lifecycleCalls: Array<[string, (hosts: any) => Promise<unknown>]> = [
+    [
+      "pullHostRootfsImage",
+      (h) =>
+        h.pullHostRootfsImage({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          image: "x",
+        }),
+    ],
+    [
+      "deleteHostRootfsImage",
+      (h) =>
+        h.deleteHostRootfsImage({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          image: "x",
+        }),
+    ],
+    [
+      "gcDeletedHostRootfsImages",
+      (h) =>
+        h.gcDeletedHostRootfsImages({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ],
+    [
+      "upgradeHostSoftware",
+      (h) =>
+        h.upgradeHostSoftware({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          targets: [{ artifact: "project-host", version: "ph-v2" }],
+        }),
+    ],
+    [
+      "reconcileHostSoftware",
+      (h) => h.reconcileHostSoftware({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ],
+    [
+      "setHostRuntimeDeployments",
+      (h) =>
+        h.setHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          scope_type: "host",
+          id: HOST_ID,
+          deployments: [],
+        }),
+    ],
+    [
+      "reconcileHostRuntimeDeployments",
+      (h) =>
+        h.reconcileHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+        }),
+    ],
+    [
+      "rollbackHostRuntimeDeployments",
+      (h) =>
+        h.rollbackHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          target_type: "artifact",
+          target: "project-host",
+          version: "ph-v1",
+        }),
+    ],
+    [
+      "rolloutHostManagedComponents",
+      (h) =>
+        h.rolloutHostManagedComponents({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          components: ["project-host"],
+        }),
+    ],
+    [
+      "upgradeHostConnector",
+      (h) => h.upgradeHostConnector({ account_id: ACCOUNT_ID, id: HOST_ID }),
+    ],
+  ];
+
+  it.each(lifecycleCalls)(
+    "%s refuses the host's owner who is not an admin, before looking at the host",
+    async (_name, call) => {
+      isAdminMock = jest.fn(async () => false);
+      const hosts = await import("./hosts");
+      await expect(call(hosts)).rejects.toThrow(
+        "host software maintenance is limited to site admins",
+      );
+      expect(isAdminMock).toHaveBeenCalledWith(ACCOUNT_ID);
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(resolveHostBayMock).not.toHaveBeenCalled();
+      expect(createLroMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(lifecycleCalls)(
+    "%s refuses an unknown host id with the admin-only error for a non-admin",
+    async (_name, call) => {
+      isAdminMock = jest.fn(async () => false);
+      queryMock = jest.fn(async () => ({ rows: [] }));
+      const hosts = await import("./hosts");
+      await expect(call(hosts)).rejects.toThrow(
+        "host software maintenance is limited to site admins",
+      );
+    },
+  );
+
+  it("still lets a site admin upgrade a host's software, and logs the admin's software source", async () => {
+    loggerWarnMock.mockReset();
+    const { upgradeHostSoftware } = await import("./hosts");
+    await upgradeHostSoftware({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      targets: [{ artifact: "project-host", version: "ph-v2" }],
+      base_url: "http://10.1.2.3:8080/software",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-upgrade-software",
+        input: expect.objectContaining({
+          base_url: "http://10.1.2.3:8080/software",
+        }),
+      }),
+    );
+    expect(
+      loggerWarnMock.mock.calls.filter(
+        ([message]) => message === "host software base url from admin",
+      ),
+    ).toEqual([
+      [
+        "host software base url from admin",
+        {
+          account_id: ACCOUNT_ID,
+          host_id: HOST_ID,
+          entry: "upgradeHostSoftware",
+          source_host: "non-https",
+        },
+      ],
+    ]);
+  });
+
+  it.each([
+    ["no owner", {}],
+    ["a blank owner", { owner: "  " }],
+    ["another owner", { owner: "acct-other" }],
+  ])("refuses a non-admin read of a host with %s", async (_label, metadata) => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return { rows: [{ id: HOST_ID, status: "running", metadata }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { listHostRuntimeDeployments } = await import("./hosts");
+    await expect(
+      listHostRuntimeDeployments({
+        account_id: ACCOUNT_ID,
+        scope_type: "host",
+        id: HOST_ID,
+      }),
+    ).rejects.toThrow("not authorized");
+    expect(listProjectHostRuntimeDeploymentsMock).not.toHaveBeenCalled();
+  });
+
+  it("lets the host's owner read its runtime deployments", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { listHostRuntimeDeployments } = await import("./hosts");
+    await expect(
+      listHostRuntimeDeployments({
+        account_id: ACCOUNT_ID,
+        scope_type: "host",
+        id: HOST_ID,
+      }),
+    ).resolves.toEqual([]);
+    expect(listProjectHostRuntimeDeploymentsMock).toHaveBeenCalled();
+  });
+
+  it("refuses a non-admin's software source for the version list, fetching nothing", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { listHostSoftwareVersions } = await import("./hosts");
+    await expect(
+      listHostSoftwareVersions({
+        account_id: ACCOUNT_ID,
+        base_url: "https://evil.example.test/software",
+        artifacts: ["tools"],
+        channels: ["latest"],
+      }),
+    ).rejects.toThrow("host software maintenance is limited to site admins");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lists the site's own versions for a non-admin who names no source", async () => {
+    isAdminMock = jest.fn(async () => false);
+    getServerSettingsMock.mockResolvedValue({
+      project_hosts_software_base_url: "https://software.example.test/software",
+    });
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            url: "https://software.example.test/software/tools/v7/tools-linux-amd64.tar.xz",
+          }),
+        ),
+    );
+    const { listHostSoftwareVersions } = await import("./hosts");
+    await expect(
+      listHostSoftwareVersions({
+        account_id: ACCOUNT_ID,
+        artifacts: ["tools"],
+        channels: ["latest"],
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ artifact: "tools", available: true }),
+    ]);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://software.example.test/software/tools/latest-linux-amd64.json",
+    ]);
+  });
+
+  it("lets a site admin name any software source for the version list", async () => {
+    loggerWarnMock.mockReset();
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            url: "http://10.1.2.3/software/tools/v7/tools-linux-amd64.tar.xz",
+          }),
+        ),
+    );
+    const { listHostSoftwareVersions } = await import("./hosts");
+    await listHostSoftwareVersions({
+      account_id: ACCOUNT_ID,
+      base_url: "http://10.1.2.3/software",
+      artifacts: ["tools"],
+      channels: ["latest"],
+    });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://10.1.2.3/software/tools/latest-linux-amd64.json",
+    ]);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "host software base url from admin",
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        entry: "listHostSoftwareVersions",
+        source_host: "non-https",
+      }),
+    );
+  });
+});
+
+describe("hosts software versions and channels at the entry points", () => {
+  const UNSAFE = "invalid host software version or channel";
+  beforeEach(() => {
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async () => {
+      throw new Error("no host lookup expected");
+    });
+  });
+
+  it.each([
+    [
+      "upgradeHostSoftware with an unsafe version",
+      (h: any) =>
+        h.upgradeHostSoftware({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          targets: [{ artifact: "project-host", version: "../x" }],
+        }),
+    ],
+    [
+      "upgradeHostSoftware with an unknown channel",
+      (h: any) =>
+        h.upgradeHostSoftware({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          targets: [{ artifact: "project-host", channel: "x?y" }],
+        }),
+    ],
+    [
+      "setHostRuntimeDeployments",
+      (h: any) =>
+        h.setHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          scope_type: "host",
+          id: HOST_ID,
+          deployments: [
+            {
+              target_type: "artifact",
+              target: "project-host",
+              desired_version: "a/b",
+            },
+          ],
+        }),
+    ],
+    [
+      "rolloutHostManagedComponents",
+      (h: any) =>
+        h.rolloutHostManagedComponents({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          components: ["project-host"],
+          desired_version: "current",
+        }),
+    ],
+    [
+      "rollbackHostRuntimeDeployments",
+      (h: any) =>
+        h.rollbackHostRuntimeDeployments({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          target_type: "artifact",
+          target: "project-host",
+          version: "a#b",
+        }),
+    ],
+    [
+      "upgradeHostConnector",
+      (h: any) =>
+        h.upgradeHostConnector({
+          account_id: ACCOUNT_ID,
+          id: HOST_ID,
+          version: "a:b",
+        }),
+    ],
+    [
+      "rolloutHostRuntimeFleet",
+      (h: any) =>
+        h.rolloutHostRuntimeFleet({
+          account_id: ACCOUNT_ID,
+          host_ids: [HOST_ID],
+          artifact: "project-host",
+          version: "%2e%2e",
+        }),
+    ],
+  ])("refuses %s, even for an admin", async (_label, call) => {
+    const hosts = await import("./hosts");
+    await expect(call(hosts)).rejects.toThrow(UNSAFE);
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an upgrade target version", { targets: [{ version: "../x" }] }],
+    ["an upgrade target channel", { targets: [{ channel: "x/y" }] }],
+    ["a desired version", { desired_version: "a b" }],
+    ["a rollback version", { version: ".hidden" }],
+  ])(
+    "refuses a queued automatic operation that names %s",
+    async (_label, extra) => {
+      isAdminMock = jest.fn(async () => true);
+      const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+      await expect(
+        hostSoftwareLifecycleOpRefusal({
+          kind: "host-upgrade-software",
+          account_id: ACCOUNT_ID,
+          input: { id: HOST_ID, automatic: true, ...extra },
+        }),
+      ).resolves.toBe(UNSAFE);
+    },
+  );
+});
+
+describe("hosts.desiredSoftwareTargetsForReconcile", () => {
+  // What the host reports it runs now, so every desired version below differs.
+  const software_inventory = [
+    { artifact: "project-host", current_version: "ph-v0" },
+    { artifact: "tools", current_version: "tools-0" },
+  ];
+
+  it("never targets an unsafe host-reported fallback version", async () => {
+    const { desiredSoftwareTargetsForReconcile } = await import("./hosts");
+    expect(
+      desiredSoftwareTargetsForReconcile({
+        id: HOST_ID,
+        version: "../x",
+        metadata: { software_inventory, software: { tools: "t:1" } },
+      }),
+    ).toEqual([]);
+    expect(
+      desiredSoftwareTargetsForReconcile({
+        id: HOST_ID,
+        version: "ph-v1",
+        metadata: { software_inventory, software: { project_host: "a/b" } },
+      }),
+    ).toEqual([]);
+  });
+
+  it("still targets a safe version", async () => {
+    const { desiredSoftwareTargetsForReconcile } = await import("./hosts");
+    expect(
+      desiredSoftwareTargetsForReconcile({
+        id: HOST_ID,
+        version: "ph-v1",
+        metadata: { software_inventory, software: { tools: "tools-7" } },
+      }),
+    ).toEqual([
+      { artifact: "project-host", version: "ph-v1" },
+      { artifact: "tools", version: "tools-7" },
+    ]);
+  });
+});
+
+describe("hosts.hostSoftwareLifecycleOpRefusal", () => {
+  const LIFECYCLE_KINDS = [
+    "host-upgrade-software",
+    "host-reconcile-software",
+    "host-rollout-managed-components",
+    "host-reconcile-runtime-deployments",
+    "host-rollback-runtime-deployments",
+  ];
+
+  it.each(LIFECYCLE_KINDS)(
+    "refuses a queued %s requested by a non-admin",
+    async (kind) => {
+      isAdminMock = jest.fn(async () => false);
+      const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+      await expect(
+        hostSoftwareLifecycleOpRefusal({
+          kind,
+          account_id: ACCOUNT_ID,
+          input: { id: HOST_ID, account_id: ACCOUNT_ID },
+        }),
+      ).resolves.toBe("host software maintenance is limited to site admins");
+      expect(isAdminMock).toHaveBeenCalledWith(ACCOUNT_ID);
+    },
+  );
+
+  it.each(LIFECYCLE_KINDS)("runs a %s requested by an admin", async (kind) => {
+    isAdminMock = jest.fn(async () => true);
+    const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+    await expect(
+      hostSoftwareLifecycleOpRefusal({
+        kind,
+        account_id: ACCOUNT_ID,
+        input: { id: HOST_ID, base_url: "http://10.1.2.3/software" },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("runs the site's own automatic convergence, whoever it is attributed to", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+    await expect(
+      hostSoftwareLifecycleOpRefusal({
+        kind: "host-upgrade-software",
+        account_id: ACCOUNT_ID,
+        input: { id: HOST_ID, automatic: true },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    [
+      "names a software source",
+      { automatic: true, base_url: "https://x.test" },
+    ],
+    ["is only truthy", { automatic: "true" }],
+  ])(
+    "refuses an automatic-looking operation by a non-admin that %s",
+    async (_label, extra) => {
+      isAdminMock = jest.fn(async () => false);
+      const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+      await expect(
+        hostSoftwareLifecycleOpRefusal({
+          kind: "host-upgrade-software",
+          account_id: ACCOUNT_ID,
+          input: { id: HOST_ID, ...extra },
+        }),
+      ).resolves.toBe("host software maintenance is limited to site admins");
+    },
+  );
+
+  it("refuses a lifecycle operation with no requester", async () => {
+    isAdminMock = jest.fn(async () => true);
+    const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+    await expect(
+      hostSoftwareLifecycleOpRefusal({
+        kind: "host-upgrade-software",
+        input: { id: HOST_ID },
+      }),
+    ).resolves.toBe("host software maintenance is limited to site admins");
+    expect(isAdminMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["host-start", "host-stop", "host-public-route", "host-drain"])(
+    "leaves %s to its own checks",
+    async (kind) => {
+      isAdminMock = jest.fn(async () => false);
+      const { hostSoftwareLifecycleOpRefusal } = await import("./hosts");
+      await expect(
+        hostSoftwareLifecycleOpRefusal({
+          kind,
+          account_id: ACCOUNT_ID,
+          input: { id: HOST_ID },
+        }),
+      ).resolves.toBeUndefined();
+    },
+  );
 });
 
 describe("hosts.stopHostProjects / restartHostProjects", () => {
@@ -9203,3 +9988,11 @@ describe("hosts.recordConvergedProjectHostUpgradeInternal", () => {
     );
   });
 });
+
+function safeJson(value: string): any {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}

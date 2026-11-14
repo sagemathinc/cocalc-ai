@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
-import passwordHash from "@cocalc/backend/auth/password-hash";
+import { hashPassword } from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
 import { before, after } from "@cocalc/server/test";
 import {
@@ -221,7 +221,7 @@ it("connects public proposal, real financial sign-in, re-verification and receip
   const password = `test-${randomUUID()}`;
   await getPool().query(
     "UPDATE accounts SET password_hash=$2 WHERE account_id=$1",
-    [sender, passwordHash(password)],
+    [sender, await hashPassword(password, { kdf: "legacy" })],
   );
   const probe = createServer();
   await new Promise<void>((done) => probe.listen(0, "127.0.0.2", done));

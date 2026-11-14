@@ -367,6 +367,69 @@ describe("project-runner podman orphan fallback", () => {
     );
   });
 
+  // PR S (OOM Phase 0): the REAL limits translation gives a project with no
+  // swap allowance memory.swap.max = 0, in the helper's swap position, both on
+  // reconcile and at startup (podman itself runs with --cgroups=disabled).
+  async function withRealLimits<T>(fn: () => Promise<T>): Promise<T> {
+    const actual = jest.requireActual("./limits");
+    const podmanLimitsImpl = mockPodmanLimits.getMockImplementation();
+    const cgroupLimitsImpl =
+      mockProjectCgroupLimitsFromPodmanArgs.getMockImplementation();
+    mockPodmanLimits.mockImplementation(actual.podmanLimits);
+    mockProjectCgroupLimitsFromPodmanArgs.mockImplementation(
+      actual.projectCgroupLimitsFromPodmanArgs,
+    );
+    try {
+      return await fn();
+    } finally {
+      mockPodmanLimits.mockImplementation(podmanLimitsImpl!);
+      mockProjectCgroupLimitsFromPodmanArgs.mockImplementation(
+        cgroupLimitsImpl!,
+      );
+    }
+  }
+
+  it("reconciles a project with no swap allowance to memory.swap.max 0", async () => {
+    mockGetConmonContainerProcessLists.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          [
+            {
+              name: `project-${project1}`,
+              project_id: project1,
+              conmon_pid: 400,
+              child_pids: [401],
+            },
+          ],
+        ],
+      ]),
+    );
+    await withRealLimits(async () => {
+      await expect(
+        reconcileProjectCgroup({
+          project_id: project1,
+          config: { memory: 2_000_000_000, swap: false },
+          force: true,
+        }),
+      ).resolves.toMatchObject({ status: "repaired" });
+    });
+    const attach = mockExecuteCode.mock.calls
+      .map(([opts]) => opts)
+      .find((opts) => opts?.args?.[2] === "attach-project-cgroup");
+    expect(attach).toBeDefined();
+    // args: -n, helper, attach-project-cgroup, project, sandbox, memory.max,
+    // memory.high, memory.low, memory.swap.max, ...
+    expect(attach.args.slice(3, 9)).toEqual([
+      project1,
+      expect.any(String),
+      "2000000000",
+      "max",
+      "1600000000",
+      "0",
+    ]);
+  });
+
   it("reconciles network containment once at host scope", async () => {
     mockGetConmonContainerProcessLists.mockResolvedValue(
       new Map([
@@ -765,6 +828,39 @@ describe("project-runner podman orphan fallback", () => {
     }
   });
 
+  it("starts a project with no swap allowance with memory.swap.max 0", async () => {
+    mockProjectStartPodman(project1);
+    await withRealLimits(async () => {
+      await start({
+        project_id: project1,
+        localPath: async () => ({ home: `/tmp/project-${project1}` }),
+        config: {
+          image: "docker.io/library/ubuntu:latest",
+          memory: 2_000_000_000,
+          swap: false,
+        },
+      });
+    });
+    const startCall = mockPodman.mock.calls.find(
+      ([args]) => args?.[0] === "start" && args?.[1] === `project-${project1}`,
+    );
+    expect(startCall).toBeDefined();
+    const { argsPrefix } = startCall![1].launcher;
+    // The launcher script hands "$2".."$12" to the helper after "$1" "$$":
+    // memory.max, memory.high, memory.low, memory.swap.max, ...
+    expect(argsPrefix[1]).toContain(
+      'prepare-project-startup-runtime-cgroup "$1" "$$" "$2" "$3" "$4" "$5"',
+    );
+    expect(argsPrefix.slice(2, 8)).toEqual([
+      "cocalc-project-podman",
+      project1,
+      "2000000000",
+      "max",
+      "1600000000",
+      "0",
+    ]);
+  });
+
   it("uses caller-provided host ports when starting a project", async () => {
     mockProjectStartPodman(project1);
     const libatomic = `/tmp/cocalc-test-libatomic-${project1}`;
@@ -848,6 +944,14 @@ describe("project-runner podman orphan fallback", () => {
           ]),
         }),
       }),
+    );
+    expect(mockPodman).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "create",
+        "--security-opt",
+        expect.stringMatching(/^seccomp=.*cocalc-project-[0-9a-f]{16}\.json$/),
+      ]),
+      expect.anything(),
     );
     expect(mockExecuteCode).toHaveBeenCalledWith(
       expect.objectContaining({

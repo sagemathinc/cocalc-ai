@@ -567,3 +567,49 @@ describe("route-project bay-aware routing", () => {
     expect(hostFetchCount).toBe(2);
   });
 });
+
+describe("selectHostAddress (054 C containment)", () => {
+  async function select(row: any, mode: unknown = "internal") {
+    const { selectHostAddress } = await import("./route-project");
+    return selectHostAddress(row, mode).address;
+  }
+
+  it("routes a valid tunnel port on this machine", async () => {
+    expect(
+      await select({ metadata: { self_host: { http_tunnel_port: 41000 } } }),
+    ).toBe("http://127.0.0.1:41000");
+  });
+
+  it("never routes an invalid tunnel port", async () => {
+    for (const bad of ["127.0.0.1:22#", 22, 70000]) {
+      expect(
+        await select({
+          metadata: {
+            self_host: { http_tunnel_port: bad },
+            machine: { cloud: "self-host" },
+          },
+        }),
+      ).toBeUndefined();
+    }
+  });
+
+  it("routes stored host URLs naming ordinary addresses", async () => {
+    expect(await select({ internal_url: "http://10.0.0.5:9002" })).toBe(
+      "http://10.0.0.5:9002",
+    );
+    expect(
+      await select({ public_url: "https://h.example" }, "public"),
+    ).toBe("https://h.example");
+  });
+
+  it("never routes a stored host URL naming a refused address", async () => {
+    for (const bad of [
+      "http://127.0.0.1:5432",
+      "http://169.254.169.254/",
+      "http://metadata.google.internal/",
+    ]) {
+      expect(await select({ internal_url: bad })).toBeUndefined();
+      expect(await select({ public_url: bad }, "public")).toBeUndefined();
+    }
+  });
+});

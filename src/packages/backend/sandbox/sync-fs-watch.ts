@@ -25,7 +25,10 @@ import {
   deferWalCheckpoints,
   forgetWalCheckpoints,
 } from "../sqlite-checkpoint";
-import { DatabaseSync as Database } from "node:sqlite";
+import {
+  DATABASE_SYNC_SOURCE,
+  DatabaseSync as Database,
+} from "@cocalc/backend/sqlite";
 import { Worker } from "node:worker_threads";
 import { DiffMatchPatch, compressPatch } from "@cocalc/util/dmp";
 import { tmpNameSync } from "tmp-promise";
@@ -52,7 +55,7 @@ const FS_HEADS_COLUMNS = [
 // does not checkpoint the old WAL on close.
 const READ_FS_HEADS_WORKER = `
 const { parentPort, workerData } = require("node:worker_threads");
-const { DatabaseSync } = require("node:sqlite");
+const DatabaseSync = ${DATABASE_SYNC_SOURCE};
 let db;
 try {
   db = new DatabaseSync(workerData.path, { readOnly: true });
@@ -141,7 +144,7 @@ const SNAPSHOT_STORE_REMOVE_RETRY_MS = 60 * 60_000;
 // switch checkpoints the old WAL first. "error" when it can't be known.
 const RELEASE_CHECK_WORKER = `
 const { parentPort, workerData } = require("node:worker_threads");
-const { DatabaseSync } = require("node:sqlite");
+const DatabaseSync = ${DATABASE_SYNC_SOURCE};
 let db;
 let result;
 try {

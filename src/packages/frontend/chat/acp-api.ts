@@ -52,6 +52,11 @@ import {
 import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
 import { fetchPaymentSelectionForSend } from "./payment-selection-store";
 import { healedHarnessCredential } from "./harness-credential-heal";
+import {
+  confirmClaudeSubscriptionSharing,
+  needsClaudeSubscriptionSharingConfirm,
+} from "./claude-subscription-sharing";
+import { readClaudePoolSelection } from "./harness-credential-selection";
 
 let lastGeneratedAcpMessageMs = 0;
 const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
@@ -424,6 +429,28 @@ export async function processAcpLLM({
           threadKey: thread_id,
         })
       : undefined;
+  // Before every turn: with other collaborators here, a session paid by the
+  // user's own subscription is usable by them; the user is told first.
+  const sharingCheck = {
+    accountId: redux.getStore("account")?.get("account_id"),
+    projectId: project_id,
+    credential: harnessCredential,
+    pool:
+      runtime?.profile.id === "claude-code" &&
+      !!readClaudePoolSelection({
+        accountId: redux.getStore("account")?.get("account_id"),
+        projectId: project_id,
+        threadKey: thread_id,
+      }),
+  };
+  if (
+    needsClaudeSubscriptionSharingConfirm(sharingCheck) &&
+    !(await confirmClaudeSubscriptionSharing(sharingCheck))
+  ) {
+    throw new Error(
+      "Not sent: the warning about collaborators using your Claude subscription was not accepted.",
+    );
+  }
   if (
     !isHarnessThread &&
     selectedCredentialId &&

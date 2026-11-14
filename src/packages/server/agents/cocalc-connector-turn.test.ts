@@ -56,9 +56,8 @@ jest.mock("@cocalc/database/pool", () => ({
   }),
 }));
 jest.mock("@cocalc/backend/auth/password-hash", () => ({
-  __esModule: true,
-  default: () => "test-hash",
-  verifyPassword: (secret: string, hash: string) =>
+  tokenHash: () => "test-hash",
+  verifyToken: (secret: string, hash: string) =>
     secret.startsWith("test.") && hash === "test-hash",
 }));
 jest.mock("@cocalc/database/settings/secret-settings", () => ({

@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { safeProjectHostUrl, safeTunnelPort } from "@cocalc/backend/project-host-target";
 import getPool from "@cocalc/database/pool";
 import basePath from "@cocalc/backend/base-path";
 import {
@@ -205,7 +206,7 @@ export async function resolveLocalApiRelayHostUrl(
   if (localProxy) {
     // Existing on-prem hosts have only a reverse tunnel at their owning hub.
     // Other hosts connect directly; this is not a new hub data-plane relay.
-    if (!metadata.self_host?.http_tunnel_port) {
+    if (safeTunnelPort(metadata.self_host?.http_tunnel_port) == null) {
       throw Error("API relay target host tunnel is unavailable");
     }
     const site = await getBayPublicOrigin(getConfiguredBayId());
@@ -216,6 +217,10 @@ export async function resolveLocalApiRelayHostUrl(
     url = parsed.toString();
   }
   if (!url) throw Error("API relay target host has no connection URL");
+  // A host's stored URL never names a loopback, link-local or metadata address.
+  if (!localProxy && safeProjectHostUrl(url) == null) {
+    throw Error("invalid API relay target URL");
+  }
   const parsed = new URL(url);
   if (
     !["http:", "https:"].includes(parsed.protocol) ||

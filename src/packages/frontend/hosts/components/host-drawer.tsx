@@ -100,6 +100,7 @@ import {
   getHostSizeDisplay,
 } from "../utils/format";
 import { canManageHostLifecycle } from "../utils/access";
+import { hostMachineFallback, hostMachineFallbackLabel } from "../spot-ui";
 import type { HostDeleteOptions } from "../types";
 import {
   currentProjectHostRolloutPhase,
@@ -1625,6 +1626,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const isSelfHost = host?.machine?.cloud === "self-host";
   const hostCpu = host ? getHostCpuCount(host) : undefined;
   const hostRam = host ? getHostRamGiB(host) : undefined;
+  const machineFallback = hostMachineFallback(host);
   const hostRamMb = host?.host_ram_mb ?? (hostRam ? hostRam * 1024 : undefined);
   const maxProjectRamMb =
     hostRamMb != null ? Math.max(0, Math.floor(hostRamMb - 3072)) : undefined;
@@ -2107,6 +2109,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               .filter(Boolean)
               .join(" · ") || "No machine details reported yet."}
           </Typography.Text>
+          {machineFallback && (
+            <Typography.Text type="warning">
+              {hostMachineFallbackLabel(machineFallback)}
+            </Typography.Text>
+          )}
           {showHostResources && (
             <Typography.Text type="secondary">
               Resources {hostCpu ?? "?"} vCPU · {hostRam ?? "?"} GB RAM ·{" "}

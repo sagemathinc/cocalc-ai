@@ -45,6 +45,10 @@ async function main() {
     bundleRoot,
     "packages/server/dist/initial-onprem-setup.js",
   );
+  const { initPasswordKdfDefaultAfterSchema } = requireFromBundle(
+    bundleRoot,
+    "packages/server/dist/auth/password-kdf-default.js",
+  );
   const { isLaunchpadProduct } = requireFromBundle(
     bundleRoot,
     "packages/server/dist/launchpad/mode.js",
@@ -57,6 +61,9 @@ async function main() {
     await callback2(db.connect.bind(db));
     await load_server_settings_from_env(db);
     await db.update_schema();
+    // Before initialOnPremSetup creates the admin: its first password is then
+    // hashed in the chosen format (see server/auth/password-kdf-default.ts).
+    await initPasswordKdfDefaultAfterSchema();
 
     if (
       isLaunchpadProduct() &&

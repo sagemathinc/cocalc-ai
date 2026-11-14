@@ -13,9 +13,7 @@ they have no password, then the provided one is ignored.
 import getPool from "@cocalc/database/pool";
 import { randomBytes } from "node:crypto";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { tokenHash, verifyToken } from "@cocalc/backend/auth/password-hash";
 import { getLogger } from "@cocalc/backend/logger";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import type {
@@ -322,12 +320,12 @@ async function createApiKey({
         ],
       );
       const { id, key_id } = rows[0];
-      // Note that passwordHash is NOT a "function" -- due to salt every time you call it, the output is different!
+      // Note that tokenHash is NOT a "function" -- due to salt every time you call it, the output is different!
       // Thus we have to do this little trick.
       // v2 keys use a random key_id for lookup, not the local integer id.
       const secret = createApiKeySecret({ key_id });
       const trunc = truncApiKey(secret);
-      const hash = passwordHash(secret);
+      const hash = tokenHash(secret);
       await client.query("UPDATE api_keys SET trunc=$1,hash=$2 WHERE id=$3", [
         trunc,
         hash,
@@ -605,7 +603,7 @@ async function checkApiKeyRows({
     });
     return;
   }
-  if (verifyPassword(secret, rows[0].hash)) {
+  if (verifyToken(secret, rows[0].hash)) {
     const { expire } = rows[0];
     if (expire != null && expire.valueOf() <= Date.now()) {
       // Renewal may have committed since this read. Deny the stale request;
@@ -734,7 +732,7 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     });
     return undefined;
   }
-  if (!verifyPassword(secret, entry.hash)) {
+  if (!verifyToken(secret, entry.hash)) {
     recordApiKeyAuditEventSoon({
       event: "api_key_denied",
       value: {

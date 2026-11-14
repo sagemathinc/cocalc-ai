@@ -93,6 +93,7 @@ jobs:
       # provides the shared libraries the bundled binaries link against.
       - name: Install the distro Podman
         run: |
+          .github/scripts/ci-apt-mirror.sh
           sudo apt-get update -qq
           sudo apt-get install -y -qq podman jq
 

@@ -1,0 +1,420 @@
+#!/usr/bin/env bash
+# The key of the bay's broker fabric TLS listener (cocalc-bay-broker-tls):
+# create it, show its pin, check what the listener serves, rotate it, revoke
+# it. See "Broker Fabric TLS Listener" in the bay-systemd README.
+#
+#   cocalc-bay-broker-tls-key init                 create the key and certificate (once)
+#   cocalc-bay-broker-tls-key pin                  the pin of the installed certificate
+#   cocalc-bay-broker-tls-key check [--expect PIN] a TLS 1.3 handshake with the listener
+#   cocalc-bay-broker-tls-key stage                create the next key (not yet served)
+#   cocalc-bay-broker-tls-key activate --expect-pin PIN --reason TEXT
+#                                                  serve the staged key; keep the old one
+#                                                  until the listener serves PIN
+#   cocalc-bay-broker-tls-key revoke --yes --reason TEXT
+#                                                  stop the listener and delete its keys
+#
+# The pin is the sha256 (hex) of the certificate's DER SubjectPublicKeyInfo:
+# the broker's COCALC_BROKER_FABRIC_SPKI_SHA256. Keys are made on this host,
+# never leave it and are never printed. pin and check need no privileges;
+# the rest run as root. Everything here is openssl and coreutils: root does
+# not run node.
+set -euo pipefail
+
+: "${COCALC_BAY_CONFIG_DIR:=/etc/cocalc}"
+: "${SYSTEMCTL:=systemctl}"
+: "${OPENSSL:=openssl}"
+# How long activate waits for the restarted listener to serve the new pin.
+: "${COCALC_BAY_BROKER_TLS_ACTIVATE_WAIT:=20}"
+UNIT=cocalc-bay-broker-tls.service
+BASE="${COCALC_BAY_CONFIG_DIR}/broker-fabric-tls"
+KEY="${BASE}.key"
+CRT="${BASE}.crt"
+NEXT_KEY="${BASE}.next.key"
+NEXT_CRT="${BASE}.next.crt"
+OLD_KEY="${BASE}.old.key"
+OLD_CRT="${BASE}.old.crt"
+CN=cocalc-bay-broker-fabric
+DAYS=825
+
+die() {
+  echo "cocalc-bay-broker-tls-key: $*" >&2
+  exit 1
+}
+
+usage() {
+  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+bay_env_value() {
+  # One value from the env files of cocalc-bay-broker-tls.service, in its
+  # order (later files win), without sourcing them, so the tool and the
+  # listener see the same address and port.
+  local name="$1" file line value=""
+  for file in bay.env bay-workers.env bay-overlay.env bay-topology.env bay-local.env; do
+    [[ -r "${COCALC_BAY_CONFIG_DIR}/${file}" ]] || continue
+    line="$(grep -E "^${name}=" "${COCALC_BAY_CONFIG_DIR}/${file}" | tail -1)" || true
+    [[ -n "$line" ]] && value="${line#*=}"
+  done
+  value="${value#[\"\']}"
+  value="${value%[\"\']}"
+  printf '%s' "$value"
+}
+
+BIND="${COCALC_BAY_BROKER_TLS_BIND_HOST:-$(bay_env_value COCALC_BAY_BROKER_TLS_BIND_HOST)}"
+BIND="${BIND%/32}"
+PORT="${COCALC_BAY_BROKER_TLS_PORT:-$(bay_env_value COCALC_BAY_BROKER_TLS_PORT)}"
+PORT="${PORT:-9443}"
+
+require_root() {
+  [[ "$(id -u)" == 0 || -n "${COCALC_BAY_BROKER_TLS_KEY_TEST:-}" ]] || die "run as root"
+}
+
+# The bind address as the listener accepts it: an IPv4 address, not 0.0.0.0
+# and not loopback (the tests, which run the listener on loopback, set
+# COCALC_BAY_BROKER_TLS_KEY_TEST).
+valid_bind() {
+  local IFS=. octet
+  [[ "$BIND" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  for octet in $BIND; do
+    ((10#$octet <= 255)) || return 1
+  done
+  [[ "$BIND" != 0.0.0.0 ]] || return 1
+  [[ "$BIND" != 127.* || -n "${COCALC_BAY_BROKER_TLS_KEY_TEST:-}" ]]
+}
+
+valid_port() {
+  [[ "$PORT" =~ ^[0-9]{1,5}$ ]] && ((10#$PORT >= 1024 && 10#$PORT <= 65535))
+}
+
+require_bind() {
+  valid_bind ||
+    die "set COCALC_BAY_BROKER_TLS_BIND_HOST (the bay's internal IPv4 address) in ${COCALC_BAY_CONFIG_DIR}/bay-local.env"
+  valid_port || die "invalid COCALC_BAY_BROKER_TLS_PORT (1024-65535)"
+}
+
+# A reason goes into a single record line: one line of printable ASCII, at
+# most 200 characters. Checked before anything changes.
+require_reason() {
+  local LC_ALL=C
+  [[ ${#1} -ge 1 && ${#1} -le 200 && "$1" =~ ^[[:print:]]+$ ]] ||
+    die "the reason must be one line of printable ASCII, at most 200 characters"
+}
+
+# A failed step is a FAILED line on stdout, where record lines go, saying
+# what is still true, then the exit.
+failed() {
+  local code="$1"
+  shift
+  echo "FAILED: $*"
+  exit "$code"
+}
+
+valid_pin() {
+  [[ "$1" =~ ^[0-9a-f]{64}$ ]]
+}
+
+# The pin of a certificate, the broker's way: sha256 of the DER SPKI.
+pin_of_cert() {
+  local pin
+  pin="$("$OPENSSL" x509 -in "$1" -noout -pubkey 2>/dev/null |
+    "$OPENSSL" pkey -pubin -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)"
+  valid_pin "$pin" && [[ "$pin" != "$(printf '' | sha256sum | cut -d' ' -f1)" ]] ||
+    die "cannot read the certificate $1"
+  printf '%s' "$pin"
+}
+
+# The same hash of the public half of a private key (root only).
+pin_of_key() {
+  "$OPENSSL" pkey -in "$1" -pubout -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+
+not_after() {
+  "$OPENSSL" x509 -in "$1" -noout -enddate 2>/dev/null | sed 's/^notAfter=//'
+}
+
+# The pin the listener serves now, from a TLS 1.3 handshake with it (empty
+# if there is no TLS 1.3 handshake). From this host the source address is
+# the bay's own, which the listener accepts.
+served_pin() {
+  local pem
+  pem="$(timeout 10 "$OPENSSL" s_client -connect "${BIND}:${PORT}" -tls1_3 \
+    -alpn http/1.1 -verify_quiet </dev/null 2>/dev/null)" || true
+  [[ "$pem" == *"-----BEGIN CERTIFICATE-----"* ]] || return 0
+  printf '%s\n' "$pem" | "$OPENSSL" x509 -noout -pubkey 2>/dev/null |
+    "$OPENSSL" pkey -pubin -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+
+sync_dir() {
+  sync "$COCALC_BAY_CONFIG_DIR" 2>/dev/null || sync
+}
+
+# A new key pair at KEY_PATH/CRT_PATH, neither of which may exist: made in a
+# private temporary directory next to them, then linked into place (link(2)
+# never replaces a file).
+make_pair() {
+  local key_path="$1" crt_path="$2" tmp
+  [[ ! -e "$key_path" && ! -e "$crt_path" ]] || die "$key_path or $crt_path already exists"
+  tmp="$(umask 077 && mktemp -d "${COCALC_BAY_CONFIG_DIR}/.broker-fabric-tls.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
+  (umask 077 && "$OPENSSL" req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -nodes -sha256 -days "$DAYS" -subj "/CN=${CN}" \
+    -addext "subjectAltName=IP:${BIND}" \
+    -addext "basicConstraints=critical,CA:FALSE" \
+    -addext "keyUsage=critical,digitalSignature" \
+    -addext "extendedKeyUsage=serverAuth" \
+    -keyout "${tmp}/key" -out "${tmp}/crt" 2>/dev/null) || die "openssl could not create a key"
+  chmod 0400 "${tmp}/key"
+  chmod 0444 "${tmp}/crt"
+  if [[ "$(id -u)" == 0 ]]; then
+    chown root:root "${tmp}/key" "${tmp}/crt"
+  fi
+  ln "${tmp}/key" "$key_path" || die "could not create $key_path"
+  ln "${tmp}/crt" "$crt_path" || die "could not create $crt_path (the key is at $key_path)"
+  rm -rf "$tmp"
+  trap - EXIT
+  sync_dir
+}
+
+# A unit property as systemd reports it (systemctl show --property=NAME
+# --value): the query must succeed and print exactly one state word.
+# Otherwise "unreadable": a failed query is never read as a state, whatever
+# it printed.
+unit_state() {
+  local state rc=0
+  state="$("$SYSTEMCTL" show "$UNIT" --property="$1" --value 2>/dev/null)" || rc=$?
+  if [[ "$rc" != 0 || ! "$state" =~ ^[a-z-]{1,32}$ ]]; then
+    state=unreadable
+  fi
+  printf '%s' "$state"
+}
+
+# Whether the listener's address refuses TCP connections: positive proof
+# that nothing listens there. A connect that succeeds, times out or fails in
+# any other way is not proof.
+port_refused() {
+  local err
+  err="$(LC_ALL=C timeout 5 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$BIND" "$PORT" 2>&1)" && return 1
+  [[ "$err" == *"Connection refused"* ]]
+}
+
+# The unit must be one systemd knows: `show` also answers, with
+# ActiveState=inactive, for a unit that does not exist.
+unit_loaded() {
+  local load
+  load="$(unit_state LoadState)"
+  [[ "$load" == loaded ]] || {
+    WHY="${WHY:+${WHY}; }systemd reports ${UNIT} LoadState as ${load}"
+    return 1
+  }
+}
+
+# Stops the listener and proves it: the stop succeeds, systemd knows the unit
+# and reports its ActiveState as "inactive" or "failed" (any other answer,
+# or a failed query, is not proof), and the listener's address refuses
+# connections. Sets WHY to what failed (empty if none) and ACTIVE_STATE to
+# the state observed.
+WHY=""
+ACTIVE_STATE=""
+UNIT_FILE_STATE=""
+stop_verified() {
+  local state
+  WHY=""
+  "$SYSTEMCTL" stop "$UNIT" || WHY="systemctl stop failed"
+  unit_loaded || true
+  state="$(unit_state ActiveState)"
+  ACTIVE_STATE="$state"
+  if [[ "$state" != inactive && "$state" != failed ]]; then
+    WHY="${WHY:+${WHY}; }systemd reports ${UNIT} as ${state}"
+  fi
+  if ! valid_bind || ! valid_port; then
+    WHY="${WHY:+${WHY}; }cannot check the listener's port (no valid bind address or port)"
+  elif ! port_refused; then
+    WHY="${WHY:+${WHY}; }${BIND}:${PORT} does not refuse connections"
+  fi
+  [[ -z "$WHY" ]]
+}
+
+# Disables the listener and proves it: the disable succeeds, systemd knows
+# the unit and reports its UnitFileState as "disabled" (any other answer, or
+# a failed query, is not proof).
+disable_verified() {
+  local state
+  WHY=""
+  "$SYSTEMCTL" disable "$UNIT" >/dev/null 2>&1 || WHY="systemctl disable failed"
+  unit_loaded || true
+  state="$(unit_state UnitFileState)"
+  UNIT_FILE_STATE="$state"
+  if [[ "$state" != disabled ]]; then
+    WHY="${WHY:+${WHY}; }systemd reports ${UNIT} as ${state}"
+  fi
+  [[ -z "$WHY" ]]
+}
+
+check_pair() {
+  # A key and its certificate belong together.
+  [[ -e "$1" && -e "$2" ]] || die "missing $1 or $2"
+  [[ "$(pin_of_key "$1")" == "$(pin_of_cert "$2")" ]] || die "$1 does not match $2"
+}
+
+record_time() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+command="${1:-}"
+shift || true
+case "$command" in
+  init)
+    require_root
+    require_bind
+    [[ ! -e "$KEY" && ! -e "$CRT" ]] ||
+      die "$KEY or $CRT exists; it is never replaced (use stage and activate to rotate)"
+    [[ ! -e "$NEXT_KEY" && ! -e "$OLD_KEY" ]] || die "a rotation is in progress; see the README"
+    make_pair "$KEY" "$CRT"
+    echo "pin=$(pin_of_cert "$CRT")"
+    echo "not_after=$(not_after "$CRT")"
+    ;;
+  pin)
+    [[ -e "$CRT" ]] || die "no certificate at $CRT (run init)"
+    echo "pin=$(pin_of_cert "$CRT")"
+    echo "not_after=$(not_after "$CRT")"
+    ;;
+  check)
+    expect=""
+    if [[ "${1:-}" == --expect ]]; then
+      expect="${2:-}"
+      valid_pin "$expect" || die "usage: check [--expect PIN] (64 lowercase hex)"
+    elif [[ -n "${1:-}" ]]; then
+      die "usage: check [--expect PIN]"
+    fi
+    require_bind
+    [[ -e "$CRT" ]] || die "no certificate at $CRT (run init)"
+    installed="$(pin_of_cert "$CRT")"
+    served="$(served_pin)"
+    echo "time=$(record_time)"
+    echo "installed_pin=${installed}"
+    echo "served_pin=${served:-none}"
+    [[ -n "$served" ]] || die "no TLS 1.3 handshake with ${UNIT} at its configured address"
+    echo "tls=TLSv1.3"
+    [[ "$served" == "$installed" ]] || die "the listener serves a different key than $CRT (restart ${UNIT}?)"
+    [[ -z "$expect" || "$served" == "$expect" ]] || die "the listener does not serve the expected pin"
+    echo "ok"
+    ;;
+  stage)
+    require_root
+    require_bind
+    [[ -e "$KEY" && -e "$CRT" ]] || die "no current key (run init)"
+    [[ ! -e "$OLD_KEY" && ! -e "$OLD_CRT" ]] ||
+      die "$OLD_KEY exists: an earlier activation did not finish; see the README"
+    [[ ! -e "$NEXT_KEY" && ! -e "$NEXT_CRT" ]] ||
+      die "a next key is already staged (pin $(pin_of_cert "$NEXT_CRT" 2>/dev/null || echo unknown))"
+    make_pair "$NEXT_KEY" "$NEXT_CRT"
+    next="$(pin_of_cert "$NEXT_CRT")"
+    echo "next_pin=${next}"
+    echo "Next: set the broker's COCALC_BROKER_FABRIC_SPKI_SHA256 to ${next}, then run: cocalc-bay-broker-tls-key activate --expect-pin ${next} --reason TEXT" >&2
+    ;;
+  activate)
+    require_root
+    require_bind
+    expect=""
+    reason=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --expect-pin) expect="${2:-}"; shift 2 || shift ;;
+        --reason) reason="${2:-}"; shift 2 || shift ;;
+        *) die "unknown option: $1" ;;
+      esac
+    done
+    valid_pin "$expect" && [[ -n "$reason" ]] ||
+      die "usage: activate --expect-pin PIN --reason TEXT"
+    require_reason "$reason"
+    [[ ! -e "$OLD_KEY" && ! -e "$OLD_CRT" ]] ||
+      die "$OLD_KEY exists: an earlier activation did not finish; see the README"
+    check_pair "$NEXT_KEY" "$NEXT_CRT"
+    check_pair "$KEY" "$CRT"
+    [[ "$(pin_of_cert "$NEXT_CRT")" == "$expect" ]] ||
+      die "the staged key's pin is not ${expect}; nothing changed"
+    old="$(pin_of_cert "$CRT")"
+    # The current pair stays on disk (as .old) until the new one is served.
+    ln "$KEY" "$OLD_KEY"
+    ln "$CRT" "$OLD_CRT"
+    sync_dir
+    mv -T "$NEXT_KEY" "$KEY"
+    mv -T "$NEXT_CRT" "$CRT"
+    sync_dir
+    "$SYSTEMCTL" restart "$UNIT" || true
+    served=""
+    for ((i = 0; i < COCALC_BAY_BROKER_TLS_ACTIVATE_WAIT; i++)); do
+      served="$(served_pin)"
+      [[ "$served" == "$expect" ]] && break
+      sleep 1
+    done
+    if [[ "$served" != "$expect" ]]; then
+      if ! stop_verified; then
+        cat >&2 <<EOF
+cocalc-bay-broker-tls-key: the listener did not serve ${expect}, and it could NOT
+be confirmed stopped (${WHY}): it may still be serving the key it loaded.
+Both keys are kept: the new one at ${KEY} (${CRT}), the previous one at
+${OLD_KEY} (${OLD_CRT}), pin ${old}. Stop it by hand (systemctl stop ${UNIT};
+systemctl show ${UNIT} --property=ActiveState --value must say inactive, and
+cocalc-bay-broker-tls-key check must find no handshake), then follow the
+recovery in the README.
+EOF
+        failed 2 "broker fabric pin NOT changed to ${expect}; the listener could not be confirmed stopped (${WHY}); both keys kept"
+      fi
+      cat >&2 <<EOF
+cocalc-bay-broker-tls-key: the listener did not serve ${expect}; ${UNIT} is stopped
+(systemd reports it inactive and its address refuses connections).
+Both keys are kept: the new one at ${KEY} (${CRT}), the previous one at
+${OLD_KEY} (${OLD_CRT}), pin ${old}. To go back to the previous key:
+  mv -T ${OLD_KEY} ${KEY} && mv -T ${OLD_CRT} ${CRT}
+  set the broker's pin back to ${old}
+  systemctl start ${UNIT} && cocalc-bay-broker-tls-key check --expect ${old}
+To retry the new key instead: fix the cause, systemctl start ${UNIT},
+cocalc-bay-broker-tls-key check --expect ${expect}, then remove the .old files.
+EOF
+      failed 1 "broker fabric pin NOT changed to ${expect}; the listener did not serve it and is stopped (verified); both keys kept"
+    fi
+    rm -f "$OLD_KEY" "$OLD_CRT"
+    sync_dir
+    echo "time=$(record_time)"
+    echo "served_pin=${served}"
+    echo "ok"
+    echo "record: broker fabric pin ${old} -> ${expect}; at $(record_time); check: served_pin=${served} tls=TLSv1.3 ok; reason: ${reason}"
+    ;;
+  revoke)
+    require_root
+    yes=""
+    reason=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --yes) yes=1; shift ;;
+        --reason) reason="${2:-}"; shift 2 || shift ;;
+        *) die "unknown option: $1" ;;
+      esac
+    done
+    [[ -n "$yes" && -n "$reason" ]] || die "usage: revoke --yes --reason TEXT (stops the listener and deletes its keys)"
+    require_reason "$reason"
+    old=""
+    [[ -e "$CRT" ]] && old="$(pin_of_cert "$CRT" 2>/dev/null || true)"
+    # Proving the stop needs the listener's address: without one, stop nothing.
+    valid_bind && valid_port ||
+      failed 1 "broker fabric key NOT revoked (pin ${old:-none}); no valid bind address or port to prove the listener stopped; nothing was stopped or deleted"
+    # The keys go only once the listener is proven stopped and disabled: a
+    # running listener keeps the key it loaded, so deleting the files alone
+    # would revoke nothing, and would destroy what recovery needs.
+    stop_verified ||
+      failed 1 "broker fabric key NOT revoked (pin ${old:-none}); the listener could not be confirmed stopped (${WHY}) and may still be serving; nothing was deleted"
+    disable_verified ||
+      failed 1 "broker fabric key NOT revoked (pin ${old:-none}); the listener is stopped but could not be confirmed disabled (${WHY}); nothing was deleted"
+    rm -f "$KEY" "$CRT" "$NEXT_KEY" "$NEXT_CRT" "$OLD_KEY" "$OLD_CRT"
+    sync_dir
+    echo "record: broker fabric key revoked (pin ${old:-none}); at $(record_time); ${UNIT} ActiveState=${ACTIVE_STATE}, UnitFileState=${UNIT_FILE_STATE}, port closed; reason: ${reason}"
+    ;;
+  -h|--help|"")
+    usage
+    ;;
+  *)
+    die "unknown command: $command"
+    ;;
+esac

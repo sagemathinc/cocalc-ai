@@ -7,6 +7,10 @@ import type {
   AgentNetworkProposal,
 } from "@cocalc/conat/agents/personal";
 import {
+  AGENT_RPC_ADMISSION_CAPACITY_CODE,
+  agentRpcAdmissionCapacityError,
+  isAgentRpcAdmissionCapacityError,
+  isAgentRpcAdmissionCapacityResponse,
   rpcOutcome,
   validateAgentRpcRequest,
   validateAgentRpcOutcome,
@@ -145,6 +149,8 @@ export async function sendIdentityMessage(
       "version" in request
         ? await withTimeout(pending, 50_000, "agent RPC deadline exceeded")
         : await pending;
+    if (isAgentRpcAdmissionCapacityResponse(response.data))
+      throw agentRpcAdmissionCapacityError();
     if (response.data?.error) throw new Error(response.data.error);
     if (!response.data?.result)
       throw new Error("message receipt was not confirmed");
@@ -162,6 +168,18 @@ export async function sendIdentityMessage(
       validateAgentRpcOutcome(response.data.result, request);
     return response.data.result;
   } catch (error) {
+    // The hub refused before reading the request: a definite, retryable
+    // rejection rather than an unknown outcome.
+    if (
+      isAgentRpcAdmissionCapacityError(error) &&
+      "version" in request &&
+      (request.action === "send" || request.action === "prepare-attachments")
+    )
+      return rpcOutcome(request, "rejected", {
+        code: AGENT_RPC_ADMISSION_CAPACITY_CODE,
+        chat_effect: "none",
+        reason: (error as Error).message,
+      });
     if ("version" in request && request.action === "prepare-attachments")
       return rpcOutcome(request, "rejected", {
         code: "attachment_preparation_unavailable",

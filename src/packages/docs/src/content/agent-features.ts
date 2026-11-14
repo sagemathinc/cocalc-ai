@@ -33,9 +33,11 @@ permissions, model access, and installed tools determine what you can use.
 
 Unless a row names another payment method, the detailed Claude tool and
 coordination qualifications refer to a personal Pro/Max subscription on an
-enabled managed project host. API-key and membership access are also available
-as described below; this comparison does not assert tool parity across payment
-methods or generic ACP adapters.
+enabled managed project host using the default controller runtime. API-key and
+membership access are also available as described below; this comparison does not
+assert tool parity across payment methods or generic ACP adapters. The
+[project runtime](/docs/ai/claude-subscription-in-project) has different tools and
+sharing requirements.
 
 ## Workspace and access
 
@@ -63,7 +65,7 @@ methods or generic ACP adapters.
 | [Copy/fork an agent with conversation context](/docs/ai/codex-conversations) | Available | Available | Claude's happy path has live confirmation. A fork is not a copy of project files or a separate Git worktree. |
 | [Queue follow-up messages and manage drafts](/docs/ai/codex-conversations) | Available | Available | A queued human message waits for execution; editing or canceling unsent work is different from interrupting admitted work. |
 | [Guide a running turn](/docs/ai/codex-conversations) | Available | Available | Requires adapter steering support. The pinned Claude adapter supports delivery during active work; otherwise messages queue. |
-| [Stop the current turn](/docs/ai/codex-notifications) | Available | Available | Stops are not rollbacks of file changes, external requests, or provider usage. Claude also cancels its managed project commands. |
+| [Stop the current turn](/docs/ai/codex-notifications) | Available | Available | Stops are not rollbacks of file changes, external requests, or provider usage. In controller mode, Claude also cancels its managed project commands. |
 | [Return after a browser disconnect](/docs/ai/codex-conversations) | Available | Available | Closing a browser is not cancellation. Project/host loss is different: do not assume running commands are replayed or recovered automatically. |
 | [Paste images and attach project context](/docs/ai/editor-agent) | Conditional | Available | Model, attachment type, size, and transport limits apply. Claude accepts pasted images; this does not imply arbitrary binary attachments or native PDF understanding. |
 | [Ask from an editor selection, notebook cell, error, or terminal](/docs/ai/editor-agent) | Available | Unverified | Do not assume every editor-to-agent shortcut correctly targets Claude just because the chat composer is shared. |
@@ -74,21 +76,24 @@ methods or generic ACP adapters.
 
 ## Project work and tools
 
-These are CoCalc workspace capabilities exposed through project-aware tools,
-not promises that a model will use them correctly without instructions. Claude
-subscription commands run through its project tool bridge, not inside its
-isolated login controller. Both agents remain subject to CLI authorization.
+Both agents can use the project's files and tools and are subject to CLI
+authorization. By default, subscription-paid Claude Code runs in a separate
+controller and reaches the project through CoCalc's tool bridge. Sites that opt
+into the [project runtime](/docs/ai/claude-subscription-in-project) run it as the
+project user, with the project's configured skills and MCP servers. The
+subscription credential stays on the host. In a shared project, CoCalc asks you
+to acknowledge the collaborator warning before sending a turn when required.
 
 | Feature and guide | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
 | [Inspect/edit files and run project commands](/docs/files/project-files) | Available | Available | Both can change the shared project and run tests/builds. Review results rather than relying only on the final answer. |
-| [Honor project instructions and use CoCalc skills](/docs/cli/use-cocalc-cli) | Available | Available | Claude receives the CoCalc skill as instructions and reads project CLAUDE.md through project tools; it is not a separate native Skill tool. |
+| [Honor project instructions and use CoCalc skills](/docs/cli/use-cocalc-cli) | Available | Available | In controller mode, Claude receives the CoCalc skill as instructions and reads project CLAUDE.md through project tools; it is not a separate native Skill tool. |
 | [Remember notes across sessions and projects](/docs/ai/agent-memory) | Available | Available | Off by default; the account owner turns it on in Settings -> AI. Codex and Claude share one account-wide set of notes. |
 | [Edit live collaborative text](/docs/cli/collaborative-text) | Available | Conditional | Use the live text API so unsaved collaborative state is respected; a raw filesystem edit is not equivalent. |
 | [Read/edit/run live notebooks and inspect outputs](/docs/cli/notebook-workflows) | Available | Conditional | Shared project CLI capability. Use live notebook APIs rather than rewriting an open .ipynb file. |
 | [Build LaTeX, documents, and other supported formats](/docs/cli/builds-and-versions) | Available | Conditional | Requires the format's installed toolchain. Use the document build pipeline rather than assuming a shell command reproduces editor behavior. |
-| [Run long foreground commands and inspect partial output](/docs/ai/claude-code) | Available | Available | Claude uses managed jobs with wait/cancel/list and bounded output. A short tool wait is not a process deadline. |
-| [Interact with terminals and run persistent services](/docs/terminal/use-terminal) | Available | Conditional | Use project-owned terminal/service facilities. Detaching a Claude managed command does not make it persistent. |
+| [Run long foreground commands and inspect partial output](/docs/ai/claude-code) | Available | Available | In controller mode, Claude uses managed jobs with wait/cancel/list and bounded output. A short tool wait is not a process deadline. |
+| [Interact with terminals and run persistent services](/docs/terminal/use-terminal) | Available | Conditional | Use project-owned terminal/service facilities. Detaching a controller-managed command does not make it persistent. |
 | [Inspect Git changes, commit, and work with repositories](/docs/files/git) | Available | Conditional | Git is shared project tooling. Pushes and pull requests require separately configured repository access. |
 | [Use browser-session automation](/docs/cli/browser-workflows) | Conditional | Conditional | Requires an authorized browser target and the appropriate runtime tools; it does not grant access to an arbitrary user's browser. |
 | [Use versioned CLI commands and scripting](/docs/cli/scripting-and-results) | Available | Conditional | Claude receives scoped project CLI access. Individual commands may still require human approval, fresh authentication, or a different scope. |

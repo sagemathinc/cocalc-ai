@@ -24,16 +24,14 @@ The goal is to keep the observation pipeline separate from the operational
 flows in `hosts.ts`.
 */
 
+import { loadTrustedEffectiveRuntimeDeployments } from "./host-software-admin";
 import type {
   HostRuntimeDeploymentStatus,
   HostRuntimeDeploymentRecord,
 } from "@cocalc/conat/hub/api/hosts";
 import type { HostManagedComponentStatus } from "@cocalc/conat/project-host/api";
 import getPool from "@cocalc/database/pool";
-import {
-  listProjectHostRuntimeDeployments,
-  loadEffectiveProjectHostRuntimeDeployments,
-} from "@cocalc/database/postgres/project-host-runtime-deployments";
+import { listProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import {
   isUnsupportedHostAgentStatusObservationError,
   observedHostAgentFromMetadata,
@@ -100,7 +98,7 @@ export async function getHostRuntimeDeploymentStatusInternal({
       scope_type: "host",
       host_id: row.id,
     }),
-    loadEffectiveProjectHostRuntimeDeployments({ host_id: row.id }),
+    loadTrustedEffectiveRuntimeDeployments({ host_id: row.id }),
   ]);
   let observed_artifacts = observedRuntimeArtifactsFromMetadata(row);
   let observed_components: HostManagedComponentStatus[] | undefined;

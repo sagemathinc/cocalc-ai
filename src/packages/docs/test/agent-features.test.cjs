@@ -64,7 +64,7 @@ test("feature matrix renders as tables with valid detailed-guide links", () => {
 });
 
 test("assessment retains provider differences and separates source from live evidence", () => {
-  const body = full.getDocsEntry(slug).body;
+  const body = full.getDocsEntry(slug).body.replace(/\s+/g, " ");
   for (const phrase of [
     "does not assert tool parity across payment",
     "2026-09-28",

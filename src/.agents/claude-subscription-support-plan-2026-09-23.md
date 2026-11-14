@@ -55,9 +55,21 @@ pass.
 Let a CoCalc user connect their own Claude Pro or Max account and run the
 qualified Claude ACP agent in CoCalc, with subscription usage rather than an
 accidental Anthropic Console API charge. The user should see the selected
-billing identity before every turn. Project collaborators must not be able to
-use that personal subscription, and model-controlled project tools must not be
+billing identity before every turn. Model-controlled project tools must not be
 able to read or copy its login material.
+
+Collaborators (decided 2026-11-06, superseding the earlier goal that project
+collaborators must not be able to use the subscription): when the agent runs
+in the project, CoCalc does not try to stop the project's other collaborators
+from using the session while it runs. In the decision's words: "cocalc does
+NOT protect you from malicious collaborators", and the UI must say so, and
+that "it is a violation of the anthropic term of usage if one user uses
+another users credentials via this method". The reasoning: any user can
+already sign Claude or Codex in from a terminal in a shared project, so every
+collaborator could use that login; running the agent in the project makes a
+shared environment easier to use within the terms, but cannot stop a
+determined collaborator. The login material itself still never enters the
+project (see "Running in the project" below).
 
 This is a focused continuation of
 `src/.agents/claude-code-acp-integration-plan-2026-09-21.md`, not a replacement
@@ -187,7 +199,9 @@ independent of the experimental full-project-trust warning for API keys.
   ID server-side, check active ownership and entitlement, and bind the turn to
   `billingMode=claude-subscription`. Shared thread data cannot supply an
   account credential ID. No collaborator, network message, or scheduled job
-  may borrow another user's subscription.
+  may start a turn on another user's subscription. (A session that is already
+  running in a shared project is usable by its collaborators; see the
+  collaborator decision under Goal.)
 - Strip API-key/Console/Bedrock/Vertex override variables and config from the
   subscription runtime. If the runtime reports a different auth source, stop
   before sending a prompt. Pin native session identity to credential and
@@ -240,6 +254,32 @@ independent of the experimental full-project-trust warning for API keys.
    rollout controls, and regression evidence.
 
 The release gate is a live subscription-backed ACP turn with verified billing
-source, no project/tool access to login material, no collaborator spending,
-and no silent API-key fallback. If any part fails, keep Pro/Max disabled rather
+source, no project/tool access to login material, no collaborator able to
+start a turn on another user's subscription (with the collaborator warning
+shown wherever a running session can be used by others, per the decision
+under Goal), and no silent API-key fallback. If any part fails, keep Pro/Max disabled rather
 than treating an API-key turn as subscription support.
+
+## Running in the project
+
+With the site setting `claude_subscription_runtime` = `project`, Claude Code
+runs in the project's own container as the project user, like Codex. The
+subscription token stays on the host: Claude Code gets a per-session relay
+token and the host's project-reachable provider proxy as its base URL, and the
+proxy swaps in the real token for each model request. The relay:
+
+- accepts only `POST /v1/messages` and `POST /v1/messages/count_tokens`,
+  checked exactly on the request-target as sent (origin-form only; no encoded
+  or backslash separators or dots), and never forwards the caller's own
+  credentials;
+- has no time limit during a turn (turns can be long); between turns it is
+  suspended after a period without requests, until the next turn starts. A
+  new agent process, after each idle disposal or restart, gets a new token;
+- cannot tell which project a connection comes from (projects reach it through
+  the host's loopback), so a leaked relay token is usable from any project on
+  the host while a turn runs, or until the idle limit after it. This is the
+  residual risk.
+
+Before any turn in a project with other collaborators (checked at every turn
+start, and whenever the collaborators change), the user sees the collaborator
+warning and must accept it; a banner stays in the agent panel.

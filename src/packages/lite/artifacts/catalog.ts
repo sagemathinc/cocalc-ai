@@ -4,7 +4,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, openSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import type {
   ArtifactCatalogApi,
   CatalogAccountPage,

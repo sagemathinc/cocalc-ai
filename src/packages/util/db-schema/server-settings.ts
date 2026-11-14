@@ -171,6 +171,8 @@ export interface Customize {
   strategies?: Strategy[];
   openaiEnabled?: boolean;
   cliConnectors?: ("github" | "cloudflare")[];
+  /** Where subscription-paid Claude agents run (site-defaults). */
+  claudeSubscriptionRuntime?: "controller" | "project";
   googleVertexaiEnabled?: boolean;
   mistralEnabled?: boolean;
   anthropicEnabled?: boolean;

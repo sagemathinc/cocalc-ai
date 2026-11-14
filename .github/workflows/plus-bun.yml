@@ -1,0 +1,76 @@
+name: CoCalc Plus on Bun
+
+# Builds CoCalc Plus for Bun (plus/bun/build.sh: the app, from the release
+# bundle, and the launchers) and starts it through the Linux launcher
+# (plus/bun/smoke.sh, which also syncs a file with reflect-sync).  Run by hand, it also uploads the build, with
+# launchers for every platform, for testing.
+
+on:
+  pull_request:
+    paths:
+      - "src/packages/plus/**"
+      - "src/packages/lite/**"
+      - "src/packages/backend/sqlite*.ts"
+      - "src/packages/backend/sandbox/sync-fs-watch.ts"
+      - "src/packages/backend/conat/persist*"
+      - "src/packages/backend/conat/persist-maintenance/**"
+      - "src/packages/conat/core/**"
+      - "src/packages/project/conat/terminal/**"
+      - "src/packages/pnpm-lock.yaml"
+      - "src/packages/pnpm-workspace.yaml"
+      - ".github/workflows/plus-bun.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plus-bun-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bun:
+    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: src/packages/plus/bun/.bun-version
+
+      - name: Build the Lite workspace (including the frontend)
+        run: cd src && pnpm build:lite
+
+      - name: Build the release bundle
+        run: src/packages/plus/sea/build-bundle.sh
+
+      - name: Build for Bun
+        env:
+          COCALC_PLUS_BUN_TARGETS: >-
+            ${{ github.event_name == 'workflow_dispatch'
+            && 'linux-x64 linux-arm64 darwin-arm64 darwin-x64 windows-x64'
+            || 'linux-x64' }}
+        run: src/packages/plus/bun/build.sh
+
+      - name: Start it through the launcher
+        run: src/packages/plus/bun/smoke.sh
+
+      - name: Upload the build
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
+        with:
+          name: cocalc-plus-bun-${{ github.sha }}
+          path: src/packages/plus/build/bun
+          retention-days: 7

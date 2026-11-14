@@ -5,6 +5,7 @@
 
 import type { DocsEntry } from "../types";
 import { CLAUDE_CODE_BODY } from "../content/claude-code";
+import { CLAUDE_SUBSCRIPTION_IN_PROJECT_BODY } from "../content/claude-subscription-in-project";
 import { AGENT_FEATURES_BODY } from "../content/agent-features";
 import { AGENT_MEMORY_BODY } from "../content/agent-memory";
 import { COCALC_ACCESS_BODY } from "../content/cocalc-access";
@@ -51,6 +52,22 @@ export const AI_ENTRIES: DocsEntry[] = [
     summary:
       "Use Claude Code in CoCalc: membership, subscription, or API-key access, project tools, billing, and permissions.",
     title: "Claude Code in CoCalc",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CLAUDE_SUBSCRIPTION_IN_PROJECT_BODY.trim(),
+    category: "AI",
+    id: "ai.claude-subscription-in-project",
+    lastReviewed: "2026-11-06",
+    noActionReason:
+      "This explains how a site's Claude Subscription Runtime setting protects your subscription; nothing to start here.",
+    slug: "ai/claude-subscription-in-project",
+    status: "ready",
+    searchKeywords:
+      "Claude Pro Max subscription in project relay token credential collaborators shared project terms of service security",
+    summary:
+      "How your Claude subscription is kept out of the project when Claude Code runs in it, when its relay token works, and what sharing the project means.",
+    title: "Claude subscriptions when Claude Code runs in the project",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],

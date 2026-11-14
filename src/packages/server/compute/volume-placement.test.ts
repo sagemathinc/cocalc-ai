@@ -151,3 +151,38 @@ it("does not invoke creation after a disk deletion or account move", async () =>
   ).rejects.toThrow();
   expect(mockCreate).not.toHaveBeenCalled();
 });
+
+describe("agent callers across bays", () => {
+  const agent_auth = {
+    account_id,
+    project_id: randomUUID(),
+    token_fingerprint: "a".repeat(64),
+    issued_at_s: 1,
+    expires_at_s: 2,
+  };
+  // what the hub hands an agent call: its account only inside agent_auth
+  const { account_id: _account, ...agentOpts } = { ...opts, agent_auth };
+
+  it("forwards an agent call without adding a second identity", async () => {
+    expect(await routeVmToHomeVolume(agentOpts as any)).toEqual(vm);
+    const forwarded = mockRemote.mock.calls[0][0].opts;
+    expect(forwarded.agent_auth).toEqual(agent_auth);
+    expect(forwarded.account_id).toBeUndefined();
+  });
+
+  it("creates for an agent on the resource bay without adding a second identity", async () => {
+    mockBay = "resource";
+    await createVmWithVolumeOnBay({
+      account_home_bay: "home",
+      opts: agentOpts as any,
+    });
+    const created = mockCreate.mock.calls[0][0];
+    expect(created.agent_auth).toEqual(agent_auth);
+    expect(created.account_id).toBeUndefined();
+  });
+
+  it("still names the account for an account caller", async () => {
+    await routeVmToHomeVolume(opts);
+    expect(mockRemote.mock.calls[0][0].opts.account_id).toBe(account_id);
+  });
+});

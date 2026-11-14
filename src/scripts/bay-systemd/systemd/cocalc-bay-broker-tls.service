@@ -1,0 +1,51 @@
+# The bay's internal TLS listener for the connector broker. Not enabled by
+# install-scaffold: see "Broker Fabric TLS Listener" in the README. Without
+# its key (cocalc-bay-broker-tls-key init) it does not start, and without
+# COCALC_BAY_BROKER_TLS_ENABLE=1 it exits at once.
+[Unit]
+Description=CoCalc Bay Broker Fabric TLS Listener
+After=network-online.target cocalc-bay-frontdoor.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-topology.env
+EnvironmentFile=-/etc/cocalc/bay-local.env
+LoadCredential=broker-fabric-tls.key:/etc/cocalc/broker-fabric-tls.key
+LoadCredential=broker-fabric-tls.crt:/etc/cocalc/broker-fabric-tls.crt
+ExecStart=/opt/cocalc/bay/current/bin/bay-broker-tls
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

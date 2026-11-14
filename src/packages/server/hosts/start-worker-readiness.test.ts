@@ -19,6 +19,7 @@ jest.mock("../lro/lro-db", () => ({
 jest.mock("../conat/api/hosts", () => ({
   startHostInternal: jest.fn(),
   restartHostInternal: jest.fn(),
+  hostSoftwareLifecycleOpRefusal: jest.fn(async () => undefined),
 }));
 jest.mock("../lro/stream", () => ({
   publishLroSummary: jest.fn(),

@@ -13,8 +13,11 @@ import {
 import { conat } from "@cocalc/backend/conat";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
+import { pickHostReportedMetadata } from "./host-report-metadata";
 import {
-  createProjectHostMasterConatToken,
+  exchangeProjectHostBootstrapToken,
+  proveProjectHostMasterToken,
+  rotateProjectHostMasterToken,
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -56,6 +59,7 @@ import {
   type PlannedProjectHostRuntimeTransition,
 } from "@cocalc/server/hosts/runtime-transition";
 import { recoverHostToRunning } from "@cocalc/server/hosts/desired-state";
+import { safeProjectHostUrl } from "@cocalc/backend/project-host-target";
 
 // A GCP Spot VM gets a new ephemeral public IP on every start, and a host
 // stack started at boot reports the previous boot's address until it is
@@ -71,8 +75,104 @@ export function authoritativeSshServer(
   return publicIp ? `${publicIp}:2222` : reported;
 }
 
+// Top-level metadata keys the bay owns that a host report must never set:
+// self_host holds the reverse-tunnel ports the bay proxies to on its own
+// machine; local, provider, cloud_provider and machine switch a host onto that
+// local-proxy route; runtime, dns, cloudflare_tunnel, public_route and
+// content_dns are the bay's record of where the host is and what it owns at
+// the edge; public_url, public_ip and ip_address are read as addresses. A
+// report keeps only host-owned keys (host-report-metadata.ts), so these and
+// every other bay-owned key (billing, desired_state, the probe quarantines,
+// restart recovery, ...) are dropped; this list names the ones whose loss
+// would be most severe and is asserted in tests.
+export const HOST_REPORT_DENIED_METADATA_KEYS = [
+  "self_host",
+  "local",
+  "provider",
+  "cloud_provider",
+  "machine",
+  "runtime",
+  "dns",
+  "cloudflare_tunnel",
+  "public_route",
+  "content_dns",
+  "public_url",
+  "public_ip",
+  "ip_address",
+] as const;
+
+const HOST_REPORT_URL_FIELDS = ["public_url", "internal_url"] as const;
+type HostReportUrlField = (typeof HOST_REPORT_URL_FIELDS)[number];
+
+// The one place a register or heartbeat report is cleaned before any use: the
+// metadata is reduced to host-owned keys with valid values, a local self-host
+// reports no URLs, and a URL naming a loopback, link-local or metadata address
+// is refused (the caller keeps the stored value for a refused field). Values
+// are never logged.
+export function sanitizeHostReport<
+  T extends { metadata?: any; public_url?: string; internal_url?: string },
+>(
+  info: T,
+  { isLocalSelfHost }: { isLocalSelfHost: boolean },
+): { report: T; refusedUrlFields: HostReportUrlField[] } {
+  const report: T = {
+    ...info,
+    metadata: pickHostReportedMetadata(info.metadata),
+  };
+  if (isLocalSelfHost) {
+    report.public_url = undefined;
+    report.internal_url = undefined;
+    return { report, refusedUrlFields: [] };
+  }
+  const refusedUrlFields: HostReportUrlField[] = [];
+  for (const field of HOST_REPORT_URL_FIELDS) {
+    const value = report[field];
+    if (value == null || `${value}`.trim() === "") continue;
+    if (!safeProjectHostUrl(value)) {
+      refusedUrlFields.push(field);
+      report[field] = undefined;
+    }
+  }
+  return { report, refusedUrlFields };
+}
+
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
+
+async function keepStoredUrlsForRefusedFields<
+  T extends { public_url?: string; internal_url?: string },
+>(
+  host_id: string,
+  report: T,
+  refusedUrlFields: HostReportUrlField[],
+): Promise<T> {
+  if (!refusedUrlFields.length) return report;
+  const { rows } = await pool().query<{
+    public_url?: string | null;
+    internal_url?: string | null;
+  }>(
+    "SELECT public_url, internal_url FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    [host_id],
+  );
+  const next = { ...report };
+  for (const field of refusedUrlFields) {
+    next[field] = rows[0]?.[field] ?? undefined;
+  }
+  return next;
+}
+
+function warnRefusedHostReportUrls(
+  host_id: string,
+  source: "register" | "heartbeat",
+  refusedUrlFields: HostReportUrlField[],
+): void {
+  if (!refusedUrlFields.length) return;
+  logger.warn("host report url refused; keeping the stored value", {
+    host_id,
+    source,
+    fields: refusedUrlFields,
+  });
+}
 const STOP_POLICY_PRIORITY_CACHE_TTL_MS = 5 * 60_000;
 const HOST_RESTART_RECOVERY_SCHEDULE_DELAY_MS = 1_000;
 const HOST_RESTART_RECOVERY_DEFAULT_PARALLEL_STARTS = 4;
@@ -1419,7 +1519,6 @@ export async function initHostRegistryService() {
         logger.debug("register", {
           id: info.id,
           region: info.region,
-          url: info.public_url,
         });
         const currentStatus = await loadCurrentStatus(info.id);
         if (
@@ -1435,15 +1534,21 @@ export async function initHostRegistryService() {
           });
           return;
         }
-        const isLocalSelfHost = await resolveLocalSelfHost(info);
-        const sanitized = isLocalSelfHost
-          ? { ...info, public_url: undefined, internal_url: undefined }
-          : info;
+        // Decided from the bay's row: a report's own machine is stripped first.
+        const isLocalSelfHost = await resolveLocalSelfHost({
+          ...info,
+          metadata: pickHostReportedMetadata(info.metadata),
+        } as HostRegistration);
+        const { report: cleaned, refusedUrlFields } = sanitizeHostReport(info, {
+          isLocalSelfHost,
+        });
+        warnRefusedHostReportUrls(info.id, "register", refusedUrlFields);
+        // Never the URL text: a host chooses it (presence only).
         logger.debug("register host urls", {
           id: info.id,
           isLocalSelfHost,
-          public_url: sanitized.public_url,
-          internal_url: sanitized.internal_url,
+          has_public_url: !!cleaned.public_url,
+          has_internal_url: !!cleaned.internal_url,
         });
         const { rows: previousRows } = await pool().query<{
           metadata: any;
@@ -1451,6 +1556,11 @@ export async function initHostRegistryService() {
         }>(
           "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
           [info.id],
+        );
+        const sanitized = await keepStoredUrlsForRefusedFields(
+          info.id,
+          cleaned,
+          refusedUrlFields,
         );
         const registryBayId = registryBayIdForHeartbeat(
           previousRows[0]?.bay_id,
@@ -1545,16 +1655,26 @@ export async function initHostRegistryService() {
           });
           return;
         }
-        const isLocalSelfHost = await resolveLocalSelfHost(info);
-        const sanitized = isLocalSelfHost
-          ? { ...info, public_url: undefined, internal_url: undefined }
-          : info;
+        // Decided from the bay's row: a report's own machine is stripped first.
+        const isLocalSelfHost = await resolveLocalSelfHost({
+          ...info,
+          metadata: pickHostReportedMetadata(info.metadata),
+        } as HostRegistration);
+        const { report: cleaned, refusedUrlFields } = sanitizeHostReport(info, {
+          isLocalSelfHost,
+        });
+        warnRefusedHostReportUrls(info.id, "heartbeat", refusedUrlFields);
         const { rows: previousRows } = await pool().query<{
           metadata: any;
           bay_id?: string | null;
         }>(
           "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
           [info.id],
+        );
+        const sanitized = await keepStoredUrlsForRefusedFields(
+          info.id,
+          cleaned,
+          refusedUrlFields,
         );
         const registryBayId = registryBayIdForHeartbeat(
           previousRows[0]?.bay_id,
@@ -1992,6 +2112,18 @@ export async function initHostRegistryService() {
             "reportProjectPressureAction: host_id, project_id, pressure_zone, and reason are required",
           );
         }
+        // host_id is the caller's own (bindHostRegistryArgs); the project must
+        // be on that host now, or the report would write another host's
+        // project log (068-2).  No row, or another host: refused.
+        const { rows: owner } = await pool().query<{ host_id: string | null }>(
+          "SELECT host_id FROM projects WHERE project_id=$1 AND deleted IS NOT TRUE",
+          [project_id],
+        );
+        if (owner[0]?.host_id !== host_id) {
+          throw Error(
+            "reportProjectPressureAction: the project is not on the calling host",
+          );
+        }
         const occurred_at_ms =
           Math.max(0, Number(opts?.occurred_at_ms ?? 0)) || Date.now();
         const host_name = `${opts?.host_name ?? ""}`.trim() || undefined;
@@ -2050,6 +2182,23 @@ export async function initHostRegistryService() {
             "getMasterConatTokenStatus: token is invalid for this host",
           );
         }
+        let proof: { valid: boolean } | undefined;
+        try {
+          proof = await proveProjectHostMasterToken(host_id, info.token_id);
+        } catch (err) {
+          // The exchange stays open until the next check; never fail the
+          // status check on this, which would make the host re-mint its token.
+          logger.warn(
+            "getMasterConatTokenStatus: recording the host's proof failed",
+            { host_id, err },
+          );
+        }
+        if (proof && !proof.valid) {
+          // Revoked by a concurrent mint between the two checks.
+          throw Error(
+            "getMasterConatTokenStatus: token is invalid for this host",
+          );
+        }
         return {
           expires_at: info.expires.toISOString(),
         };
@@ -2071,18 +2220,41 @@ export async function initHostRegistryService() {
               purpose: "master-conat",
             })
           : null;
-        const bootstrapInfo = bootstrapToken
-          ? await verifyProjectHostToken(bootstrapToken, {
-              purpose: "bootstrap",
-            })
-          : null;
-        const info = currentInfo ?? bootstrapInfo;
-        if (!info || info.host_id !== host_id) {
+        if (currentInfo) {
+          if (currentInfo.host_id !== host_id) {
+            throw Error("rotateMasterConatToken: token is invalid for host");
+          }
+          const issued = await rotateProjectHostMasterToken(
+            host_id,
+            currentInfo.token_id,
+            { ttlMs: 1000 * 60 * 60 * 24 * 365 }, // 1 year
+          );
+          if (!issued) {
+            // Revoked by a concurrent mint after the first check.
+            throw Error("rotateMasterConatToken: token is invalid for host");
+          }
+          return { master_conat_token: issued.token };
+        }
+        // A bootstrap token is used only when the current token is not valid,
+        // only for its own host, and only until the host has proved a valid
+        // master token (exchangeProjectHostBootstrapToken).
+        if (!bootstrapToken) {
           throw Error("rotateMasterConatToken: token is invalid for host");
         }
-        const issued = await createProjectHostMasterConatToken(host_id, {
-          ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
-        });
+        const exchanged = await exchangeProjectHostBootstrapToken(
+          bootstrapToken,
+          { hostId: host_id, ttlMs: 1000 * 60 * 60 * 24 * 365 }, // 1 year
+        );
+        if (!exchanged.ok) {
+          if (exchanged.reason === "exchange_closed") {
+            logger.warn("rotateMasterConatToken: bootstrap token refused", {
+              host_id,
+              reason: exchanged.reason,
+            });
+          }
+          throw Error("rotateMasterConatToken: token is invalid for host");
+        }
+        const issued = exchanged.master;
         return { master_conat_token: issued.token };
       },
     },

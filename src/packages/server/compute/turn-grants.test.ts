@@ -612,3 +612,33 @@ it("revokes only the owner's grant", async () => {
     fields: ["compute_agent_grants"],
   });
 });
+
+it("caps how far a refresh can move a grant's expiry", async () => {
+  query.mockResolvedValueOnce({ rows: [approvedGrant()] });
+  await requireAgentComputeGrant({ auth: auth(), action: "read", project_id });
+  // unreachable while validateAgentAuth bounds credential lifetimes; pinned
+  // so it stays as a second line
+  expect(`${query.mock.calls[0][0]}`.replace(/\s+/g, " ")).toContain(
+    "SET expires_at=LEAST( GREATEST(expires_at, $2::timestamptz), NOW() + interval '31 minutes' )",
+  );
+});
+
+it("refuses a credential that claims to live longer than any token", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth({ issued_at_s: now - 5, expires_at_s: now - 5 + 1801 }),
+      action: "read",
+      project_id,
+    }),
+  ).rejects.toThrow("expired");
+  expect(query).not.toHaveBeenCalled();
+  query.mockResolvedValueOnce({ rows: [approvedGrant()] });
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth({ issued_at_s: now - 5, expires_at_s: now - 5 + 1800 }),
+      action: "read",
+      project_id,
+    }),
+  ).resolves.toBeDefined();
+});

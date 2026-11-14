@@ -166,6 +166,30 @@ describe("server/conat route-client", () => {
     expect(authValue).toEqual({ bearer: "token-1" });
   });
 
+  it("connects routed host clients through the guarded agent for that address (054 C)", async () => {
+    connectMock.mockImplementation(() => createFakeClient());
+    const { getExplicitProjectHostRoutedHubClient } =
+      await import("./route-client");
+    const { projectHostAgentFor } =
+      await import("@cocalc/backend/project-host-target");
+    for (const [host_id, address] of [
+      ["host-a", "https://host-a.example"],
+      ["host-b", "http://10.0.0.5:9002"],
+      ["host-c", "http://127.0.0.1:41000"],
+    ]) {
+      getExplicitProjectHostRoutedHubClient({ host_id, address });
+      const opts = connectMock.mock.calls[connectMock.mock.calls.length - 1][0];
+      expect(opts.address).toBe(address);
+      expect(opts.agent).toBe(projectHostAgentFor(address));
+    }
+    // the tunnel form gets the loopback agent, the others the strict ones
+    const agents = connectMock.mock.calls.map((c) => c[0].agent);
+    expect(new Set(agents).size).toBe(3);
+    expect(agents[2]).toBe(
+      projectHostAgentFor("http://x.example", { allowLoopback: true }),
+    );
+  });
+
   it("reconnects routed host clients after connect_error", async () => {
     const central = createFakeClient();
     const routed = createFakeClient();

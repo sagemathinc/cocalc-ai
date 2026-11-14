@@ -13,9 +13,8 @@ address is NOT set, then a new email address and password are set.
 Throws an exception if something is wrong.
 */
 
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { checkPassword } from "@cocalc/backend/auth/password-hash";
+import { newPasswordHash } from "@cocalc/database/settings/password-kdf";
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/account-row-feed";
@@ -120,6 +119,7 @@ export default async function setEmailAddress({
 
   if (!password_hash) {
     // setting both the email_address *and* password at once.
+    const new_password_hash = await newPasswordHash(password);
     await updateClusterAccountEmailAddress({ account_id, email_address });
     try {
       await withAccountRehomeWriteFence({
@@ -128,7 +128,7 @@ export default async function setEmailAddress({
         fn: async (db) => {
           await db.query(
             "UPDATE accounts SET password_hash=$1, email_address=$2 WHERE account_id=$3",
-            [passwordHash(password), email_address, account_id],
+            [new_password_hash, email_address, account_id],
           );
         },
       });
@@ -167,7 +167,7 @@ export default async function setEmailAddress({
     };
   }
   // Verify that existing password is correct.
-  if (!verifyPassword(password, password_hash)) {
+  if (!(await checkPassword(password, password_hash))) {
     throw Error("password is incorrect");
   }
 

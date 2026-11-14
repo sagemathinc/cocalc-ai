@@ -279,3 +279,33 @@ it.each([
     "invalid API relay target URL",
   );
 });
+
+it.each(["127.0.0.1:22#", 22, 70000, "evil.test"])(
+  "fails closed on a local host whose stored tunnel port is %s",
+  async (port) => {
+    mockQuery.mockResolvedValue({
+      rows: [
+        {
+          public_url: "http://127.0.0.1:9000",
+          metadata: { local: true, self_host: { http_tunnel_port: port } },
+        },
+      ],
+    });
+    await expect(resolveLocalProjectApiRelayTarget(target)).rejects.toThrow(
+      "API relay target host tunnel is unavailable",
+    );
+  },
+);
+
+it.each([
+  "http://127.0.0.1:5432",
+  "http://localhost:9002",
+  "http://169.254.169.254/",
+  "http://metadata.google.internal/",
+  "http://2130706433/",
+])("fails closed on a stored remote host URL %s", async (url) => {
+  mockQuery.mockResolvedValue({ rows: [{ public_url: url, metadata: {} }] });
+  await expect(resolveLocalProjectApiRelayTarget(target)).rejects.toThrow(
+    "invalid API relay target URL",
+  );
+});

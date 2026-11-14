@@ -8,7 +8,7 @@ import basePath from "@cocalc/backend/base-path";
 import { buildBootstrapScriptWithStatus } from "@cocalc/server/cloud/bootstrap-host";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
-  createProjectHostMasterConatToken,
+  exchangeProjectHostBootstrapToken,
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
@@ -331,19 +331,22 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyProjectHostToken(token, {
-        purpose: "bootstrap",
+      const exchanged = await exchangeProjectHostBootstrapToken(token, {
+        ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
       });
-      if (!tokenInfo) {
-        res.status(401).send("invalid bootstrap token");
+      if (!exchanged.ok) {
+        // "exchange_closed" is expected once per project-host daemon start
+        // after the host proved its master token (its startup preflight);
+        // otherwise worth a look.
+        logger.warn("bootstrap conat token refused", {
+          host_id: exchanged.host_id,
+          token_id: exchanged.token_id,
+          reason: exchanged.reason,
+        });
+        res.status(401).send("invalid or already used bootstrap token");
         return;
       }
-      const issued = await createProjectHostMasterConatToken(
-        tokenInfo.host_id,
-        {
-          ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
-        },
-      );
+      const issued = exchanged.master;
       res.type("text/plain").send(issued.token);
     } catch (err) {
       logger.warn("bootstrap conat token failed", err);

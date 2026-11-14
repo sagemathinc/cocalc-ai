@@ -1,4 +1,5 @@
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import { assertHostSshMetadataAllowed, hostSshUser } from "./host-ssh-metadata";
 import {
   type HostSpec,
   type GcpImage,
@@ -413,7 +414,10 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     : undefined;
   const storage_mode = machine.storage_mode;
   const sshPublicKeys = await getHostSshPublicKeys();
-  const ssh_user = machine.metadata?.ssh_user ?? "ubuntu";
+  // Providers copy these into the host's runtime, which the bay later uses as
+  // an ssh destination: refuse a spec built from values that are not allowed.
+  assertHostSshMetadataAllowed(machine.metadata);
+  const ssh_user = hostSshUser(machine.metadata?.ssh_user);
   const baseName = row.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
   const providerId = normalizeProviderId(machine.cloud);
   if (providerId === "self-host" && !row.region) {

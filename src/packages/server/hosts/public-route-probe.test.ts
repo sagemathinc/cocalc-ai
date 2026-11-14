@@ -53,6 +53,20 @@ function healthResponse({
 }
 
 describe("probeProjectHostPublicRoute", () => {
+  // These tests run real servers on 127.0.0.1, which needs the bay's
+  // development loopback opt-in (production never sets it).
+  const savedLoopback = process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+  beforeEach(() => {
+    process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = "1";
+  });
+  afterEach(() => {
+    if (savedLoopback == null) {
+      delete process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+    } else {
+      process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = savedLoopback;
+    }
+  });
+
   it("checks public health, CORS preflight, and session rejection", async () => {
     const fetchImpl = jest
       .fn()
@@ -549,5 +563,202 @@ describe("probeProjectHostPublicRoute", () => {
       health_host_id: wrongHostId,
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("probeProjectHostPublicRoute target containment (054 C R3)", () => {
+  const savedLoopback = process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+  beforeEach(() => {
+    delete process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+    lookupCalls = [];
+  });
+  afterAll(() => {
+    if (savedLoopback != null) {
+      process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = savedLoopback;
+    }
+  });
+
+  let lookupCalls: string[] = [];
+  function fakeLookup(table: Record<string, string>) {
+    return ((hostname: string, options: any, callback: any) => {
+      lookupCalls.push(hostname);
+      const address = table[hostname];
+      if (!address) {
+        process.nextTick(
+          callback,
+          Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }),
+        );
+      } else if (options?.all) {
+        process.nextTick(callback, null, [{ address, family: 4 }]);
+      } else {
+        process.nextTick(callback, null, address, 4);
+      }
+    }) as any;
+  }
+
+  async function localServer(handler: (req: any, res: any) => void) {
+    let connections = 0;
+    let upgrades = 0;
+    const server = createServer(handler);
+    server.on("connection", () => (connections += 1));
+    server.on("upgrade", (_req, socket) => {
+      upgrades += 1;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (server.address() as any).port;
+    return {
+      port,
+      counts: () => ({ connections, upgrades }),
+      close: () => new Promise((r) => server.close(r)),
+    };
+  }
+
+  it("refuses a public_url naming a refused address before any request", async () => {
+    const fetchImpl = jest.fn();
+    const websocketProbeImpl = jest.fn();
+    for (const public_url of [
+      "http://127.0.0.1:9002",
+      "http://localhost:9002",
+      "http://169.254.169.254/",
+      "http://metadata.google.internal/",
+      "http://[::ffff:7f00:1]/",
+    ]) {
+      await expect(
+        probeProjectHostPublicRoute({
+          public_url,
+          origin: ORIGIN,
+          expected_host_id: HOST_ID,
+          fetchImpl,
+          websocketProbeImpl,
+        }),
+      ).rejects.toThrow("not an allowed target");
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(websocketProbeImpl).not.toHaveBeenCalled();
+  });
+
+  it("HTTP: a name that resolves to loopback never reaches the server", async () => {
+    const server = await localServer((_req, res) => res.end("{}"));
+    try {
+      await expect(
+        probeProjectHostPublicRoute({
+          public_url: `http://probe.example:${server.port}`,
+          origin: ORIGIN,
+          expected_host_id: HOST_ID,
+          lookup: fakeLookup({ "probe.example": "127.0.0.1" }),
+          timeout_ms: 2000,
+        }),
+      ).rejects.toThrow();
+      expect(server.counts()).toEqual({ connections: 0, upgrades: 0 });
+      expect(lookupCalls).toContain("probe.example");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("WebSocket: the default upgrade probe never reaches the server either", async () => {
+    const server = await localServer((_req, res) => res.end());
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(healthResponse())
+      .mockResolvedValueOnce(response(204, corsHeaders()))
+      .mockResolvedValueOnce(response(401, corsHeaders()));
+    try {
+      const result = await probeProjectHostPublicRoute({
+        public_url: `http://probe.example:${server.port}`,
+        origin: ORIGIN,
+        expected_host_id: HOST_ID,
+        fetchImpl,
+        websocket_attempts: 2,
+        lookup: fakeLookup({ "probe.example": "127.0.0.1" }),
+        timeout_ms: 2000,
+      }).catch((err) => err);
+      expect(result).toBeInstanceOf(Error);
+      expect(server.counts()).toEqual({ connections: 0, upgrades: 0 });
+      // the HTTP stages were stubbed: only the WS upgrade resolved the name,
+      // through the guarded agent's hook
+      expect(lookupCalls).toContain("probe.example");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("does not follow a redirect to another address", async () => {
+    process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = "1";
+    const other = await localServer((_req, res) => res.end("{}"));
+    const first = await localServer((_req, res) => {
+      res.statusCode = 302;
+      res.setHeader("location", `http://127.0.0.1:${other.port}/healthz`);
+      res.end();
+    });
+    try {
+      await probeProjectHostPublicRoute({
+        public_url: `http://127.0.0.1:${first.port}`,
+        origin: ORIGIN,
+        expected_host_id: HOST_ID,
+        timeout_ms: 2000,
+      }).catch(() => undefined);
+      expect(first.counts().connections).toBeGreaterThan(0);
+      expect(other.counts().connections).toBe(0);
+    } finally {
+      await first.close();
+      await other.close();
+    }
+  });
+});
+
+describe("projectHostRequest (054 C A5)", () => {
+  const savedLoopback = process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+  afterEach(() => {
+    if (savedLoopback == null) {
+      delete process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+    } else {
+      process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = savedLoopback;
+    }
+  });
+
+  it("refuses refused URLs and names that resolve to them; never follows redirects", async () => {
+    const { projectHostRequest } = await import("./public-route-probe");
+    delete process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS;
+    await expect(projectHostRequest("http://127.0.0.1:1/")).rejects.toThrow(
+      "not an allowed target",
+    );
+    let hits = 0;
+    let otherHits = 0;
+    const other = createServer((_req, res) => {
+      otherHits += 1;
+      res.end("other");
+    });
+    await new Promise<void>((r) => other.listen(0, "127.0.0.1", r));
+    const otherPort = (other.address() as any).port;
+    const server = createServer((_req, res) => {
+      hits += 1;
+      res.statusCode = 302;
+      res.setHeader("location", `http://127.0.0.1:${otherPort}/`);
+      res.end();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as any).port;
+    try {
+      const lookup = ((_h: string, o: any, cb: any) =>
+        o?.all
+          ? process.nextTick(cb, null, [{ address: "127.0.0.1", family: 4 }])
+          : process.nextTick(cb, null, "127.0.0.1", 4)) as any;
+      await expect(
+        projectHostRequest(`http://smoke.example:${port}/`, {}, { lookup }),
+      ).rejects.toMatchObject({ code: "ECOCALC_REFUSED_TARGET" });
+      expect(hits).toBe(0);
+      process.env.COCALC_PROJECT_HOST_ALLOW_LOOPBACK_URLS = "1";
+      const r = await projectHostRequest(`http://127.0.0.1:${port}/`);
+      expect(r.status).toBe(302);
+      expect(hits).toBe(1);
+      expect(otherHits).toBe(0);
+    } finally {
+      await new Promise((r) => server.close(r));
+      await new Promise((r) => other.close(r));
+    }
   });
 });

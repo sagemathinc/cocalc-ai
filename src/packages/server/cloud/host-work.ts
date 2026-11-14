@@ -84,6 +84,7 @@ import {
   alternateMachineTypes,
   buildFallbackLadder,
   classifyStartFailure,
+  customMachineVcpus,
   exhaustedLadderRetryDelayMs,
   machineShape,
   MAX_TRANSIENT_RETRIES_PER_OPTION,
@@ -2289,6 +2290,7 @@ async function handleStart(row: any) {
         const key = rungKey(rung);
         const vcpus =
           vcpusByType.get(rung.machine_type) ??
+          customMachineVcpus(rung.machine_type) ??
           Number(machine.metadata?.cpu ?? 0);
         if (!rungFitsQuota({ rung, vcpus, headroom })) {
           tried.add(key);

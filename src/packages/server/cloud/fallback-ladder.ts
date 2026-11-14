@@ -126,11 +126,15 @@ export function hourlyPriceUsd(opts: {
     opts.region
   ];
   if (!(cpu > 0) || !(ram > 0)) return undefined;
-  return cpu * opts.shape.vcpus + ram * opts.shape.memory_gb;
+  const premium = isCustomMachineType(opts.shape.name)
+    ? CUSTOM_MACHINE_TYPE_PREMIUM
+    : 1;
+  return (cpu * opts.shape.vcpus + ram * opts.shape.memory_gb) * premium;
 }
 
-// Same physical cores and memory as the desired shape, within 10%, without
-// paying for much more than that (at most 1.5x either).
+// Same physical cores and memory as the desired shape, within 10%. More
+// cores are allowed up to 1.5x, but not more memory: a fallback must not
+// change the host's RAM (and memory is what costs extra).
 export function isCoreEquivalent(
   desired: MachineShape,
   candidate: MachineShape,
@@ -139,8 +143,60 @@ export function isCoreEquivalent(
     candidate.cores >= desired.cores * 0.9 &&
     candidate.memory_gb >= desired.memory_gb * 0.9 &&
     candidate.cores <= desired.cores * 1.5 &&
-    candidate.memory_gb <= desired.memory_gb * 2.01
+    candidate.memory_gb <= desired.memory_gb * 1.1
   );
+}
+
+// GCP custom machine types: the vCPU counts each series allows, 0.5-8 GB per
+// vCPU (no extended memory) in 256 MiB steps, and a 5% price premium. See
+// https://cloud.google.com/compute/docs/instances/creating-instance-with-custom-machine-type
+const CUSTOM_VCPUS: Record<string, (vcpus: number) => boolean> = {
+  n2: (vcpus) =>
+    (vcpus >= 2 && vcpus <= 32 && vcpus % 2 === 0) ||
+    (vcpus > 32 && vcpus <= 80 && vcpus % 4 === 0),
+  n2d: (vcpus) => [2, 4, 8, 16, 32, 48, 64, 80, 96].includes(vcpus),
+};
+const CUSTOM_MEMORY_STEP_MB = 256;
+const CUSTOM_MIN_MB_PER_VCPU = 512;
+const CUSTOM_MAX_MB_PER_VCPU = 8192;
+const CUSTOM_MACHINE_TYPE_PREMIUM = 1.05;
+
+export function isCustomMachineType(machineType: string): boolean {
+  return customMachineVcpus(machineType) != null;
+}
+
+// The vCPUs of a custom type (e.g. n2d-custom-32-65536), which zone machine
+// type lists do not include.
+export function customMachineVcpus(machineType: string): number | undefined {
+  const match = /-custom-(\d+)-\d+(-ext)?$/.exec(`${machineType ?? ""}`);
+  return match ? Number(match[1]) : undefined;
+}
+
+// A custom machine type in this family with exactly the desired physical
+// cores and (to 256 MiB) memory, or undefined if the family cannot have it.
+// Zones list only predefined types, so recovery adds these itself.
+export function customMachineType(
+  family: string,
+  desired: Pick<MachineShape, "cores" | "memory_gb">,
+): GcpMachineTypeEntry | undefined {
+  const allowed = CUSTOM_VCPUS[family];
+  if (!allowed) return undefined;
+  const vcpus = desired.cores * (SINGLE_THREAD_FAMILIES.has(family) ? 1 : 2);
+  if (!Number.isInteger(vcpus) || !allowed(vcpus)) return undefined;
+  const memoryMb =
+    Math.round((desired.memory_gb * 1024) / CUSTOM_MEMORY_STEP_MB) *
+    CUSTOM_MEMORY_STEP_MB;
+  if (
+    memoryMb < vcpus * CUSTOM_MIN_MB_PER_VCPU ||
+    memoryMb > vcpus * CUSTOM_MAX_MB_PER_VCPU
+  ) {
+    return undefined;
+  }
+  return {
+    name: `${family}-custom-${vcpus}-${memoryMb}`,
+    guestCpus: vcpus,
+    memoryMb,
+  };
 }
 
 export function alternateMachineTypes(opts: {
@@ -153,7 +209,15 @@ export function alternateMachineTypes(opts: {
   limit?: number;
 }): Array<{ machine_type: string; usd_per_hour?: number }> {
   const allowed = new Set(opts.families);
-  const candidates = opts.available
+  // For each family the zone offers, also a custom type with exactly the
+  // desired cores and memory; the cheapest type per family still wins.
+  const zoneFamilies = new Set(
+    opts.available.map((entry) => machineFamily(entry?.name ?? "")),
+  );
+  const custom = [...zoneFamilies]
+    .map((family) => customMachineType(family, opts.desired))
+    .filter((entry): entry is GcpMachineTypeEntry => !!entry);
+  const candidates = [...opts.available, ...custom]
     .map(machineShape)
     .filter(
       (shape): shape is MachineShape =>

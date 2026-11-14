@@ -33,6 +33,7 @@ import signal
 import shutil
 import ssl
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -43,10 +44,10 @@ import urllib.request
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261109-v62"
+HELPER_SCHEMA_VERSION = "20261112-r21"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -899,6 +900,7 @@ APT_LOCK_TIMEOUT_S = 120
 APT_UPDATE_TIMEOUT_S = 180
 APT_INSTALL_TIMEOUT_S = 600
 RUNTIME_USERNS_MAP_PROBE_TIMEOUT_S = 10
+RUNTIME_TREE_REMOVE_TIMEOUT_S = 120
 APPARMOR_PROFILE_PROBE_TIMEOUT_S = 2
 PODMAN_STALE_BOOT_ERROR_PATTERNS = (
     re.compile(r"current system boot ID differs from cached boot ID", re.IGNORECASE),
@@ -922,6 +924,14 @@ Unattended-Upgrade::SyslogEnable "true";
 GCE_UBUNTU_MIRROR_RE = re.compile(
     r"https?://[A-Za-z0-9.-]*gce(?:\.clouds)?\.archive\.ubuntu\.com/ubuntu/?"
 )
+DATA_ROOT = "/mnt/cocalc/data"
+# The bay's startup script keeps bootstrap state (this script, host facts, the
+# desired state with the bootstrap token, the log) in this root-only directory
+# and trusts only root-owned markers to skip first boot. Older scripts kept it
+# in DATA_ROOT/.host-bootstrap, which the runtime user can rename.
+BOOTSTRAP_STATE_ROOT = "/var/lib/cocalc-host-bootstrap"
+OLD_BOOTSTRAP_STATE_NAME = ".host-bootstrap"
+FINGERPRINT_MAX_FILE_BYTES = 1 << 20
 HOST_OWNED_DATA_TREE_DIRS = (
     "secrets",
     "sync",
@@ -1652,6 +1662,8 @@ class BundleSpec:
 
 COCALC_INSTALL_ROOT = Path("/opt/cocalc")
 COCALC_INSTALL_OWNER = (0, 0)
+# Root keeps its state here and mounts the loop image from here by name.
+COCALC_STATE_ROOT = Path("/var/lib/cocalc")
 
 
 @dataclass(frozen=True)
@@ -2579,7 +2591,13 @@ def podman_has_stale_boot_state(proc: subprocess.CompletedProcess[str]) -> bool:
 
 
 def repair_stale_podman_boot_state(
-    cfg: BootstrapConfig, *, uid: int, gid: int, runtime_dir: str
+    cfg: BootstrapConfig,
+    *,
+    uid: int,
+    gid: int,
+    runtime_dir: str,
+    run_as_runtime_user: Callable[[list[str]], Any],
+    podman_unshare: list[str] | None = None,
 ) -> None:
     if project_host_runtime_is_active():
         raise RuntimeError(
@@ -2603,9 +2621,12 @@ def repair_stale_podman_boot_state(
             raise RuntimeError(
                 f"refusing to clear stale Podman boot state through symlink {path}"
             )
-    for path in (rootless_run, runtime_tmp):
-        if path.exists():
-            shutil.rmtree(path)
+    # runtime_tmp first: it holds the stale pause state, which `podman
+    # unshare` would otherwise try to join.
+    for path in (runtime_tmp, rootless_run):
+        remove_runtime_tree(
+            path, run_as_runtime_user, podman_unshare, runtime_ids=(uid, gid)
+        )
     ensure_owned_runtime_dir(rootless_run, uid, gid)
     ensure_owned_runtime_dir(expected_runtime_dir, uid, gid)
     log_line(
@@ -2671,12 +2692,21 @@ def read_current_runtime_user_contract(cfg: BootstrapConfig) -> dict[str, Any]:
         RUNTIME_USERNS_MAP_PROBE_TIMEOUT_S,
     )
     if uid_proc.returncode != 0 and podman_has_stale_boot_state(uid_proc):
+
+        def run_as_runtime_user(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            return run_bounded_capture(
+                prefix + ["bash", "-lc", f'cd "$HOME" && exec {shlex.join(argv)}'],
+                RUNTIME_TREE_REMOVE_TIMEOUT_S,
+            )
+
         try:
             repair_stale_podman_boot_state(
                 cfg,
                 uid=pw.pw_uid,
                 gid=pw.pw_gid,
                 runtime_dir=runtime_dir,
+                run_as_runtime_user=run_as_runtime_user,
+                podman_unshare=[*apparmor_prefix, podman, "unshare"],
             )
             uid_proc = run_bounded_capture(
                 prefix + ["bash", "-lc", f'cd "$HOME" && exec {podman_command}'],
@@ -3045,6 +3075,7 @@ def run_cmd(
     as_user: str | None = None,
     env: dict[str, str] | None = None,
     cwd: str | Path | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     cmd = args
     if as_user and os.geteuid() == 0 and as_user != "root":
@@ -3060,6 +3091,7 @@ def run_cmd(
         timeout=timeout,
         env=env,
         cwd=run_cwd,
+        pass_fds=pass_fds,
     )
     if result.stdout:
         for line in result.stdout.splitlines():
@@ -6190,9 +6222,98 @@ def enable_linger(cfg: BootstrapConfig) -> None:
 
 
 def ensure_owned_runtime_dir(path: Path, uid: int, gid: int) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-    os.chown(path, uid, gid)
-    os.chmod(path, 0o700)
+    """Created if missing and handed to the runtime user through a
+    descriptor: parents such as /mnt/cocalc/data/tmp are the runtime user's,
+    so nothing on the way is followed (UnsafeRuntimePath)."""
+    fd = open_dir_nofollow(path, create=True)
+    try:
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, 0o700)
+    finally:
+        os.close(fd)
+
+
+def remove_empty_dir_at(path: Path) -> bool:
+    """Removes the directory path through its parent's descriptor (no symlink
+    followed on the way; a symlink or file at path is refused), but only if
+    it is empty: False if it still has entries, True once it is gone."""
+    try:
+        parent_fd = open_dir_nofollow(path.parent)
+    except FileNotFoundError:
+        return True
+    try:
+        try:
+            info = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return True
+        if not stat.S_ISDIR(info.st_mode):
+            raise UnsafeRuntimePath(f"{path} is not a directory")
+        try:
+            os.rmdir(path.name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+        except OSError as err:
+            if err.errno in (errno.ENOTEMPTY, errno.EEXIST, errno.EBUSY):
+                return False
+            raise
+        return True
+    finally:
+        os.close(parent_fd)
+
+
+def remove_runtime_tree(
+    path: Path,
+    run_as_runtime_user: Callable[[list[str]], Any],
+    podman_unshare: list[str] | None = None,
+    *,
+    runtime_ids: tuple[int, int] | None = None,
+) -> None:
+    """Removes a directory the runtime user can write. Root never walks into
+    it, since anything inside could have been moved in from elsewhere: the
+    runtime user empties it (then, for files of its subordinate ids, through
+    `podman unshare`), and root only removes the emptied directory. Nothing
+    falls back to deleting as root."""
+    if remove_empty_dir_at(path):
+        return
+    rm = ["rm", "-rf", "--one-file-system", "--", str(path)]
+    attempts = [rm]
+    if podman_unshare:
+        attempts.append([*podman_unshare, *rm])
+    for argv in attempts:
+        run_as_runtime_user(argv)
+        if remove_empty_dir_at(path):
+            return
+    runtime = f"{runtime_ids[0]}:{runtime_ids[1]}" if runtime_ids else "unknown"
+    raise RuntimeError(
+        f"could not empty {path} as runtime uid:gid {runtime} (left: "
+        f"{runtime_tree_residue(path)}); refusing root fallback (#94)"
+    )
+
+
+def runtime_tree_residue(path: Path, limit: int = 3) -> str:
+    """At most limit top-level entries left in path, as name (uid:gid), for
+    the operator: one lazy scan, lstat only, nothing opened below path."""
+    found: list[str] = []
+    try:
+        fd = open_dir_nofollow(path)
+    except (OSError, UnsafeRuntimePath):
+        return "unknown"
+    try:
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                if len(found) >= limit:
+                    break
+                try:
+                    info = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
+                    owner = f"{info.st_uid}:{info.st_gid}"
+                except OSError:
+                    owner = "?"
+                found.append(f"{ascii(entry.name[:64])} ({owner})")
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+    return ", ".join(found) or "unknown"
 
 
 def default_podman_runtime_dir(uid: int) -> str:
@@ -6235,15 +6356,42 @@ def ensure_runtime_user_manager(cfg: BootstrapConfig) -> None:
         or default_podman_runtime_dir(uid)
     ).strip()
     if Path(configured_runtime).is_absolute():
-        ensure_owned_runtime_dir(Path(configured_runtime), uid, gid)
+        try:
+            ensure_owned_runtime_dir(Path(configured_runtime), uid, gid)
+        except UnsafeRuntimePath as err:
+            log_line(cfg, f"bootstrap: refusing podman runtime dir: {err}")
 
 
 def prepare_dirs(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: preparing cocalc directories")
     ensure_cocalc_install_root()
-    for path in ["/var/lib/cocalc", "/etc/cocalc", "/mnt/cocalc"]:
+    for path in ["/etc/cocalc", "/mnt/cocalc"]:
         Path(path).mkdir(parents=True, exist_ok=True)
-    run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", "/var/lib/cocalc"], "chown cocalc dirs")
+    ensure_cocalc_state_root(cfg)
+
+
+def ensure_cocalc_state_root(cfg: BootstrapConfig) -> None:
+    """Root-owned and not writable by others: root scripts keep state in
+    /var/lib/cocalc and mount the loop image from it by name, so the runtime
+    user must not be able to rename or replace anything there.  The runtime
+    user only reads the published bootstrap-lifecycle view."""
+    if os.geteuid() != 0:
+        log_line(cfg, f"bootstrap: not root; leaving {COCALC_STATE_ROOT} ownership unchanged")
+        return
+    path = COCALC_STATE_ROOT
+    _require(path.resolve() == path, f"CoCalc state root contains a symlink: {path}")
+    path.mkdir(mode=0o755, parents=True, exist_ok=True)
+    # Older bootstrap made /var/lib/cocalc runtime-owned. Migrate only that
+    # inode; its children keep their ownership.
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        if (info.st_uid, info.st_gid) != (0, 0) or info.st_mode & 0o022:
+            log_line(cfg, f"bootstrap: making {path} root-owned (was {info.st_uid}:{info.st_gid} {stat.S_IMODE(info.st_mode):o})")
+        os.fchown(fd, 0, 0)
+        os.fchmod(fd, 0o755)
+    finally:
+        os.close(fd)
 
 
 def tree_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
@@ -6287,54 +6435,83 @@ def path_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
 
 
 def repair_host_data_ownership(cfg: BootstrapConfig) -> None:
+    """Hands host-owned data back to the runtime user, through descriptors
+    of the data dir (the runtime user's own): no symlink is followed, and a
+    hard-linked file is never chowned."""
     if cfg.ssh_user == "root":
         return
     desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
-    data_root = Path("/mnt/cocalc/data")
-    recursive_targets: list[str] = []
-    top_level_dir_targets: list[str] = []
-    file_targets: list[str] = []
-
-    for dirname in HOST_OWNED_DATA_TREE_DIRS:
-        path = data_root / dirname
-        if tree_has_unexpected_ownership(path, desired_uid, desired_gid):
-            recursive_targets.append(str(path))
-    for dirname in HOST_OWNED_DATA_TOPLEVEL_DIRS:
-        path = data_root / dirname
-        if path_has_unexpected_ownership(path, desired_uid, desired_gid):
-            top_level_dir_targets.append(str(path))
-
+    data_root = Path(DATA_ROOT)
     try:
-        for child in data_root.iterdir():
-            if not child.is_file():
-                continue
-            if child.name not in HOST_OWNED_DATA_FILES and not HOST_OWNED_SQLITE_RE.match(
-                child.name
-            ):
-                continue
-            if path_has_unexpected_ownership(child, desired_uid, desired_gid):
-                file_targets.append(str(child))
+        data_fd = open_dir_nofollow(data_root)
     except FileNotFoundError:
         return
+    except UnsafeRuntimePath as err:
+        log_line(cfg, f"bootstrap: refusing to repair {data_root}: {err}")
+        return
+    try:
+        for dirname in HOST_OWNED_DATA_TREE_DIRS:
+            # the descriptor walk itself decides what needs changing (a check
+            # by path first would follow a symlink at the top)
+            chown_tree_at(cfg, data_fd, dirname, desired_uid, desired_gid)
+        for dirname in HOST_OWNED_DATA_TOPLEVEL_DIRS:
+            try:
+                fd = os.open(dirname, O_DIR_NOFOLLOW, dir_fd=data_fd)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if (info.st_uid, info.st_gid) != (desired_uid, desired_gid):
+                    os.fchown(fd, desired_uid, desired_gid)
+            finally:
+                os.close(fd)
+        for name in os.listdir(data_fd):
+            if name not in HOST_OWNED_DATA_FILES and not HOST_OWNED_SQLITE_RE.match(name):
+                continue
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=data_fd)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if (
+                    stat.S_ISREG(info.st_mode)
+                    and info.st_nlink == 1
+                    and (info.st_uid, info.st_gid) != (desired_uid, desired_gid)
+                ):
+                    os.fchown(fd, desired_uid, desired_gid)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(data_fd)
 
-    if recursive_targets:
-        run_best_effort(
-            cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *recursive_targets],
-            "repair host data dir ownership",
-        )
-    if top_level_dir_targets:
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *top_level_dir_targets],
-            "repair host data top-level dir ownership",
-        )
-    if file_targets:
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *file_targets],
-            "repair host data file ownership",
-        )
+
+def chown_tree_at(cfg: BootstrapConfig, parent_fd: int, name: str, uid: int, gid: int) -> None:
+    """chown -R, through descriptors: the tree is walked without following a
+    symlink, and a hard-linked file (which could be another file's inode)
+    is left alone."""
+    try:
+        top = os.open(name, O_DIR_NOFOLLOW, dir_fd=parent_fd)
+    except OSError as err:
+        if err.errno in (errno.ELOOP, errno.ENOTDIR):
+            log_line(cfg, f"bootstrap: refusing to repair {name}: a symlink or not a directory")
+        return
+    try:
+        info = os.fstat(top)
+        if (info.st_uid, info.st_gid) != (uid, gid):
+            os.fchown(top, uid, gid)
+        for _dir, dirs, files, dfd in os.fwalk(dir_fd=top, follow_symlinks=False):
+            for entry in [*dirs, *files]:
+                try:
+                    info = os.stat(entry, dir_fd=dfd, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+                    continue
+                if (info.st_uid, info.st_gid) != (uid, gid):
+                    os.chown(entry, uid, gid, dir_fd=dfd, follow_symlinks=False)
+    finally:
+        os.close(top)
 
 
 def ensure_legacy_btrfs_link(cfg: BootstrapConfig) -> None:
@@ -6395,6 +6572,403 @@ def chown_paths_best_effort(
     run_best_effort(cfg, ["sudo", *args], f"sudo {desc}")
 
 
+# Runtime-owned trees (the project-host root and its bin, bundle roots) are
+# written through descriptors: the runtime user controls their entries, so a
+# root write, chmod or chown by path could be sent through a symlink to any
+# file on the host.
+O_DIR_NOFOLLOW = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+class UnsafeRuntimePath(RuntimeError):
+    """A runtime-owned path bootstrap refuses to write through."""
+
+
+def runtime_file_owner(cfg: BootstrapConfig) -> tuple[int, int] | None:
+    """(uid, gid) for runtime files, as `chown user:user` gave them; None when
+    not root (nothing to hand over) or the user doesn't exist."""
+    if os.geteuid() != 0 or not cfg.ssh_user or cfg.ssh_user == "root":
+        return None
+    try:
+        pw = pwd.getpwnam(cfg.ssh_user)
+    except KeyError:
+        return None
+    try:
+        gid = grp.getgrnam(cfg.ssh_user).gr_gid
+    except KeyError:
+        gid = pw.pw_gid
+    return pw.pw_uid, gid
+
+
+def open_dir_nofollow(path: str | Path, *, create: bool = False) -> int:
+    """A descriptor for the directory path, opened one component at a time
+    from / without following a symlink anywhere on the way."""
+    path = Path(os.path.abspath(path))
+    fd = os.open("/", O_DIR_NOFOLLOW)
+    try:
+        for part in path.parts[1:]:
+            try:
+                try:
+                    next_fd = os.open(part, O_DIR_NOFOLLOW, dir_fd=fd)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    try:
+                        os.mkdir(part, 0o755, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                    next_fd = os.open(part, O_DIR_NOFOLLOW, dir_fd=fd)
+            except OSError as err:
+                if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise UnsafeRuntimePath(
+                        f"{path}: {part} is a symlink or not a directory"
+                    ) from err
+                raise
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def require_dir_owner(fd: int, path: str | Path, owners: set[int]) -> None:
+    owner = os.fstat(fd).st_uid
+    if owner not in owners:
+        raise UnsafeRuntimePath(f"{path} is owned by uid {owner}")
+
+
+def write_file_at(
+    dirfd: int,
+    name: str,
+    text: str | bytes,
+    mode: int,
+    owner: tuple[int, int] | None,
+) -> None:
+    """Writes name in the directory dirfd as a new file (a temporary name,
+    then renamed over name), so whatever is at name, a symlink or a hard link,
+    is replaced and never written through."""
+    tmp = f".{name}.{os.getpid()}.{os.urandom(4).hex()}"
+    fd = os.open(
+        tmp,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+        dir_fd=dirfd,
+    )
+    try:
+        try:
+            data = text.encode("utf-8") if isinstance(text, str) else text
+            while data:
+                data = data[os.write(fd, data) :]
+            os.fchmod(fd, mode)
+            if owner is not None:
+                os.fchown(fd, *owner)
+        finally:
+            os.close(fd)
+        os.rename(tmp, name, src_dir_fd=dirfd, dst_dir_fd=dirfd)
+    except BaseException:
+        try:
+            os.unlink(tmp, dir_fd=dirfd)
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def runtime_bin_dir(cfg: BootstrapConfig):
+    """The project-host root's bin as a descriptor, both opened without
+    following a symlink, owned by root or the runtime user; bin is handed to
+    the runtime user as before."""
+    root = project_host_runtime_root(cfg)
+    owner = runtime_file_owner(cfg)
+    owners = {0, os.geteuid()} | ({owner[0]} if owner else set())
+    root_fd = open_dir_nofollow(root, create=True)
+    try:
+        require_dir_owner(root_fd, root, owners)
+        try:
+            os.mkdir("bin", 0o755, dir_fd=root_fd)
+        except FileExistsError:
+            pass
+        try:
+            bin_fd = os.open("bin", O_DIR_NOFOLLOW, dir_fd=root_fd)
+        except OSError as err:
+            if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise UnsafeRuntimePath(
+                    f"{root}/bin is a symlink or not a directory"
+                ) from err
+            raise
+    finally:
+        os.close(root_fd)
+    try:
+        require_dir_owner(bin_fd, root / "bin", owners)
+        if owner is not None:
+            os.fchown(bin_fd, *owner)
+        yield bin_fd
+    finally:
+        os.close(bin_fd)
+
+
+def ensure_runtime_owned_dirs(cfg: BootstrapConfig, root: Path, children: list[str]) -> None:
+    """root and its direct children, created if missing and handed to the
+    runtime user through descriptors (no symlink followed on the way)."""
+    owner = runtime_file_owner(cfg)
+    try:
+        root_fd = open_dir_nofollow(root, create=True)
+    except UnsafeRuntimePath as err:
+        log_line(cfg, f"bootstrap: refusing to set up {root}: {err}")
+        return
+    try:
+        if owner is not None:
+            os.fchown(root_fd, *owner)
+        for child in children:
+            try:
+                os.mkdir(child, 0o755, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            try:
+                fd = os.open(child, O_DIR_NOFOLLOW, dir_fd=root_fd)
+            except OSError as err:
+                if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                    log_line(cfg, f"bootstrap: refusing to set up {root}/{child}: a symlink or not a directory")
+                    continue
+                raise
+            try:
+                if owner is not None:
+                    os.fchown(fd, *owner)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(root_fd)
+
+
+def in_root_only_bootstrap_state(path: str | Path) -> bool:
+    root = os.path.normpath(BOOTSTRAP_STATE_ROOT)
+    path = os.path.normpath(str(path))
+    return path == root or path.startswith(root + "/")
+
+
+def ensure_root_bootstrap_done_marker(cfg: BootstrapConfig) -> None:
+    """The marker the bay's startup script trusts to skip first boot: in the
+    root-only state root, which is created root 0700 if it doesn't exist."""
+    if os.geteuid() != 0:
+        return
+    root_fd = open_dir_nofollow(BOOTSTRAP_STATE_ROOT, create=True)
+    try:
+        info = os.fstat(root_fd)
+        if (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) != (0, 0, 0o700):
+            os.fchown(root_fd, 0, 0)
+            os.fchmod(root_fd, 0o700)
+        fd = os.open(
+            ".bootstrap_done",
+            os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=root_fd,
+        )
+        os.close(fd)
+    finally:
+        os.close(root_fd)
+
+
+def mark_bootstrap_done(cfg: BootstrapConfig) -> None:
+    """After a completed first boot: only the root-only marker. The other
+    markers older scripts listed (in the runtime user's data dir, or in
+    /var/lib/cocalc, which was the runtime user's before r19) are read-only
+    transition input for the startup script and never written here: a root
+    write by path there goes wherever that user points it."""
+    ensure_root_bootstrap_done_marker(cfg)
+
+
+# What older startup scripts and bootstrap.py left in DATA_ROOT/.host-bootstrap:
+# only this tree is removed, nothing that merely looks harmless.
+OLD_BOOTSTRAP_STATE_DIRS = ("bootstrap", "tmp")
+OLD_BOOTSTRAP_STATE_FILES = frozenset(
+    {
+        "bootstrap.py",
+        "bootstrap.py.sha256",
+        "bootstrap-host-facts.json",
+        "bootstrap-desired-state.json",
+        "bootstrap-state.json",
+        "bootstrap-config.json",
+        "bootstrap.lock",
+        "bootstrap.log",
+        "bootstrap.log.1",
+        "bootstrap.payload.sh",
+        "bootstrap.sh",
+    }
+)
+# text_write_atomic's temp names, left behind by an interrupted write
+OLD_BOOTSTRAP_STATE_TEMP = re.compile(
+    r"\.bootstrap-(host-facts|desired-state|state)\.json\.[A-Za-z0-9_]{1,16}\.tmp"
+)
+
+
+def old_bootstrap_state_problem(
+    top_fd: int, runtime_uid: int, runtime_gid: int, admin_uids: set[int]
+) -> str | None:
+    """Why the tree open as top_fd isn't exactly an old bootstrap state dir
+    (None if it is), read only through top_fd. An allow-list: the top holds
+    only bootstrap/ and tmp/; bootstrap/ only the files bootstrap wrote there,
+    including bootstrap.py; tmp/ nothing. Every entry is a directory or
+    regular file of root or the bootstrap user, not in the runtime user's
+    group, on one filesystem, and no directory is writable by group or
+    others (so nothing can be added while it is removed)."""
+
+    def entry_problem(st: os.stat_result, rel: str) -> str | None:
+        if st.st_uid not in admin_uids:
+            return f"{rel} is owned by uid {st.st_uid}"
+        if st.st_uid == runtime_uid or st.st_gid == runtime_gid:
+            return f"{rel} belongs to the runtime user"
+        if st.st_dev != top.st_dev:
+            return f"{rel} is on another filesystem"
+        if stat.S_ISDIR(st.st_mode) and st.st_mode & 0o022:
+            return f"{rel} is writable by group or others"
+        return None
+
+    top = os.fstat(top_fd)
+    if not stat.S_ISDIR(top.st_mode):
+        return "not a directory"
+    if top.st_uid not in admin_uids:
+        return f"owned by uid {top.st_uid}"
+    if top.st_gid == runtime_gid:
+        return "its group is the runtime user's"
+    if top.st_mode & 0o022:
+        return "writable by group or others"
+    names = os.listdir(top_fd)
+    unexpected = sorted(set(names) - set(OLD_BOOTSTRAP_STATE_DIRS))
+    if unexpected:
+        return f"unexpected entries {unexpected[:5]}"
+    if "bootstrap" not in names:
+        return "no bootstrap/"
+    for sub in names:
+        st = os.lstat(sub, dir_fd=top_fd)
+        if not stat.S_ISDIR(st.st_mode):
+            return f"{sub} is not a directory"
+        problem = entry_problem(st, sub)
+        if problem:
+            return problem
+        sub_fd = os.open(sub, O_DIR_NOFOLLOW, dir_fd=top_fd)
+        try:
+            opened = os.fstat(sub_fd)
+            if (opened.st_dev, opened.st_ino) != (st.st_dev, st.st_ino):
+                return f"{sub} changed while being checked"
+            entries = os.listdir(sub_fd)
+            for entry in entries:
+                rel = f"{sub}/{entry}"
+                if sub == "tmp" or not (
+                    entry in OLD_BOOTSTRAP_STATE_FILES
+                    or OLD_BOOTSTRAP_STATE_TEMP.fullmatch(entry)
+                ):
+                    return f"unexpected entry {rel}"
+                est = os.lstat(entry, dir_fd=sub_fd)
+                if not stat.S_ISREG(est.st_mode):
+                    return f"{rel} is not a regular file"
+                problem = entry_problem(est, rel)
+                if problem:
+                    return problem
+            if sub == "bootstrap" and "bootstrap.py" not in entries:
+                return "no bootstrap/bootstrap.py"
+        finally:
+            os.close(sub_fd)
+    return None
+
+
+def remove_dir_contents_at(dir_fd: int, dev: int) -> None:
+    """Empties the directory open as dir_fd, through descriptors: each
+    subdirectory is opened without following a symlink and must still be the
+    entry that was listed, on the same filesystem."""
+    for entry in os.listdir(dir_fd):
+        st = os.lstat(entry, dir_fd=dir_fd)
+        if not stat.S_ISDIR(st.st_mode):
+            os.unlink(entry, dir_fd=dir_fd)
+            continue
+        if st.st_dev != dev:
+            raise UnsafeRuntimePath(f"{entry} is on another filesystem")
+        child = os.open(entry, O_DIR_NOFOLLOW, dir_fd=dir_fd)
+        try:
+            opened = os.fstat(child)
+            if (opened.st_dev, opened.st_ino) != (st.st_dev, st.st_ino):
+                raise UnsafeRuntimePath(f"{entry} changed while being removed")
+            remove_dir_contents_at(child, dev)
+        finally:
+            os.close(child)
+        os.rmdir(entry, dir_fd=dir_fd)
+
+
+def remove_old_bootstrap_state(cfg: BootstrapConfig) -> None:
+    """Retires DATA_ROOT/.host-bootstrap once this run used the root-only state
+    root: it held root's bootstrap.py and a bootstrap token, under a directory
+    the runtime user owns. The tree is opened once, checked and emptied through
+    that descriptor, and its name removed only if it still names the same
+    directory; anything else is left in place for inspection."""
+    if os.geteuid() != 0 or not in_root_only_bootstrap_state(cfg.bootstrap_dir):
+        return
+    old = f"{DATA_ROOT}/{OLD_BOOTSTRAP_STATE_NAME}"
+    try:
+        data_fd = open_dir_nofollow(DATA_ROOT)
+    except FileNotFoundError:
+        return
+    except UnsafeRuntimePath as err:
+        log_line(cfg, f"bootstrap: refusing to remove old bootstrap dir {old}: {err}")
+        return
+    top_fd = None
+    try:
+        try:
+            top_fd = os.open(OLD_BOOTSTRAP_STATE_NAME, O_DIR_NOFOLLOW, dir_fd=data_fd)
+        except FileNotFoundError:
+            return
+        except OSError as err:
+            if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                log_line(cfg, f"bootstrap: refusing to remove old bootstrap dir {old}: a symlink or not a directory")
+                return
+            raise
+        runtime = runtime_file_owner(cfg)
+        admin_uids = {0}
+        try:
+            admin_uids.add(pwd.getpwnam(cfg.bootstrap_user).pw_uid)
+        except (KeyError, TypeError):
+            pass
+        problem = old_bootstrap_state_problem(
+            top_fd,
+            runtime[0] if runtime else -1,
+            runtime[1] if runtime else -1,
+            admin_uids,
+        )
+        if problem:
+            log_line(cfg, f"bootstrap: refusing to remove old bootstrap dir {old}: {problem}")
+            return
+        top = os.fstat(top_fd)
+        remove_dir_contents_at(top_fd, top.st_dev)
+        current = os.lstat(OLD_BOOTSTRAP_STATE_NAME, dir_fd=data_fd)
+        if (current.st_dev, current.st_ino) != (top.st_dev, top.st_ino):
+            log_line(
+                cfg,
+                f"bootstrap: refusing to remove old bootstrap dir {old}: it was replaced while being removed (its contents are gone; the name now holds something else)",
+            )
+            return
+        # Only an empty directory can go: rmdir by name can't take more.
+        os.rmdir(OLD_BOOTSTRAP_STATE_NAME, dir_fd=data_fd)
+        log_line(cfg, f"bootstrap: removed old bootstrap dir {old}")
+    except (OSError, UnsafeRuntimePath) as err:
+        log_line(cfg, f"bootstrap: refusing to remove old bootstrap dir {old}: {err}")
+    finally:
+        if top_fd is not None:
+            os.close(top_fd)
+        os.close(data_fd)
+
+
+def finish_successful_run(cfg: BootstrapConfig) -> None:
+    """After a successful run: the root-only marker (so the bay's script keeps
+    taking the reconcile path once it stops trusting the data disk's marker),
+    then the old state dir. Neither may fail the run."""
+    for label, step in (
+        ("root-only bootstrap marker", ensure_root_bootstrap_done_marker),
+        ("old bootstrap dir cleanup", remove_old_bootstrap_state),
+    ):
+        try:
+            step(cfg)
+        except Exception as err:
+            log_line(cfg, f"bootstrap: {label} failed (ignored): {err}")
+
+
 def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     Path(cfg.bootstrap_root).mkdir(parents=True, exist_ok=True)
     Path(cfg.bootstrap_dir).mkdir(parents=True, exist_ok=True)
@@ -6402,11 +6976,17 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     Path(cfg.log_file).parent.mkdir(parents=True, exist_ok=True)
     rotate_bootstrap_log(cfg)
     if cfg.bootstrap_user and cfg.bootstrap_user != "root":
+        # Root-only state stays root's; only older state roots are handed to
+        # the bootstrap user, as before.
         owner_paths = [
-            cfg.bootstrap_root,
-            cfg.bootstrap_dir,
-            cfg.bootstrap_tmp,
-            str(Path(cfg.log_file).parent),
+            path
+            for path in (
+                cfg.bootstrap_root,
+                cfg.bootstrap_dir,
+                cfg.bootstrap_tmp,
+                str(Path(cfg.log_file).parent),
+            )
+            if not in_root_only_bootstrap_state(path)
         ]
         chown_paths_best_effort(
             cfg,
@@ -6427,6 +7007,24 @@ def prune_bundle_versions(
     root = Path(bundle.root)
     if not root.is_dir():
         return
+    # The root is the runtime user's: list and delete through a descriptor
+    # opened without following a symlink, so nothing outside it is touched.
+    try:
+        root_fd = open_dir_nofollow(root)
+    except UnsafeRuntimePath as err:
+        log_line(cfg, f"bootstrap: refusing to prune {root}: {err}")
+        chown_runtime_bundle_roots(cfg)
+        return
+    try:
+        prune_bundle_versions_at(cfg, bundle, root, root_fd, keep)
+    finally:
+        os.close(root_fd)
+    chown_runtime_bundle_roots(cfg)
+
+
+def prune_bundle_versions_at(
+    cfg: BootstrapConfig, bundle: BundleSpec, root: Path, root_fd: int, keep: int
+) -> None:
     keep_resolved: set[Path] = set()
     try:
         live_versions = live_mounted_bundle_versions(root)
@@ -6460,20 +7058,20 @@ def prune_bundle_versions(
     except Exception:
         pass
     candidates: list[Path] = []
-    for child in root.iterdir():
-        if child.name.startswith(".") or child.name == "current":
+    mtimes: dict[str, float] = {}
+    for name in os.listdir(root_fd):
+        if name.startswith(".") or name == "current":
             continue
         try:
-            if child.is_symlink() or not child.is_dir():
-                continue
+            info = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
         except OSError:
             continue
-        candidates.append(child)
+        if not stat.S_ISDIR(info.st_mode):
+            continue
+        mtimes[name] = info.st_mtime
+        candidates.append(root / name)
     candidates.sort(
-        key=lambda child: (
-            child.stat().st_mtime if child.exists() else 0,
-            child.name,
-        ),
+        key=lambda child: (mtimes.get(child.name, 0), child.name),
         reverse=True,
     )
     for child in candidates:
@@ -6490,7 +7088,12 @@ def prune_bundle_versions(
                 keep_resolved.add(resolved)
             continue
         log_line(cfg, f"bootstrap: pruning old bundle dir {child}")
-        shutil.rmtree(child, ignore_errors=True)
+        shutil.rmtree(child.name, dir_fd=root_fd, ignore_errors=True)
+
+
+def chown_runtime_bundle_roots(cfg: BootstrapConfig) -> None:
+    """The bundle roots belong to the runtime user. As root each is handed
+    over through its own descriptor, opened without following a symlink."""
     runtime_paths = [
         cfg.project_host_bundle.root,
         cfg.project_bundle.root,
@@ -6505,17 +7108,23 @@ def prune_bundle_versions(
     if not runtime_paths:
         return
     if os.geteuid() == 0:
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
-            "chown runtime dir roots",
-        )
+        owner = runtime_file_owner(cfg)
+        if owner is None:
+            return
+        for path in runtime_paths:
+            try:
+                fd = open_dir_nofollow(path)
+            except (UnsafeRuntimePath, FileNotFoundError) as err:
+                log_line(cfg, f"bootstrap: not handing over {path}: {err}")
+                continue
+            try:
+                os.fchown(fd, *owner)
+            finally:
+                os.close(fd)
     else:
-        run_best_effort(
-            cfg,
-            ["sudo", "chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
-            "sudo chown runtime dir roots",
-        )
+        # A privileged chown by path would follow a symlink in any component;
+        # without root there is no safe way to hand these over.
+        log_line(cfg, "bootstrap: not root; runtime bundle roots keep their owner")
 
 
 def decode_mountinfo_path(value: str) -> str:
@@ -7724,12 +8333,15 @@ installed below /usr/local with root ownership.
 import contextlib
 import ctypes
 import errno
+import fcntl
 import json
 import os
+import pwd
 import re
 import select
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -7749,6 +8361,26 @@ ALLOWED_ROOTS = {
     "/var/lib/cocalc/star/project-host/0/cache",
     "/var/lib/cocalc/star/project-host/0/secrets/rustic",
 }
+# Backup credentials are read only by the rustic verbs.
+SECRET_ROOTS = {"/var/lib/cocalc/star/project-host/0/secrets/rustic"}
+# Beneath these roots generic verbs reach only the listed paths with the
+# listed verbs, or nothing within the listed protected subtrees.  Owning the
+# image behind /mnt/cocalc would be raw access to that filesystem, so the
+# images only take truncate, and only to create a new one.
+GENERIC_ONLY_PATHS = {"/var/lib/cocalc": ({"btrfs.img", "cocalc.img"}, {"truncate"})}
+CREATE_ONLY_ROOTS = {"/var/lib/cocalc"}
+GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets",)}
+# The data filesystem's root stays root-owned: BEES and the R1 project-root
+# hardening rely on it, so no generic verb may change it.
+GENERIC_FIXED_ROOTS = {"/mnt/cocalc"}
+# Verbs that act on a whole tree must not take a protected subtree with them.
+TREE_COMMANDS = {"copy-tree-preserve", "copy-tree-reflink", "rename", "rm", "rmdir"}
+STICKY_ROOTS = {"/mnt/cocalc-scratch"}
+RUNTIME_USER = "__RUNTIME_USER__"
+# R1 project runtime ids (P), outside every subordinate range.
+PROJECT_RUNTIME_ID_START = 1073741824
+PROJECT_RUNTIME_ID_COUNT = 65536
+SUBID_FILES = ("/etc/subuid", "/etc/subgid")
 COMMANDS = {
     "chmod",
     "chattr-cow",
@@ -8613,6 +9245,11 @@ def run_rustic(
         profile_arg = profile_path[: -len(".toml")]
         rustic = select_privileged_rustic_binary(rustic_candidates)
         base = [rustic, "-P", profile_arg]
+        # Root's cache is pinned twice on purpose: the flag here, and
+        # RUSTIC_CACHE_DIR below (with HOME=/root as the last fallback). The
+        # flag conflicts with --no-cache, so it is left out when that is asked.
+        if not values["no-cache"]:
+            base += ["--cache-dir", "/root/.cache/rustic"]
         env = {
             "HOME": "/root",
             "LANG": "C.UTF-8",
@@ -8699,7 +9336,10 @@ def run_rustic(
                 raise subprocess.CalledProcessError(status, base)
             return
 
-        restore = ["restore"]
+        # Restores into a tree that may already hold files: Rustic must read
+        # each one, not trust a matching size and modification time (both are
+        # easy to keep while changing the bytes).
+        restore = ["restore", "--verify-existing"]
         if values["no-cache"]:
             restore.append("--no-cache")
         if values["delete"]:
@@ -9043,7 +9683,6 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
 # the per-project dirs are root-owned 0710 with the runtime group, so the
 # runtime user can reach the views to hand them to Podman but can't rename or
 # replace what this helper mounts on, and the view uid can't enter at all.
-RUNTIME_USER = "__RUNTIME_USER__"
 PROJECT_VIEW_ROOT = "/run/cocalc/project-views"
 # Serializes every change beneath PROJECT_VIEW_ROOT (mounts, unmounts, gc and
 # idmapped overlay uppers), so a check for an existing mount and the mount
@@ -9091,10 +9730,8 @@ PROJECT_HOME_RE = re.compile(r"project-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 
 def runtime_ids():
-    import pwd
-
-    entry = pwd.getpwnam(RUNTIME_USER)
-    return entry.pw_uid, entry.pw_gid
+    # the stricter check (unknown user or uid/gid 0 is a failure)
+    return runtime_user_ids()
 
 
 def validate_project_id(value):
@@ -9497,7 +10134,377 @@ def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
                 os.close(fd)
 
 
-def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
+def runtime_user_ids(user=RUNTIME_USER):
+    try:
+        entry = pwd.getpwnam(user)
+    except KeyError:
+        fail(f"runtime user is unknown: {user!r}")
+    if entry.pw_uid == 0 or entry.pw_gid == 0:
+        fail("runtime user must not be root")
+    return entry.pw_uid, entry.pw_gid
+
+
+def subordinate_ranges(path, user, uid):
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        return []
+    ranges = []
+    for line in lines:
+        parts = line.strip().split(":")
+        if len(parts) != 3 or parts[0] not in (user, str(uid)):
+            continue
+        if all(re.fullmatch(r"[0-9]{1,10}", part) for part in parts[1:]):
+            ranges.append((int(parts[1]), int(parts[2])))
+    return ranges
+
+
+def owner_policy(user=RUNTIME_USER, subid_files=SUBID_FILES):
+    """Ids that generic chown may assign: the runtime user, its subordinate
+    ranges (container root and project ranges) and the R1 project ids."""
+    uid, gid = runtime_user_ids(user)
+    project = (PROJECT_RUNTIME_ID_START, PROJECT_RUNTIME_ID_COUNT)
+    return {
+        "uid": [(uid, 1), project, *subordinate_ranges(subid_files[0], user, uid)],
+        "gid": [(gid, 1), project, *subordinate_ranges(subid_files[1], user, uid)],
+    }
+
+
+def parse_owner_id(value, name, ranges):
+    if not re.fullmatch(r"[0-9]{1,10}", value):
+        fail(f"{name} must be a non-negative integer")
+    result = int(value)
+    if result == 0 or not any(start <= result < start + count for start, count in ranges):
+        fail(f"{name} {result} is not an allowed owner")
+    return result
+
+
+def parse_mode(value, root, sticky_roots=STICKY_ROOTS):
+    if not re.fullmatch(r"[0-7]{3,4}", value):
+        fail(f"mode must be 3 or 4 octal digits: {value!r}")
+    mode = int(value, 8)
+    if mode & 0o6000:
+        fail(f"setuid and setgid modes are not allowed: {value!r}")
+    if mode & 0o1000 and root not in sticky_roots:
+        fail(f"the sticky bit is only allowed beneath scratch: {value!r}")
+    return mode
+
+
+def check_generic_path(root, path, command, generic_roots):
+    if root not in generic_roots:
+        fail(f"root is not allowed: {root!r}")
+    only = GENERIC_ONLY_PATHS.get(root)
+    if only is not None and (path not in only[0] or command not in only[1]):
+        fail(f"{command} of this path is not allowed beneath {root}: {path!r}")
+    if path == "." and root in GENERIC_FIXED_ROOTS:
+        fail(f"{command} of {root} itself is not allowed")
+    for protected in GENERIC_PROTECTED_PATHS.get(root, ()):
+        if path == protected or path.startswith(protected + "/"):
+            fail(f"path is protected: {path!r}")
+        if command in TREE_COMMANDS and (path == "." or protected.startswith(path + "/")):
+            fail(f"path contains a protected path: {path!r}")
+
+
+def open_single_link(rootfd, path):
+    # A second hard link would let a path outside a protected subtree reach
+    # an inode inside it.
+    fd = open_existing(rootfd, path)
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode) and info.st_nlink != 1:
+        os.close(fd)
+        fail(f"path has more than one hard link: {path!r}")
+    return fd
+
+
+def btrfs_ioc(direction, nr, size):
+    return (direction << 30) | (size << 16) | (0x94 << 8) | nr
+
+
+# btrfs takes only the command shapes callers use.  Every path operand is
+# pinned beneath BTRFS_ROOTS without following symlinks and must be on btrfs.
+# Subvolume create, snapshot and delete and the ro property are ioctls on the
+# pinned descriptors (btrfs-progs re-resolves some of these paths by name);
+# the remaining shapes run btrfs-progs on /proc/self/fd/N.
+BTRFS_ROOTS = ("/mnt/cocalc", "/mnt/cocalc-scratch")
+BTRFS_SUPER_MAGIC = 0x9123683E
+BTRFS_FIRST_FREE_OBJECTID = 256
+BTRFS_SUBVOL_RDONLY = 1 << 1
+BTRFS_NAME_MAX = 255
+BTRFS_IOC_SUBVOL_CREATE = btrfs_ioc(1, 14, 4096)
+BTRFS_IOC_SNAP_DESTROY = btrfs_ioc(1, 15, 4096)
+BTRFS_IOC_SNAP_CREATE_V2 = btrfs_ioc(1, 23, 4096)
+BTRFS_IOC_SUBVOL_GETFLAGS = btrfs_ioc(2, 25, 8)
+BTRFS_IOC_SUBVOL_SETFLAGS = btrfs_ioc(1, 26, 8)
+BTRFS_EXECUTABLE = "/usr/bin/btrfs"
+MKFS_IMAGE_ROOT = "/var/lib/cocalc"
+MKFS_IMAGES = {"btrfs.img", "cocalc.img"}
+
+
+def is_qgroup_id(value):
+    # Only a project's quota group, never a subvolume's own (level 0).
+    return re.fullmatch(r"1/[0-9]{1,15}", value) is not None
+
+
+def parse_btrfs(argv):
+    """Return (action, operands) for an allowed btrfs command line.  Operands
+    are literal strings or (kind, path): "dir" an existing directory, "new" a
+    name to create, "dest" a snapshot destination, "old" a name to delete."""
+
+    def dirs(*paths):
+        return [("dir", path) for path in paths]
+
+    match argv:
+        case ["subvolume", "create", path]:
+            return "create", [("new", path)]
+        case ["subvolume", "snapshot", "-r", source, dest]:
+            return "snapshot-ro", [("dir", source), ("dest", dest)]
+        case ["subvolume", "snapshot", source, dest]:
+            return "snapshot", [("dir", source), ("dest", dest)]
+        case ["subvolume", "delete", path]:
+            return "delete", [("old", path)]
+        case ["property", "get", "-ts", path, "ro"]:
+            return "get-ro", dirs(path)
+        case ["property", "set", "-ts", path, "ro", ("true" | "false") as value]:
+            return "set-ro", [*dirs(path), value]
+        case ["subvolume", "show", path] | ["subvolume", "list", path]:
+            return "exec", [*argv[:2], *dirs(path)]
+        case ["subvolume", "list", ("-o" | "-u") as flag, path]:
+            return "exec", ["subvolume", "list", flag, *dirs(path)]
+        case ["filesystem", ("show" | "sync") as sub, path]:
+            return "exec", ["filesystem", sub, *dirs(path)]
+        case ["filesystem", "usage", "-b", path] | ["filesystem", "du", "-s", path]:
+            return "exec", [*argv[:3], *dirs(path)]
+        case ["qgroup", "show", *flags, path] if len(flags) <= 3 and all(
+            re.fullmatch(r"-[pcreFf]{1,6}|--raw|--sync", flag) for flag in flags
+        ):
+            return "exec", ["qgroup", "show", *flags, *dirs(path)]
+        case ["qgroup", ("create" | "destroy") as sub, group, path] if is_qgroup_id(group):
+            return "exec", ["qgroup", sub, group, *dirs(path)]
+        case ["qgroup", "assign", "--no-rescan", source, group, path] if is_qgroup_id(group):
+            return "exec", ["qgroup", "assign", "--no-rescan", *dirs(source), group, *dirs(path)]
+        case ["qgroup", "limit", size, target, path] if re.fullmatch(
+            r"[0-9]{1,20}[KMGTPEkmgtpe]?|none", size
+        ):
+            target_operand = target if is_qgroup_id(target) else ("dir", target)
+            return "exec", ["qgroup", "limit", size, target_operand, *dirs(path)]
+        case ["quota", "enable", "--simple", path] | ["quota", "disable", path]:
+            return "exec", [*argv[:-1], *dirs(path)]
+    fail(f"btrfs command is not allowed: {' '.join(argv[:3])!r}")
+
+
+def btrfs_root_and_rel(path, roots):
+    if not path.startswith("/"):
+        fail(f"btrfs path must be absolute: {path!r}")
+    for root in roots:
+        if path == root:
+            return root, "."
+        if path.startswith(root + "/"):
+            rel = path[len(root) + 1 :]
+            validate_relative(rel)
+            return root, rel
+    fail(f"btrfs path is not allowed: {path!r}")
+
+
+def require_btrfs(fd, path):
+    buf = ctypes.create_string_buffer(512)
+    if LIBC.fstatfs(fd, buf) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), path)
+    if ctypes.c_long.from_buffer(buf).value & 0xFFFFFFFF != BTRFS_SUPER_MAGIC:
+        fail(f"Not a Btrfs filesystem: {path!r}")
+
+
+def open_btrfs_directory(path, roots):
+    root, rel = btrfs_root_and_rel(path, roots)
+    rootfd = open_root(root, set(roots))
+    try:
+        fd = openat2(rootfd, rel, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        require_btrfs(fd, path)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def open_btrfs_parent(path, roots):
+    root, rel = btrfs_root_and_rel(path, roots)
+    if rel == ".":
+        fail(f"btrfs path needs a parent beneath {root}: {path!r}")
+    parent, _, name = rel.rpartition("/")
+    if len(os.fsencode(name)) > BTRFS_NAME_MAX:
+        fail(f"btrfs name is too long: {path!r}")
+    return open_btrfs_directory(root if not parent else f"{root}/{parent}", roots), name
+
+
+def btrfs_vol_args(name, fd=0, flags=None):
+    # struct btrfs_ioctl_vol_args (fd, name[4088]) or, with flags,
+    # btrfs_ioctl_vol_args_v2 (fd, transid, flags, unused[4], name[4040]).
+    args = bytearray(4096)
+    encoded = os.fsencode(name)
+    if flags is None:
+        struct.pack_into("q", args, 0, fd)
+        args[8 : 8 + len(encoded)] = encoded
+    else:
+        struct.pack_into("qQQ", args, 0, fd, 0, flags)
+        args[56 : 56 + len(encoded)] = encoded
+    return args
+
+
+def require_subvolume(info, path):
+    if not stat.S_ISDIR(info.st_mode) or info.st_ino != BTRFS_FIRST_FREE_OBJECTID:
+        fail(f"Not a Btrfs subvolume: {path!r}")
+
+
+def run_btrfs(argv, roots=BTRFS_ROOTS, executable=BTRFS_EXECUTABLE):
+    action, operands = parse_btrfs(argv)
+    fds = []
+
+    def pin(path):
+        fd = open_btrfs_directory(path, roots)
+        fds.append(fd)
+        return fd
+
+    def pin_parent(path):
+        fd, name = open_btrfs_parent(path, roots)
+        fds.append(fd)
+        return fd, name
+
+    try:
+        if action == "create":
+            path = operands[0][1]
+            parentfd, name = pin_parent(path)
+            fcntl.ioctl(parentfd, BTRFS_IOC_SUBVOL_CREATE, btrfs_vol_args(name))
+            print(f"Create subvolume '{path}'")
+        elif action in ("snapshot", "snapshot-ro"):
+            source, dest = operands[0][1], operands[1][1]
+            sourcefd = pin(source)
+            require_subvolume(os.fstat(sourcefd), source)
+            parentfd, name = pin_parent(dest)
+            try:
+                info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+            except FileNotFoundError:
+                info = None
+            if info is not None:
+                if not stat.S_ISDIR(info.st_mode):
+                    fail(f"snapshot destination exists: {dest!r}")
+                # As btrfs-progs: an existing directory receives the snapshot
+                # under the source's name.
+                parentfd = openat2(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK | os.O_CLOEXEC)
+                fds.append(parentfd)
+                name = source.rstrip("/").rpartition("/")[2]
+            flags = BTRFS_SUBVOL_RDONLY if action == "snapshot-ro" else 0
+            fcntl.ioctl(parentfd, BTRFS_IOC_SNAP_CREATE_V2, btrfs_vol_args(name, sourcefd, flags))
+            kind = "a readonly snapshot" if flags else "a snapshot"
+            print(f"Create {kind} of '{source}' in '{dest}'")
+        elif action == "delete":
+            path = operands[0][1]
+            parentfd, name = pin_parent(path)
+            require_subvolume(os.stat(name, dir_fd=parentfd, follow_symlinks=False), path)
+            # The kernel looks the name up in the pinned parent; a symlink
+            # there is not a subvolume.
+            fcntl.ioctl(parentfd, BTRFS_IOC_SNAP_DESTROY, btrfs_vol_args(name))
+            print(f"Delete subvolume (no-commit): '{path}'")
+        elif action in ("get-ro", "set-ro"):
+            path = operands[0][1]
+            fd = pin(path)
+            require_subvolume(os.fstat(fd), path)
+            buf = bytearray(8)
+            fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_GETFLAGS, buf)
+            flags = struct.unpack("Q", buf)[0]
+            if action == "get-ro":
+                print(f"ro={'true' if flags & BTRFS_SUBVOL_RDONLY else 'false'}")
+            else:
+                if operands[1] == "true":
+                    flags |= BTRFS_SUBVOL_RDONLY
+                else:
+                    flags &= ~BTRFS_SUBVOL_RDONLY
+                fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_SETFLAGS, bytearray(struct.pack("Q", flags)))
+        else:
+            args = [executable]
+            for operand in operands:
+                args.append(operand if isinstance(operand, str) else f"/proc/self/fd/{pin(operand[1])}")
+            sys.stdout.flush()
+            return subprocess.run(args, pass_fds=tuple(fds), stdin=subprocess.DEVNULL).returncode
+        sys.stdout.flush()
+        return 0
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def run_mkfs_btrfs(argv, image_root=MKFS_IMAGE_ROOT, owner_uid=0, executable=None):
+    """mkfs.btrfs only on a new image: a root-owned regular file with one link
+    and no allocated blocks (as truncate creates it), opened without
+    following symlinks.  mkfs.btrfs itself refuses an existing filesystem
+    without -f, which is never passed."""
+    values, _flags = parse_named_options(argv, "mkfs-btrfs", {"--root", "--path"}, {"--root", "--path"})
+    if values["root"] != image_root or values["path"] not in MKFS_IMAGES:
+        fail(f"mkfs.btrfs is only allowed on {image_root}/{{{','.join(sorted(MKFS_IMAGES))}}}")
+    rootfd = open_root(image_root, {image_root})
+    try:
+        fd = openat2(rootfd, values["path"], os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        # Two concurrent calls must not both see a fresh image.
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail("mkfs.btrfs is already running on this image")
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != owner_uid
+            or info.st_nlink != 1
+            or info.st_blocks != 0
+            or info.st_size == 0
+        ):
+            fail("mkfs.btrfs needs a new, empty image file")
+        if executable is None:
+            executable = "/usr/sbin/mkfs.btrfs" if os.path.exists("/usr/sbin/mkfs.btrfs") else "/sbin/mkfs.btrfs"
+        sys.stdout.flush()
+        return subprocess.run([executable, f"/proc/self/fd/{fd}"], pass_fds=(fd,), stdin=subprocess.DEVNULL).returncode
+    finally:
+        os.close(fd)
+
+
+# Read-only tree tools the wrapper runs as root.  The helper pins the tree
+# without following symlinks and re-enters the wrapper's internal verb with
+# /proc/self/fd/N; that verb refuses to run under sudo.
+PIN_EXEC_VERBS = {"du-bytes", "rootfs-manifest", "tar-sha256-tree"}
+STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage"
+
+
+def run_pin_exec(argv, allowed_roots=ALLOWED_ROOTS, wrapper=STORAGE_WRAPPER):
+    values, _flags = parse_named_options(
+        argv, "pin-exec", {"--root", "--path", "--verb"}, {"--root", "--path", "--verb"}
+    )
+    if values["verb"] not in PIN_EXEC_VERBS:
+        fail(f"pin-exec verb is not allowed: {values['verb']!r}")
+    validate_relative(values["path"], allow_root=True)
+    rootfd = open_root(values["root"], set(allowed_roots) - SECRET_ROOTS)
+    try:
+        fd = openat2(rootfd, values["path"], O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("SUDO_")}
+        sys.stdout.flush()
+        return subprocess.run(
+            [wrapper, f"_{values['verb']}-pinned", f"/proc/self/fd/{fd}"],
+            pass_fds=(fd,),
+            env=env,
+            stdin=subprocess.DEVNULL,
+        ).returncode
+    finally:
+        os.close(fd)
+
+
+def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
     if argv and argv[0] == "scan-changed-since":
@@ -9511,10 +10518,21 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
             return run_normalize_rootfs(argv, allowed_roots)
         return run_overlay(argv, allowed_roots)
     command, root, path, values = parse(argv)
-    rootfd = open_root(root, allowed_roots)
+    generic_roots = set(allowed_roots) - SECRET_ROOTS
+    check_generic_path(root, path, command, generic_roots)
+    if command == "rename":
+        check_generic_path(root, values["dest"], command, generic_roots)
+    elif command in ("copy-tree-preserve", "copy-tree-reflink"):
+        check_generic_path(values["dest-root"], values["dest"], command, generic_roots)
+    if command in ("chmod", "mkdir"):
+        mode = parse_mode(values["mode"], root)
+    elif command == "chown":
+        owners = owners or owner_policy()
+        uid = parse_owner_id(values["uid"], "uid", owners["uid"])
+        gid = parse_owner_id(values["gid"], "gid", owners["gid"])
+    rootfd = open_root(root, generic_roots)
     try:
         if command == "mkdir":
-            mode = int(values["mode"], 8)
             mkdir_beneath(rootfd, path, values["recursive"], mode)
         elif command == "rename":
             sourcefd, source = open_parent(rootfd, path)
@@ -9534,19 +10552,19 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
             finally:
                 os.close(parentfd)
         elif command == "chmod":
-            fd = open_existing(rootfd, path)
+            fd = open_single_link(rootfd, path)
             try:
-                os.fchmod(fd, int(values["mode"], 8))
+                os.fchmod(fd, mode)
             finally:
                 os.close(fd)
         elif command == "chown":
-            fd = open_existing(rootfd, path)
+            fd = open_single_link(rootfd, path)
             try:
-                os.fchown(fd, parse_uint(values["uid"], "uid", 2**32 - 1), parse_uint(values["gid"], "gid", 2**32 - 1))
+                os.fchown(fd, uid, gid)
             finally:
                 os.close(fd)
         elif command in ("copy-tree-preserve", "copy-tree-reflink"):
-            dest_rootfd = open_root(values["dest-root"], allowed_roots)
+            dest_rootfd = open_root(values["dest-root"], generic_roots)
             try:
                 if values["dest"] != ".":
                     mkdir_beneath(dest_rootfd, values["dest"], True, 0o755)
@@ -9593,12 +10611,10 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
             finally:
                 os.close(dest_rootfd)
         elif command == "truncate":
-            fd = openat2(
-                rootfd,
-                path,
-                os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK | os.O_CLOEXEC,
-                0o600,
-            )
+            flags = os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK | os.O_CLOEXEC
+            if root in CREATE_ONLY_ROOTS:
+                flags |= os.O_EXCL
+            fd = openat2(rootfd, path, flags, 0o600)
             try:
                 os.ftruncate(fd, parse_uint(values["length"], "length"))
             finally:
@@ -9626,8 +10642,16 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
     # children be stopped instead of orphaned.
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, raise_on_signal)
+    argv = sys.argv[1:] if argv is None else argv
     try:
-        run(sys.argv[1:] if argv is None else argv, allowed_roots)
+        # These two pass the tool's own exit status through.
+        if argv and argv[0] == "btrfs":
+            return run_btrfs(argv[1:])
+        if argv and argv[0] == "mkfs-btrfs":
+            return run_mkfs_btrfs(argv)
+        if argv and argv[0] == "pin-exec":
+            return run_pin_exec(argv, allowed_roots)
+        run(argv, allowed_roots)
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as err:
         print(f"SECURITY_DENY code=path-helper-failed detail={err}", file=sys.stderr)
@@ -11293,8 +12317,35 @@ poweroff_exam_host() {
     current="$(cat "$(exam_current_run_file)" 2>/dev/null || true)"
   fi
   [ "$current" = "$run_id" ] || deny "exam-run-id-mismatch" "$run_id"
-  printf 'exam-deadline:%s\\n' "$run_id" > /mnt/cocalc/data/host-shutdown-intent
+  write_data_dir_file host-shutdown-intent "exam-deadline:${run_id}"
   /usr/bin/systemctl poweroff --no-block
+}
+
+write_data_dir_file() {
+  # /mnt/cocalc/data is the runtime user's: the file is written through
+  # descriptors (no symlink followed anywhere), as a new file renamed over
+  # the name, and owned like the data dir.
+  /usr/bin/python3 -I - "$1" "$2" <<'PY'
+import os
+import sys
+
+name, text = sys.argv[1], sys.argv[2]
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+fd = os.open("/", flags)
+for part in ("mnt", "cocalc", "data"):
+    next_fd = os.open(part, flags, dir_fd=fd)
+    os.close(fd)
+    fd = next_fd
+info = os.fstat(fd)
+tmp = ".%s.%d.%s" % (name, os.getpid(), os.urandom(4).hex())
+out = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=fd)
+try:
+    os.write(out, (text + chr(10)).encode())
+    os.fchown(out, info.st_uid, info.st_gid)
+finally:
+    os.close(out)
+os.rename(tmp, name, src_dir_fd=fd, dst_dir_fd=fd)
+PY
 }
 
 project_network_policy_file() {
@@ -11857,6 +12908,52 @@ reconcile_project_network_limits() {
   return 1
 }
 
+# du-bytes, rootfs-manifest and tar-sha256-tree: the path helper pins the
+# tree (pin-exec) and re-enters as _<verb>-pinned /proc/self/fd/N, which only
+# root can do: sudo always sets SUDO_UID and closes descriptors above 2.
+pin_tree_and_reenter() {
+  require_allowed_path_parts "$1"
+  exec /usr/local/libexec/cocalc-runtime-storage-path-helper pin-exec --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL" --verb "$cmd"
+}
+
+enter_pinned_tree() {
+  if [ -n "${SUDO_UID:-}${SUDO_USER:-}${SUDO_COMMAND:-}" ]; then
+    deny "pinned-verb-not-allowed" "$cmd"
+  fi
+  if ! [[ "$1" =~ ^/proc/self/fd/([0-9]{1,4})$ ]] || [ "${BASH_REMATCH[1]}" -lt 3 ]; then
+    deny "pinned-path-invalid" "$1"
+  fi
+  cd -- "$1" || deny "pinned-path-invalid" "$1"
+}
+
+# BEES runs only on the data filesystem's root.  It and its .beeshome must be
+# root-owned real directories that nobody else can write: root opens files
+# beneath them by name.
+root_only_directory() {
+  local path="$1" mode
+  [ ! -L "$path" ] && [ -d "$path" ] || return 1
+  [ "$(stat -c '%u' "$path" 2>/dev/null)" = "0" ] || return 1
+  mode="$(stat -c '%a' "$path" 2>/dev/null)"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] && [ "$((8#$mode & 022))" -eq 0 ]
+}
+
+require_bees_mountpoint() {
+  local mountpoint="$1"
+  if [ "$mountpoint" != "/mnt/cocalc" ]; then
+    deny "bees-mountpoint-not-allowed" "$mountpoint"
+  fi
+  if ! root_only_directory "$mountpoint"; then
+    deny "bees-mountpoint-not-root-owned" "$mountpoint"
+  fi
+}
+
+require_bees_home() {
+  local beeshome="$1/.beeshome"
+  if ! root_only_directory "$beeshome"; then
+    deny "bees-home-invalid" "$beeshome"
+  fi
+}
+
 find_bees_pid() {
   local mountpoint="$1" proc pid
   for proc in /proc/[0-9]*; do
@@ -12100,8 +13197,6 @@ set_allowed_path_parts() {
       ALLOWED_PATH_ROOT="/opt/cocalc/tools"; ALLOWED_PATH_REL="." ;;
     /opt/cocalc/tools/*)
       ALLOWED_PATH_ROOT="/opt/cocalc/tools"; ALLOWED_PATH_REL="${path#/opt/cocalc/tools/}" ;;
-    /dev/loop[0-9]*)
-      ALLOWED_PATH_ROOT="/dev"; ALLOWED_PATH_REL="${path#/dev/}" ;;
     *) return 1 ;;
   esac
   return 0
@@ -12955,22 +14050,19 @@ PY
     reconcile_project_network_limits
     ;;
   btrfs|btrfs-maintenance)
-    if [ "${1:-}" = "qgroup" ]; then
-      check_qgroup_args "$@"
-    else
-      check_args "$@"
-    fi
+    # The path helper allows only the command shapes callers use and pins
+    # every path operand without following symlinks.
     if [ "$cmd" = "btrfs-maintenance" ]; then
       attach_maintenance_worker
     fi
-    exec /usr/bin/btrfs "$@"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper btrfs "$@"
     ;;
   mkfs.btrfs)
-    check_args "$@"
-    if command -v /usr/sbin/mkfs.btrfs >/dev/null 2>&1; then
-      exec /usr/sbin/mkfs.btrfs "$@"
+    if [ "$#" -ne 1 ]; then
+      deny "mkfs-btrfs-args-invalid" "$*"
     fi
-    exec /sbin/mkfs.btrfs "$@"
+    require_allowed_path_parts "$1"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper mkfs-btrfs --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL"
     ;;
   mount-overlay-project)
     # Optional: --idmap <uid> mounts the upper through an idmapped view.
@@ -13104,13 +14196,6 @@ PY
       umount-overlay-project \
       --merged-root "$merged_root" --merged-path "$merged_rel"
     ;;
-  losetup)
-    check_args "$@"
-    if command -v /usr/sbin/losetup >/dev/null 2>&1; then
-      exec /usr/sbin/losetup "$@"
-    fi
-    exec /sbin/losetup "$@"
-    ;;
   mknod)
     if [ "$#" -ne 5 ] || [ "$1" != "-m660" ] || [ "$3" != "b" ] || [ "$4" != "7" ]; then
       deny "mknod-args-invalid" "$*"
@@ -13149,10 +14234,6 @@ PY
       deny "chown-owner-not-runtime-user" "$owner"
     fi
     for path in "$@"; do
-      if echo "$path" | grep -Eq '^/dev/loop[0-9]+$'; then
-        /bin/chown "$owner_uid:$owner_gid" -- "$path"
-        continue
-      fi
       require_allowed_path_parts "$path"
       path_helper chown --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL" --uid "$owner_uid" --gid "$owner_gid"
     done
@@ -13995,13 +15076,16 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --snapshot "$snapshot" \
       "${no_cache_args[@]}"
     ;;
-  rootfs-manifest)
+  rootfs-manifest|_rootfs-manifest-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage rootfs-manifest <path>" >&2
       exit 2
     fi
-    tree="$1"
-    check_args "$tree"
+    if [ "$cmd" = "rootfs-manifest" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    tree="."
     exec /bin/bash -lc 'set -euo pipefail; python3 - "$1" <<'"'"'PY'"'"'
 import hashlib
 import json
@@ -14044,7 +15128,8 @@ def detect_type(st):
 
 def sha256_file(path):
     h = hashlib.sha256()
-    with open(path, "rb") as handle:
+    # The entry was lstat-ed as a regular file; never follow a swapped-in link.
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -14171,23 +15256,28 @@ json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
 sys.stdout.write("\\n")
 PY' bash "$tree"
     ;;
-  tar-sha256-tree)
+  tar-sha256-tree|_tar-sha256-tree-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage tar-sha256-tree <path>" >&2
       exit 2
     fi
-    tree="$1"
-    check_args "$tree"
+    if [ "$cmd" = "tar-sha256-tree" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    tree="."
     exec /bin/bash -lc 'set -euo pipefail; tar --sort=name --mtime='"'"'UTC 1970-01-01'"'"' --numeric-owner --owner=0 --group=0 --format=posix --acls --xattrs --xattrs-include='"'"'*'"'"' -cf - -C "$1" . | sha256sum | awk '"'"'{print $1}'"'"'' bash "$tree"
     ;;
-  du-bytes)
+  du-bytes|_du-bytes-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage du-bytes <path>" >&2
       exit 2
     fi
-    path="$1"
-    check_args "$path"
-    exec /usr/bin/du -sb "$path"
+    if [ "$cmd" = "du-bytes" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    exec /usr/bin/du -sb .
     ;;
   df)
     check_args "$@"
@@ -14199,14 +15289,7 @@ PY' bash "$tree"
       exit 2
     fi
     mountpoint="$1"
-    check_args "$mountpoint"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
     existing_pid="$(find_bees_pid "$mountpoint")"
     if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
       apply_bees_runtime_policy "$existing_pid" "$mountpoint"
@@ -14221,14 +15304,8 @@ PY' bash "$tree"
       exit 2
     fi
     mountpoint="$1"
-    check_args "$mountpoint"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
+    require_bees_home "$mountpoint"
     emit_bees_status "$mountpoint"
     ;;
   bees-gate)
@@ -14242,14 +15319,7 @@ PY' bash "$tree"
     fi
     mountpoint="$1"
     action="$2"
-    check_args "$mountpoint" "$action"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
     pool="$(bees_cgroup)"
     case "$action" in
       freeze)
@@ -14303,22 +15373,21 @@ PY' bash "$tree"
     echo "BEES_GATE action=${action} mountpoint=${mountpoint}" >&2
     ;;
   bees)
-    check_args "$@"
-    mountpoint=""
-    for arg in "$@"; do
-      mountpoint="$arg"
-    done
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
-    beeshome="$mountpoint/.beeshome"
-    if [ ! -d "$beeshome" ]; then
-      deny "bees-home-missing" "$beeshome"
+    # Only the shape project-host sends: -v N [-c N] /mnt/cocalc.
+    if ! [[ "$#" -ge 3 && "$1" == "-v" && "$2" =~ ^[0-9]{1,2}$ ]]; then
+      deny "bees-args-invalid" "$*"
     fi
+    if [ "$#" -eq 5 ]; then
+      if ! [[ "$3" == "-c" && "$4" =~ ^[1-9][0-9]{0,3}$ ]]; then
+        deny "bees-args-invalid" "$*"
+      fi
+    elif [ "$#" -ne 3 ]; then
+      deny "bees-args-invalid" "$*"
+    fi
+    mountpoint="${!#}"
+    require_bees_mountpoint "$mountpoint"
+    require_bees_home "$mountpoint"
+    beeshome="$mountpoint/.beeshome"
     if ! command -v flock >/dev/null 2>&1; then
       deny "flock-missing" "flock"
     fi
@@ -14630,20 +15699,39 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
         run_cmd(cfg, ["btrfs", "subvolume", "show", "/mnt/cocalc/data"], "btrfs subvolume show", check=False)
     except Exception:
         pass
-    if not Path("/mnt/cocalc/data").exists():
+    if not Path(DATA_ROOT).exists():
         try:
-            run_cmd(cfg, ["btrfs", "subvolume", "create", "/mnt/cocalc/data"], "btrfs subvolume create", check=False)
+            run_cmd(cfg, ["btrfs", "subvolume", "create", DATA_ROOT], "btrfs subvolume create", check=False)
         except Exception:
-            Path("/mnt/cocalc/data").mkdir(parents=True, exist_ok=True)
-    Path("/mnt/cocalc/data/secrets").mkdir(parents=True, exist_ok=True)
-    Path("/mnt/cocalc/data/tmp").mkdir(parents=True, exist_ok=True)
-    os.chmod("/mnt/cocalc/data/tmp", 0o1777)
-    for path in ["/mnt/cocalc/data", "/mnt/cocalc/data/secrets", "/mnt/cocalc/data/tmp"]:
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", path],
-            f"chown {path}",
-        )
+            Path(DATA_ROOT).mkdir(parents=True, exist_ok=True)
+    # The data dir is handed to the runtime user, so its entries are theirs:
+    # set them up through descriptors, refusing a symlink.
+    owner = runtime_file_owner(cfg)
+    data_fd = open_dir_nofollow(DATA_ROOT)
+    try:
+        if owner is not None:
+            os.fchown(data_fd, *owner)
+        for name, mode in (("secrets", None), ("tmp", 0o1777)):
+            try:
+                os.mkdir(name, 0o755, dir_fd=data_fd)
+            except FileExistsError:
+                pass
+            try:
+                fd = os.open(name, O_DIR_NOFOLLOW, dir_fd=data_fd)
+            except OSError as err:
+                if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                    log_line(cfg, f"bootstrap: refusing {DATA_ROOT}/{name}: a symlink or not a directory")
+                    continue
+                raise
+            try:
+                if mode is not None:
+                    os.fchmod(fd, mode)
+                if owner is not None:
+                    os.fchown(fd, *owner)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(data_fd)
     repair_host_data_ownership(cfg)
 
 
@@ -14667,12 +15755,56 @@ def project_host_runtime_is_active() -> bool:
 
 
 def configured_podman_runroot(path: Path) -> str | None:
+    # In the runtime user's home: no symlink followed on the way, only a file.
     try:
-        text = path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
+        dir_fd = open_dir_nofollow(path.parent)
+    except (OSError, UnsafeRuntimePath):
         return None
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
+    except OSError:
+        return None
+    finally:
+        os.close(dir_fd)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as f:
+            text = f.read(1 << 20)
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(fd)
     match = re.search(r'^\s*runroot\s*=\s*"([^"]+)"', text, re.MULTILINE)
     return match.group(1) if match else None
+
+
+ROOT_PODMAN_UNITS_TO_STOP = ("podman-auto-update.timer", "podman.socket")
+ROOT_PODMAN_UNITS_TO_MASK = (
+    "podman-auto-update.timer",
+    "podman-auto-update.service",
+    "podman.service",
+    "podman.socket",
+    "podman-clean-transient.service",
+)
+
+
+def disable_root_podman_units(cfg: BootstrapConfig) -> None:
+    """The distribution's root podman units (auto-update, the API socket,
+    boot-time prune) aren't used by CoCalc: stopped and masked, on every
+    reconcile. Our own podman calls are unaffected."""
+    if shutil.which("systemctl") is None:
+        return
+    run_best_effort(
+        cfg,
+        ["systemctl", "disable", "--now", *ROOT_PODMAN_UNITS_TO_STOP],
+        "stop the distribution's root podman units",
+    )
+    run_best_effort(
+        cfg,
+        ["systemctl", "mask", *ROOT_PODMAN_UNITS_TO_MASK],
+        "mask the distribution's root podman units",
+    )
 
 
 def configure_podman(cfg: BootstrapConfig) -> None:
@@ -14686,26 +15818,30 @@ def configure_podman(cfg: BootstrapConfig) -> None:
     user_config = user_config_root / "containers"
     user_storage_conf = user_config / "storage.conf"
     current_rootless_run = configured_podman_runroot(user_storage_conf)
-    migration_pending = Path(
-        "/mnt/cocalc/data/containers/runroot-migration-pending"
-    )
+    migration_pending = Path(DATA_ROOT) / "containers" / "runroot-migration-pending"
     if (
         current_rootless_run
         and current_rootless_run != str(rootless_run)
         and project_host_runtime_is_active()
     ):
-        migration_pending.parent.mkdir(parents=True, exist_ok=True)
-        migration_pending.write_text(
-            f"current={current_rootless_run}\ndesired={rootless_run}\n",
-            encoding="utf-8",
-        )
+        # under the runtime user's data dir: written through a descriptor
+        marker_dir = open_dir_nofollow(migration_pending.parent, create=True)
+        try:
+            write_file_at(
+                marker_dir,
+                migration_pending.name,
+                f"current={current_rootless_run}\ndesired={rootless_run}\n",
+                0o644,
+                None,
+            )
+        finally:
+            os.close(marker_dir)
         log_line(
             cfg,
             "bootstrap: deferring Podman runroot migration until the next safe host boot",
         )
         return
 
-    Path("/mnt/cocalc/data/containers/root/storage").mkdir(parents=True, exist_ok=True)
     runtime_run_root.mkdir(parents=True, exist_ok=True)
     container_run_root.mkdir(parents=True, exist_ok=True)
     rootless_run_root.mkdir(parents=True, exist_ok=True)
@@ -14731,7 +15867,9 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         '[storage]\n'
         'driver = "overlay"\n'
         f'runroot = "{root_run}"\n'
-        'graphroot = "/mnt/cocalc/data/containers/root/storage"\n',
+        # root's own store stays root's (the distribution default), never
+        # under the runtime user's data dir; CoCalc doesn't run root podman
+        'graphroot = "/var/lib/containers/storage"\n',
         encoding="utf-8",
     )
     Path("/etc/containers/containers.conf").write_text(
@@ -14743,34 +15881,8 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
         rootless_root = Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}")
         rootless_storage = rootless_root / "storage"
-        user_config_root.mkdir(parents=True, exist_ok=True)
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config_root)],
-            "chown user config",
-        )
-        user_config.mkdir(parents=True, exist_ok=True)
-        rootless_storage.mkdir(parents=True, exist_ok=True)
+        ensure_runtime_owned_dirs(cfg, rootless_root, ["storage"])
         rootless_run.mkdir(parents=True, exist_ok=True)
-        run_best_effort(
-            cfg,
-            [
-                "chown",
-                f"{cfg.ssh_user}:{cfg.ssh_user}",
-                str(user_config),
-            ],
-            "chown rootless podman config",
-        )
-        run_best_effort(
-            cfg,
-            [
-                "chown",
-                f"{cfg.ssh_user}:{cfg.ssh_user}",
-                str(rootless_root),
-                str(rootless_storage),
-            ],
-            "chown rootless podman persistent paths",
-        )
         run_best_effort(
             cfg,
             [
@@ -14785,37 +15897,41 @@ def configure_podman(cfg: BootstrapConfig) -> None:
             ["chmod", "0700", str(rootless_run)],
             "restrict rootless Podman runroot",
         )
-        (user_config / "storage.conf").write_text(
-            '[storage]\n'
-            'driver = "overlay"\n'
-            f'runroot = "{rootless_run}"\n'
-            f'graphroot = "{rootless_storage}"\n',
-            encoding="utf-8",
-        )
-        run_best_effort(
-            cfg,
-            [
-                "chown",
-                f"{cfg.ssh_user}:{cfg.ssh_user}",
-                str(user_config / "storage.conf"),
-            ],
-            "chown storage.conf",
-        )
-        (user_config / "containers.conf").write_text(
-            '[engine]\n'
-            'cgroup_manager = "cgroupfs"\n',
-            encoding="utf-8",
-        )
-        run_best_effort(
-            cfg,
-            [
-                "chown",
-                f"{cfg.ssh_user}:{cfg.ssh_user}",
-                str(user_config / "containers.conf"),
-            ],
-            "chown containers.conf",
-        )
-    migration_pending.unlink(missing_ok=True)
+        user_files = {
+            str(user_config / "storage.conf"): (
+                '[storage]\n'
+                'driver = "overlay"\n'
+                f'runroot = "{rootless_run}"\n'
+                f'graphroot = "{rootless_storage}"\n'
+            ),
+            str(user_config / "containers.conf"): (
+                '[engine]\n'
+                'cgroup_manager = "cgroupfs"\n'
+            ),
+        }
+        if os.geteuid() == 0:
+            # In the runtime user's home: written by that user, not by root.
+            run_python_as_user(
+                cfg,
+                cfg.ssh_user,
+                USER_FILES_WRITE,
+                "write_user_files",
+                {"files": user_files},
+                "writing podman user config",
+            )
+        else:
+            _user_files_namespace["write_user_files"](user_files)
+    try:
+        marker_dir = open_dir_nofollow(migration_pending.parent)
+    except (FileNotFoundError, UnsafeRuntimePath):
+        marker_dir = -1
+    if marker_dir >= 0:
+        try:
+            os.unlink(migration_pending.name, dir_fd=marker_dir)
+        except FileNotFoundError:
+            pass
+        finally:
+            os.close(marker_dir)
 
 
 def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
@@ -14847,8 +15963,16 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
     uid = pwd.getpwnam(cfg.ssh_user).pw_uid if cfg.ssh_user else None
     if uid is not None:
         runtime_dir = default_podman_runtime_dir(uid)
-        Path(runtime_dir).mkdir(parents=True, exist_ok=True)
-        run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", runtime_dir], "chown runtime dir")
+        owner = runtime_file_owner(cfg)
+        if owner is not None:
+            try:
+                fd = open_dir_nofollow(runtime_dir, create=True)
+                try:
+                    os.fchown(fd, *owner)
+                finally:
+                    os.close(fd)
+            except UnsafeRuntimePath as err:
+                log_line(cfg, f"bootstrap: refusing podman runtime dir: {err}")
         env_assignments["COCALC_PODMAN_RUNTIME_DIR"] = runtime_dir
     env_assignments["COCALC_BTRFS_ROOT_RESERVE_GB"] = str(compute_root_reserve_gb(cfg))
     env_assignments["COCALC_PROJECT_HOST_BOOTSTRAP_DIR"] = str(
@@ -14951,17 +16075,24 @@ def runtime_podman_env_lines(cfg: BootstrapConfig) -> list[str]:
     return lines
 
 
-def upsert_managed_bashrc_block(path: Path, lines: list[str]) -> None:
+# The managed-block edit, self-contained: configure_runtime_shell_env runs it
+# in its own interpreter as the runtime user (nothing of bootstrap's state or
+# open locks inherited) when bootstrap is root.
+BASHRC_BLOCK_UPSERT = r"""
+def upsert_bashrc_block(path, start, end, comment, lines):
+    import os
+
     existing_lines = []
-    if path.exists():
-        existing_lines = path.read_text(encoding="utf-8").splitlines()
-    out: list[str] = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            existing_lines = f.read().splitlines()
+    out = []
     in_block = False
     for line in existing_lines:
-        if line == PODMAN_BASHRC_BLOCK_START:
+        if line == start:
             in_block = True
             continue
-        if line == PODMAN_BASHRC_BLOCK_END:
+        if line == end:
             in_block = False
             continue
         if not in_block:
@@ -14970,17 +16101,92 @@ def upsert_managed_bashrc_block(path: Path, lines: list[str]) -> None:
         out.pop()
     if out:
         out.append("")
-    out.extend(
+    out.extend([start, comment, *lines, end, ""])
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out))
+"""
+_bashrc_block_namespace: dict[str, Any] = {}
+exec(BASHRC_BLOCK_UPSERT, _bashrc_block_namespace)
+PODMAN_BASHRC_COMMENT = (
+    "# Added by CoCalc project-host bootstrap so rootless podman works in login shells."
+)
+
+
+def bashrc_block_args(path: Path, lines: list[str]) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "start": PODMAN_BASHRC_BLOCK_START,
+        "end": PODMAN_BASHRC_BLOCK_END,
+        "comment": PODMAN_BASHRC_COMMENT,
+        "lines": list(lines),
+    }
+
+
+def upsert_managed_bashrc_block(path: Path, lines: list[str]) -> None:
+    _bashrc_block_namespace["upsert_bashrc_block"](**bashrc_block_args(path, lines))
+
+
+# Writes files (creating their directories) as whoever runs it: used for the
+# runtime user's own config files.
+USER_FILES_WRITE = r"""
+def write_user_files(files):
+    import os
+
+    for path, text in files.items():
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = "%s.tmp-%d" % (path, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+"""
+_user_files_namespace: dict[str, Any] = {}
+exec(USER_FILES_WRITE, _user_files_namespace)
+
+
+def run_python_as_user(
+    cfg: BootstrapConfig, user: str, source: str, call: str, args: dict[str, Any], desc: str
+) -> bool:
+    """Runs call(**args), defined in source, in a separate interpreter with the
+    user's uid and gid (no extra groups, a minimal environment): their home
+    is theirs, so nothing there is written, or chowned, as root."""
+    pw = pwd.getpwnam(user)
+    result = subprocess.run(
         [
-            PODMAN_BASHRC_BLOCK_START,
-            "# Added by CoCalc project-host bootstrap so rootless podman works in login shells.",
-            *lines,
-            PODMAN_BASHRC_BLOCK_END,
-            "",
-        ]
+            sys.executable,
+            "-I",
+            "-c",
+            source + f"\nimport json, sys\n{call}(**json.load(sys.stdin))\n",
+        ],
+        input=json.dumps(args),
+        text=True,
+        capture_output=True,
+        user=pw.pw_uid,
+        group=pw.pw_gid,
+        extra_groups=[],
+        env={"PATH": "/usr/bin:/bin", "HOME": pw.pw_dir, "LANG": "C.UTF-8"},
+        cwd="/",
+        close_fds=True,
+        timeout=60,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(out), encoding="utf-8")
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip().splitlines()[-1:] or [""]
+        log_line(cfg, f"bootstrap: {desc} as {user} failed (ignored): {detail[0][:300]}")
+        return False
+    return True
+
+
+def upsert_bashrc_block_as_user(
+    cfg: BootstrapConfig, user: str, path: Path, lines: list[str]
+) -> None:
+    run_python_as_user(
+        cfg,
+        user,
+        BASHRC_BLOCK_UPSERT,
+        "upsert_bashrc_block",
+        bashrc_block_args(path, lines),
+        f"updating {path}",
+    )
 
 
 def configure_runtime_shell_env(cfg: BootstrapConfig) -> None:
@@ -14990,13 +16196,13 @@ def configure_runtime_shell_env(cfg: BootstrapConfig) -> None:
     if not lines:
         return
     bashrc = Path(runtime_home(cfg)) / ".bashrc"
-    upsert_managed_bashrc_block(bashrc, lines)
-    run_best_effort(
-        cfg,
-        ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bashrc)],
-        "chown runtime bashrc podman env",
-    )
-
+    if os.geteuid() != 0:
+        upsert_managed_bashrc_block(bashrc, lines)
+        return
+    try:
+        upsert_bashrc_block_as_user(cfg, cfg.ssh_user, bashrc, lines)
+    except (KeyError, OSError, subprocess.SubprocessError) as err:
+        log_line(cfg, f"bootstrap: could not update {bashrc} as {cfg.ssh_user} (ignored): {err}")
 
 def upsert_env(path: str, key: str, value: str) -> None:
     env = read_env_assignments(path)
@@ -15056,20 +16262,38 @@ def report_bootstrap_status(
 def setup_master_conat_token(cfg: BootstrapConfig) -> None:
     if not cfg.conat_url or not cfg.bootstrap_token:
         return
-    path = Path("/mnt/cocalc/data/secrets/master-conat-token")
-    if path.exists():
-        log_line(cfg, "bootstrap: master conat token already present")
-        if cfg.ssh_user and cfg.ssh_user != "root":
-            run_best_effort(
-                cfg,
-                ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(path)],
-                "chown master conat token",
-            )
+    path = Path(DATA_ROOT) / "secrets" / "master-conat-token"
+    owner = runtime_file_owner(cfg)
+    # The data disk is the runtime user's: the token is read, written and
+    # handed over through a descriptor of secrets/, never by path.
+    secrets_fd = open_dir_nofollow(path.parent, create=True)
+    try:
         try:
-            os.chmod(path, 0o600)
-        except Exception:
-            pass
-        return
+            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=secrets_fd)
+        except FileNotFoundError:
+            fd = -1
+        except OSError as err:
+            if err.errno != errno.ELOOP:
+                raise
+            fd = -1  # a symlink at the name: replaced below
+        if fd >= 0:
+            try:
+                info = os.fstat(fd)
+                if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                    log_line(cfg, "bootstrap: master conat token already present")
+                    os.fchmod(fd, 0o600)
+                    if owner is not None:
+                        os.fchown(fd, *owner)
+                    return
+            finally:
+                os.close(fd)
+        data = fetch_master_conat_token(cfg)
+        write_file_at(secrets_fd, path.name, data, 0o600, owner)
+    finally:
+        os.close(secrets_fd)
+
+
+def fetch_master_conat_token(cfg: BootstrapConfig) -> bytes:
     log_line(cfg, "bootstrap: fetching master conat token")
     headers = {
         "Authorization": f"Bearer {cfg.bootstrap_token}",
@@ -15085,21 +16309,28 @@ def setup_master_conat_token(cfg: BootstrapConfig) -> None:
     try:
         request = urllib.request.Request(cfg.conat_url, headers=headers)
         with urllib.request.urlopen(request, context=context) as resp:
-            data = resp.read()
-        path.write_bytes(data)
+            return resp.read()
     except Exception as err:
         log_line(cfg, f"bootstrap: master-conat-token fetch failed via urllib ({err}); trying curl")
         if shutil.which("curl") is None:
             raise
+    # to a private temp file of root's, then read back; the bearer token goes
+    # in a header file, not in argv (readable by anyone via /proc)
+    with tempfile.TemporaryDirectory(prefix="cocalc-token-") as tmpdir:
+        dest = Path(tmpdir) / "token"
+        header_file = Path(tmpdir) / "auth-header"
+        fd = os.open(header_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(f"Authorization: Bearer {cfg.bootstrap_token}\n")
         run_cmd(
             cfg,
             [
                 "curl",
                 "-fsSL",
                 "-o",
-                str(path),
+                str(dest),
                 "-H",
-                f"Authorization: Bearer {cfg.bootstrap_token}",
+                f"@{header_file}",
                 "-H",
                 "User-Agent: cocalc-bootstrap/1.0 (master-conat-token)",
                 "-H",
@@ -15108,13 +16339,7 @@ def setup_master_conat_token(cfg: BootstrapConfig) -> None:
             ],
             "fetch master conat token via curl",
         )
-    os.chmod(path, 0o600)
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(path)],
-            "chown master conat token",
-        )
+        return dest.read_bytes()
 
 
 def download_file(
@@ -15277,8 +16502,8 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
 def tools_artifact_lock(root: str):
     """Coordinate tools extraction/activation with the project-host collector.
 
-    The tools directory isn't trusted, so nothing in it is opened, created
-    or changed by path: the lock is opened relative to a
+    The tools root may belong to the runtime user, so nothing in it is
+    opened, created or changed by path: the lock is opened relative to a
     descriptor of the root without following a symlink, and a lock file that
     isn't bootstrap's own (root's) regular file is replaced, never followed.
     """
@@ -15372,76 +16597,176 @@ def _replace_tools_lock(dirfd: int) -> None:
 def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     bundle = resolve_bundle_spec(cfg, bundle)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
-    if cfg.bootstrap_user and cfg.bootstrap_user != "root":
+    if (
+        cfg.bootstrap_user
+        and cfg.bootstrap_user != "root"
+        and not in_root_only_bootstrap_state(cfg.bootstrap_tmp)
+    ):
         run_best_effort(
             cfg,
             ["chown", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", cfg.bootstrap_tmp],
             "chown bootstrap tmp",
         )
-    Path(bundle.root).mkdir(parents=True, exist_ok=True)
+    root = Path(bundle.root)
     desired_dir = Path(bundle.dir)
     current_path = Path(bundle.current)
-    if desired_dir.exists():
-        if current_path.is_symlink():
+    if desired_dir.parent != root:
+        raise RuntimeError(f"bundle dir {desired_dir} must be an entry of {root}")
+    # The root is the runtime user's: everything below happens through a
+    # descriptor opened without following a symlink, never by path.
+    root_fd = open_dir_nofollow(root, create=True)
+    try:
+        if entry_is_dir(root_fd, desired_dir.name):
             try:
-                if current_path.resolve() == desired_dir.resolve():
-                    log_line(
-                        cfg,
-                        f"bootstrap: bundle already current version={bundle.version or desired_dir.name} root={bundle.root}",
-                    )
-                    prune_bundle_versions(cfg, bundle)
-                    return bundle
-            except Exception:
-                pass
-        log_line(
-            cfg,
-            f"bootstrap: reusing existing bundle version={bundle.version or desired_dir.name} root={bundle.root}",
-        )
-    else:
-        try:
-            if bundle.fallback_manifest_url and not bundle.sha256:
-                # A kept version the store no longer serves: there is no
-                # checksum to verify a download against, so don't try one.
-                raise RuntimeError("no checksum for a kept version that is not installed")
-            download_file(cfg, bundle.url, bundle.remote)
-            verify_sha256(cfg, bundle.remote, bundle.sha256)
-        except Exception as err:
-            if not bundle.fallback_manifest_url:
-                raise
+                target = read_link_at(current_path)
+            except OSError:
+                target = None
+            if target in (str(desired_dir), desired_dir.name):
+                log_line(
+                    cfg,
+                    f"bootstrap: bundle already current version={bundle.version or desired_dir.name} root={bundle.root}",
+                )
+                os.close(root_fd)
+                root_fd = -1
+                prune_bundle_versions(cfg, bundle)
+                return bundle
             log_line(
                 cfg,
-                f"bootstrap: desired bundle version={bundle.version} is not installed and could not be downloaded ({err}); falling back to {bundle.fallback_manifest_url}",
+                f"bootstrap: reusing existing bundle version={bundle.version or desired_dir.name} root={bundle.root}",
             )
-            return extract_bundle_unlocked(
-                cfg,
-                replace(
-                    bundle,
-                    manifest_url=bundle.fallback_manifest_url,
-                    fallback_manifest_url=None,
-                ),
-            )
-        if desired_dir.exists():
-            shutil.rmtree(desired_dir)
-        desired_dir.mkdir(parents=True, exist_ok=True)
-        run_cmd(
-            cfg,
-            ["tar", "-xJf", bundle.remote, "--strip-components=1", "-C", bundle.dir],
-            f"extract {bundle.url}",
-        )
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
-            cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", bundle.dir],
-            f"chown {bundle.dir}",
-        )
-    if current_path.is_symlink() or current_path.exists():
-        if current_path.is_dir() and not current_path.is_symlink():
-            shutil.rmtree(current_path)
         else:
-            current_path.unlink()
-    current_path.symlink_to(desired_dir, target_is_directory=True)
+            try:
+                if bundle.fallback_manifest_url and not bundle.sha256:
+                    # A kept version the store no longer serves: there is no
+                    # checksum to verify a download against, so don't try one.
+                    raise RuntimeError("no checksum for a kept version that is not installed")
+                download_file(cfg, bundle.url, bundle.remote)
+                verify_sha256(cfg, bundle.remote, bundle.sha256)
+            except Exception as err:
+                if not bundle.fallback_manifest_url:
+                    raise
+                log_line(
+                    cfg,
+                    f"bootstrap: desired bundle version={bundle.version} is not installed and could not be downloaded ({err}); falling back to {bundle.fallback_manifest_url}",
+                )
+                os.close(root_fd)
+                root_fd = -1
+                return extract_bundle_unlocked(
+                    cfg,
+                    replace(
+                        bundle,
+                        manifest_url=bundle.fallback_manifest_url,
+                        fallback_manifest_url=None,
+                    ),
+                )
+            install_bundle_tree(cfg, bundle, root_fd, desired_dir.name)
+        # current may live elsewhere (project-host: next to bundles/)
+        if current_path.parent == root:
+            point_link_at(root_fd, current_path.name, str(desired_dir))
+        else:
+            link_dir_fd = open_dir_nofollow(current_path.parent, create=True)
+            try:
+                point_link_at(link_dir_fd, current_path.name, str(desired_dir))
+            finally:
+                os.close(link_dir_fd)
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
     prune_bundle_versions(cfg, bundle)
     return bundle
+
+
+def read_link_at(path: Path) -> str:
+    """The target of the symlink path, read through its parent's descriptor."""
+    dir_fd = open_dir_nofollow(path.parent)
+    try:
+        return os.readlink(path.name, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def entry_is_dir(dirfd: int, name: str) -> bool:
+    try:
+        return stat.S_ISDIR(os.stat(name, dir_fd=dirfd, follow_symlinks=False).st_mode)
+    except FileNotFoundError:
+        return False
+
+
+def install_bundle_tree(
+    cfg: BootstrapConfig, bundle: BundleSpec, root_fd: int, version: str
+) -> None:
+    """Extracts the verified archive into a fresh root-only dir inside the
+    root (reached through its descriptor, so a rename of the name can't
+    redirect tar), strips setuid/setgid bits, hands the tree to the runtime
+    user, then renames it into place as version."""
+    staging = f".staging-{version}-{os.getpid()}-{os.urandom(4).hex()}"
+    os.mkdir(staging, 0o700, dir_fd=root_fd)
+    staging_fd = os.open(staging, O_DIR_NOFOLLOW, dir_fd=root_fd)
+    try:
+        try:
+            run_cmd(
+                cfg,
+                [
+                    "tar",
+                    "-xJf",
+                    bundle.remote,
+                    "--strip-components=1",
+                    "--no-same-owner",
+                    "-C",
+                    f"/proc/self/fd/{staging_fd}",
+                ],
+                f"extract {bundle.url}",
+                pass_fds=(staging_fd,),
+            )
+            owner = runtime_file_owner(cfg)
+            for _dir, dirs, files, dfd in os.fwalk(dir_fd=staging_fd, follow_symlinks=False):
+                for name in [*dirs, *files]:
+                    info = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+                    if (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)) and info.st_mode & (
+                        stat.S_ISUID | stat.S_ISGID
+                    ):
+                        os.chmod(name, stat.S_IMODE(info.st_mode) & ~(stat.S_ISUID | stat.S_ISGID), dir_fd=dfd)
+                    if owner is not None:
+                        os.chown(name, *owner, dir_fd=dfd, follow_symlinks=False)
+            # whatever is at the version's name is replaced, never followed
+            if entry_is_dir(root_fd, version):
+                shutil.rmtree(version, dir_fd=root_fd)
+            else:
+                try:
+                    os.unlink(version, dir_fd=root_fd)
+                except FileNotFoundError:
+                    pass
+            os.rename(staging, version, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+        except BaseException:
+            shutil.rmtree(staging, dir_fd=root_fd, ignore_errors=True)
+            raise
+        # through the descriptor: the name may have changed since the rename
+        os.fchmod(staging_fd, 0o755)
+        if owner is not None:
+            os.fchown(staging_fd, *owner)
+    finally:
+        os.close(staging_fd)
+
+
+def point_link_at(dirfd: int, name: str, target: str) -> None:
+    """Makes name in dirfd a symlink to target: a new link renamed over the
+    name, so whatever is there is replaced (a directory is removed first)."""
+    tmp = f".{name}.{os.getpid()}.{os.urandom(4).hex()}"
+    os.symlink(target, tmp, dir_fd=dirfd)
+    try:
+        try:
+            os.rename(tmp, name, src_dir_fd=dirfd, dst_dir_fd=dirfd)
+        except OSError as err:
+            if err.errno not in (errno.EISDIR, errno.ENOTEMPTY, errno.EEXIST) or not entry_is_dir(dirfd, name):
+                raise
+            shutil.rmtree(name, dir_fd=dirfd)
+            os.rename(tmp, name, src_dir_fd=dirfd, dst_dir_fd=dirfd)
+    except BaseException:
+        try:
+            os.unlink(tmp, dir_fd=dirfd)
+        except OSError:
+            pass
+        raise
 
 
 def install_privileged_tool_binaries_from_archive(
@@ -15844,6 +17169,12 @@ def install_node_runtime_libs(
     log_line(cfg, f"bootstrap: published {source} as {target}")
 
 
+# `setcap cap_net_bind_service=+ep` as the kernel stores it (struct
+# vfs_cap_data, revision 2): the effective flag, then permitted and inheritable
+# for capabilities 0-31 and 32-63. CAP_NET_BIND_SERVICE is 10.
+NODE_BIND_SERVICE_CAPABILITY = struct.pack("<5I", 0x02000001, 1 << 10, 0, 0, 0)
+
+
 def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
     direct_port = next(
         (
@@ -15855,24 +17186,113 @@ def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
     )
     if not direct_port:
         return
-    if shutil.which("setcap") is None:
-        raise RuntimeError(
-            "setcap is required for the unprivileged project-host HTTPS listener"
-        )
-    node_path = (NODE_ROOT / "current" / "bin" / "node").resolve()
-    if not node_path.is_file() or not node_path.is_relative_to(NODE_ROOT.resolve()):
+    # Everything this step depends on (the node binary and its tree) is
+    # checked first, so any failure skips only the capability: the HTTPS
+    # listener then can't bind, and the rest of the reconcile still runs.
+    try:
+        set_node_bind_service_capability(cfg)
+    except Exception as err:
+        log_line(cfg, f"bootstrap: refusing to set the node bind capability: {err}")
+
+
+def set_node_bind_service_capability(cfg: BootstrapConfig) -> None:
+    # The capability must be on the binary the project-host wrapper runs: the
+    # root-owned node under NODE_ROOT (#1526) when it is executable, else the
+    # runtime user's nvm node (the wrapper's fallback).
+    if os.access(NODE_ROOT / "current" / "bin" / "node", os.X_OK):
+        set_root_node_bind_service_capability(cfg)
+    else:
+        set_nvm_node_bind_service_capability(cfg)
+
+
+def set_root_node_bind_service_capability(cfg: BootstrapConfig) -> None:
+    # NODE_ROOT is root's, so resolving its "current" link is safe; bin/ and the
+    # binary are then opened without following a symlink and must be root's own regular,
+    # not group/other-writable file, and the capability is set on that
+    # descriptor (setcap takes only a path).
+    root = NODE_ROOT.resolve()
+    release = (NODE_ROOT / "current").resolve()  # only the "current" link is followed
+    if not release.is_relative_to(root) or release == root:
         raise RuntimeError("unable to resolve the project-host node binary")
-    run_cmd(
+    node_path = release / "bin" / "node"
+    dirfd = open_dir_nofollow(str(release / "bin"))
+    try:
+        try:
+            fd = os.open(
+                "node",
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=dirfd,
+            )
+        except OSError as err:
+            if err.errno == errno.ELOOP:
+                raise UnsafeRuntimePath(f"{node_path} is a symlink") from err
+            raise
+    finally:
+        os.close(dirfd)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise UnsafeRuntimePath(f"{node_path} is not a regular file")
+        if st.st_uid != 0:
+            raise UnsafeRuntimePath(f"{node_path} is owned by uid {st.st_uid}")
+        if st.st_mode & 0o022:
+            raise UnsafeRuntimePath(f"{node_path} is group/other-writable")
+        log_line(cfg, f"bootstrap: allow project-host node to bind HTTPS port 443: {node_path}")
+        os.setxattr(fd, "security.capability", NODE_BIND_SERVICE_CAPABILITY)
+    finally:
+        os.close(fd)
+
+
+def set_nvm_node_bind_service_capability(cfg: BootstrapConfig) -> None:
+    # Fallback when the root-owned node isn't installed (the wrapper falls back to nvm too).
+    nvm_dir = Path(runtime_home(cfg)) / ".nvm"
+    result = run_cmd(
         cfg,
-        ["setcap", "cap_net_bind_service=+ep", str(node_path)],
-        "allow project-host node to bind HTTPS port 443",
+        [
+            "bash",
+            "-lc",
+            f'export NVM_DIR="{nvm_dir}"; . "$NVM_DIR/nvm.sh"; nvm which default',
+        ],
+        "resolve project-host node binary",
+        timeout=120,
+        as_user=cfg.ssh_user,
     )
+    output_lines = [line.strip() for line in (result.stdout or "").splitlines()]
+    node_path = os.path.normpath(output_lines[-1]) if output_lines else ""
+    versions_root = str(nvm_dir / "versions" / "node")
+    if not node_path.startswith(versions_root + "/"):
+        raise RuntimeError("unable to resolve the project-host nvm node binary")
+    # The runtime user owns everything under its home, so the binary is opened
+    # without following a symlink anywhere on its path, and the capability is
+    # set on that descriptor (setcap takes only a path).
+    dirfd = open_dir_nofollow(os.path.dirname(node_path))
+    try:
+        try:
+            fd = os.open(
+                os.path.basename(node_path),
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=dirfd,
+            )
+        except OSError as err:
+            if err.errno == errno.ELOOP:
+                raise UnsafeRuntimePath(f"{node_path} is a symlink") from err
+            raise
+    finally:
+        os.close(dirfd)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise UnsafeRuntimePath(f"{node_path} is not a regular file")
+        if st.st_uid != pwd.getpwnam(cfg.ssh_user).pw_uid:
+            raise UnsafeRuntimePath(f"{node_path} is owned by uid {st.st_uid}")
+        log_line(cfg, f"bootstrap: allow project-host node to bind HTTPS port 443: {node_path}")
+        os.setxattr(fd, "security.capability", NODE_BIND_SERVICE_CAPABILITY)
+    finally:
+        os.close(fd)
 
 
 def write_wrapper(cfg: BootstrapConfig) -> None:
     host_dir = project_host_runtime_root(cfg)
-    bin_dir = host_dir / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
     bundle_root = cfg.project_host_bundle.current
     if not bundle_root:
         bundle_root = str(host_dir / "bundles" / "current")
@@ -15913,21 +17333,16 @@ fi
 export UV_THREADPOOL_SIZE="${{UV_THREADPOOL_SIZE:-64}}"
 exec "$NODE_BIN" "{bundle_entry}" "$@"
 """
-    wrapper_path = bin_dir / "project-host"
-    wrapper_path.write_text(wrapper, encoding="utf-8")
-    wrapper_path.chmod(0o755)
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir), str(wrapper_path)],
-            "chown project-host wrapper",
-        )
+    try:
+        with runtime_bin_dir(cfg) as bin_fd:
+            write_file_at(bin_fd, "project-host", wrapper, 0o755, runtime_file_owner(cfg))
+    except UnsafeRuntimePath as err:
+        # Skip only this write; the running services are left alone.
+        log_line(cfg, f"bootstrap: refusing to write the project-host wrapper: {err}")
 
 
 def write_helpers(cfg: BootstrapConfig) -> None:
     runtime_root = project_host_runtime_root(cfg)
-    bin_dir = runtime_root / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
     rootctl_path = project_host_rootctl_path(cfg)
     core_handler_path = rootctl_path.with_name("cocalc-project-host-core-handler")
     ctl = """#!/usr/bin/env bash
@@ -16102,14 +17517,19 @@ timestamp="${5:-}"
 executable="${6:-project-host}"
 runtime_user="__RUNTIME_USER__"
 pid_file="/mnt/cocalc/data/project-host-app.pid"
-core_dir="/mnt/cocalc/data/forensics/core-dumps"
+# root's own dir: the data disk belongs to the runtime user, whose process
+# crash runs this handler as root
+core_dir="/var/lib/cocalc-project-host-core-dumps"
 max_bytes=$((1024 * 1024 * 1024))
 
 if ! [[ "${pid}" =~ ^[0-9]+$ ]] || ! [[ "${uid}" =~ ^[0-9]+$ ]]; then
   exit 0
 fi
 expected_uid="$(id -u "${runtime_user}" 2>/dev/null || true)"
-expected_pid="$(cat "${pid_file}" 2>/dev/null || true)"
+expected_pid=""
+if [ -f "${pid_file}" ] && [ ! -L "${pid_file}" ]; then
+  expected_pid="$(head -c 32 -- "${pid_file}" 2>/dev/null | tr -d '[:space:]' || true)"
+fi
 if [ -z "${expected_uid}" ] || [ "${uid}" != "${expected_uid}" ] || [ "${pid}" != "${expected_pid}" ]; then
   exit 0
 fi
@@ -16119,6 +17539,15 @@ if ! [[ "${supervisor_pid}" =~ ^[0-9]+$ ]] || [ "${parent_pid}" != "${supervisor
   exit 0
 fi
 
+if [ -L "${core_dir}" ] || [ "$(stat -c %u /var/lib)" != "0" ]; then
+  exit 0
+fi
+# on the root filesystem now: never let crashes fill it
+reserve_bytes=$((5 * 1024 * 1024 * 1024))
+avail_bytes="$(df --output=avail -B1 /var/lib 2>/dev/null | tail -n1 | tr -d '[:space:]' || true)"
+if ! [[ "${avail_bytes}" =~ ^[0-9]+$ ]] || [ "${avail_bytes}" -lt $((max_bytes + reserve_bytes)) ]; then
+  exit 0
+fi
 install -d -o root -g root -m 0700 "${core_dir}"
 exec 9>"${core_dir}/capture.lock"
 flock -x 9
@@ -16171,7 +17600,9 @@ PID_FILE="/mnt/cocalc/data/daemon.pid"
 HOST_AGENT_PID_FILE="/mnt/cocalc/data/host-agent.pid"
 CONAT_ROUTER_PID_FILE="/mnt/cocalc/data/conat-router.pid"
 CONAT_PERSIST_PID_FILE="/mnt/cocalc/data/conat-persist.pid"
-DAEMON_CONTROL_LOCK="/mnt/cocalc/data/tmp/project-host-daemon-control.lock"
+# root's alone, in a root-owned dir: a lock file in the runtime user's tmp
+# could be swapped for a symlink, and opening it by path would follow it.
+DAEMON_CONTROL_LOCK="/run/cocalc/project-host-daemon-control.lock"
 DAEMON_CONTROL_LOCK_WAIT_SECONDS="${COCALC_PROJECT_HOST_CONTROL_LOCK_WAIT_SECONDS:-30}"
 BOOTSTRAP_USER="__BOOTSTRAP_USER__"
 BOOTSTRAP_LIFECYCLE_LOCK="__BOOTSTRAP_LIFECYCLE_LOCK__"
@@ -16217,8 +17648,22 @@ run_daemon() {
 }
 
 acquire_daemon_control_lock() {
-  install -d -o "${RUNTIME_USER}" -g "${RUNTIME_USER}" -m 0700 "$(dirname "${DAEMON_CONTROL_LOCK}")"
-  exec 8>"${DAEMON_CONTROL_LOCK}"
+  local lock_dir old_umask
+  ensure_owned_runtime_dir /mnt/cocalc/data/tmp
+  lock_dir="$(dirname "${DAEMON_CONTROL_LOCK}")"
+  # /run is a tmpfs: (re)create the dir each time, and use it only if it is
+  # exactly root's 0711 directory.
+  install -d -o root -g root -m 0711 "${lock_dir}"
+  if [ -L "${lock_dir}" ] || [ "$(stat -c '%u:%g %a %F' "${lock_dir}")" != "0:0 711 directory" ]; then
+    echo "refusing daemon control lock dir ${lock_dir}: not root's 0711 directory" >&2
+    exit 1
+  fi
+  # root-only, so the runtime user can't open it and hold the lock
+  old_umask="$(umask)"
+  umask 077
+  exec 8>>"${DAEMON_CONTROL_LOCK}"
+  umask "${old_umask}"
+  chmod 0600 "${DAEMON_CONTROL_LOCK}"
   if ! flock -x -w "${DAEMON_CONTROL_LOCK_WAIT_SECONDS}" 8; then
     echo "timed out waiting for project-host daemon control lock" >&2
     exit 1
@@ -16432,13 +17877,141 @@ run_podman_as_runtime() {
     "${podman_prefix[@]}" podman "$@"
 }
 
+run_as_runtime_user() {
+  (cd / && sudo -n -u "${RUNTIME_USER}" -H "$@")
+}
+
+remove_runtime_path() {
+  # Parents such as /mnt/cocalc/data are the runtime user's, so root never
+  # walks into a directory here: anything inside could have been moved in
+  # from elsewhere. The runtime user empties it (then, for files of its
+  # subordinate ids, through `podman unshare`); root only removes the top
+  # entry (a file, a link, or the emptied directory) through its parent's
+  # descriptor. A symlinked parent is refused (nothing removed). Nothing
+  # falls back to deleting as root.
+  local path="$1" cgroup_manager
+  remove_runtime_path_entry "${path}" && return 0
+  run_as_runtime_user rm -rf --one-file-system -- "${path}" >/dev/null 2>&1 || true
+  remove_runtime_path_entry "${path}" && return 0
+  cgroup_manager="$(read_env_value CONTAINERS_CGROUP_MANAGER)"
+  run_podman_as_runtime 60s "$(podman_runtime_dir)" "${cgroup_manager:-cgroupfs}" \\
+    unshare rm -rf --one-file-system -- "${path}" >/dev/null 2>&1 || true
+  remove_runtime_path_entry "${path}" && return 0
+  echo "could not empty ${path} as runtime uid:gid $(runtime_uid):$(runtime_gid) (left: $(remove_runtime_path_entry "${path}" residue)); refusing root fallback (#94)" >&2
+  return 1
+}
+
+remove_runtime_path_entry() {
+  # Exit 0 once the path is gone (or refused), 3 while it is a directory
+  # with entries: never recursive. With "residue", it only prints at most
+  # 3 top-level entries left, as name (uid:gid), for the operator: one lazy
+  # scan, lstat only, nothing opened below the path.
+  python3 -I - "$1" "${2:-remove}" <<'PY'
+import errno
+import os
+import stat
+import sys
+
+path, mode = sys.argv[1], sys.argv[2]
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+parts = [part for part in path.split("/") if part]
+if not parts:
+    sys.exit("refusing to remove /")
+
+
+def residue(top_fd, limit=3):
+    found = []
+    try:
+        with os.scandir(top_fd) as entries:
+            for entry in entries:
+                if len(found) >= limit:
+                    break
+                try:
+                    info = os.stat(entry.name, dir_fd=top_fd, follow_symlinks=False)
+                    owner = f"{info.st_uid}:{info.st_gid}"
+                except OSError:
+                    owner = "?"
+                found.append(f"{ascii(entry.name[:64])} ({owner})")
+    except OSError:
+        pass
+    return ", ".join(found) or "unknown"
+
+
+fd = os.open("/", flags)
+try:
+    for part in parts[:-1]:
+        try:
+            next_fd = os.open(part, flags, dir_fd=fd)
+        except FileNotFoundError:
+            sys.exit(0)
+        except OSError as err:
+            if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                print(f"refusing to remove {path}: {part} is a symlink or not a directory", file=sys.stderr)
+                sys.exit(0)
+            raise
+        os.close(fd)
+        fd = next_fd
+    name = parts[-1]
+    if mode == "residue":
+        try:
+            top_fd = os.open(name, flags, dir_fd=fd)
+        except OSError:
+            print("unknown")
+            sys.exit(0)
+        try:
+            print(residue(top_fd))
+        finally:
+            os.close(top_fd)
+        sys.exit(0)
+    try:
+        info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode):
+            os.unlink(name, dir_fd=fd)
+        else:
+            os.rmdir(name, dir_fd=fd)
+    except FileNotFoundError:
+        pass
+    except OSError as err:
+        if err.errno in (errno.ENOTEMPTY, errno.EEXIST, errno.EBUSY):
+            sys.exit(3)
+        raise
+finally:
+    os.close(fd)
+PY
+}
+
 ensure_owned_runtime_dir() {
-  local path="$1" uid gid
-  uid="$(runtime_uid)"
-  gid="$(runtime_gid)"
-  install -d -o "${uid}" -g "${gid}" -m 0700 "${path}"
-  chown "${uid}:${gid}" "${path}"
-  chmod 0700 "${path}"
+  # Through descriptors, without following a symlink anywhere: a parent may
+  # be the runtime user's own (e.g. /run/user/<uid>), so a chown or chmod by
+  # path could be sent to any file.
+  python3 -I - "$1" "$(runtime_uid)" "$(runtime_gid)" <<'PY'
+import errno
+import os
+import sys
+
+path, uid, gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+parts = [part for part in path.split("/") if part]
+fd = os.open("/", flags)
+try:
+    for index, part in enumerate(parts):
+        try:
+            try:
+                next_fd = os.open(part, flags, dir_fd=fd)
+            except FileNotFoundError:
+                os.mkdir(part, 0o700 if index == len(parts) - 1 else 0o755, dir_fd=fd)
+                next_fd = os.open(part, flags, dir_fd=fd)
+        except OSError as err:
+            if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                sys.exit(f"refusing runtime dir {path}: {part} is a symlink or not a directory")
+            raise
+        os.close(fd)
+        fd = next_fd
+    os.fchown(fd, uid, gid)
+    os.fchmod(fd, 0o700)
+finally:
+    os.close(fd)
+PY
 }
 
 ensure_podman_runroot() {
@@ -16509,7 +18082,7 @@ remove_safe_runtime_dir() {
   legacy_dir="/mnt/cocalc/data/tmp/cocalc-podman-runtime-${uid}"
   case "${path}" in
     "${run_dir}/cocalc-podman-runtime"|${legacy_dir})
-      rm -rf --one-file-system "${path}"
+      remove_runtime_path "${path}"
       ;;
     *)
       echo "refusing to remove unsafe Podman runtime dir: ${path}" >&2
@@ -16527,11 +18100,11 @@ cleanup_podman_runtime_state() {
   remove_safe_runtime_dir "${runtime_dir}"
   runroot="/run/cocalc/containers/rootless/${RUNTIME_USER}"
   if [ -e "${runroot}" ]; then
-    rm -rf --one-file-system "${runroot}"
+    remove_runtime_path "${runroot}"
   fi
   legacy_runroot="/mnt/cocalc/data/containers/rootless/${RUNTIME_USER}/run"
   if [ -e "${legacy_runroot}" ]; then
-    rm -rf --one-file-system "${legacy_runroot}"
+    remove_runtime_path "${legacy_runroot}"
   fi
   repair_runtime_environment
 }
@@ -16668,7 +18241,11 @@ retry_failed_podman_boot_preparation() {
     echo "bootstrap is running; not retrying Podman boot preparation now" >&2
     return 0
   fi
-  install -d -m 0700 "$(dirname "${stamp}")"
+  # The stamp's dir is /run/cocalc itself, which the runtime user must be able
+  # to traverse to its rootless runroot and the project views (0711, as
+  # ensure_podman_runroot makes it): never tighten it here (install -d sets the
+  # mode of an existing dir too).
+  install -d -o root -g root -m 0711 "$(dirname "${stamp}")"
   echo "${now}" > "${stamp}"
   echo "Podman boot preparation failed earlier; retrying it" >&2
   set +e
@@ -16720,7 +18297,8 @@ prepare_podman_boot() {
   legacy_runroot="/mnt/cocalc/data/containers/rootless/${RUNTIME_USER}/run"
   graphroot="/mnt/cocalc/data/containers/rootless/${RUNTIME_USER}/storage"
   db_path="${graphroot}/db.sql"
-  current_runroot="$(sed -n 's/^[[:space:]]*runroot[[:space:]]*=[[:space:]]*"\\([^"]*\\)".*/\\1/p' "${storage_conf}" 2>/dev/null | head -n1)"
+  # Read as the runtime user: the file is in their home.
+  current_runroot="$(cd /tmp && sudo -n -u "${RUNTIME_USER}" -H sed -n 's/^[[:space:]]*runroot[[:space:]]*=[[:space:]]*"\\([^"]*\\)".*/\\1/p' "${storage_conf}" 2>/dev/null | head -n1)"
   case "${current_runroot}" in
     ""|"${desired_runroot}"|"${legacy_runroot}")
       ;;
@@ -16732,22 +18310,32 @@ prepare_podman_boot() {
 
   runtime_dir="$(podman_runtime_dir)"
   remove_safe_runtime_dir "${runtime_dir}"
-  rm -rf --one-file-system "${desired_runroot}"
-  rm -rf --one-file-system "${legacy_runroot}"
+  remove_runtime_path "${desired_runroot}"
+  remove_runtime_path "${legacy_runroot}"
   repair_runtime_environment
 
-  install -d -o "${RUNTIME_USER}" -g "${RUNTIME_USER}" -m 0700 "${config_dir}"
-  tmp="$(mktemp "${config_dir}/storage.conf.tmp.XXXXXX")"
-  cat > "${tmp}" <<EOF
+  # The runtime user's home is theirs: storage.conf is written by that user,
+  # so nothing there is created, written or chowned as root.
+  (
+    cd /tmp
+    sudo -n -u "${RUNTIME_USER}" -H /bin/sh -s -- \
+      "${config_dir}" "${desired_runroot}" "${graphroot}" <<'SH'
+set -eu
+umask 077
+mkdir -p "$1"
+chmod 0700 "$1"
+tmp="$(mktemp "$1/storage.conf.tmp.XXXXXX")"
+cat > "$tmp" <<EOF
 [storage]
 driver = "overlay"
-runroot = "${desired_runroot}"
-graphroot = "${graphroot}"
+runroot = "$2"
+graphroot = "$3"
 EOF
-  chown "${RUNTIME_USER}:${RUNTIME_USER}" "${tmp}"
-  chmod 0600 "${tmp}"
-  mv -f "${tmp}" "${storage_conf}"
-  rm -f /mnt/cocalc/data/containers/runroot-migration-pending
+chmod 0600 "$tmp"
+mv -f "$tmp" "$1/storage.conf"
+SH
+  )
+  remove_runtime_path /mnt/cocalc/data/containers/runroot-migration-pending
 
   migrate_podman_database_runroot \
     "${db_path}" "${desired_runroot}" "${legacy_runroot}"
@@ -17061,9 +18649,15 @@ attach_external_pid_tree_to_project_pool() {
 }
 
 read_pid_file() {
-  local file="$1"
-  if [ -r "${file}" ]; then
-    tr -d '[:space:]' < "${file}" 2>/dev/null || true
+  # The pid files are in the runtime user's data dir: only a regular file,
+  # at most a few bytes, and only digits count.
+  local file="$1" value
+  if [ -f "${file}" ] && [ ! -L "${file}" ]; then
+    value="$(head -c 32 -- "${file}" 2>/dev/null | tr -d '[:space:]' || true)"
+    case "${value}" in
+      ""|*[!0-9]*) ;;
+      *) printf '%s' "${value}" ;;
+    esac
   fi
 }
 
@@ -17473,77 +19067,56 @@ esac
     rootctl = rootctl.replace(
         "__HOST_INTRUSION_SNAPSHOT_HELPER__", HOST_INTRUSION_SNAPSHOT_HELPER
     )
-    (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
-    (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
-    (bin_dir / "logs").write_text(logs_script, encoding="utf-8")
-    (bin_dir / "acp-status").write_text(acp_status_script, encoding="utf-8")
-    (bin_dir / "acp-logs").write_text(acp_logs_script, encoding="utf-8")
-    (bin_dir / "logs-cf").write_text(logs_cf_script, encoding="utf-8")
-    (bin_dir / "ctl-cf").write_text(ctl_cf_script, encoding="utf-8")
+    runtime_scripts = {
+        "ctl": ctl,
+        "start-project-host": start_ph,
+        "logs": logs_script,
+        "acp-status": acp_status_script,
+        "acp-logs": acp_logs_script,
+        "logs-cf": logs_cf_script,
+        "ctl-cf": ctl_cf_script,
+    }
     rootctl_path.parent.mkdir(parents=True, exist_ok=True)
     rootctl_path.write_text(rootctl, encoding="utf-8")
     core_handler_path.parent.mkdir(parents=True, exist_ok=True)
     core_handler_path.write_text(core_handler, encoding="utf-8")
-    for name in [
-        "ctl",
-        "start-project-host",
-        "logs",
-        "acp-status",
-        "acp-logs",
-        "logs-cf",
-        "ctl-cf",
-    ]:
-        (bin_dir / name).chmod(0o755)
     rootctl_path.chmod(0o755)
     core_handler_path.chmod(0o755)
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        helper_paths = [
-            bin_dir / "ctl",
-            bin_dir / "start-project-host",
-            bin_dir / "logs",
-            bin_dir / "acp-status",
-            bin_dir / "acp-logs",
-            bin_dir / "logs-cf",
-            bin_dir / "ctl-cf",
-        ]
-        chown_paths_best_effort(
-            cfg,
-            cfg.ssh_user,
-            [bin_dir, *helper_paths],
-            "chown runtime helper scripts",
-        )
 
+    # The fetch-*.sh tools run bootstrap.py, which is root's: they are admin
+    # wrappers only (below), never runtime-owned scripts that root might run.
     bootstrap_dir = Path(cfg.bootstrap_dir)
     bootstrap_py = bootstrap_dir / "bootstrap.py"
-    fetch_project_bundle = f"""#!/usr/bin/env bash
+    fetch_scripts = {
+        f"fetch-{label}.sh": f"""#!/usr/bin/env bash
 set -euo pipefail
-exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only project_bundle
+# bootstrap.py and its state are root's: run as root
+if [ "$(id -u)" -ne 0 ]; then
+  exec sudo -n "$0" "$@"
+fi
+cd /
+exec python3 -I "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only {only}
 """
-    fetch_project_host = f"""#!/usr/bin/env bash
-set -euo pipefail
-exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only project_host_bundle
-"""
-    fetch_tools = f"""#!/usr/bin/env bash
-set -euo pipefail
-exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bundle
-"""
-    (bin_dir / "fetch-project-bundle.sh").write_text(fetch_project_bundle, encoding="utf-8")
-    (bin_dir / "fetch-project-host.sh").write_text(fetch_project_host, encoding="utf-8")
-    (bin_dir / "fetch-tools.sh").write_text(fetch_tools, encoding="utf-8")
-    for name in ["fetch-project-bundle.sh", "fetch-project-host.sh", "fetch-tools.sh"]:
-        (bin_dir / name).chmod(0o755)
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        fetch_paths = [
-            bin_dir / "fetch-project-bundle.sh",
-            bin_dir / "fetch-project-host.sh",
-            bin_dir / "fetch-tools.sh",
-        ]
-        chown_paths_best_effort(
-            cfg,
-            cfg.ssh_user,
-            fetch_paths,
-            "chown runtime fetch helpers",
+        for label, only in (
+            ("project-bundle", "project_bundle"),
+            ("project-host", "project_host_bundle"),
+            ("tools", "tools_bundle"),
         )
+    }
+    owner = runtime_file_owner(cfg)
+    try:
+        with runtime_bin_dir(cfg) as bin_fd:
+            for name, script in runtime_scripts.items():
+                write_file_at(bin_fd, name, script, 0o755, owner)
+            for name in fetch_scripts:
+                # copies from older bootstraps (runtime-owned)
+                try:
+                    os.unlink(name, dir_fd=bin_fd)
+                except FileNotFoundError:
+                    pass
+    except UnsafeRuntimePath as err:
+        # Skip only these writes; the running services are left alone.
+        log_line(cfg, f"bootstrap: refusing to write runtime helper scripts: {err}")
 
     admin_root = Path(cfg.bootstrap_root)
     if admin_root != runtime_root:
@@ -17557,9 +19130,6 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
             "acp-logs",
             "logs-cf",
             "ctl-cf",
-            "fetch-project-bundle.sh",
-            "fetch-project-host.sh",
-            "fetch-tools.sh",
         ]:
             script = (
                 "#!/usr/bin/env bash\n"
@@ -17572,6 +19142,10 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
                 "cd /\n"
                 'exec sudo -n -u "$RUNTIME_USER" -H "$RUNTIME_SCRIPT" "$@"\n'
             )
+            target = admin_bin / name
+            target.write_text(script, encoding="utf-8")
+            target.chmod(0o755)
+        for name, script in fetch_scripts.items():
             target = admin_bin / name
             target.write_text(script, encoding="utf-8")
             target.chmod(0o755)
@@ -17891,6 +19465,9 @@ OOMScoreAdjust={HOST_CRITICAL_OOM_SCORE_ADJ}
         )
 
 
+CLOUDFLARED_NO_MPTCP_DROPIN = "[Service]\nEnvironment=GODEBUG=multipathtcp=0\n"
+
+
 def configure_cloudflared(cfg: BootstrapConfig) -> None:
     if not cfg.cloudflared.enabled:
         return
@@ -18057,8 +19634,16 @@ Type=simple
         recovery_dropin_dir / "cocalc-recovery.conf",
         "[Service]\nTimeoutStopSec=30\n",
     )
+    # cloudflared is a Go program, and Go listeners use MPTCP by default; its
+    # metrics listener is loopback-only, but MPTCP is surface it doesn't
+    # need. A drop-in of its own, and not a service change: it takes effect at
+    # the next restart instead of forcing one.
+    no_mptcp_dropin_changed = write_text_if_changed(
+        recovery_dropin_dir / "cocalc-no-mptcp.conf",
+        CLOUDFLARED_NO_MPTCP_DROPIN,
+    )
     service_changed = unit_changed or service_changed
-    if unit_changed or recovery_dropin_changed:
+    if unit_changed or recovery_dropin_changed or no_mptcp_dropin_changed:
         run_cmd(cfg, ["systemctl", "daemon-reload"], "daemon-reload", timeout=30)
     run_cmd(cfg, ["systemctl", "enable", "cocalc-cloudflared"], "enable cloudflared")
     active = run_cmd(
@@ -18208,9 +19793,27 @@ def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
     def digest_bytes(data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()
 
-    def add_file(key: str, path: Path | str) -> None:
+    def add_file(key: str, path: Path | str, dir_fd: int | None = None) -> None:
+        # Some of these are in runtime-owned dirs: never follow a symlink
+        # there, read only regular files, and at most a bounded size.
         try:
-            parts[key] = digest_bytes(Path(path).read_bytes())
+            fd = os.open(
+                path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd
+            )
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    parts[key] = "not-a-regular-file"
+                    return
+                info = os.fstat(fd)
+                with os.fdopen(fd, "rb", closefd=False) as f:
+                    data = f.read(FINGERPRINT_MAX_FILE_BYTES + 1)
+                if len(data) > FINGERPRINT_MAX_FILE_BYTES:
+                    # stable, so an unchanged big file isn't a change
+                    parts[key] = f"too-large:{info.st_size}:{info.st_mtime_ns}"
+                    return
+                parts[key] = digest_bytes(data)
+            finally:
+                os.close(fd)
         except FileNotFoundError:
             parts[key] = "missing"
         except OSError as exc:
@@ -18240,13 +19843,32 @@ def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
         parts["node_binary"] = f"{info.st_dev}:{info.st_ino}:{info.st_mtime_ns}:{info.st_size}"
     except OSError:
         parts["node_binary"] = "missing"
-    bin_dir = project_host_runtime_root(cfg) / "bin"
+    # R/bin through the same no-follow descriptors as the writes
+    bin_fd = -1
     try:
-        for entry in sorted(bin_dir.iterdir()):
-            if entry.is_file():
-                add_file(f"bin:{entry.name}", entry)
+        root_fd = open_dir_nofollow(project_host_runtime_root(cfg))
+        try:
+            bin_fd = os.open("bin", O_DIR_NOFOLLOW, dir_fd=root_fd)
+        except OSError as err:
+            if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise UnsafeRuntimePath("bin is a symlink or not a directory") from err
+            raise
+        finally:
+            os.close(root_fd)
+        for name in sorted(os.listdir(bin_fd)):
+            info = os.stat(name, dir_fd=bin_fd, follow_symlinks=False)
+            if stat.S_ISREG(info.st_mode):
+                add_file(f"bin:{name}", name, dir_fd=bin_fd)
     except FileNotFoundError:
         parts["bin"] = "missing"
+    except UnsafeRuntimePath:
+        parts["bin"] = "unsafe"  # stable: refused the same way every time
+    except OSError as exc:
+        # Unknown is a change: never skip a restart on a read failure.
+        parts["bin"] = f"unreadable:{os.urandom(8).hex()}:{exc.errno}"
+    finally:
+        if bin_fd >= 0:
+            os.close(bin_fd)
     env_path = Path(cfg.env_file)
     local_env_path = env_path.with_name(
         env_path.name[:-4] + ".local.env"
@@ -18391,6 +20013,8 @@ def touch_paths(paths: list[str]) -> None:
 
 def run_provision(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting provision")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Preparing bootstrap environment")
     record_operation_start(cfg, "provision")
     try:
@@ -18427,6 +20051,8 @@ def run_provision(cfg: BootstrapConfig) -> int:
 
 def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int:
     log_line(cfg, "bootstrap: starting reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Reconciling host software")
     record_operation_start(cfg, "reconcile")
     # At boot, systemd has already started the stack; restarting it again
@@ -18458,6 +20084,8 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
                 cfg, "running", "Installing container runtime"
             )
             extract_bundle(cfg, cfg.container_runtime_bundle)
+        # stopped before the config changes, so no root podman runs meanwhile
+        disable_root_podman_units(cfg)
         configure_podman(cfg)
         verify_runtime_user_contract(cfg)
         write_env(cfg, image_size_gb)
@@ -18522,6 +20150,8 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
 
 def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting helper-only reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Reconciling privileged host helpers")
     record_operation_start(cfg, "reconcile")
     try:
@@ -18532,6 +20162,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         configure_host_integrity_watch(cfg)
         configure_btrfs_scrub(cfg)
         configure_kernel_sysctl_hardening(cfg)
+        disable_root_podman_units(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)
@@ -18554,6 +20185,8 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
 
 def run_reconcile_environment(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting environment-only reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(
         cfg, "running", "Reconciling managed project-host environment"
     )
@@ -18584,7 +20217,7 @@ def run_bootstrap(cfg: BootstrapConfig) -> int:
     report_bootstrap_status(cfg, "running", "Starting project-host services")
     start_project_host(cfg)
     report_bootstrap_status(cfg, "running", "Finalizing bootstrap")
-    touch_paths(cfg.bootstrap_done_paths)
+    mark_bootstrap_done(cfg)
     write_bootstrap_state_files(cfg)
     log_line(cfg, "bootstrap: completed successfully")
     return 0
@@ -18623,6 +20256,9 @@ def main(argv: list[str]) -> int:
     if not bootstrap_dir:
         parser.error("one of --bootstrap-dir or --config is required")
     cfg = load_config(bootstrap_dir)
+    # Every mode writes beneath /var/lib/cocalc by name (lifecycle export,
+    # status): make it root's first.
+    ensure_cocalc_state_root(cfg)
     only = parse_only(args.only)
     log_line(cfg, "bootstrap: starting python bootstrap")
     log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
@@ -18669,19 +20305,32 @@ def main(argv: list[str]) -> int:
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
                 if args.restart_if_changed:
-                    return run_reconcile(cfg, restart_if_changed=True)
-                return run_reconcile(cfg)
+                    rc = run_reconcile(cfg, restart_if_changed=True)
+                else:
+                    rc = run_reconcile(cfg)
+                if rc == 0:
+                    finish_successful_run(cfg)
+                return rc
         if args.mode == "helpers":
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
-                return run_reconcile_helpers(cfg)
+                rc = run_reconcile_helpers(cfg)
+                if rc == 0:
+                    finish_successful_run(cfg)
+                return rc
         if args.mode == "environment":
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
-                return run_reconcile_environment(cfg)
+                rc = run_reconcile_environment(cfg)
+                if rc == 0:
+                    finish_successful_run(cfg)
+                return rc
         with bootstrap_operation_lock(cfg):
             cfg = load_config(bootstrap_dir)
-            return run_bootstrap(cfg)
+            rc = run_bootstrap(cfg)
+            if rc == 0:
+                finish_successful_run(cfg)
+            return rc
     except Exception as exc:
         log_line(cfg, f"bootstrap: failed: {exc}")
         # Bootstrap may fail before the host can heartbeat its local state.

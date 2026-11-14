@@ -20,6 +20,7 @@ Typical usage from a node REPL:
   await a.runSelfHostMultipassBackupSmoke({});
 */
 
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import { randomUUID } from "node:crypto";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
@@ -459,12 +460,8 @@ async function assertWorkspaceSshRouteMatchesLocalTunnel({
   if (!isLocalSelfHost) {
     return;
   }
-  const expectedPort = Number(metadata?.self_host?.ssh_tunnel_port);
-  if (
-    !Number.isInteger(expectedPort) ||
-    expectedPort <= 0 ||
-    expectedPort > 65535
-  ) {
+  const expectedPort = safeTunnelPort(metadata?.self_host?.ssh_tunnel_port);
+  if (expectedPort == null) {
     throw new Error(
       `self-host local tunnel is missing ssh_tunnel_port (host=${hostId})`,
     );
@@ -530,6 +527,21 @@ async function getMultipassIp(vmName: string): Promise<string> {
   return ip;
 }
 
+export function sshReadyArgs(sshTarget: string): string[] {
+  return [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ConnectTimeout=5",
+    // "--" ends the options: the destination can never be read as one.
+    "--",
+    sshTarget,
+    "true",
+  ];
+}
+
 async function waitForSshReady({
   sshTarget,
   wait,
@@ -540,20 +552,7 @@ async function waitForSshReady({
   let lastErr: unknown;
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
     try {
-      await runCommand(
-        "ssh",
-        [
-          "-o",
-          "BatchMode=yes",
-          "-o",
-          "StrictHostKeyChecking=accept-new",
-          "-o",
-          "ConnectTimeout=5",
-          sshTarget,
-          "true",
-        ],
-        { timeoutMs: 15_000 },
-      );
+      await runCommand("ssh", sshReadyArgs(sshTarget), { timeoutMs: 15_000 });
       return;
     } catch (err) {
       lastErr = err;

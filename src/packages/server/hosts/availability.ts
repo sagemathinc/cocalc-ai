@@ -16,6 +16,7 @@ import adminAlert from "@cocalc/server/messages/admin-alert";
 import { byHostId, conditionAlert, conditionCleared } from "./condition-alert";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { runProjectHostRuntimeMaintenance } from "./runtime-maintenance";
+import { runSpotFallbackAlertCheck } from "./spot-fallback-alert";
 import {
   persistenceAlert,
   persistenceAlertDelivery,
@@ -1067,6 +1068,8 @@ async function enqueueRunningStaleHostRepairs(
           account_id,
           reason: "running_stale_heartbeat",
           source: "host_availability_maintenance",
+          // The site's own repair: runs whoever it is attributed to.
+          automatic: true,
         },
         dedupe_key: `${HOST_RECONCILE_LRO_KIND}:${row.id}`,
         status: "queued",
@@ -1867,6 +1870,7 @@ export function startHostAvailabilityMaintenance({
       const persistProblems = await runConatPersistAlertCheck();
       const runtimeProblems = await runRuntimeDegradedHostAlertCheck();
       const acpWorkerProblems = await runAcpWorkerDegradedHostAlertCheck();
+      const spotFallbacks = await runSpotFallbackAlertCheck();
       void runProjectHostRuntimeMaintenance().catch((err) => {
         logger.warn("project-host runtime maintenance failed", {
           err: `${err}`,
@@ -1901,6 +1905,11 @@ export function startHostAvailabilityMaintenance({
       if (acpWorkerProblems) {
         logger.warn("project hosts have unstable ACP workers", {
           count: acpWorkerProblems,
+        });
+      }
+      if (spotFallbacks) {
+        logger.warn("spot hosts have been on a fallback for over 24 hours", {
+          count: spotFallbacks,
         });
       }
     } catch (err) {
@@ -2201,6 +2210,7 @@ export async function annotateHostAvailabilityEvent({
 }
 
 export const _test = {
+  enqueueRunningStaleHostRepairs,
   getRunningStaleHosts,
   reportRunningStaleCondition,
   conatPersistAlertRow,

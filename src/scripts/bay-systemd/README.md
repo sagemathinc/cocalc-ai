@@ -543,6 +543,182 @@ Tests:
 - `settings/master-key-migration.test.ts` in `packages/database`, which runs a
   full rotation over every store
 
+## Broker Fabric TLS Listener
+
+The federated connector broker runs on its own VM and reaches its fabric bay
+only over TLS. It accepts the bay by a pinned key: the sha256 of the
+certificate's SubjectPublicKeyInfo, set as the broker's
+`COCALC_BROKER_FABRIC_SPKI_SHA256`. It does not check a CA chain.
+
+Every other bay listener is plain HTTP on loopback, and public TLS ends off the
+bay, at the Cloudflare tunnel or the load balancer. So the bay runs a separate
+listener for the broker, `cocalc-bay-broker-tls.service`
+(`bin/bay-broker-tls.js`, Node core only):
+
+- **Address.** It listens only on the bay's internal IPv4 address
+  (`COCALC_BAY_BROKER_TLS_BIND_HOST`), port `COCALC_BAY_BROKER_TLS_PORT`
+  (default 9443). It refuses `0.0.0.0`, loopback and any address that is not
+  on a local interface.
+- **Sources.** Only two may connect:
+  - the broker, `COCALC_BAY_BROKER_TLS_ALLOW_FROM`: one IPv4 address, or a
+    `/32`;
+  - the bay itself, so that the pin can be checked from the bay.
+
+  Any other source is closed on the raw TCP socket before any TLS.
+- **Limits.** At most 4 connections at once. Bounded handshake, header,
+  upstream-connect and idle times. 8 KiB of request headers. All of these
+  can be set with `COCALC_BAY_BROKER_TLS_*` variables, within fixed
+  bounds.
+- **TLS.** TLS 1.3 only, with ALPN `http/1.1`. No session resumption and no
+  client certificate: the broker authenticates in the conat handshake.
+- **Requests.** It forwards only a `GET` websocket upgrade on
+  `COCALC_BAY_BROKER_TLS_CONAT_PATH` (for example `/conat/`) with
+  `EIO=4&transport=websocket`. The target must be in normal form. Anything
+  else gets a 404 and is closed.
+- **Forwarding.** The upgrade goes to the frontdoor, which must be on
+  loopback, so the hub's own authentication applies:
+  - it removes every `X-Forwarded-*`, `Forwarded`, `X-Real-IP`,
+    `True-Client-IP`, `CF-*` and `Host` header, in any case and any number;
+  - it sets `Host` to `COCALC_BAY_BROKER_TLS_UPSTREAM_HOST_HEADER` (the site's
+    host name), `X-Forwarded-For` to the broker's address, and
+    `X-Forwarded-Proto: https`;
+  - everything else, such as `Authorization`, cookies and the websocket
+    handshake, passes unchanged.
+- **Logs.** Counts only, plus the served pin at start. No addresses, headers
+  or paths.
+- **Dormant by default.** The process exits at once unless
+  `COCALC_BAY_BROKER_TLS_ENABLE=1`, and the unit cannot start without its key.
+  `install-scaffold.sh` installs the unit but does not enable it.
+
+### Key Inventory
+
+| Item                                     | Owner                | Purpose                                                           |
+| ---------------------------------------- | -------------------- | ----------------------------------------------------------------- |
+| `/etc/cocalc/broker-fabric-tls.key`      | root, 0400           | the listener's private key (ECDSA P-256); made on the bay, never copied off it |
+| `/etc/cocalc/broker-fabric-tls.crt`      | root, 0444           | its self-signed certificate (`CN=cocalc-bay-broker-fabric`, SAN `IP:<bind address>`, 825 days) |
+| the pin (`cocalc-bay-broker-tls-key pin`) | public              | the broker's `COCALC_BROKER_FABRIC_SPKI_SHA256`                   |
+
+- **Where the key lives.** The service reads the key and certificate as
+  systemd credentials (`LoadCredential=`). The key is never printed, logged
+  or written into an env file.
+- **Disk snapshots.** It is in the bay's disk snapshots, like
+  `site-master-key`. That is accepted for staging. **Before a production bay
+  serves this listener, seal the key to the VM's vTPM with `systemd-creds`
+  (tracked: cocalc-ai-private#126).**
+- **Rotation.** Rotate it at least every 12 months, on any suspicion of
+  exposure, and after an emergency revoke.
+
+`cocalc-bay-broker-tls-key`, which `install-scaffold.sh` installs root-owned
+in `/usr/local/sbin`, does every key step. It uses only openssl and
+coreutils.
+
+### Enable
+
+1. Set the four required variables in `/etc/cocalc/bay-local.env`:
+   `COCALC_BAY_BROKER_TLS_BIND_HOST`, `COCALC_BAY_BROKER_TLS_ALLOW_FROM`,
+   `COCALC_BAY_BROKER_TLS_CONAT_PATH` and
+   `COCALC_BAY_BROKER_TLS_UPSTREAM_HOST_HEADER`. Then set
+   `COCALC_BAY_BROKER_TLS_ENABLE=1`.
+2. Make the key with `cocalc-bay-broker-tls-key init`. It prints the pin and
+   never replaces an existing key.
+3. Start the listener:
+
+   ```sh
+   systemctl enable --now cocalc-bay-broker-tls.service
+   ```
+
+4. Check it with `cocalc-bay-broker-tls-key check`. This makes a TLS 1.3
+   handshake from the bay. The served pin must equal the installed
+   certificate's pin. Only exit code 0 with a last line of `ok` is a
+   successful check. The tool reads the unit's env files, in the unit's
+   order.
+
+Nothing outside the bay can connect until the VPC firewall admits the broker.
+The firewall gate is hard:
+
+- the rule allows the listener's port to the bay only from the broker VM;
+- the pre-step (A0) lists every other ingress rule that would also admit
+  that port, such as a broad `default-allow-internal`;
+- if there is one, a higher-priority deny of the port from everything else
+  must exist before the broker is pointed at the bay.
+
+### Rotation
+
+Every pin change is a record line, run and kept by the operator:
+
+- the old and new pins;
+- the reason;
+- the time, from `date -u`;
+- a check that the listener serves the new pin.
+
+`activate` prints this line.
+
+- **The reason** must be one line of printable ASCII, at most 200 characters,
+  so it cannot forge a second record line. Anything else is refused before
+  anything changes. It is the last field of the record line, so it cannot
+  imitate the fields the tool writes.
+- **A step that fails** prints a `FAILED:` line instead of a record line. It
+  says what is still true, for example that the listener may still be
+  running.
+
+1. **Stage the next key.** Run `cocalc-bay-broker-tls-key stage`. It prints
+   `next_pin`. Nothing serves it yet.
+2. **Re-pin the broker** to `next_pin` through its own configuration step.
+   From now until step 3 finishes, the broker cannot connect, and its gate
+   stays closed.
+3. **Activate:**
+
+   ```sh
+   cocalc-bay-broker-tls-key activate --expect-pin <next_pin> --reason "<why>"
+   ```
+
+   - It refuses unless the staged key's pin is `<next_pin>`.
+   - It keeps the current key as `broker-fabric-tls.old.key` and `.old.crt`,
+     installs the staged key and restarts the listener.
+   - It removes the old key only after a TLS 1.3 handshake shows the new pin
+     being served.
+   - If that check fails, the tool stops the listener and proves it: the
+     stop must succeed; `systemctl show` must succeed and report
+     `LoadState=loaded` and `ActiveState` exactly `inactive` or `failed`; and
+     a TCP connect to the listener's address must be refused. Any other
+     answer, a failed query (whatever it printed), or a connect that succeeds
+     or times out is not proof.
+     - Proven stopped: both keys stay on disk and the tool prints how to go
+       back (exit 1).
+     - Not proven: a distinct hard failure (exit 2). The listener may still
+       be serving the key it loaded; stop it by hand before anything else.
+     - Either way, `stage` and `activate` refuse to run until the `.old`
+       files are dealt with.
+
+### Emergency Revoke
+
+```sh
+cocalc-bay-broker-tls-key revoke --yes --reason "<why>"
+```
+
+This stops and disables the listener, then deletes every key file, and
+prints a record line stating the observed `ActiveState` and `UnitFileState`
+and that the port is closed.
+
+- The keys are deleted only once the stop and the disable are proven:
+  - the stop succeeds, `systemctl show` succeeds and reports
+    `LoadState=loaded` and `ActiveState` exactly `inactive` or `failed`, and
+    a TCP connect to the listener's address is refused;
+  - the disable succeeds, and `systemctl show` succeeds and reports
+    `LoadState=loaded` and `UnitFileState` exactly `disabled`.
+  - Any other answer, or a failed query (whatever it printed), is not proof.
+  - Without a valid bind address and port the port cannot be checked, so
+    nothing is stopped or deleted.
+- A running listener keeps the key it loaded, so deleting the files alone
+  would revoke nothing. If either proof fails, nothing is deleted and the
+  tool prints a `FAILED:` line: stop or disable the unit by hand, then run
+  `revoke` again.
+
+- The broker can no longer connect, so it cannot register, and its gate stays
+  closed.
+- To recover, make a new key (`init`), re-pin the broker and record the new
+  pin.
+
 ## GCP Bootstrap Service Account
 
 Run this in a trusted admin `gcloud` shell to create or update the project

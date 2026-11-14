@@ -2,9 +2,8 @@
 Set or change the password of an account.
 */
 
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { checkPassword } from "@cocalc/backend/auth/password-hash";
+import { newPasswordHash } from "@cocalc/database/settings/password-kdf";
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
@@ -36,7 +35,7 @@ export default async function setPassword(
   const { password_hash } = rows[0];
   if (password_hash) {
     // user had a password set before, so it needs to match
-    if (!verifyPassword(current_password, password_hash)) {
+    if (!(await checkPassword(current_password, password_hash))) {
       throw Error("Current password is incorrect.");
     }
   }
@@ -47,13 +46,14 @@ export default async function setPassword(
   }
 
   // save the hash (only!) of the new password.
+  const new_password_hash = await newPasswordHash(new_password);
   await withAccountRehomeWriteFence({
     account_id,
     action: "set password",
     fn: async (db) => {
       await db.query(
         "UPDATE accounts SET password_hash=$1 WHERE account_id=$2",
-        [passwordHash(new_password), account_id],
+        [new_password_hash, account_id],
       );
     },
   });

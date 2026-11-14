@@ -1,3 +1,4 @@
+import { safeTunnelPort } from "@cocalc/backend/project-host-target";
 import { createHash, randomUUID } from "node:crypto";
 import { requireApiKeyCapability } from "@cocalc/server/api/api-key-scope";
 import type { ApiKeyPrincipal } from "@cocalc/server/api/api-key-scope";
@@ -4764,8 +4765,8 @@ export async function resolveWorkspaceSshConnection({
     `${metadata?.cloudflare_tunnel?.ssh_hostname ?? ""}`.trim() || null;
   let sshServer = row.ssh_server ?? null;
   if (isLocalSelfHost) {
-    const sshPort = Number(metadata?.self_host?.ssh_tunnel_port);
-    if (Number.isInteger(sshPort) && sshPort > 0 && sshPort <= 65535) {
+    const sshPort = safeTunnelPort(metadata?.self_host?.ssh_tunnel_port);
+    if (sshPort != null) {
       const sshHost = resolveOnPremHost();
       sshServer = `${sshHost}:${sshPort}`;
     }

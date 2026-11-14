@@ -101,6 +101,28 @@ function hasProjectVmAvailabilityScope(
   );
 }
 
+// The longest a project-host token (and so an agent credential) can live
+// (conat/auth/project-host-token.ts MAX_TTL_SECONDS). A credential's refresh
+// therefore never moves a turn grant's expiry more than this (plus the 60 s
+// issue-time tolerance) past now; a live session keeps extending its grant
+// only by presenting fresh credentials.
+const MAX_AGENT_CREDENTIAL_LIFETIME_S = 30 * 60;
+
+// Extends a turn grant to a presented credential's expiry ($2), never past
+// NOW() + 31 minutes, and returns it while it is live. $1 is the credential's
+// fingerprint.
+export const REFRESH_TURN_GRANT_SQL = `WITH refreshed AS (
+       UPDATE compute_vm_turn_grants
+          SET expires_at=LEAST(
+                GREATEST(expires_at, $2::timestamptz),
+                NOW() + interval '31 minutes'
+              )
+        WHERE secret_hash=$1 AND revoked_at IS NULL
+     )
+     SELECT * FROM compute_vm_turn_grants
+      WHERE secret_hash=$1 AND revoked_at IS NULL AND expires_at > NOW()
+      LIMIT 1`;
+
 function validateAgentAuth(auth: ComputeAgentAuth): void {
   const now = Date.now() / 1000;
   if (!/^[a-f0-9]{64}$/.test(auth.token_fingerprint)) {
@@ -112,7 +134,9 @@ function validateAgentAuth(auth: ComputeAgentAuth): void {
     !Number.isFinite(auth.issued_at_s) ||
     !Number.isFinite(auth.expires_at_s) ||
     auth.issued_at_s > now + 60 ||
-    auth.expires_at_s <= now
+    auth.expires_at_s <= now ||
+    // no agent credential lives longer than the project-host token maximum
+    auth.expires_at_s - auth.issued_at_s > MAX_AGENT_CREDENTIAL_LIFETIME_S
   ) {
     throw Object.assign(new Error("managed-compute capability has expired"), {
       code: 403,
@@ -158,17 +182,10 @@ export async function requireAgentComputeGrant(
     }
   }
   const pool = getPool();
-  let { rows } = await pool.query(
-    `WITH refreshed AS (
-       UPDATE compute_vm_turn_grants
-          SET expires_at=GREATEST(expires_at, $2::timestamptz)
-        WHERE secret_hash=$1 AND revoked_at IS NULL
-     )
-     SELECT * FROM compute_vm_turn_grants
-      WHERE secret_hash=$1 AND revoked_at IS NULL AND expires_at > NOW()
-      LIMIT 1`,
-    [opts.auth.token_fingerprint, new Date(opts.auth.expires_at_s * 1000)],
-  );
+  let { rows } = await pool.query(REFRESH_TURN_GRANT_SQL, [
+    opts.auth.token_fingerprint,
+    new Date(opts.auth.expires_at_s * 1000),
+  ]);
   if (!rows[0]) {
     const expiresAt = new Date(
       Math.min(opts.auth.expires_at_s * 1000, Date.now() + 30 * 60_000),

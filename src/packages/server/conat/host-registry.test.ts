@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { BAY_OWNED_METADATA_KEYS } from "./__tests__/host-report-metadata-fixtures";
+
 let queryMock: jest.Mock;
 let connectMock: jest.Mock;
 let upsertProjectHostMock: jest.Mock;
@@ -90,6 +92,9 @@ jest.mock("@cocalc/server/projects/runtime-slots", () => ({
 
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
   createProjectHostMasterConatToken: jest.fn(),
+  exchangeProjectHostBootstrapToken: jest.fn(),
+  proveProjectHostMasterToken: jest.fn(),
+  rotateProjectHostMasterToken: jest.fn(),
   verifyProjectHostToken: jest.fn(),
 }));
 
@@ -537,7 +542,9 @@ describe("host-registry automatic convergence retry", () => {
               project_id: "project-1",
               users: {},
               runtime_lifecycle_revision: "1",
-              ...(sql.includes("AS content_epoch") ? { content_epoch: "3" } : {}),
+              ...(sql.includes("AS content_epoch")
+                ? { content_epoch: "3" }
+                : {}),
               updated_ms: "10",
             },
           ],
@@ -548,7 +555,9 @@ describe("host-registry automatic convergence retry", () => {
     const { initHostRegistryService } = await import("./host-registry");
     const service: any = await initHostRegistryService();
     const deltas = await service.listProjectUserDeltas({ host_id: "host-1" });
-    const reconcile = await service.listProjectUserReconcile({ host_id: "host-1" });
+    const reconcile = await service.listProjectUserReconcile({
+      host_id: "host-1",
+    });
     expect(deltas.rows[0].content_epoch).toBe("3");
     expect(reconcile.rows[0].content_epoch).toBe("3");
     expect(seen).toHaveLength(2);
@@ -1429,6 +1438,9 @@ describe("host-registry automatic convergence retry", () => {
   it("writes durable project log entries for pressure stops", async () => {
     currentMetadata = {};
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT host_id FROM projects WHERE project_id=$1")) {
+        return { rows: [{ host_id: "host-1" }] };
+      }
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
@@ -1490,6 +1502,354 @@ describe("host-registry automatic convergence retry", () => {
       },
     });
   });
+
+  it.each([
+    ["on another host", [{ host_id: "host-2" }]],
+    ["with no host", [{ host_id: null }]],
+    ["missing or deleted", []],
+  ])(
+    "refuses a pressure report for a project %s, and writes no log (068-2)",
+    async (_label, rows) => {
+      queryMock = jest.fn(async (sql: string, params: any[]) => {
+        if (sql.includes("SELECT host_id FROM projects WHERE project_id=$1")) {
+          expect(params).toEqual(["proj-b"]);
+          return { rows };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      await expect(
+        service.reportProjectPressureAction({
+          host_id: "host-1",
+          project_id: "proj-b",
+          action_status: "stopped",
+          pressure_zone: "pressure",
+          reason: "low_priority",
+        }),
+      ).rejects.toThrow("the project is not on the calling host");
+      expect(appendProjectLogRowBestEffortMock).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("host report sanitizer (054 C containment)", () => {
+  const DENIED = [
+    "self_host",
+    "local",
+    "provider",
+    "cloud_provider",
+    "machine",
+    "runtime",
+    "dns",
+    "cloudflare_tunnel",
+    "public_route",
+    "content_dns",
+    "public_url",
+    "public_ip",
+    "ip_address",
+  ];
+  const STORED_URLS = {
+    public_url: "https://host-1.cocalc.example",
+    internal_url: "http://10.0.0.5:9002",
+  };
+  let currentMetadata: any;
+  let storedUrlQueries: number;
+
+  beforeEach(() => {
+    publishMock = jest.fn(async () => undefined);
+    connectMock = jest.fn(() => {
+      throw new Error("unexpected db connection");
+    });
+    appendProjectOutboxEventForProjectMock = jest.fn(async () => undefined);
+    publishProjectAccountFeedEventsBestEffortMock = jest.fn(
+      async () => undefined,
+    );
+    appendProjectLogRowBestEffortMock = jest.fn(async () => true);
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      effective_limits: { shared_compute_priority: 0 },
+    }));
+    startProjectOnHostMock = jest.fn(async () => undefined);
+    computeQuotaMock = jest.fn(async () => undefined);
+    loadProjectRuntimeSponsorMock = jest.fn(async () => undefined);
+    reserveProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    heartbeatProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    releaseProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    enqueueCloudVmWorkOnceMock = jest.fn(async () => undefined);
+    recordProviderSpotPreemptionMock = jest.fn(({ state }) => ({
+      state: state ?? { phase: "idle" },
+      recorded: true,
+      circuit_breaker_triggered: false,
+    }));
+    shouldAutoRestoreInterruptedSpotHostMock = jest.fn(() => false);
+    spotRecoveryPolicyMock = jest.fn(() => undefined);
+    ensureAutomaticHostRuntimeDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+    ensureAutomaticHostArtifactDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+    // The bay-seeded row: a cloud host whose self_host the bay wrote.
+    currentMetadata = {
+      host_session_id: "session-1",
+      host_boot_id: "boot-1",
+      machine: { cloud: "gcp" },
+      self_host: { http_tunnel_port: 41000, ssh_tunnel_port: 41001 },
+    };
+    storedUrlQueries = 0;
+    upsertProjectHostMock = jest.fn(async () => undefined);
+    queryMock = jest.fn(async (sql: string) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "running" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT public_url, internal_url FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        storedUrlQueries += 1;
+        return { rows: [STORED_URLS] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata, bay_id: "bay-0" }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+  });
+
+  it("drops each denied top-level key and keeps host-owned ones", async () => {
+    const { HOST_REPORT_DENIED_METADATA_KEYS } =
+      await import("./host-registry");
+    const { pickHostReportedMetadata } = await import("./host-report-metadata");
+    expect([...HOST_REPORT_DENIED_METADATA_KEYS].sort()).toEqual(
+      [...DENIED].sort(),
+    );
+    for (const key of DENIED) {
+      const picked: any = pickHostReportedMetadata({
+        [key]: { anything: 1 },
+        software: { project_host: "1.0.0" },
+        host_session_id: "s",
+      });
+      expect(picked).not.toHaveProperty(key);
+      expect(picked.software).toEqual({ project_host: "1.0.0" });
+      expect(picked.host_session_id).toBe("s");
+    }
+    const original = { self_host: { http_tunnel_port: 1 }, metrics: {} };
+    pickHostReportedMetadata(original);
+    expect(original).toHaveProperty("self_host");
+    expect(pickHostReportedMetadata(undefined)).toEqual({});
+  });
+
+  // 076: the bay's own state (billing, desired_state, the probe quarantines,
+  // restart recovery, ...) shares project_hosts.metadata with the report and
+  // is merged with jsonb `||`, so the report must not carry any of it.
+  it("a report keeps no bay-owned key, and the old deny-list did (mutation check)", async () => {
+    const { sanitizeHostReport } = await import("./host-registry");
+    const report: Record<string, unknown> = { host_session_id: "s" };
+    for (const key of BAY_OWNED_METADATA_KEYS) {
+      report[key] = { quarantined: false, state: "ok" };
+    }
+    const keptBayKeys = (metadata: any) =>
+      BAY_OWNED_METADATA_KEYS.filter((key) =>
+        Object.prototype.hasOwnProperty.call(metadata ?? {}, key),
+      );
+    const cleaned = sanitizeHostReport({ metadata: report } as any, {
+      isLocalSelfHost: false,
+    }).report.metadata;
+    expect(keptBayKeys(cleaned)).toEqual([]);
+    expect(cleaned).toEqual({ host_session_id: "s" });
+    // The pre-076 strip: delete the denied keys and keep the rest.
+    const oldStrip = (metadata: Record<string, unknown>) => {
+      const stripped = { ...metadata };
+      for (const key of DENIED) delete stripped[key];
+      return stripped;
+    };
+    expect(keptBayKeys(oldStrip(report))).toEqual(
+      expect.arrayContaining([
+        "billing",
+        "desired_state",
+        "runtime_synthetic_probe",
+        "public_route_probe",
+      ]),
+    );
+  });
+
+  it("refuses each bad URL class and keeps good URLs", async () => {
+    const { sanitizeHostReport } = await import("./host-registry");
+    for (const bad of [
+      "http://127.0.0.1:5432",
+      "http://localhost:9002",
+      "http://2130706433/",
+      "http://[::1]/",
+      "http://0.0.0.0:9002",
+      "http://169.254.169.254/",
+      "http://metadata.google.internal/",
+      "file:///etc/passwd",
+      "http://user:pw@host.example",
+      "not a url",
+    ]) {
+      const { report, refusedUrlFields } = sanitizeHostReport(
+        { public_url: bad, internal_url: bad } as any,
+        { isLocalSelfHost: false },
+      );
+      expect(refusedUrlFields.sort()).toEqual(["internal_url", "public_url"]);
+      expect(report.public_url).toBeUndefined();
+      expect(report.internal_url).toBeUndefined();
+    }
+    const good = sanitizeHostReport(
+      {
+        public_url: "https://host-1.cocalc.example",
+        internal_url: "http://10.206.0.38:9002",
+      } as any,
+      { isLocalSelfHost: false },
+    );
+    expect(good.refusedUrlFields).toEqual([]);
+    expect(good.report.public_url).toBe("https://host-1.cocalc.example");
+    expect(good.report.internal_url).toBe("http://10.206.0.38:9002");
+    const local = sanitizeHostReport(
+      {
+        public_url: "http://127.0.0.1:9002",
+        internal_url: "http://127.0.0.1:9002",
+        metadata: { local: true },
+      } as any,
+      { isLocalSelfHost: true },
+    );
+    expect(local.refusedUrlFields).toEqual([]);
+    expect(local.report.public_url).toBeUndefined();
+    expect(local.report.metadata).toEqual({});
+  });
+
+  for (const method of ["register", "heartbeat"] as const) {
+    it(`${method}: a host report can't set or replace denied keys or point the URLs at refused addresses`, async () => {
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      await service[method]({
+        id: "host-1",
+        public_url: "http://127.0.0.1:5432",
+        internal_url: "http://169.254.169.254/",
+        metadata: {
+          host_session_id: "session-1",
+          host_boot_id: "boot-1",
+          software: { project_host: "1.0.0" },
+          self_host: { http_tunnel_port: "127.0.0.1:22#" },
+          local: true,
+          provider: "star",
+          cloud_provider: "star",
+          machine: {
+            cloud: "self-host",
+            metadata: { self_host_mode: "local" },
+          },
+          runtime: { public_ip: "10.1.2.3", ssh_user: "-oX=y" },
+          dns: { record_id: "other-hosts-record" },
+          cloudflare_tunnel: { id: "other-tunnel", record_id: "r" },
+          public_route: { active_mode: "cloudflare-proxy" },
+          content_dns: { domain: "x", records: [] },
+          public_url: "https://elsewhere.example",
+          public_ip: "10.1.2.3",
+          ip_address: "10.1.2.3",
+          // 076: every bay-owned key a host must not set or replace
+          ...Object.fromEntries(
+            BAY_OWNED_METADATA_KEYS.filter(
+              (key) => !(DENIED as readonly string[]).includes(key),
+            ).map((key) => [key, { quarantined: false, state: "ok" }]),
+          ),
+        },
+      } as any);
+      expect(upsertProjectHostMock).toHaveBeenCalledTimes(1);
+      const written = upsertProjectHostMock.mock.calls[0][0];
+      for (const key of [...DENIED, ...BAY_OWNED_METADATA_KEYS]) {
+        expect(written.metadata).not.toHaveProperty(key);
+      }
+      expect(written.metadata.software).toEqual({ project_host: "1.0.0" });
+      expect(Object.keys(written.metadata).sort()).toEqual([
+        "host_boot_id",
+        "host_session_id",
+        "software",
+      ]);
+      // refused URLs keep the stored values, never the reported ones
+      expect(written.public_url).toBe(STORED_URLS.public_url);
+      expect(written.internal_url).toBe(STORED_URLS.internal_url);
+      expect(storedUrlQueries).toBe(1);
+    });
+
+    it(`${method}: no accepted or refused URL text reaches the logger (R2)`, async () => {
+      const loggerModule: any = await import("@cocalc/backend/logger");
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      const texts = [
+        "accepted-host.cocalc.example",
+        "10.9.8.7",
+        "127.0.0.1:5432",
+        "169.254.169.254",
+        "secret-path-marker",
+      ];
+      for (const [public_url, internal_url] of [
+        [
+          "https://accepted-host.cocalc.example/secret-path-marker?q=1",
+          "http://10.9.8.7:9002",
+        ],
+        ["http://127.0.0.1:5432", "http://169.254.169.254/secret-path-marker"],
+      ]) {
+        await service[method]({
+          id: "host-1",
+          public_url,
+          internal_url,
+          metadata: { host_session_id: "session-1", host_boot_id: "boot-1" },
+        } as any);
+      }
+      const logged = loggerModule.getLogger.mock.results
+        .map((r: any) => r.value)
+        .flatMap((l: any) =>
+          ["info", "debug", "warn", "silly"].flatMap((level) =>
+            (l?.[level]?.mock?.calls ?? []).map((c: any[]) =>
+              JSON.stringify(c, (_k, v) => (v instanceof Error ? `${v}` : v)),
+            ),
+          ),
+        )
+        .join("\n");
+      expect(logged).toContain("register");
+      for (const text of texts) {
+        expect(logged).not.toContain(text);
+      }
+    });
+
+    it(`${method}: a clean report is passed through unchanged`, async () => {
+      const { initHostRegistryService } = await import("./host-registry");
+      const service = await initHostRegistryService();
+      await service[method]({
+        id: "host-1",
+        public_url: "https://host-1.cocalc.example",
+        internal_url: "http://10.0.0.5:9002",
+        metadata: {
+          host_session_id: "session-1",
+          host_boot_id: "boot-1",
+          software: { project_host: "1.0.0" },
+        },
+      } as any);
+      const written = upsertProjectHostMock.mock.calls[0][0];
+      expect(written.public_url).toBe("https://host-1.cocalc.example");
+      expect(written.internal_url).toBe("http://10.0.0.5:9002");
+      expect(written.metadata.software).toEqual({ project_host: "1.0.0" });
+      expect(storedUrlQueries).toBe(0);
+    });
+  }
 });
 
 describe("host-registry runtime availability", () => {
@@ -1546,6 +1906,189 @@ describe("host-registry runtime availability", () => {
       category: "unknown",
       summary: "Host is online.",
     });
+  });
+});
+
+describe("host-registry master token exchange", () => {
+  let tokens: any;
+  let service: any;
+  const masterInfo = {
+    token_id: "m",
+    host_id: "host-1",
+    purpose: "master-conat",
+    expires: new Date("2027-10-24T00:00:00Z"),
+  };
+
+  beforeAll(async () => {
+    tokens = await import("@cocalc/server/project-host/bootstrap-token");
+    const { initHostRegistryService } = await import("./host-registry");
+    service = await initHostRegistryService();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    tokens.verifyProjectHostToken.mockReset();
+    tokens.exchangeProjectHostBootstrapToken.mockReset();
+    tokens.proveProjectHostMasterToken.mockReset();
+    tokens.rotateProjectHostMasterToken.mockReset();
+    tokens.rotateProjectHostMasterToken.mockResolvedValue({
+      token: "new-master",
+    });
+  });
+
+  it("exchanges a bootstrap token, bound to the host, when there is no current token", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(null);
+    tokens.exchangeProjectHostBootstrapToken.mockResolvedValue({
+      ok: true,
+      host_id: "host-1",
+      master: { token: "exchanged-master" },
+    });
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "stale",
+        bootstrap_token: "boot",
+      }),
+    ).resolves.toEqual({ master_conat_token: "exchanged-master" });
+    expect(tokens.exchangeProjectHostBootstrapToken).toHaveBeenCalledWith(
+      "boot",
+      expect.objectContaining({ hostId: "host-1" }),
+    );
+    expect(tokens.rotateProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses a bootstrap token whose exchange is closed or that is invalid", async () => {
+    for (const reason of ["exchange_closed", "invalid"]) {
+      tokens.exchangeProjectHostBootstrapToken.mockResolvedValue({
+        ok: false,
+        reason,
+      });
+      await expect(
+        service.rotateMasterConatToken({
+          host_id: "host-1",
+          bootstrap_token: "boot",
+        }),
+      ).rejects.toThrow("token is invalid for host");
+    }
+    expect(tokens.rotateProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("rotates with a valid current token without touching the bootstrap token", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "master",
+        bootstrap_token: "boot",
+      }),
+    ).resolves.toEqual({ master_conat_token: "new-master" });
+    // The current token is re-checked under the lock by its id.
+    expect(tokens.rotateProjectHostMasterToken).toHaveBeenCalledWith(
+      "host-1",
+      "m",
+      expect.anything(),
+    );
+    expect(tokens.exchangeProjectHostBootstrapToken).not.toHaveBeenCalled();
+    expect(tokens.proveProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses a current token revoked between the check and the locked rotation", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    tokens.rotateProjectHostMasterToken.mockResolvedValue(undefined);
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).rejects.toThrow("token is invalid for host");
+  });
+
+  it("refuses a current token of another host", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue({
+      ...masterInfo,
+      host_id: "host-2",
+    });
+    await expect(
+      service.rotateMasterConatToken({
+        host_id: "host-1",
+        current_token: "other",
+      }),
+    ).rejects.toThrow("token is invalid for host");
+    expect(tokens.rotateProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("records the host's proof of its master token on a status check", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    tokens.proveProjectHostMasterToken.mockResolvedValue({
+      valid: true,
+      closed: 1,
+    });
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).resolves.toEqual({ expires_at: "2027-10-24T00:00:00.000Z" });
+    expect(tokens.proveProjectHostMasterToken).toHaveBeenCalledWith(
+      "host-1",
+      "m",
+    );
+  });
+
+  it("does not record a proof for an invalid or foreign master token", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(null);
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "stale",
+      }),
+    ).rejects.toThrow("token is invalid for this host");
+    tokens.verifyProjectHostToken.mockResolvedValue({
+      ...masterInfo,
+      host_id: "host-2",
+    });
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "other",
+      }),
+    ).rejects.toThrow("token is invalid for this host");
+    expect(tokens.proveProjectHostMasterToken).not.toHaveBeenCalled();
+  });
+
+  it("a valid token with nothing to close still succeeds; one revoked under the lock fails", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    tokens.proveProjectHostMasterToken.mockResolvedValue({
+      valid: true,
+      closed: 0,
+    });
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).resolves.toEqual({ expires_at: "2027-10-24T00:00:00.000Z" });
+    tokens.proveProjectHostMasterToken.mockResolvedValue({
+      valid: false,
+      closed: 0,
+    });
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).rejects.toThrow("token is invalid for this host");
+  });
+
+  it("a failure to record the proof never fails the status check", async () => {
+    tokens.verifyProjectHostToken.mockResolvedValue(masterInfo);
+    tokens.proveProjectHostMasterToken.mockRejectedValue(new Error("db down"));
+    await expect(
+      service.getMasterConatTokenStatus({
+        host_id: "host-1",
+        current_token: "master",
+      }),
+    ).resolves.toEqual({ expires_at: "2027-10-24T00:00:00.000Z" });
   });
 });
 
