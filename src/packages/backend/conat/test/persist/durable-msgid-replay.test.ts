@@ -300,6 +300,55 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     }
   });
 
+  // A batch in which only duplicates ran issues no COMMIT (B-1), so whatever
+  // a duplicate wrote would be rolled back anyway.  In a batch that ALSO
+  // commits a new message, it would persist: the duplicate's own stored
+  // state (its message row, its ledger entry, the checkpoint rows) must be
+  // unchanged.
+  it("P1/P2: a duplicate in a batch that also commits a new message leaves the duplicate's stored state (row, ledger, checkpoints) unchanged", async () => {
+    for (const path of ["P1", "P2"] as const) {
+      const name = `dup-commit-${path}`;
+      let stream = open(name);
+      const first = await stream.setQueued(
+        msg("a", { msgID: "m1", checkpoint: { name: "cp", data: { v: 1 } } }),
+      );
+      if (path == "P2") stream = reopen(stream, name);
+      const db = (stream as any).db;
+      const own = () => ({
+        message: db.prepare("SELECT * FROM messages WHERE seq = ?").all(first.seq),
+        ledger: db
+          .prepare("SELECT * FROM message_ids WHERE msg_id = ? OR seq = ?")
+          .all("m1", first.seq),
+        checkpoints: db.prepare("SELECT * FROM stream_checkpoints").all(),
+      });
+      const norm = (x) =>
+        JSON.parse(
+          JSON.stringify(x, (_k, v) =>
+            v instanceof Uint8Array || (v?.type == "Buffer" && v?.data)
+              ? Buffer.from(v.data ?? v).toString("hex")
+              : v,
+          ),
+        );
+      const before = norm(own());
+      const changes = watch(stream);
+      const [dup, fresh] = await stream.setManyQueued([
+        msg("a", {
+          msgID: "m1",
+          checkpoint: { name: "cp", seq: first.seq, data: { v: 2 } },
+        }),
+        msg("new"),
+      ]);
+      expectSameResult(dup, first);
+      expect((fresh as any).seq).toBeGreaterThan(first.seq);
+      // only the new message's change
+      assertNoEvents(
+        changes.filter((c) => c.seq !== (fresh as any).seq),
+        path,
+      );
+      assertStateUnchanged(before, norm(own()), path);
+    }
+  });
+
   it("P1/P2: a resend whose headers fail the required-headers fence emits no live event", async () => {
     for (const path of ["P1", "P2"] as const) {
       const name = `fence-${path}`;
