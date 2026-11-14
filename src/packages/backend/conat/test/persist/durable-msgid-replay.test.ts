@@ -63,13 +63,15 @@ function assertStateUnchanged(
   }
 }
 
-// Every row of every table except the reset trash, as stored.
+// Every row of every table except the reset trash, as stored, INCLUDING
+// sqlite_sequence (the AUTOINCREMENT state of messages: a duplicate path that
+// advanced the next seq and removed its row would show only there).
 function state(stream): Record<string, any[]> {
   const db = (stream as any).db;
   const tables = (
     db
       .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%trash%' ORDER BY name",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%trash%' ORDER BY name",
       )
       .all() as { name: string }[]
   ).map((t) => t.name);
@@ -249,6 +251,7 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     ["key", () => ({ ...owner(), key: "other-key" })],
     ["ttl", () => ({ ...owner(), ttl: 1 })],
     ["checkpoint", () => ({ ...owner(), checkpoint: { name: "cp", data: { v: 2 } } })],
+    ["previousSeq", () => ({ ...owner(), previousSeq: 0 })],
   ];
   const p3changed = (op: any): string[] => {
     const base = owner();
@@ -285,12 +288,20 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
       ]),
     );
   const NOW = 1_800_000_000_000;
+  // the columns a stream derives from Date.now (a control at another NOW
+  // differs in these, and only these: proves the clock is mocked)
+  const TIME_COLUMNS = new Set(["messages.time", "history_epochs.time"]);
   // run one batch on a fresh stream at a fixed Date.now: "many" = one
   // setMany, "requests" = separate requests in one batch
-  const runBatch = async (name: string, ops: any[], how: "many" | "requests") => {
+  const runBatch = async (
+    name: string,
+    ops: any[],
+    how: "many" | "requests",
+    at: number = NOW,
+  ) => {
     // the whole life of the stream at one Date.now (the open stamps the
     // history epoch too)
-    const now = jest.spyOn(Date, "now").mockReturnValue(NOW);
+    const now = jest.spyOn(Date, "now").mockReturnValue(at);
     let stream, changes, results: any[];
     try {
       stream = open(name);
@@ -312,6 +323,12 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
       const b = await runBatch(`p3-ctl-b-${how}`, [owner()], how);
       const noise = differingColumns(state(a.stream), state(b.stream));
       expect([...noise].filter((c) => !NONDETERMINISTIC_OK.has(c))).toEqual([]);
+      // can fail: a control at another Date.now differs, exactly in the
+      // clock-derived columns
+      const c = await runBatch(`p3-ctl-c-${how}`, [owner()], how, NOW + 7_654_321);
+      const shifted = differingColumns(state(a.stream), state(c.stream));
+      expect(shifted.has("messages.time")).toBe(true);
+      expect([...shifted].filter((col) => !TIME_COLUMNS.has(col))).toEqual([]);
     });
 
     for (const [what, make] of p3variants) {
@@ -328,6 +345,12 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
           "P3",
         );
         // the duplicate's result is the owner's
+        if (how == "requests") {
+          expect(test.results.map((r) => r.status)).toEqual([
+            "fulfilled",
+            "fulfilled",
+          ]);
+        }
         const value = (r) => (how == "many" ? r : r.value);
         expect(value(test.results[1])).toEqual(value(test.results[0]));
         // exactly the owner's change, carrying the owner's bytes
