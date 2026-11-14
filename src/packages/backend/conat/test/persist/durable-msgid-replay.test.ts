@@ -19,8 +19,9 @@ mapped assertion.  "No mutation" compares EVERY column of every row of every
 non-trash table (messages incl. ttl, message_ids, stream_checkpoints incl.
 time, data_json and revision, ...), before and after.
 
-Refusing a different body under a reused msgID is B-2's item (087); here the
-property is "nothing stored, nothing emitted" for every field.
+B-2 (finding 087) refuses a different body under a stored msgID with
+msgid-conflict (previousSeq excepted for a committed message: it is not
+stored); either way nothing is stored and nothing is emitted.
 */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -220,11 +221,19 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
           const changes = watch(stream);
           const op = make(first.seq);
           expect(changedFields(op)).toEqual([field]);
-          const result =
-            how == "set"
-              ? stream.set(op as any)
-              : (await stream.setManyQueued([op as any]))[0];
-          expectSameResult(result, first);
+          if (field == "previousSeq") {
+            // not stored: the canonical duplicate (087's stated exclusion)
+            const result =
+              how == "set"
+                ? stream.set(op as any)
+                : (await stream.setManyQueued([op as any]))[0];
+            expectSameResult(result, first);
+          } else if (how == "set") {
+            expect(() => stream.set(op as any)).toThrow("msgID was already used");
+          } else {
+            const [r] = await stream.setManyQueued([op as any]);
+            expect(JSON.stringify(r)).toContain("msgID was already used");
+          }
           assertNoEvents(changes, path);
           assertStateUnchanged(before, state(stream), path);
         });
@@ -246,7 +255,8 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
       const [r1, r2] = await stream.setManyQueued([msg("a", { msgID: "m1" }), dup as any]);
       // nothing after the owner's own change (the mapped assertion first)
       assertNoEvents(changes.slice(1), "P3");
-      expect(r2).toEqual(r1);
+      if (what == "the same body") expect(r2).toEqual(r1);
+      else expect(JSON.stringify(r2)).toContain("msgID was already used");
       // exactly the owner's change, carrying the owner's bytes
       const sets = changes.filter((c) => c.seq != null);
       expect(sets).toHaveLength(1);
@@ -257,12 +267,17 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     it(`P3: across requests in one batch, a later request with the msgID and ${what} gets the first's result, emits nothing of its own and stores nothing`, async () => {
       const stream = open(`p3-batch-${what}`);
       const changes = watch(stream);
-      const [r1, r2] = await Promise.all([
+      const [s1, s2] = await Promise.allSettled([
         stream.setQueued(msg("a", { msgID: "m1" })),
         stream.setQueued(dup as any),
       ]);
       assertNoEvents(changes.slice(1), "P3");
-      expect(r2).toEqual(r1);
+      expect(s1.status).toBe("fulfilled");
+      if (what == "the same body") {
+        expect((s2 as any).value).toEqual((s1 as any).value);
+      } else {
+        expect((s2 as any).reason?.code).toBe("msgid-conflict");
+      }
       const sets = changes.filter((c) => c.seq != null);
       expect(sets).toHaveLength(1);
       expect(Buffer.from(sets[0].raw).toString()).toBe("a");
@@ -360,11 +375,12 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
       if (path == "P2") stream = reopen(stream, name);
       const before = state(stream);
       const changes = watch(stream);
-      // a writer without the fence header reusing the stored msgID
-      expectSameResult(
+      // a writer without the fence header reusing the stored msgID: refused
+      // (087)
+      expect(() =>
         stream.set(msg("forged", { msgID: "m1", headers: {} })),
-        first,
-      );
+      ).toThrow("msgID was already used");
+      void first;
       assertNoEvents(changes, path);
       assertStateUnchanged(before, state(stream), path);
       // without a msgID the same write is refused by the fence
