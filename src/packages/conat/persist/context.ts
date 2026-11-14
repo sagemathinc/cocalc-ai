@@ -97,14 +97,67 @@ export let writeCounter: PersistWriteCounter | undefined = undefined;
 //   by another process (a crash mid-write): the outcome is unknown, so the
 //   open is refused until it is verified (B-2 adds that path).
 // Without it no disk-backed stream opens (fail closed).
-export type PersistDurabilityCheck = "ok" | "poisoned" | "unverified";
+// "leftover": only dirty records of DEAD processes (a crash mid-write): the
+// outcome is unknown and a verified eviction settles it (B-2); "unverified":
+// a live (or unknown) other process holds a record.
+// "needs-check": poisoned in an earlier boot (the durable post-reboot
+// record): opened only after a full integrity_check passes.
+export type PersistDurabilityCheck =
+  | "ok"
+  | "poisoned"
+  | "unverified"
+  | "leftover"
+  | "needs-check";
 export interface PersistDurabilityRecords {
   arm: (id: string) => void;
   disarm: (id: string) => void;
   poison: (id: string, info: Record<string, string | number>) => void;
   check: (id: string) => PersistDurabilityCheck;
+  // after a verified eviction: remove dead processes' dirty records
+  clearLeftovers: (id: string) => number;
+  // after a passed integrity_check: remove the post-reboot record (durably;
+  // throws on failure)
+  clearPostReboot: (id: string) => void;
 }
 export let durability: PersistDurabilityRecords | undefined = undefined;
+
+// The open barrier (finding 028, DESIGN §3.2.6): before a disk-backed stream
+// serves anything, its -wal, .db and directory are fsync'd, with
+// hostile-path checks (§3.1).  "discovery": an open/stat error or a check
+// failed, nothing proven, retry; "sync-error": an fsync RETURNED an error, a
+// durability signal (§3.2.3).  The backend sets it; without it no disk-backed
+// stream opens (fail closed).
+export type OpenBarrierResult =
+  | { kind: "ok"; synced: string[] }
+  | { kind: "discovery"; path: string; why: string }
+  | { kind: "sync-error"; path: string; errno: string; synced: string[] };
+export interface PersistOpenBarrier {
+  // asynchronous (threadpool, capped, fair per owner): the persist server
+  run: (dbPath: string, owner: string) => Promise<OpenBarrierResult>;
+  // synchronous: in-process callers that construct a stream directly
+  runSync: (dbPath: string) => OpenBarrierResult;
+}
+export let openBarrier: PersistOpenBarrier | undefined = undefined;
+
+// Verified page-cache eviction (finding 028, DESIGN §3.2.6 H-b): for a stream
+// a dead process left mid-write, make the page cache equal the disk (fsync,
+// DONTNEED, mincore = 0, remove the -shm) before the normal open.  Anything
+// unexpected is "not verified": the stream stays refused and is retried; it
+// is never a poison.  The backend sets it; without it such streams stay
+// refused.
+export type VerifiedEvictionResult =
+  | { verified: true; files: string[] }
+  | { verified: false; path: string; why: string };
+export let verifiedEviction:
+  | ((dbPath: string) => Promise<VerifiedEvictionResult>)
+  | undefined = undefined;
+
+// A full PRAGMA integrity_check of a closed database, off the main thread, time
+// bounded and one at a time per host (§3.2.6 POST-REBOOT, §3.2.9).  Without
+// it, a stream with a post-reboot record stays refused.
+export let integrityCheck:
+  | ((dbPath: string) => Promise<{ ok: boolean; why?: string }>)
+  | undefined = undefined;
 
 export let syncFiles = {
   local: "",
@@ -153,6 +206,9 @@ export function initContext(opts: {
   copyFileSync: (src: string, desc: string) => void;
   writeCounter?: PersistWriteCounter;
   durability?: PersistDurabilityRecords;
+  openBarrier?: PersistOpenBarrier;
+  verifiedEviction?: (dbPath: string) => Promise<VerifiedEvictionResult>;
+  integrityCheck?: (dbPath: string) => Promise<{ ok: boolean; why?: string }>;
 }) {
   sqliteModule = opts.sqlite;
   compress = opts.compress;
@@ -169,6 +225,9 @@ export function initContext(opts: {
   copyFileSync = opts.copyFileSync;
   writeCounter = opts.writeCounter;
   durability = opts.durability;
+  openBarrier = opts.openBarrier;
+  verifiedEviction = opts.verifiedEviction;
+  integrityCheck = opts.integrityCheck;
 }
 
 export function createDatabase(...args): Database {

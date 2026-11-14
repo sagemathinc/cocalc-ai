@@ -41,7 +41,13 @@ Also getAll using start_seq:
 */
 
 import { assertHasWritePermission } from "./auth";
-import { pstream, PersistentStream, type StorageOptions } from "./storage";
+import {
+  pstream,
+  PersistentStream,
+  type StorageOptions,
+  prepareDurableOpen,
+  clearOpenBarrierPass,
+} from "./storage";
 import { join } from "path";
 import {
   syncFiles,
@@ -240,8 +246,18 @@ async function openStream({
         .map(ensureContainingDirectoryExists),
     );
   }
-  if (ephemeral || maintenance == null) {
+  if (ephemeral) {
     return pstream({ ...storage, path, archive, backup, archiveInterval });
+  }
+  if (maintenance == null) {
+    // 028 B-2: the open barrier, off the main thread, right before the get
+    // (no await between it and the construction that consumes its pass)
+    await prepareDurableOpen(path, storeOwner(storage.path));
+    try {
+      return pstream({ ...storage, path, archive, backup, archiveInterval });
+    } finally {
+      clearOpenBarrierPass(path);
+    }
   }
 
   const maintenancePath: PersistMaintenancePath = {
@@ -261,6 +277,7 @@ async function openStream({
     maintenance.trackingUnavailable?.(err);
   }
   try {
+    await prepareDurableOpen(path, storeOwner(storage.path));
     const stream = pstream({
       ...storage,
       path,
@@ -277,5 +294,12 @@ async function openStream({
   } catch (err) {
     maintenance.openFailed?.(maintenancePath, err);
     throw err;
+  } finally {
+    clearOpenBarrierPass(path);
   }
+}
+
+// the logical owner of a storage path, for the open barrier's fairness
+function storeOwner(logicalPath: string): string {
+  return projectOfStoragePath(logicalPath) ?? "host";
 }

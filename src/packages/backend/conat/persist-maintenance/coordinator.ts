@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { assertPersistMaintenanceOpenAllowed } from "../persist-durability";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -453,6 +454,7 @@ export class PersistMaintenanceCoordinator {
   ): Promise<void> {
     try {
       const checked = this.safety.assertExistingRegularFile(row.physical_path);
+      assertPersistMaintenanceOpenAllowed(checked.path);
       const result = await this.runWorker({
         sourcePath: checked.path,
         timeoutMs: Math.min(this.config.jobTimeoutMs, 5 * 60 * 1000),
@@ -547,6 +549,7 @@ export class PersistMaintenanceCoordinator {
     let secondary: Array<{ temporary: string; destination: string }> = [];
     try {
       rmSync(outputPath, { force: true });
+      assertPersistMaintenanceOpenAllowed(checked.path);
       const result = await this.runWorker({
         sourcePath: checked.path,
         outputPath,
@@ -706,7 +709,8 @@ export class PersistMaintenanceCoordinator {
 
     // With no owners and worker opens waiting for begin-open acknowledgement,
     // this checkpoint is exclusive. It removes stale WAL state before swapping
-    // the main database inode.
+    // the main database inode.  (Never on a poisoned or unverified file: 028.)
+    assertPersistMaintenanceOpenAllowed(checked.path);
     const sourceDb = new DatabaseSync(checked.path);
     try {
       sourceDb.exec("PRAGMA busy_timeout=1000");
@@ -864,6 +868,7 @@ export class PersistMaintenanceCoordinator {
   private quickCheck(path: string): boolean {
     if (!existsSync(path)) return false;
     try {
+      assertPersistMaintenanceOpenAllowed(path);
       const db = new DatabaseSync(path, { readOnly: true });
       try {
         const row = db.prepare("PRAGMA quick_check").get() as Record<

@@ -1,0 +1,270 @@
+/*
+Finding 028 B-2: a stream a DEAD process left mid-write (its dirty record
+remains) is opened only after a verified page-cache eviction (DESIGN v1.21
+§3.2.6 H-b, §3.2.11).  A live process's record keeps refusing; a failed
+verification refuses and is retried, never poisons.
+*/
+
+import * as fs from "node:fs";
+import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { pstream } from "@cocalc/backend/conat/persist";
+import {
+  isWriterAlive,
+  persistDurabilityRecords,
+  persistRunDir,
+  procStartTime,
+  sha256Hex,
+} from "@cocalc/backend/conat/persist-durability";
+import {
+  PAGECACHE_HELPER_PROGRAM,
+  PAGECACHE_HELPER_SHA256,
+  PYTHON,
+  parseHelperOutput,
+  readCheckedHelper,
+  verifiedEviction,
+} from "@cocalc/backend/conat/persist-verified-eviction";
+import * as context from "@cocalc/conat/persist/context";
+import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
+import { DataEncoding } from "@cocalc/conat/core/client";
+import {
+  clearOpenBarrierPass,
+  prepareDurableOpen,
+} from "@cocalc/conat/persist/storage";
+
+const msg = (s: string) => ({
+  encoding: DataEncoding.JsonCodec,
+  raw: Buffer.from(s),
+});
+
+// a pid that existed and is gone
+function deadPid(): number {
+  const r = spawnSync(process.execPath, ["-e", "process.stdout.write(`${process.pid}`)"]);
+  const pid = Number(r.stdout.toString());
+  expect(fs.existsSync(`/proc/${pid}`)).toBe(false);
+  return pid;
+}
+
+// a dirty record for id, written by another process generation with pid
+function plantDirtyRecord(id: string, pid: number, procStart?: string) {
+  createDurabilityRecords({
+    root: persistRunDir(),
+    generation: `planted-${pid}-${Math.random()}`,
+    fs: fs as any,
+    sha256: sha256Hex,
+    pid,
+    procStart,
+  }).arm(id);
+}
+
+describe("028 B-2: verified eviction of a stream left mid-write", () => {
+  let dir: string;
+  let streams: any[] = [];
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "persist-028-evict-"));
+    streams = [];
+  });
+
+  afterEach(async () => {
+    for (const s of streams) {
+      try {
+        if (!s.isPoisoned?.()) s.close();
+      } catch {}
+    }
+    jest.restoreAllMocks();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("the shipped program equals persist-pagecache-helper.py and its pinned sha256", () => {
+    const file = fs.readFileSync(
+      join(__dirname, "../../persist-pagecache-helper.py"),
+      "utf8",
+    );
+    expect(PAGECACHE_HELPER_PROGRAM).toBe(file);
+    expect(sha256Hex(file)).toBe(PAGECACHE_HELPER_SHA256);
+    expect(readCheckedHelper()).toEqual(Buffer.from(file));
+    // a changed byte: refused
+    expect(readCheckedHelper(file + " ")).toBeUndefined();
+  });
+
+  it("parses only the exact line, with the parent's page count", () => {
+    const ok = '{"v":1,"page_size":4096,"pages":3,"resident_after":0}\n';
+    expect(parseHelperOutput(ok, 3)).toEqual({ resident: 0 });
+    expect(parseHelperOutput(ok, 4)).toBeUndefined();
+    expect(parseHelperOutput(ok + "x", 3)).toBeUndefined();
+    expect(
+      parseHelperOutput('{"v":1,"page_size":8192,"pages":3,"resident_after":0}\n', 3),
+    ).toBeUndefined();
+    expect(
+      parseHelperOutput('{"v":1,"page_size":4096,"pages":3,"resident_after":4}\n', 3),
+    ).toBeUndefined();
+    expect(parseHelperOutput("", 0)).toBeUndefined();
+  });
+
+  it("evicts a real file: fsync, DONTNEED, mincore = 0, and removes the -shm", async () => {
+    const db = join(dir, "real.db");
+    await writeFile(db, Buffer.alloc(256 * 1024, 7));
+    await writeFile(`${db}-wal`, Buffer.alloc(64 * 1024, 7));
+    await writeFile(`${db}-shm`, Buffer.alloc(32 * 1024, 0));
+    fs.readFileSync(db); // resident now
+    const r = await verifiedEviction(db);
+    expect(r).toEqual({ verified: true, files: [`${db}-wal`, db] });
+    expect(fs.existsSync(`${db}-shm`)).toBe(false);
+  });
+
+  it("spawns exactly /usr/bin/python3 -I -S - with an empty env, no shell, the program on stdin and the file on fd 3", async () => {
+    const db = join(dir, "spy.db");
+    await writeFile(db, Buffer.alloc(4096, 1));
+    const calls: any[] = [];
+    const real = require("node:child_process").spawn;
+    const spy = (cmd, args, opts) => {
+      calls.push({ cmd, args, opts });
+      return real(cmd, args, opts);
+    };
+    const r = await verifiedEviction(db, { spawnFn: spy as any });
+    expect(r.verified).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].cmd).toBe(PYTHON);
+    expect(calls[0].args).toEqual(["-I", "-S", "-"]);
+    expect(calls[0].opts.shell).toBe(false);
+    expect(calls[0].opts.env).toEqual({});
+    expect(calls[0].opts.stdio.slice(0, 3)).toEqual(["pipe", "pipe", "pipe"]);
+    expect(typeof calls[0].opts.stdio[3]).toBe("number");
+  });
+
+  // a fake child: whatever output, exit code, stderr
+  const fakeSpawn =
+    ({ stdout = "", stderr = "", code = 0, readStdin = true }) =>
+    () => {
+      const child: any = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = {
+        on: () => {},
+        write: (_b, cb) => cb(readStdin ? undefined : new Error("EPIPE")),
+        end: () => {},
+      };
+      child.kill = () => {};
+      setImmediate(() => {
+        if (stdout) child.stdout.emit("data", Buffer.from(stdout));
+        if (stderr) child.stderr.emit("data", Buffer.from(stderr));
+        child.emit("close", code, null);
+      });
+      return child;
+    };
+
+  it.each([
+    ["extra output", { stdout: '{"v":1,"page_size":4096,"pages":1,"resident_after":0}\nmore' }],
+    ["a non-zero exit", { stdout: '{"v":1,"page_size":4096,"pages":1,"resident_after":0}\n', code: 1 }],
+    ["stderr text", { stdout: '{"v":1,"page_size":4096,"pages":1,"resident_after":0}\n', stderr: "x" }],
+    ["pages still resident", { stdout: '{"v":1,"page_size":4096,"pages":1,"resident_after":1}\n' }],
+    ["a failed delivery of the program", { stdout: '{"v":1,"page_size":4096,"pages":1,"resident_after":0}\n', readStdin: false }],
+  ])("%s → not verified", async (_name, fake) => {
+    const db = join(dir, "fake.db");
+    await writeFile(db, Buffer.alloc(4096, 1));
+    const r = await verifiedEviction(db, { spawnFn: fakeSpawn(fake as any) as any });
+    expect(r.verified).toBe(false);
+  });
+
+  it("a sha mismatch of the program → not verified, nothing spawned", async () => {
+    const db = join(dir, "sha.db");
+    await writeFile(db, Buffer.alloc(4096, 1));
+    const spawnFn = jest.fn();
+    const r = await verifiedEviction(db, {
+      program: readCheckedHelper("tampered", PAGECACHE_HELPER_SHA256),
+      spawnFn: spawnFn as any,
+    });
+    expect(r.verified).toBe(false);
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it("a symlink planted at the -wal → not verified, the helper never runs on it", async () => {
+    const target = join(dir, "victim");
+    await writeFile(target, Buffer.alloc(4096, 1));
+    const db = join(dir, "planted.db");
+    await writeFile(db, Buffer.alloc(4096, 1));
+    await symlink(target, `${db}-wal`);
+    const spawnFn = jest.fn();
+    const r = await verifiedEviction(db, { spawnFn: spawnFn as any });
+    expect(r).toMatchObject({ verified: false, path: `${db}-wal` });
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it("writer liveness: a gone pid is dead; this process is alive; a reused pid (other start time) is dead", () => {
+    expect(isWriterAlive(deadPid())).toBe(false);
+    const mine = procStartTime("self");
+    expect(mine).toMatch(/^\d+$/);
+    expect(isWriterAlive(process.pid, mine)).toBe(true);
+    expect(isWriterAlive(process.pid, "1")).toBe(false);
+    // no start time recorded and the pid exists: fail closed (alive)
+    expect(isWriterAlive(process.pid)).toBe(true);
+  });
+
+  it("a dead writer's record: the server's open verifies, removes it and serves the stream", async () => {
+    const path = join(dir, "left");
+    const s0 = pstream({ path });
+    s0.set(msg("committed"));
+    s0.close();
+    const records = persistDurabilityRecords();
+    plantDirtyRecord(path, deadPid());
+    expect(records.check(path)).toBe("leftover");
+    // a direct construction can't verify: refused
+    expect(() => pstream({ path })).toThrow("not verified yet");
+    await prepareDurableOpen(path, "host");
+    const s = pstream({ path });
+    streams.push(s);
+    clearOpenBarrierPass(path);
+    expect(records.check(path)).toBe("ok");
+    expect(Buffer.from(s.get({ seq: 1 })!.raw).toString()).toBe("committed");
+  });
+
+  it("a failed verification refuses (retryable), keeps the record and poisons nothing; a later retry admits", async () => {
+    const path = join(dir, "retry");
+    const s0 = pstream({ path });
+    s0.set(msg("x"));
+    s0.close();
+    const records = persistDurabilityRecords();
+    plantDirtyRecord(path, deadPid());
+    const ctx = context as any;
+    const real = ctx.verifiedEviction;
+    ctx.verifiedEviction = async (db: string) => ({
+      verified: false,
+      path: db,
+      why: "mincore says 3 pages resident",
+    });
+    try {
+      await expect(prepareDurableOpen(path, "host")).rejects.toThrow(
+        "not verified yet",
+      );
+    } finally {
+      ctx.verifiedEviction = real;
+    }
+    expect(records.check(path)).toBe("leftover");
+    expect(records.check(path)).not.toBe("poisoned");
+    await prepareDurableOpen(path, "host");
+    const s = pstream({ path });
+    streams.push(s);
+    clearOpenBarrierPass(path);
+    expect(records.check(path)).toBe("ok");
+  });
+
+  it("a LIVE writer's record keeps refusing: no verification, no removal", async () => {
+    const path = join(dir, "live");
+    const s0 = pstream({ path });
+    s0.set(msg("x"));
+    s0.close();
+    plantDirtyRecord(path, process.pid, procStartTime("self"));
+    const records = persistDurabilityRecords();
+    expect(records.check(path)).toBe("unverified");
+    await expect(prepareDurableOpen(path, "host")).rejects.toThrow(
+      "not verified yet",
+    );
+    expect(() => pstream({ path })).toThrow("not verified yet");
+    expect(records.check(path)).toBe("unverified");
+  });
+});

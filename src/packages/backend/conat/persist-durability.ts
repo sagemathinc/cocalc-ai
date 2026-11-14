@@ -11,11 +11,15 @@
 
 import * as fs from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
+import { posix } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import {
   createDurabilityRecords,
   type DurabilityRecords,
+  type PostRebootRecords,
 } from "@cocalc/conat/persist/durability-records";
+import { syncFiles } from "@cocalc/backend/data";
+import { spawn } from "node:child_process";
 
 const logger = getLogger("persist:durability");
 
@@ -29,10 +33,118 @@ export function sha256Hex(data: string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+// A process's start time, /proc/<pid>/stat field 22 (clock ticks since
+// boot); undefined if it can't be read.  The comm field (2) may contain
+// spaces and parentheses, so fields are counted after its last ")".
+export function procStartTime(
+  pid: number | "self",
+  readFile: (path: string) => string = (path) =>
+    fs.readFileSync(path, "utf8"),
+): string | undefined {
+  let stat: string;
+  try {
+    stat = readFile(`/proc/${pid}/stat`);
+  } catch {
+    return;
+  }
+  const rest = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  // rest[0] is field 3, so field 22 is rest[19]
+  const start = rest[19];
+  return start != null && /^\d+$/.test(start) ? start : undefined;
+}
+
+// Whether the writer of a dirty record still runs: false only if its pid is
+// gone, or is now a different process (another start time).  Anything else
+// (no /proc, a record without procStart for a pid that exists) counts as
+// alive: its record keeps refusing (fail closed).
+export function isWriterAlive(
+  pid: number,
+  procStart?: string,
+  readFile?: (path: string) => string,
+): boolean {
+  let exists = true;
+  try {
+    (readFile ?? ((path) => fs.readFileSync(path, "utf8")))(
+      `/proc/${pid}/stat`,
+    );
+  } catch (err) {
+    if ((err as any)?.code === "ENOENT") exists = false;
+    else return true;
+  }
+  if (!exists) return false;
+  if (procStart == null) return true;
+  const now = procStartTime(pid, readFile);
+  if (now == null) return true;
+  return now === procStart;
+}
+
+// The persistent state directory for the post-reboot records (§3.2.5 (b)):
+// COCALC_PERSIST_STATE_DIR, else <the persist data dir>/.cocalc-persist-state.
+// Host-owned, never in a project; undefined if neither is known.
+export function persistStateDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (env.COCALC_PERSIST_STATE_DIR) return env.COCALC_PERSIST_STATE_DIR;
+  if (syncFiles.local) return posix.join(syncFiles.local, ".cocalc-persist-state");
+  return undefined;
+}
+
+function fsyncPath(path: string, flags = "r"): void {
+  const fd = fs.openSync(path, flags);
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Durable records in <dir>/poisoned/<key>: temp file, fsync, rename, fsync of
+// the directory; removal unlinks, then fsyncs the directory.
+export function nodePostRebootRecords(dir: string): PostRebootRecords {
+  const recordsDir = posix.join(dir, "poisoned");
+  const ensure = () => {
+    fs.mkdirSync(recordsDir, { recursive: true, mode: 0o700 });
+  };
+  return {
+    write: (key, data) => {
+      ensure();
+      const target = posix.join(recordsDir, key);
+      const tmp = `${target}.${process.pid}.tmp`;
+      const fd = fs.openSync(tmp, "w", 0o600);
+      try {
+        fs.writeSync(fd, data);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(tmp, target);
+      fsyncPath(recordsDir);
+    },
+    exists: (key) => {
+      try {
+        fs.lstatSync(posix.join(recordsDir, key));
+        return true;
+      } catch (err) {
+        return (err as any)?.code !== "ENOENT";
+      }
+    },
+    remove: (key) => {
+      try {
+        fs.unlinkSync(posix.join(recordsDir, key));
+      } catch (err) {
+        if ((err as any)?.code === "ENOENT") return;
+        throw err;
+      }
+      fsyncPath(recordsDir);
+    },
+  };
+}
+
 // records in root, for a process generation (a new one by default)
 export function nodeDurabilityRecords(
   root: string,
   generation = `${process.pid}-${randomUUID()}`,
+  stateDir: string | undefined = persistStateDir(),
 ): DurabilityRecords {
   return createDurabilityRecords({
     root,
@@ -40,14 +152,111 @@ export function nodeDurabilityRecords(
     fs: fs as any,
     sha256: sha256Hex,
     pid: process.pid,
+    procStart: procStartTime("self"),
+    isWriterAlive: (pid, procStart) => isWriterAlive(pid, procStart),
+    postReboot: stateDir == null ? undefined : nodePostRebootRecords(stateDir),
     warn: (message, err) => logger.warn(message, { err: `${err}` }),
   });
 }
 
+// (b) records that could not be written are retried every minute, with a
+// non-paging alert each time (§3.2.5 (b)).
+export const POST_REBOOT_RETRY_MS = 60_000;
+let retryTimer: ReturnType<typeof setInterval> | undefined;
+function startPostRebootRetry(r: DurabilityRecords): void {
+  if (retryTimer != null) return;
+  retryTimer = setInterval(() => {
+    if (r.postRebootPending() > 0) r.retryPostReboot();
+  }, POST_REBOOT_RETRY_MS);
+  (retryTimer as any).unref?.();
+}
+
+// A full PRAGMA integrity_check of a closed database in a child process
+// (never on the persist main thread), at most one at a time per host, at most
+// 10 minutes (§3.2.6, §3.2.9).  The child exits with process.exit, so its
+// connection is never closed (a close would checkpoint).
+export const INTEGRITY_CHECK_TIMEOUT_MS = 10 * 60_000;
+const INTEGRITY_CHECK_SOURCE = String.raw`
+const { DatabaseSync } = require("node:sqlite");
+let out;
+try {
+  const db = new DatabaseSync(process.argv[1]);
+  db.exec("PRAGMA busy_timeout=5000");
+  const rows = db.prepare("PRAGMA integrity_check").all();
+  out = { ok: rows.length === 1 && Object.values(rows[0])[0] === "ok", rows: rows.length };
+} catch (err) {
+  out = { ok: false, error: String(err && err.message || err).slice(0, 200) };
+}
+process.stdout.write(JSON.stringify(out) + "
+");
+process.exit(0);
+`;
+let integrityQueue: Promise<unknown> = Promise.resolve();
+export function integrityCheckClosedDatabase(
+  dbPath: string,
+  timeoutMs: number = INTEGRITY_CHECK_TIMEOUT_MS,
+): Promise<{ ok: boolean; why?: string }> {
+  const run = () =>
+    new Promise<{ ok: boolean; why?: string }>((resolve) => {
+      let stdout = "";
+      const child = spawn(
+        process.execPath,
+        ["-e", INTEGRITY_CHECK_SOURCE, dbPath],
+        { shell: false, env: {}, cwd: "/", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+      child.stdout.on("data", (d) => {
+        if (stdout.length < 4096) stdout += d.toString();
+      });
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        resolve({ ok: false, why: `${err}` });
+      });
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        if (code !== 0 || signal != null) {
+          resolve({ ok: false, why: `exit ${code} ${signal}` });
+          return;
+        }
+        try {
+          const r = JSON.parse(stdout.trim());
+          resolve(r.ok === true ? { ok: true } : { ok: false, why: stdout.trim() });
+        } catch {
+          resolve({ ok: false, why: "unparsable output" });
+        }
+      });
+    });
+  const next = integrityQueue.then(run, run);
+  integrityQueue = next.catch(() => {});
+  return next;
+}
+
 let records: DurabilityRecords | undefined;
+
+// Every MAINTENANCE open of a persist database (promotion, inspection,
+// compaction, the trim's offline reads; DESIGN §4A row 9, vanta P1) is
+// refused unless the stream's records are clean: a poisoned file, or one a
+// process left mid-write (dead or alive), must not be opened, read, copied or
+// checkpointed outside the open path that verifies it.  dbPath: the physical
+// <path>.db, as the stream was opened.
+export function assertPersistMaintenanceOpenAllowed(
+  dbPath: string,
+  check: (id: string) => string = (id) => persistDurabilityRecords().check(id),
+): void {
+  const id = posix.normalize(dbPath.replace(/\.db$/, ""));
+  const state = check(id);
+  if (state !== "ok") {
+    throw new Error(
+      `persist maintenance open refused (finding 028): the stream is ${state}: ${dbPath}`,
+    );
+  }
+}
 
 // the records of this process (one generation per process)
 export function persistDurabilityRecords(): DurabilityRecords {
-  records ??= nodeDurabilityRecords(persistRunDir());
+  if (records == null) {
+    records = nodeDurabilityRecords(persistRunDir());
+    startPostRebootRetry(records);
+  }
   return records;
 }

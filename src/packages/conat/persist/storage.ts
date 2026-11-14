@@ -76,6 +76,11 @@ import {
   isProjectOwnedDatabasePath,
   writeCounter,
   durability,
+  openBarrier,
+  type OpenBarrierResult,
+  verifiedEviction,
+  type VerifiedEvictionResult,
+  integrityCheck,
 } from "./context";
 import { posix } from "path";
 import { isMainThread } from "worker_threads";
@@ -124,6 +129,46 @@ export const CHECKPOINT_WAL_PAGES = 1000;
 let writeBatchWindowMs = 0;
 export function setWriteBatchWindowMs(ms: number): void {
   writeBatchWindowMs = Math.max(0, ms);
+}
+
+// 087: another write under a msgID already used (stored, or earlier in the
+// same batch).  Not retryable: the same msgID with that body will never be
+// accepted.
+export function msgIDConflictError(): ConatError {
+  return new ConatError(
+    "persist: this msgID was already used for a different message",
+    { code: "msgid-conflict" },
+  );
+}
+
+// bounded: the msgID is cut, the body is never logged
+function logMsgIDConflict(
+  path: string | undefined,
+  msgID: string,
+  where: "stored" | "batch",
+): void {
+  streamLifecycle.msgid_conflicts_total += 1;
+  logger.warn("persist: msgID reused for a different message (087)", {
+    path,
+    where,
+    msgID: `${msgID}`.slice(0, 64),
+  });
+}
+
+// The same write (087): every field a client sends with a message.
+export function sameWriteOperation(
+  a: WriteOperation,
+  b: WriteOperation,
+): boolean {
+  return (
+    Number(a.encoding) === Number(b.encoding) &&
+    Buffer.from(a.raw).equals(Buffer.from(b.raw)) &&
+    JSON.stringify(a.headers ?? null) === JSON.stringify(b.headers ?? null) &&
+    (a.key ?? null) === (b.key ?? null) &&
+    (a.ttl ?? null) === (b.ttl ?? null) &&
+    (a.previousSeq ?? null) === (b.previousSeq ?? null) &&
+    JSON.stringify(a.checkpoint ?? null) === JSON.stringify(b.checkpoint ?? null)
+  );
 }
 
 // A write that did not commit and can be sent again (the client retries).
@@ -222,6 +267,333 @@ export function poisonedStreamPaths(): string[] {
 // close returned OK (a poisoned one, or one whose close could not be armed,
 // stays here).
 const liveDiskConnections = new Set<PersistentStream>();
+
+// ---------------------------------------------------------------------------
+// The open barrier (028 B-2, DESIGN §3.2.6): before a disk-backed stream is
+// served, its -wal, .db and directory are fsync'd.  The persist server runs
+// it asynchronously (prepareDurableOpen) right before it constructs the
+// stream, which then consumes that pass; any other construction runs it
+// synchronously.  A pass is good for exactly one construction.
+const openBarrierPassed = new Set<string>();
+
+// The barrier's fsyncs can consume a sync error, so the dirty record exists
+// around them (§3.2.6 (e)), held like a connection's arm.
+function armForBarrier(id: string): void {
+  if (durability == null) throw retryableWriteError("unarmed");
+  const holders = armedConnections.get(id) ?? 0;
+  if (holders == 0) {
+    try {
+      durability.arm(id);
+    } catch (err) {
+      logger.error("persist: could not create a dirty record (finding 028)", {
+        id,
+        err: `${err}`,
+      });
+      throw retryableWriteError("unarmed");
+    }
+  }
+  armedConnections.set(id, holders + 1);
+}
+
+function releaseBarrierArm(id: string): void {
+  const holders = (armedConnections.get(id) ?? 1) - 1;
+  if (holders > 0) {
+    armedConnections.set(id, holders);
+    return;
+  }
+  armedConnections.delete(id);
+  durability?.disarm(id);
+}
+
+// What a barrier result means for the open: ok, or a refusal.  A sync error
+// poisons the file (its dirty record, armed before, becomes the poisoned-file
+// record); a discovery error proves nothing and is retried (§3.2.1 E0).
+function settleOpenBarrier(id: string, result: OpenBarrierResult): void {
+  if (result.kind == "ok") {
+    releaseBarrierArm(id);
+    return;
+  }
+  if (result.kind == "discovery") {
+    releaseBarrierArm(id);
+    logger.warn("persist: open barrier could not check a file (finding 028)", {
+      id,
+      path: result.path,
+      why: result.why,
+    });
+    throw new ConatError(
+      "persist: this stream's storage could not be verified yet; try again later",
+      { code: 503 },
+    );
+  }
+  // a sync error: the record stays and becomes the poison record
+  armedConnections.delete(id);
+  durability?.poison(id, { where: "open-barrier", errno: result.errno });
+  logger.error(
+    "PERSIST FILE POISONED (finding 028): the open barrier's fsync returned an error; the file is refused until it is verified",
+    { id, path: result.path, errno: result.errno },
+  );
+  throw retryableWriteError("poisoned");
+}
+
+function runOpenBarrierSync(id: string, dbPath: string): void {
+  if (openBarrier == null) {
+    throw new ConatError(
+      "persist: the open barrier is not configured, so disk-backed streams are refused",
+      { code: 503 },
+    );
+  }
+  armForBarrier(id);
+  let result: OpenBarrierResult;
+  try {
+    result = openBarrier.runSync(dbPath);
+  } catch (err) {
+    result = { kind: "discovery", path: dbPath, why: `${err}` };
+  }
+  settleOpenBarrier(id, result);
+}
+
+// The persist server, right before it gets the stream for path (resolved,
+// as passed to pstream): if that will construct a new connection, run the
+// open barrier first, off the main thread.  owner: the logical owner (a
+// project id, or "host"), for fairness between owners.
+export async function prepareDurableOpen(
+  path: string,
+  owner: string,
+): Promise<void> {
+  if (cache.info().count[path] != null) {
+    // a live connection: what it serves is committed, hence durable
+    return;
+  }
+  if (openBarrier == null) {
+    throw new ConatError(
+      "persist: the open barrier is not configured, so disk-backed streams are refused",
+      { code: 503 },
+    );
+  }
+  const id = posix.normalize(path);
+  const state = durability?.check(id);
+  if (state == "poisoned") throw retryableWriteError("poisoned");
+  if (state == "unverified") throw unverifiedStreamError();
+  if (state == "needs-check") {
+    // poisoned in an earlier boot: a full integrity_check first (§3.2.6)
+    await checkAfterReboot(id, `${path}.db`);
+  } else if (state == "leftover") {
+    // a dead process left it mid-write: verify, then open normally (H-b)
+    await verifyLeftover(id, `${path}.db`);
+  }
+  if (durability?.check(id) == "leftover") {
+    await verifyLeftover(id, `${path}.db`);
+  }
+  armForBarrier(id);
+  let result: OpenBarrierResult;
+  try {
+    result = await openBarrier.run(`${path}.db`, owner);
+  } catch (err) {
+    result = { kind: "discovery", path, why: `${err}` };
+  }
+  settleOpenBarrier(id, result);
+  openBarrierPassed.add(id);
+}
+
+// ---------------------------------------------------------------------------
+// The keep-open registry (028 B-2, DESIGN §4 items 8-10).  A disk stream whose
+// final checkpoint failed WITHOUT a sync error (e.g., its project is at quota)
+// is not closed: SQLite's own close would checkpoint again, and a connection
+// that is not really closed must stay counted as open for the fence (a
+// restore or move must never replace files under it).  It is parked here
+// INTACT (options, msgIDs, trash registration), retried with backoff, and
+// re-adopted by the next get of its path.  Every transition is one
+// synchronous step; a retry re-checks its generation before acting, so an
+// adoption always wins over a retry in flight.
+export const PARK_RETRY_INITIAL_MS = 5_000;
+export const PARK_RETRY_MAX_MS = 5 * 60_000;
+interface ParkedStream {
+  stream: PersistentStream;
+  state: "ownerless" | "retrying";
+  generation: number;
+  delayMs: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+const parked = new Map<string, ParkedStream>();
+
+function parkStream(stream: PersistentStream): void {
+  const path = stream.localPath();
+  if (path == null) return;
+  const existing = parked.get(path);
+  const entry: ParkedStream = existing ?? {
+    stream,
+    state: "ownerless",
+    generation: 0,
+    delayMs: PARK_RETRY_INITIAL_MS,
+  };
+  entry.stream = stream;
+  entry.state = "ownerless";
+  entry.generation += 1;
+  parked.set(path, entry);
+  logger.warn(
+    "persist alert (non-paging): a stream's final checkpoint failed; it stays open and is retried (finding 028)",
+    { path, retry_ms: entry.delayMs },
+  );
+  scheduleParkedRetry(path, entry);
+}
+
+function scheduleParkedRetry(path: string, entry: ParkedStream): void {
+  if (entry.timer != null) clearTimeout(entry.timer);
+  const generation = entry.generation;
+  entry.timer = setTimeout(() => {
+    entry.timer = undefined;
+    attemptParkedClose(path, generation);
+  }, entry.delayMs);
+  (entry.timer as any).unref?.();
+}
+
+// One close attempt for a parked stream, if it is still the same parked
+// generation (not re-adopted meanwhile).  True if it closed.
+function attemptParkedClose(path: string, generation: number): boolean {
+  const entry = parked.get(path);
+  if (entry == null || entry.generation !== generation) return false;
+  if (entry.state !== "ownerless") return false;
+  entry.state = "retrying";
+  // (B-3's quota probe would run here, awaited; the generation is
+  // re-checked after it before acting.)
+  if (parked.get(path) !== entry || entry.generation !== generation) {
+    return false;
+  }
+  const stream = entry.stream;
+  const outcome = stream.checkpointOutcome("FULL");
+  if (outcome == "poisoned") {
+    // never closed in this boot; it stays open and counted (poisonedStreams)
+    if (entry.timer != null) clearTimeout(entry.timer);
+    parked.delete(path);
+    return false;
+  }
+  if (outcome == "ok" || outcome == "busy") {
+    if (entry.timer != null) clearTimeout(entry.timer);
+    parked.delete(path);
+    stream.finishParkedClose();
+    return true;
+  }
+  entry.state = "ownerless";
+  entry.delayMs = Math.min(entry.delayMs * 2, PARK_RETRY_MAX_MS);
+  scheduleParkedRetry(path, entry);
+  return false;
+}
+
+// The next get of a parked path gets the parked object back, intact.
+function adoptParked(path: string): PersistentStream | undefined {
+  const entry = parked.get(path);
+  if (entry == null) return;
+  if (entry.timer != null) clearTimeout(entry.timer);
+  entry.generation += 1; // a retry in flight now does nothing
+  parked.delete(path);
+  entry.stream.readopted();
+  return entry.stream;
+}
+
+// A project fence (fence.ts) attempts the parked closes under it at once,
+// instead of waiting for their backoff.
+export function retryParkedStreams(under: (path: string) => boolean): void {
+  for (const [path, entry] of [...parked]) {
+    if (!under(path)) continue;
+    attemptParkedClose(path, entry.generation);
+  }
+}
+
+export function parkedStreamPaths(): string[] {
+  return [...parked.keys()];
+}
+
+// A stream poisoned in an earlier boot: after a reboot the page cache is gone
+// and the disk is the truth, but the device may have damaged the file; a full
+// integrity_check (off the main thread) must pass before it is served, and
+// only then is its durable record removed.  A failure keeps refusing, with an
+// alert (§3.2.6 POST-REBOOT).
+const checking = new Map<string, Promise<{ ok: boolean; why?: string }>>();
+async function checkAfterReboot(id: string, dbPath: string): Promise<void> {
+  if (integrityCheck == null) throw unverifiedStreamError();
+  let pending = checking.get(id);
+  if (pending == null) {
+    const run = integrityCheck;
+    pending = (async () => {
+      try {
+        return await run(dbPath);
+      } catch (err) {
+        return { ok: false, why: `${err}` };
+      }
+    })().finally(() => checking.delete(id));
+    checking.set(id, pending);
+  }
+  const result = await pending;
+  if (!result.ok) {
+    logger.error(
+      "PERSIST ALERT: a stream poisoned before the reboot failed its integrity_check; it stays refused (finding 028)",
+      { id, why: result.why },
+    );
+    throw unverifiedStreamError();
+  }
+  try {
+    durability?.clearPostReboot(id);
+  } catch (err) {
+    logger.warn("persist: could not remove a post-reboot record", {
+      id,
+      err: `${err}`,
+    });
+    throw unverifiedStreamError();
+  }
+  logger.info("persist: integrity_check passed after a poison (finding 028)", {
+    id,
+  });
+}
+
+// One verification at a time per stream (concurrent opens wait for it).
+const verifying = new Map<string, Promise<VerifiedEvictionResult>>();
+
+async function verifyLeftover(id: string, dbPath: string): Promise<void> {
+  if (verifiedEviction == null) {
+    throw unverifiedStreamError();
+  }
+  let pending = verifying.get(id);
+  if (pending == null) {
+    const run = verifiedEviction;
+    pending = (async () => {
+      try {
+        return await run(dbPath);
+      } catch (err) {
+        return { verified: false as const, path: dbPath, why: `${err}` };
+      }
+    })().finally(() => verifying.delete(id));
+    verifying.set(id, pending);
+  }
+  const result = await pending;
+  if (!result.verified) {
+    // non-paging, names the stream; no host effect (§3.2.0, §3.2.10)
+    logger.warn(
+      "persist alert (non-paging): a stream left mid-write could not be verified; it stays refused and is retried (finding 028)",
+      { id, path: result.path, why: result.why },
+    );
+    throw unverifiedStreamError();
+  }
+  // the page cache now equals the disk: the dead writers' records go
+  durability?.clearLeftovers(id);
+  logger.info("persist: verified a stream left mid-write (finding 028)", {
+    id,
+    files: result.files,
+  });
+}
+
+function unverifiedStreamError(): ConatError {
+  return new ConatError(
+    "persist: this stream's storage was left mid-write by a crash and is not verified yet; try again later",
+    { code: 503 },
+  );
+}
+
+// After the get that followed prepareDurableOpen: an unused pass (a cache hit
+// after all, or a refusal before the construction) must not serve a later
+// construction.
+export function clearOpenBarrierPass(path: string): void {
+  openBarrierPassed.delete(posix.normalize(path));
+}
 
 // At a NATURAL exit (the event loop drains), Node's teardown closes every
 // live DatabaseSync, however referenced: that close checkpoints, unarmed,
@@ -1352,6 +1724,8 @@ const streamLifecycle = {
   open_disk: 0,
   // 028: a close reached with uncommitted writes queued (a bug: they fail)
   closed_with_queued_writes_total: 0,
+  // 087: a write refused because its msgID was used for a different message
+  msgid_conflicts_total: 0,
 };
 
 const openCacheSizes = {
@@ -1547,8 +1921,19 @@ export class PersistentStream extends EventEmitter {
     PersistMaintenanceHandle
   >();
 
+  // close as defined here, before a cache wraps it (re-adoption restores it)
+  private readonly closeUnderlying: () => void;
+
   constructor(options: StorageOptions) {
     super();
+    this.closeUnderlying = this.close;
+    if (parked.has(options.path)) {
+      // a parked connection to this path is still open: never a second one
+      throw new ConatError(
+        "persist: this stream is still closing; try again",
+        { code: 503 },
+      );
+    }
     openPaths.add(options.path);
     try {
       logger.debug("constructor ", options.path);
@@ -1569,10 +1954,17 @@ export class PersistentStream extends EventEmitter {
         this.logicalId = posix.normalize(this.options.path);
         this.assertOpenAllowed();
       }
-      this.initArchive();
+      const copiedArchive = this.initArchive();
       if (location !== ":memory:") {
         // again: initArchive may have written the file
         assertSafeDatabasePath(location);
+        // 028 B-2: nothing is served before the files are fsync'd (the
+        // server's pass covers it unless initArchive just wrote the file)
+        const id = this.logicalId!;
+        if (copiedArchive || !openBarrierPassed.delete(id)) {
+          openBarrierPassed.delete(id);
+          runOpenBarrierSync(id, location);
+        }
       }
       // defensive: no writable_schema or other ways to corrupt the file
       const db = createDatabase(location, { defensive: true });
@@ -1624,7 +2016,8 @@ export class PersistentStream extends EventEmitter {
   // At open, before anything reads or copies the file: a file poisoned in
   // this boot is refused, and so is one another process left mid-write (a
   // dirty record of another generation), whose state on disk is unknown.
-  // (B-2 replaces that refusal by a verified eviction.)
+  // For a dead process's record the server's asynchronous open
+  // (prepareDurableOpen) runs a verified eviction first, which removes it.
   private assertOpenAllowed = (): void => {
     const path = this.options.path;
     if (!isMainThread) {
@@ -1647,15 +2040,15 @@ export class PersistentStream extends EventEmitter {
     if (state == "poisoned") {
       throw retryableWriteError("poisoned");
     }
-    if (state == "unverified") {
+    if (state == "unverified" || state == "leftover" || state == "needs-check") {
+      // another process may be writing it now, or a dead one left it
+      // mid-write; only the server's asynchronous open verifies the latter
+      // (prepareDurableOpen), so this construction is refused
       logger.warn(
         "persist: refusing a stream left mid-write by another process (finding 028)",
-        { path },
+        { path, state },
       );
-      throw new ConatError(
-        "persist: this stream's storage was left mid-write by a crash and is not verified yet; try again later",
-        { code: 503 },
-      );
+      throw unverifiedStreamError();
     }
   };
 
@@ -1812,19 +2205,29 @@ export class PersistentStream extends EventEmitter {
 
   // a checked checkpoint; true if it completed (nothing left in the WAL that
   // was not copied)
-  private checkpoint = (mode: "PASSIVE" | "FULL"): boolean => {
+  private checkpoint = (mode: "PASSIVE" | "FULL"): boolean =>
+    this.checkpointOutcome(mode) == "ok";
+
+  // "ok": everything copied; "busy": a reader held it (no sync error);
+  // "error": a non-sync error (e.g., a user at quota: the WAL stays);
+  // "unarmed": its dirty record could not be created, so it did not run;
+  // "poisoned": a sync error.
+  checkpointOutcome = (
+    mode: "PASSIVE" | "FULL",
+  ): "ok" | "busy" | "error" | "unarmed" | "poisoned" => {
+    if (this.poisoned) return "poisoned";
     try {
       this.armBeforeWrite();
     } catch {
-      return false;
+      return this.poisoned ? "poisoned" : "unarmed";
     }
     try {
       const result = this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get() as
         | { busy: number; log: number; checkpointed: number }
         | undefined;
-      return (
-        result != null && !result.busy && result.checkpointed >= result.log
-      );
+      return result != null && !result.busy && result.checkpointed >= result.log
+        ? "ok"
+        : "busy";
     } catch (err) {
       if (isSqliteSyncError(err)) {
         this.poison(err, `checkpoint(${mode})`);
@@ -1837,7 +2240,7 @@ export class PersistentStream extends EventEmitter {
           err: `${err}`,
         });
       }
-      return false;
+      return this.poisoned ? "poisoned" : "error";
     }
   };
 
@@ -1913,10 +2316,11 @@ export class PersistentStream extends EventEmitter {
     }
   };
 
-  private initArchive = () => {
+  // returns whether it copied the archive over the file
+  private initArchive = (): boolean => {
     if (!this.options.archive) {
       this.throttledBackup = () => {};
-      return;
+      return false;
     }
     this.throttledBackup = throttle(
       this.backup,
@@ -1931,7 +2335,9 @@ export class PersistentStream extends EventEmitter {
 
     if (archiveAge > pathAge) {
       copyFileSync(archive, path);
+      return true;
     }
+    return false;
   };
 
   // Limit what this connection can do, whatever the (untrusted) file holds.
@@ -2636,11 +3042,38 @@ export class PersistentStream extends EventEmitter {
       this.failQueuedWrites("closing");
     }
     // a final checked checkpoint, armed (§4.8): a sync error poisons, and
-    // then nothing is closed or torn down
+    // then nothing is closed or torn down.  Any other failure (e.g., a user
+    // at quota: SQLite's own close would checkpoint again and fail the same
+    // way) keeps the connection open and INTACT, counted as open for the
+    // fence, and retried later; the next get re-adopts it (§4.8-§4.10).
     if (this.db != null && this.storageKind == "disk") {
-      this.checkpoint("FULL");
+      const outcome = this.checkpointOutcome("FULL");
       if (this.poisoned) return;
+      if (outcome == "error" || outcome == "unarmed") {
+        parkStream(this);
+        return;
+      }
     }
+    this.finishClose(path);
+  };
+
+  // A parked stream's retry checkpointed it: now the real close.
+  finishParkedClose = (): void => {
+    const path = this.options?.path;
+    if (path == null || this.closing || this.poisoned) return;
+    this.finishClose(path);
+  };
+
+  // A parked stream handed out again by the cache: its own close again (the
+  // cache's wrapper of the previous reference is spent).
+  readopted = (): void => {
+    this.close = this.closeUnderlying;
+  };
+
+  // The rest of a close, once the final checkpoint is done: the real
+  // db.close() and the teardown (only if it really closed, or for an
+  // ephemeral stream).
+  private finishClose = (path: string): void => {
     this.closing = true;
     // the restore fence and every close: nothing of this stream's trash work
     // runs after this, even if already selected for a tick (H1c §5)
@@ -2866,6 +3299,21 @@ export class PersistentStream extends EventEmitter {
           | { seq: number; time: number }
           | undefined) ?? this.storedMsgID(msgID);
       if (existing != null) {
+        // 087: only the SAME write is answered as a duplicate; another body
+        // (raw, encoding, headers, key, ttl, checkpoint) under a stored
+        // msgID is refused, and nothing is stored or emitted either way
+        const stored = this.storedWriteMatches(existing.seq, {
+          encoding,
+          raw,
+          headers,
+          key,
+          ttl,
+          checkpoint,
+        });
+        if (stored == "mismatch") {
+          logMsgIDConflict(this.options?.path, msgID, "stored");
+          throw msgIDConflictError();
+        }
         return { seq: existing.seq, time: existing.time, duplicate: true };
       }
     }
@@ -2913,6 +3361,60 @@ export class PersistentStream extends EventEmitter {
       time,
       seq,
     };
+  };
+
+  // Whether the message stored at seq is the same write as op (087).
+  // "gone": the row is no longer there (deleted, trimmed, or expired): there
+  // is nothing to compare, and the duplicate answer stores and emits nothing.
+  // Compared: encoding, raw, headers (as serialized), key, ttl, and a
+  // checkpoint while its row still points at this message.  previousSeq is
+  // not stored (a precondition checked at the first commit), so a committed
+  // duplicate can't be compared on it; a duplicate in the same batch is.
+  private storedWriteMatches = (
+    seq: number,
+    op: {
+      encoding: DataEncoding;
+      raw: Buffer;
+      headers?: JSONValue;
+      key?: string;
+      ttl?: number;
+      checkpoint?: CheckpointUpdate;
+    },
+  ): "match" | "mismatch" | "gone" => {
+    const row = this.db
+      .prepare(
+        `SELECT seq, key, time, compress, encoding, raw, headers, ttl, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE seq=?`,
+      )
+      .get(seq) as any;
+    if (row == null) return "gone";
+    if (Number(row.size) > maxPersistMessageBytes()) return "mismatch";
+    const stored = dbToMessage({ ...row, ttl: undefined }, Number(row.size));
+    if (stored == null) return "gone";
+    if (Number(row.encoding) !== Number(op.encoding)) return "mismatch";
+    if (!Buffer.from(stored.raw).equals(Buffer.from(op.raw))) return "mismatch";
+    const headers = op.headers == null ? null : JSON.stringify(op.headers);
+    if ((row.headers ?? null) !== (headers ?? null)) return "mismatch";
+    if ((row.key ?? null) !== (op.key ?? null)) return "mismatch";
+    if ((row.ttl == null ? null : Number(row.ttl)) !== (op.ttl ?? null)) {
+      return "mismatch";
+    }
+    const cp = this.db
+      .prepare(
+        "SELECT name FROM stream_checkpoints WHERE snapshot_seq = ? LIMIT 1",
+      )
+      .get(seq) as { name?: string } | undefined;
+    if (cp != null && (op.checkpoint == null || op.checkpoint.name !== cp.name)) {
+      return "mismatch";
+    }
+    if (cp == null && op.checkpoint != null) {
+      // the stored message never had one, or a later checkpoint of that name
+      // replaced it: only the first can be told apart
+      const named = this.db
+        .prepare("SELECT 1 AS x FROM stream_checkpoints WHERE name = ? LIMIT 1")
+        .get(op.checkpoint.name);
+      if (named == null) return "mismatch";
+    }
+    return "match";
   };
 
   // The message a msg id was stored with, if it is still in the stream.
@@ -3224,7 +3726,15 @@ export class PersistentStream extends EventEmitter {
         const owner = op.msgID != null ? owners.get(op.msgID) : undefined;
         if (owner != null) {
           // a duplicate of an op earlier in this batch: it gets that op's
-          // result, and writes and emits nothing
+          // result, and writes and emits nothing -- but only if it is the
+          // SAME write; another body under that msgID is refused (087)
+          const ownerOp = owner.request.ops[owner.op];
+          if (!sameWriteOperation(ownerOp, op)) {
+            logMsgIDConflict(this.options?.path, op.msgID!, "batch");
+            requestResults.push({ error: msgIDConflictError() });
+            if (request.kind != "setMany") requestFailed = msgIDConflictError();
+            continue;
+          }
           requestResults.push({ duplicateOf: owner });
           continue;
         }
@@ -5634,7 +6144,8 @@ export const cache = refCacheSync<CreateOptions, PersistentStream>({
   name: "persistent-storage-stream",
   createKey: ({ path }: CreateOptions) => path,
   createObject: (options: CreateOptions) => {
-    return new PersistentStream(options);
+    // a parked connection (§4.8-§4.10) comes back intact, never a second one
+    return adoptParked(options.path) ?? new PersistentStream(options);
   },
   // a poisoned stream is never handed out again: the next get tries to open
   // it anew, which its records refuse (028)

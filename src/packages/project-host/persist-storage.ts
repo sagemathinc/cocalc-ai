@@ -25,8 +25,14 @@ import { lstat, open, opendir, rmdir, unlink } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 // (initialized with node:sqlite, as in the persist server)
-import { pstream, closeDurably } from "@cocalc/backend/conat/persist";
+import {
+  pstream,
+  closeDurably,
+  prepareDurableOpen,
+  clearOpenBarrierPass,
+} from "@cocalc/backend/conat/persist";
 import { projectPersistTemplates } from "@cocalc/backend/conat/persist-volume-template";
+import { assertPersistMaintenanceOpenAllowed } from "@cocalc/backend/conat/persist-durability";
 import {
   MAX_PERSIST_STORAGE_ACTIONS,
   RETENTION_POLICY_KINDS,
@@ -346,6 +352,7 @@ async function removeEmptyParents(root: string, path: string): Promise<void> {
 
 // Gives back the free pages of a closed database.
 function compact(path: string): void {
+  assertPersistMaintenanceOpenAllowed(`${path}.db`);
   const db = new DatabaseSync(`${path}.db`);
   try {
     db.exec("PRAGMA busy_timeout=5000");
@@ -360,6 +367,7 @@ function compact(path: string): void {
 // storage keeps each entry's time in seconds.)
 function lastSeqBefore(path: string, before: number): number | undefined {
   // (not read-only: that can't read a database in WAL mode without its -shm)
+  assertPersistMaintenanceOpenAllowed(`${path}.db`);
   const db = new DatabaseSync(`${path}.db`);
   try {
     db.exec("PRAGMA busy_timeout=5000");
@@ -407,13 +415,20 @@ async function trim(
     action.name,
     env,
   );
+  // 028 B-2: the open barrier off the main thread, consumed right below
+  await prepareDurableOpen(path, ctx.project_id);
   // (closing writes the trimmed stream to its copies)
-  const stream = pstream({
-    path,
-    ...(archive ? { archive } : {}),
-    ...(backup ? { backup } : {}),
-    noCache: true,
-  });
+  let stream: ReturnType<typeof pstream>;
+  try {
+    stream = pstream({
+      path,
+      ...(archive ? { archive } : {}),
+      ...(backup ? { backup } : {}),
+      noCache: true,
+    });
+  } finally {
+    clearOpenBarrierPass(path);
+  }
   let removed = 0;
   try {
     if (cutoff != null) {

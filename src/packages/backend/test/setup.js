@@ -13,6 +13,15 @@ if (!process.env.COCALC_PERSIST_RUN_DIR) {
     join(tmpdir(), "cocalc-persist-run-"),
   );
 }
+// and its durable post-reboot records (028 B-2): also this test process's
+if (!process.env.COCALC_PERSIST_STATE_DIR) {
+  const { mkdtempSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  process.env.COCALC_PERSIST_STATE_DIR = mkdtempSync(
+    join(tmpdir(), "cocalc-persist-state-"),
+  );
+}
 
 // openat2 support is Linux-only. On macOS/other platforms we explicitly allow
 // the node fallback path during tests.
