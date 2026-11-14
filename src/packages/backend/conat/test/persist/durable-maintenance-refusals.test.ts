@@ -106,7 +106,9 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     expect(dispatches).toHaveLength(2);
     for (const d of dispatches) {
       const before = source.slice(Math.max(0, d.index! - 200), d.index);
-      expect(before).toMatch(/assertPersistMaintenanceOpenAllowed\(checked\.path\);\s*$/);
+      expect(before).toMatch(
+        /assertPersistMaintenanceOpenAllowed\(checked\.path\);\s*(const \w+ = )?$/,
+      );
     }
   });
 
