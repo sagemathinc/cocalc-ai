@@ -6,7 +6,17 @@ headers or a key that were not stored under that seq.  (Before B-1, the
 dedupe pushed a change with the NEW body under the OLD seq, past the
 required-headers fence, the previousSeq check and the limits.)
 
-Rejecting a different body under a reused msgID is B-2's item; here the
+setInternal answers a duplicate on three paths, each tested (SA 3251):
+- P1: the in-memory msgIDs cache (the same open stream, recently);
+- P2: the persisted message_ids JOIN messages (after a restart, or once the
+  cache entry expired: the lost-ack-after-crash case B-1 exists for);
+- P3: an owner earlier in the same batch (duplicateOf).
+Each assertion of "no event" goes through assertNoEvents, whose message names
+the path, so the can-fail mutants (one per path, re-adding the pre-B-1 emit)
+are counted only on that assertion.  "No mutation" compares every row of
+every non-trash table, before and after.
+
+Refusing a different body under a reused msgID is B-2's item (087); here the
 property is "nothing stored, nothing emitted" for every field.
 */
 
@@ -23,49 +33,76 @@ const msg = (s: string, extra: object = {}) => ({
   ...extra,
 });
 
-interface StoredRow {
-  seq: number;
-  key: string | null;
-  headers: string | null;
-  raw: string;
-  encoding: number;
-  ttl: number | null;
+// The mapped assertion of the can-fail mutants: its message names the path.
+function assertNoEvents(changes: any[], path: "P1" | "P2" | "P3"): void {
+  if (changes.length !== 0) {
+    throw new Error(
+      `NO-EVENT-ASSERTION[${path}]: ${changes.length} change(s) emitted for a duplicate`,
+    );
+  }
 }
 
-function storedRows(stream): StoredRow[] {
-  return (
-    (stream as any).db
+// Every row of every table except the reset trash, as stored.
+function state(stream): Record<string, any[]> {
+  const db = (stream as any).db;
+  const tables = (
+    db
       .prepare(
-        "SELECT seq, key, headers, encoding, ttl FROM messages ORDER BY seq",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%trash%' ORDER BY name",
       )
-      .all() as any[]
-  ).map((row) => ({
-    seq: Number(row.seq),
-    key: row.key ?? null,
-    headers: row.headers ?? null,
-    encoding: Number(row.encoding),
-    ttl: row.ttl == null ? null : Number(row.ttl),
-    // the stored body, decoded the way readers decode it
-    raw: Buffer.from(stream.get({ seq: Number(row.seq) })?.raw ?? []).toString(),
-  }));
+      .all() as { name: string }[]
+  ).map((t) => t.name);
+  const out: Record<string, any[]> = {};
+  for (const table of tables) {
+    out[table] = (db.prepare(`SELECT * FROM "${table}"`).all() as any[]).map(
+      (row) =>
+        Object.fromEntries(
+          Object.entries(row).map(([k, v]) => [
+            k,
+            v instanceof Uint8Array ? Buffer.from(v).toString("hex") : v,
+          ]),
+        ),
+    );
+    out[table].sort((a, b) =>
+      JSON.stringify(a) < JSON.stringify(b) ? -1 : 1,
+    );
+  }
+  return out;
 }
 
-function checkpoints(stream) {
-  return (stream as any).db
-    .prepare("SELECT name, seq FROM stream_checkpoints ORDER BY name")
-    .all();
+function storedRaws(stream): Map<number, string> {
+  const rows = (stream as any).db
+    .prepare("SELECT seq FROM messages ORDER BY seq")
+    .all() as { seq: number }[];
+  return new Map(
+    rows.map(({ seq }) => [
+      Number(seq),
+      Buffer.from(stream.get({ seq: Number(seq) })?.raw ?? []).toString(),
+    ]),
+  );
+}
+
+// P2 answers time from the stored row (whole seconds × 1000 as stored):
+// within 2 ms of the original ack
+function expectSameResult(result: any, first: any) {
+  expect(result.seq).toBe(first.seq);
+  expect(Math.abs(result.time - first.time)).toBeLessThan(2);
 }
 
 describe("028 B-1: a stored msgID is answered without storing or emitting anything", () => {
   let dir: string;
   let streams: any[] = [];
-  const open = (name: string, opts: object = {}) => {
-    const s = pstream({ path: join(dir, name), ...opts });
+  const open = (name: string) => {
+    const s = pstream({ path: join(dir, name) });
     streams.push(s);
     return s;
   };
-  // every change a stream emits, and a check that each emitted set matches
-  // what is stored under its seq (stored == live)
+  // P2: a new connection, so the in-memory cache is empty
+  const reopen = (stream, name: string) => {
+    stream.close();
+    streams = streams.filter((s) => s !== stream);
+    return open(name);
+  };
   const watch = (stream) => {
     const changes: any[] = [];
     stream.on("change", (c) => changes.push(c));
@@ -86,20 +123,24 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("an exact resend (set, setQueued, setMany, setManyQueued) returns the stored result and emits zero changes", async () => {
-    const stream = open("exact");
-    const first = await stream.setQueued(msg("a", { msgID: "m1" }));
-    const before = storedRows(stream);
-    const changes = watch(stream);
-    expect(stream.set(msg("a", { msgID: "m1" }))).toEqual(first);
-    expect(await stream.setQueued(msg("a", { msgID: "m1" }))).toEqual(first);
-    expect(stream.setMany([msg("a", { msgID: "m1" })])[0]).toEqual(first);
-    expect(
-      (await stream.setManyQueued([msg("a", { msgID: "m1" })]))[0],
-    ).toEqual(first);
-    expect(changes).toHaveLength(0);
-    expect(storedRows(stream)).toEqual(before);
-  });
+  for (const path of ["P1", "P2"] as const) {
+    it(`${path}: an exact resend (set, setQueued, setMany, setManyQueued) returns the stored result, emits nothing and changes nothing`, async () => {
+      let stream = open(`exact-${path}`);
+      const first = await stream.setQueued(msg("a", { msgID: "m1" }));
+      if (path == "P2") stream = reopen(stream, `exact-${path}`);
+      const before = state(stream);
+      const changes = watch(stream);
+      expectSameResult(stream.set(msg("a", { msgID: "m1" })), first);
+      expectSameResult(await stream.setQueued(msg("a", { msgID: "m1" })), first);
+      expectSameResult(stream.setMany([msg("a", { msgID: "m1" })])[0], first);
+      expectSameResult(
+        (await stream.setManyQueued([msg("a", { msgID: "m1" })]))[0],
+        first,
+      );
+      assertNoEvents(changes, path);
+      expect(state(stream)).toEqual(before);
+    });
+  }
 
   // each variant differs from the stored message in one field
   const variants: Array<[string, (seq: number) => object]> = [
@@ -112,45 +153,91 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     ["checkpoint", (seq) => msg("a", { msgID: "m1", checkpoint: { name: "cp", seq } })],
   ];
 
-  for (const [field, make] of variants) {
-    for (const how of ["set", "setManyQueued"] as const) {
-      it(`a resend with a different ${field} (${how}) emits zero changes and mutates nothing`, async () => {
-        const stream = open(`diff-${field}-${how}`, {});
-        stream.config({ allow_msg_ttl: true });
-        const first = await stream.setQueued(msg("a", { msgID: "m1", key: "k" }));
-        const before = storedRows(stream);
-        const cpBefore = checkpoints(stream);
-        const changes = watch(stream);
-        const op = make(first.seq);
-        const result =
-          how == "set"
-            ? stream.set(op as any)
-            : (await stream.setManyQueued([op as any]))[0];
-        expect(result).toEqual(first);
-        expect(changes).toHaveLength(0);
-        expect(storedRows(stream)).toEqual(before);
-        expect(checkpoints(stream)).toEqual(cpBefore);
-      });
+  for (const path of ["P1", "P2"] as const) {
+    for (const [field, make] of variants) {
+      for (const how of ["set", "setManyQueued"] as const) {
+        it(`${path}: a resend with a different ${field} (${how}) emits nothing and changes nothing`, async () => {
+          const name = `diff-${path}-${field}-${how}`;
+          let stream = open(name);
+          stream.config({ allow_msg_ttl: true });
+          const first = await stream.setQueued(msg("a", { msgID: "m1", key: "k" }));
+          if (path == "P2") stream = reopen(stream, name);
+          const before = state(stream);
+          const changes = watch(stream);
+          const op = make(first.seq);
+          const result =
+            how == "set"
+              ? stream.set(op as any)
+              : (await stream.setManyQueued([op as any]))[0];
+          expectSameResult(result, first);
+          assertNoEvents(changes, path);
+          expect(state(stream)).toEqual(before);
+        });
+      }
     }
   }
 
-  it("a resend whose headers fail the required-headers fence emits no live event", async () => {
-    const stream = open("fence");
-    stream.config({ required_headers: { epoch: 1 } } as any);
-    const first = await stream.setQueued(
-      msg("a", { msgID: "m1", headers: { epoch: 1 } }),
-    );
-    const before = storedRows(stream);
-    const changes = watch(stream);
-    // a writer without the fence header reusing the stored msgID
-    const result = stream.set(msg("forged", { msgID: "m1", headers: {} }));
-    expect(result).toEqual(first);
-    expect(changes).toHaveLength(0);
-    expect(storedRows(stream)).toEqual(before);
-    // without a msgID the same write is refused by the fence
-    expect(() => stream.set(msg("forged", { headers: {} }))).toThrow(
-      "required header mismatch",
-    );
+  // P3: a duplicate of an op earlier in the same batch
+  const p3variants: Array<[string, object]> = [
+    ["the same body", msg("a", { msgID: "m1" })],
+    ["a different raw", msg("DIFFERENT", { msgID: "m1" })],
+    ["different headers", msg("a", { msgID: "m1", headers: { forged: 1 } })],
+    ["a different key", msg("a", { msgID: "m1", key: "other-key" })],
+  ];
+  for (const [what, dup] of p3variants) {
+    it(`P3: in one setMany, a later op with the msgID and ${what} gets the first op's result, emits nothing of its own and stores nothing`, async () => {
+      const stream = open(`p3-many-${what}`);
+      const changes = watch(stream);
+      const [r1, r2] = await stream.setManyQueued([msg("a", { msgID: "m1" }), dup as any]);
+      // nothing after the owner's own change (the mapped assertion first)
+      assertNoEvents(changes.slice(1), "P3");
+      expect(r2).toEqual(r1);
+      // exactly the owner's change, carrying the owner's bytes
+      const sets = changes.filter((c) => c.seq != null);
+      expect(sets).toHaveLength(1);
+      expect(Buffer.from(sets[0].raw).toString()).toBe("a");
+      expect([...storedRaws(stream).values()]).toEqual(["a"]);
+    });
+
+    it(`P3: across requests in one batch, a later request with the msgID and ${what} gets the first's result, emits nothing of its own and stores nothing`, async () => {
+      const stream = open(`p3-batch-${what}`);
+      const changes = watch(stream);
+      const [r1, r2] = await Promise.all([
+        stream.setQueued(msg("a", { msgID: "m1" })),
+        stream.setQueued(dup as any),
+      ]);
+      assertNoEvents(changes.slice(1), "P3");
+      expect(r2).toEqual(r1);
+      const sets = changes.filter((c) => c.seq != null);
+      expect(sets).toHaveLength(1);
+      expect(Buffer.from(sets[0].raw).toString()).toBe("a");
+      expect([...storedRaws(stream).values()]).toEqual(["a"]);
+    });
+  }
+
+  it("P1/P2: a resend whose headers fail the required-headers fence emits no live event", async () => {
+    for (const path of ["P1", "P2"] as const) {
+      const name = `fence-${path}`;
+      let stream = open(name);
+      stream.config({ required_headers: { epoch: 1 } } as any);
+      const first = await stream.setQueued(
+        msg("a", { msgID: "m1", headers: { epoch: 1 } }),
+      );
+      if (path == "P2") stream = reopen(stream, name);
+      const before = state(stream);
+      const changes = watch(stream);
+      // a writer without the fence header reusing the stored msgID
+      expectSameResult(
+        stream.set(msg("forged", { msgID: "m1", headers: {} })),
+        first,
+      );
+      assertNoEvents(changes, path);
+      expect(state(stream)).toEqual(before);
+      // without a msgID the same write is refused by the fence
+      expect(() => stream.set(msg("forged", { headers: {} }))).toThrow(
+        "required header mismatch",
+      );
+    }
   });
 
   it("a cached msgID whose row was deleted never yields a phantom event under the old seq", async () => {
@@ -161,17 +248,15 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     const changes = watch(stream);
     const again = await stream.setQueued(msg("a2", { msgID: "gone" }));
     // whatever the answer, no change carries the deleted seq, and every
-    // emitted set is exactly what is stored under its seq
+    // emitted set is exactly what is stored under its seq.  (P1 may answer
+    // with the deleted seq and store nothing; whether that answer stands is
+    // B-2/087's decision.)
     expect(changes.some((c) => c.seq === first.seq)).toBe(false);
-    const rows = storedRows(stream);
+    const raws = storedRaws(stream);
     for (const c of changes.filter((c) => c.seq != null)) {
-      const row = rows.find((r) => r.seq === c.seq);
-      expect(row).toBeDefined();
-      expect(row!.raw).toBe(Buffer.from(c.raw).toString());
+      expect(raws.get(c.seq)).toBe(Buffer.from(c.raw).toString());
     }
-    expect(rows.some((r) => r.seq === again.seq) || again.seq === first.seq).toBe(
-      true,
-    );
+    expect(raws.has(again.seq) || again.seq === first.seq).toBe(true);
   });
 
   it("after a history reset, a msgID from the previous epoch is not acknowledged as a duplicate", async () => {
@@ -188,8 +273,8 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     );
     // stored anew in the new epoch: a new row, emitted once, stored == live
     expect(again.seq).not.toBe(first.seq);
-    const rows = storedRows(stream);
-    expect(rows.map((r) => r.seq)).toEqual([again.seq]);
+    const raws = storedRaws(stream);
+    expect([...raws.keys()]).toEqual([again.seq]);
     const sets = changes.filter((c) => c.seq != null);
     expect(sets.map((c) => c.seq)).toEqual([again.seq]);
     expect(Buffer.from(sets[0].raw).toString()).toBe("a");
@@ -200,15 +285,13 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     const first = await stream.setQueued(msg("a", { msgID: "trim" }));
     await stream.setQueued(msg("b"));
     stream.config({ max_msgs: 1 }); // trims seq `first.seq`
-    expect(storedRows(stream).some((r) => r.seq === first.seq)).toBe(false);
+    expect(storedRaws(stream).has(first.seq)).toBe(false);
     const changes = watch(stream);
     await stream.setQueued(msg("a2", { msgID: "trim" }));
     expect(changes.some((c) => c.seq === first.seq)).toBe(false);
-    const rows = storedRows(stream);
+    const raws = storedRaws(stream);
     for (const c of changes.filter((c) => c.seq != null)) {
-      const row = rows.find((r) => r.seq === c.seq);
-      expect(row).toBeDefined();
-      expect(row!.raw).toBe(Buffer.from(c.raw).toString());
+      expect(raws.get(c.seq)).toBe(Buffer.from(c.raw).toString());
     }
   });
 });
