@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import os from "node:os";
 import path from "node:path";
+import { execPathScriptEnv } from "../runtime";
 import type {
   ReflectForwardRow,
   ReflectLogRow,
@@ -1106,7 +1107,7 @@ async function runReflectCliJson(
       [cliPath, "--session-db", sessionDb, ...args],
       {
         stdio: ["ignore", "pipe", "pipe"],
-        env: process.env,
+        env: execPathScriptEnv(),
       },
     );
     let stdout = "";

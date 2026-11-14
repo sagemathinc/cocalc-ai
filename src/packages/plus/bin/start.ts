@@ -8,6 +8,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { configurePlusRuntime, plusRuntimePaths } from "../platform";
+import { execPathScriptEnv } from "../runtime";
 
 const dynamicImport = new Function("p", "return import(p);") as (
   p: string,
@@ -421,7 +422,7 @@ function runCliCommand(args: string[]): Promise<void> {
     }
     const child = spawn(process.execPath, [cliEntry, ...args], {
       stdio: "inherit",
-      env: process.env,
+      env: execPathScriptEnv(),
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
