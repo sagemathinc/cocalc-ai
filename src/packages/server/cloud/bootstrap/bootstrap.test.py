@@ -14753,5 +14753,28 @@ class ToolsArtifactLockTest(unittest.TestCase):
         self.assertEqual(outside.read_text(), "original")
 
 
+
+class PersistTmpfilesTest(unittest.TestCase):
+    """Finding 028 B-3a: the persist records directory via tmpfiles.d."""
+
+    def test_line_is_a_private_per_boot_directory_of_the_account(self) -> None:
+        self.assertEqual(
+            bootstrap.persist_tmpfiles_conf("ubuntu"),
+            "d /run/cocalc-persist 0700 ubuntu ubuntu -\n",
+        )
+
+    def test_refuses_an_account_name_that_could_inject_fields(self) -> None:
+        for bad in ["ubuntu root", "ubuntu\nd /etc 0777", "../x", ""]:
+            with self.assertRaises(ValueError):
+                bootstrap.persist_tmpfiles_conf(bad)
+
+    def test_autostart_writes_and_creates_it(self) -> None:
+        source = inspect.getsource(bootstrap.configure_autostart)
+        self.assertIn("PERSIST_TMPFILES_CONF", source)
+        self.assertIn('"systemd-tmpfiles", "--create", PERSIST_TMPFILES_CONF', source)
+        # no unit line provisions it (a restart would remove it)
+        self.assertIsNone(re.search(r"\\nRuntimeDirectory=", source))
+
+
 if __name__ == "__main__":
     unittest.main()

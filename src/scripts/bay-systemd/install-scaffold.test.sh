@@ -28,6 +28,9 @@ fi
 
 TARGET_ROOT="${TMP_ROOT}/rootfs"
 bash "${SCRIPT_DIR}/install-scaffold.sh" --root "$TARGET_ROOT" >/dev/null
+# the persist records directory comes from tmpfiles.d (finding 028)
+grep -qx 'd /run/cocalc-persist 0700 cocalc-bay cocalc-bay -' \
+  "${TARGET_ROOT}/etc/tmpfiles.d/cocalc-bay-persist.conf"
 LOCAL_ENV="${TARGET_ROOT}/etc/cocalc/bay-local.env"
 NEEDRESTART_CONFIG="${TARGET_ROOT}/etc/needrestart/conf.d/cocalc-bay.conf"
 [[ -f "$LOCAL_ENV" ]]

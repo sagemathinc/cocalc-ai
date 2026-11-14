@@ -19170,6 +19170,16 @@ exec python3 -I "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only {only}
             )
 
 
+PERSIST_TMPFILES_CONF = "/etc/tmpfiles.d/cocalc-persist.conf"
+
+
+def persist_tmpfiles_conf(user: str) -> str:
+    """tmpfiles.d line for /run/cocalc-persist (finding 028 B-3a)."""
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user):
+        raise ValueError(f"unexpected account name for tmpfiles.d: {user!r}")
+    return f"d /run/cocalc-persist 0700 {user} {user} -\n"
+
+
 def configure_autostart(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: configuring project-host autostart")
     runtime_root = project_host_runtime_root(cfg)
@@ -19290,6 +19300,21 @@ WantedBy=multi-user.target
     os.chmod("/etc/systemd/system/cocalc-project-host-prepare.service", 0o644)
     os.chmod("/etc/systemd/system/cocalc-project-host-start.service", 0o644)
     os.chmod("/etc/systemd/system/cocalc-project-host-shutdown.service", 0o644)
+    # The persist server's durability records (finding 028): a per-boot tmpfs
+    # directory that only the project-host account can write, provisioned by
+    # tmpfiles.d (never a unit's RuntimeDirectory=, which a restart removes).
+    # The persist server refuses disk streams (and pages) if it is missing or
+    # unsafe, so a failure here is caught there.
+    Path("/etc/tmpfiles.d").mkdir(parents=True, exist_ok=True)
+    Path(PERSIST_TMPFILES_CONF).write_text(
+        persist_tmpfiles_conf(cfg.ssh_user), encoding="utf-8"
+    )
+    os.chmod(PERSIST_TMPFILES_CONF, 0o644)
+    run_best_effort(
+        cfg,
+        ["systemd-tmpfiles", "--create", PERSIST_TMPFILES_CONF],
+        "create the persist records directory",
+    )
     run_best_effort(cfg, ["systemctl", "daemon-reload"], "reload systemd")
     # The distribution unit manages rootful containers and races with CoCalc's
     # dedicated rootless runtime during boot. Managed hosts must never use it.
