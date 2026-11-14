@@ -98,21 +98,24 @@ describe("028 B-3a: every write path resends a rate_limited refusal; one admissi
     [
       "config",
       () => s.config({ config: { max_msgs: 100 } }),
-      async () => expect((await s.config({})).max_msgs).toBe(100),
+      // a config READ may run the limit-enforcement transaction, which is
+      // charged too: refill first
+      async () => {
+        now += 1000;
+        expect((await s.config({})).max_msgs).toBe(100);
+      },
     ],
     [
       "setCheckpoint",
       () => s.setCheckpoint({ name: "cp", seq: 1, data: { a: 1 } }),
       async () =>
-        expect((await s.getCheckpoints()).map((c) => c.name)).toContain("cp"),
+        expect(Object.keys(await s.getCheckpoints())).toContain("cp"),
     ],
     [
       "deleteCheckpoint",
       () => s.deleteCheckpoint("cp"),
       async () =>
-        expect((await s.getCheckpoints()).map((c) => c.name)).not.toContain(
-          "cp",
-        ),
+        expect(Object.keys(await s.getCheckpoints())).not.toContain("cp"),
     ],
     [
       "delete",
