@@ -11,10 +11,13 @@ setInternal answers a duplicate on three paths, each tested (SA 3251):
 - P2: the persisted message_ids JOIN messages (after a restart, or once the
   cache entry expired: the lost-ack-after-crash case B-1 exists for);
 - P3: an owner earlier in the same batch (duplicateOf).
-Each assertion of "no event" goes through assertNoEvents, whose message names
-the path, so the can-fail mutants (one per path, re-adding the pre-B-1 emit)
-are counted only on that assertion.  "No mutation" compares every row of
-every non-trash table, before and after.
+Each assertion of "no event" goes through assertNoEvents, and each "no
+mutation" through assertStateUnchanged; their messages name the path, so the
+can-fail mutants (re-adding the pre-B-1 emit per path; writing a checkpoint,
+or changing the msgID ledger, on the duplicate path) are counted only on the
+mapped assertion.  "No mutation" compares EVERY column of every row of every
+non-trash table (messages incl. ttl, message_ids, stream_checkpoints incl.
+time, data_json and revision, ...), before and after.
 
 Refusing a different body under a reused msgID is B-2's item (087); here the
 property is "nothing stored, nothing emitted" for every field.
@@ -38,6 +41,24 @@ function assertNoEvents(changes: any[], path: "P1" | "P2" | "P3"): void {
   if (changes.length !== 0) {
     throw new Error(
       `NO-EVENT-ASSERTION[${path}]: ${changes.length} change(s) emitted for a duplicate`,
+    );
+  }
+}
+
+// The mapped assertion of the state mutants: every row of every table equal.
+function assertStateUnchanged(
+  before: Record<string, any[]>,
+  after: Record<string, any[]>,
+  path: "P1" | "P2" | "P3",
+): void {
+  const a = JSON.stringify(before);
+  const b = JSON.stringify(after);
+  if (a !== b) {
+    const tables = Object.keys({ ...before, ...after }).filter(
+      (t) => JSON.stringify(before[t]) !== JSON.stringify(after[t]),
+    );
+    throw new Error(
+      `STATE-ASSERTION[${path}]: the duplicate changed ${tables.join(", ")}`,
     );
   }
 }
@@ -87,6 +108,11 @@ function storedRaws(stream): Map<number, string> {
 function expectEmittedEqualsStored(stream, change) {
   const stored = stream.get({ seq: change.seq });
   expect(stored).toBeDefined();
+  const ledger = (stream as any).db
+    .prepare("SELECT msg_id FROM message_ids WHERE seq = ?")
+    .all(change.seq) as { msg_id: string }[];
+  expect(ledger.length).toBeLessThanOrEqual(1);
+  expect(change.msgID ?? null).toBe(ledger[0]?.msg_id ?? null);
   const norm = (m) => ({
     seq: Number(m.seq),
     key: m.key ?? null,
@@ -154,7 +180,7 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
         first,
       );
       assertNoEvents(changes, path);
-      expect(state(stream)).toEqual(before);
+      assertStateUnchanged(before, state(stream), path);
     });
   }
 
@@ -200,7 +226,7 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
               : (await stream.setManyQueued([op as any]))[0];
           expectSameResult(result, first);
           assertNoEvents(changes, path);
-          expect(state(stream)).toEqual(before);
+          assertStateUnchanged(before, state(stream), path);
         });
       }
     }
@@ -244,6 +270,36 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     });
   }
 
+  it("P1/P2: replaying a stored msgID with the same checkpoint name and seq but other time and data leaves the whole checkpoint row (time, data_json, revision) unchanged", async () => {
+    for (const path of ["P1", "P2"] as const) {
+      const name = `cp-${path}`;
+      let stream = open(name);
+      const first = await stream.setQueued(
+        msg("a", { msgID: "m1", checkpoint: { name: "cp", data: { v: 1 } } }),
+      );
+      if (path == "P2") stream = reopen(stream, name);
+      const before = state(stream);
+      expect(before.stream_checkpoints).toHaveLength(1);
+      const changes = watch(stream);
+      expectSameResult(
+        stream.set(
+          msg("a", {
+            msgID: "m1",
+            checkpoint: {
+              name: "cp",
+              seq: first.seq,
+              time: first.time + 12345,
+              data: { v: 2, forged: true },
+            },
+          }),
+        ),
+        first,
+      );
+      assertNoEvents(changes, path);
+      assertStateUnchanged(before, state(stream), path);
+    }
+  });
+
   it("P1/P2: a resend whose headers fail the required-headers fence emits no live event", async () => {
     for (const path of ["P1", "P2"] as const) {
       const name = `fence-${path}`;
@@ -261,7 +317,7 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
         first,
       );
       assertNoEvents(changes, path);
-      expect(state(stream)).toEqual(before);
+      assertStateUnchanged(before, state(stream), path);
       // without a msgID the same write is refused by the fence
       expect(() => stream.set(msg("forged", { headers: {} }))).toThrow(
         "required header mismatch",
