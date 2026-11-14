@@ -82,6 +82,22 @@ function storedRaws(stream): Map<number, string> {
   );
 }
 
+// The stored message at seq, as a changefeed set carries it (astra B1-A2):
+// every emitted set must equal it field by field.
+function expectEmittedEqualsStored(stream, change) {
+  const stored = stream.get({ seq: change.seq });
+  expect(stored).toBeDefined();
+  const norm = (m) => ({
+    seq: Number(m.seq),
+    key: m.key ?? null,
+    encoding: Number(m.encoding),
+    headers: JSON.stringify(m.headers ?? null),
+    raw: Buffer.from(m.raw).toString("hex"),
+    time_s: Math.floor(Number(m.time) / 1000),
+  });
+  expect(norm(change)).toEqual(norm(stored));
+}
+
 // P2 answers time from the stored row (whole seconds × 1000 as stored):
 // within 2 ms of the original ack
 function expectSameResult(result: any, first: any) {
@@ -142,16 +158,28 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     });
   }
 
-  // each variant differs from the stored message in one field
-  const variants: Array<[string, (seq: number) => object]> = [
-    ["raw", () => msg("DIFFERENT", { msgID: "m1" })],
-    ["encoding", () => ({ ...msg("a", { msgID: "m1" }), encoding: DataEncoding.MsgPack })],
-    ["headers", () => msg("a", { msgID: "m1", headers: { forged: 1 } })],
-    ["key", () => msg("a", { msgID: "m1", key: "other-key" })],
-    ["ttl", () => msg("a", { msgID: "m1", ttl: 1 })],
-    ["previousSeq", (seq) => msg("a", { msgID: "m1", previousSeq: seq + 7 })],
-    ["checkpoint", (seq) => msg("a", { msgID: "m1", checkpoint: { name: "cp", seq } })],
+  // The stored message, and each variant: the SAME envelope with exactly the
+  // named field overridden (astra B1-A1).
+  const baseline = () => msg("a", { msgID: "m1", key: "k" }) as any;
+  const variants: Array<[string, (seq: number) => any]> = [
+    ["raw", () => ({ ...baseline(), raw: Buffer.from("DIFFERENT") })],
+    ["encoding", () => ({ ...baseline(), encoding: DataEncoding.MsgPack })],
+    ["headers", () => ({ ...baseline(), headers: { forged: 1 } })],
+    ["key", () => ({ ...baseline(), key: "other-key" })],
+    ["ttl", () => ({ ...baseline(), ttl: 1 })],
+    ["previousSeq", (seq) => ({ ...baseline(), previousSeq: seq + 7 })],
+    ["checkpoint", (seq) => ({ ...baseline(), checkpoint: { name: "cp", seq } })],
   ];
+  const changedFields = (op: any): string[] => {
+    const base = baseline();
+    return [...new Set([...Object.keys(base), ...Object.keys(op)])]
+      .filter(
+        (k) =>
+          JSON.stringify(base[k] instanceof Buffer ? base[k].toString("hex") : base[k]) !==
+          JSON.stringify(op[k] instanceof Buffer ? op[k].toString("hex") : op[k]),
+      )
+      .sort();
+  };
 
   for (const path of ["P1", "P2"] as const) {
     for (const [field, make] of variants) {
@@ -160,11 +188,12 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
           const name = `diff-${path}-${field}-${how}`;
           let stream = open(name);
           stream.config({ allow_msg_ttl: true });
-          const first = await stream.setQueued(msg("a", { msgID: "m1", key: "k" }));
+          const first = await stream.setQueued(baseline());
           if (path == "P2") stream = reopen(stream, name);
           const before = state(stream);
           const changes = watch(stream);
           const op = make(first.seq);
+          expect(changedFields(op)).toEqual([field]);
           const result =
             how == "set"
               ? stream.set(op as any)
@@ -254,7 +283,7 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     expect(changes.some((c) => c.seq === first.seq)).toBe(false);
     const raws = storedRaws(stream);
     for (const c of changes.filter((c) => c.seq != null)) {
-      expect(raws.get(c.seq)).toBe(Buffer.from(c.raw).toString());
+      expectEmittedEqualsStored(stream, c);
     }
     expect(raws.has(again.seq) || again.seq === first.seq).toBe(true);
   });
@@ -278,6 +307,7 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     const sets = changes.filter((c) => c.seq != null);
     expect(sets.map((c) => c.seq)).toEqual([again.seq]);
     expect(Buffer.from(sets[0].raw).toString()).toBe("a");
+    expectEmittedEqualsStored(stream, sets[0]);
   });
 
   it("a cached msgID whose row was trimmed by a limit never yields a phantom event under the old seq", async () => {
@@ -289,9 +319,8 @@ describe("028 B-1: a stored msgID is answered without storing or emitting anythi
     const changes = watch(stream);
     await stream.setQueued(msg("a2", { msgID: "trim" }));
     expect(changes.some((c) => c.seq === first.seq)).toBe(false);
-    const raws = storedRaws(stream);
     for (const c of changes.filter((c) => c.seq != null)) {
-      expect(raws.get(c.seq)).toBe(Buffer.from(c.raw).toString());
+      expectEmittedEqualsStored(stream, c);
     }
   });
 });
