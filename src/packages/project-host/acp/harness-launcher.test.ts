@@ -2,6 +2,10 @@ import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
+import {
+  claudeSubscriptionRuntime,
+  launchClaudeSubscriptionInProject,
+} from "./claude-subscription-in-project";
 import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import {
   launchHarnessInProject as launch,
@@ -47,6 +51,10 @@ jest.mock("./claude-code-tools", () => ({
 }));
 jest.mock("./claude-subscription-controller", () => ({
   launchClaudeSubscriptionController: jest.fn(),
+}));
+jest.mock("./claude-subscription-in-project", () => ({
+  claudeSubscriptionRuntime: jest.fn(async () => "controller"),
+  launchClaudeSubscriptionInProject: jest.fn(),
 }));
 jest.mock("./harness-reaper", () => ({
   harnessOwner: async () => "123:00000000-0000-0000-0000-000000000000:100",
@@ -296,6 +304,36 @@ test.each([undefined, "00000000-0000-4000-8000-000000000009"])(
     expect(mockLease).not.toHaveBeenCalled();
   },
 );
+
+test("a site that runs subscriptions in the project skips the controller", async () => {
+  const subscription = {
+    ...binding,
+    profile: {
+      version: 2 as const,
+      kind: "acp" as const,
+      id: "claude-code" as const,
+      revision: "0.93.0",
+      cwd: "/home/user",
+      credentialMode: "project-managed" as const,
+      executionPolicy: "full-access" as const,
+    },
+    credential: {
+      version: 1 as const,
+      provider: "anthropic" as const,
+      mode: "account-subscription" as const,
+      credentialId: "13ba1a66-881b-4fe1-b732-15088f82434f",
+    },
+  };
+  (claudeSubscriptionRuntime as jest.Mock).mockResolvedValueOnce("project");
+  const admitted = { ...conversation, sessionId: "session-a" };
+  await launch(subscription, admitted);
+  expect(launchClaudeSubscriptionInProject).toHaveBeenCalledWith(
+    subscription,
+    admitted,
+  );
+  expect(launchClaudeSubscriptionController).not.toHaveBeenCalled();
+  expect(mockLease).not.toHaveBeenCalled();
+});
 
 test("qualified profiles resolve only through the trusted entry point", () => {
   const command = resolveHarnessCommand({

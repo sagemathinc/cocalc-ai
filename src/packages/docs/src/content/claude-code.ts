@@ -72,6 +72,11 @@ on claude.ai, or disable CoCalc's project tools.
 
 ## Security model
 
+When your site runs subscription-paid Claude Code in the project itself, see
+[Claude subscriptions when Claude Code runs in the project](/docs/ai/claude-subscription-in-project)
+for how your subscription stays outside the project and what sharing the
+project with collaborators means.
+
 ### Project access and approvals
 
 Claude has full project access. It can read and edit files, run commands,

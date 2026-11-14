@@ -85,9 +85,29 @@ function forwardResponse(upstream: IncomingMessage, response: ServerResponse) {
   upstream.pipe(response);
 }
 
-export async function createCredentialHttpRelay(
-  options: CredentialHttpRelayOptions,
-): Promise<CredentialHttpRelay> {
+export interface ProviderRelayPolicy {
+  /** A fixed HTTPS origin (see validateProviderRelayPolicy). */
+  upstream: URL;
+  allowedPathPrefix: string;
+  /**
+   * When set, the only paths allowed, matched exactly on the raw
+   * request-target (a query may follow), not on the parsed URL.
+   */
+  allowedPaths?: ReadonlySet<string>;
+  allowedMethods: ReadonlySet<string>;
+  credentialHeader: string;
+  /** The credential header's value, revalidated for each request. */
+  credentialValue: () => Promise<string> | string;
+}
+
+/** Checked once when a relay or relay session is created. */
+export function validateProviderRelayPolicy(options: {
+  upstream: string;
+  allowedPathPrefix: string;
+  credentialHeader: string;
+  allowedMethods?: readonly string[];
+  allowHttpForTests?: boolean;
+}): { upstream: URL; allowedMethods: Set<string> } {
   const upstream = new URL(options.upstream);
   if (
     upstream.username ||
@@ -102,13 +122,10 @@ export async function createCredentialHttpRelay(
   if (
     !options.allowedPathPrefix.startsWith("/") ||
     options.allowedPathPrefix.includes("..") ||
-    !/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(options.credential.header) ||
-    !options.credential.value ||
-    /[\r\n]/.test(options.credential.value)
+    !/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(options.credentialHeader)
   ) {
     throw Error("Invalid credential relay policy");
   }
-  const token = randomBytes(32).toString("base64url");
   const allowedMethods = new Set(
     (options.allowedMethods ?? ["GET", "POST"]).map((method) =>
       method.toUpperCase(),
@@ -120,12 +137,142 @@ export async function createCredentialHttpRelay(
   ) {
     throw Error("Invalid credential relay methods");
   }
+  return { upstream, allowedMethods };
+}
+
+/**
+ * Forward one already-authorized request to the provider with the
+ * credential header set, never forwarding the caller's own credentials or
+ * hop-by-hop headers. Shared by the socket relay below and the relay sessions
+ * on the project-reachable provider proxy (site-funded-proxy.ts).
+ */
+export async function forwardProviderRequest({
+  request,
+  response,
+  policy,
+  requests,
+  isClosed,
+}: {
+  request: IncomingMessage;
+  response: ServerResponse;
+  policy: ProviderRelayPolicy;
+  /** In-flight provider requests, destroyed when the relay closes. */
+  requests: Set<ClientRequest>;
+  isClosed: () => boolean;
+}): Promise<void> {
+  if (
+    !request.method ||
+    !policy.allowedMethods.has(request.method.toUpperCase())
+  ) {
+    request.resume();
+    fail(response, 405, "Provider request method is outside relay policy");
+    return;
+  }
+  // The policy is checked on what the caller sent, before any parsing: only
+  // origin-form ("/path?query"; never "http://host/..." or "//host/...", which
+  // name another host), and no encoded or backslash separators or dots,
+  // which URL parsing folds or leaves for the provider to decode
+  // differently (S1).
+  const raw = request.url ?? "";
+  const rawPath = raw.split("?")[0];
+  if (
+    !raw.startsWith("/") ||
+    raw.startsWith("//") ||
+    /%2f|%5c|%2e|\\/i.test(raw) ||
+    (policy.allowedPaths != null && !policy.allowedPaths.has(rawPath))
+  ) {
+    request.resume();
+    fail(response, 403, "Provider request is outside relay policy");
+    return;
+  }
+  let target: URL;
+  try {
+    target = new URL(raw, policy.upstream);
+  } catch {
+    request.resume();
+    fail(response, 400, "Invalid provider request");
+    return;
+  }
+  if (
+    target.origin !== policy.upstream.origin ||
+    !target.pathname.startsWith(policy.allowedPathPrefix)
+  ) {
+    request.resume();
+    fail(response, 403, "Provider request is outside relay policy");
+    return;
+  }
+  const headers = safeHeaders(request.headers, policy.credentialHeader);
+  headers.host = policy.upstream.host;
+  const value = await policy.credentialValue();
+  if (!value || /[\r\n]/.test(value)) throw Error("Invalid relay credential");
+  headers[policy.credentialHeader] = value;
+  if (isClosed() || request.destroyed) throw Error("Relay is closed");
+  const send =
+    policy.upstream.protocol === "https:" ? httpsRequest : httpRequest;
+  let sent = 0;
+  let providerRequest: ClientRequest;
+  try {
+    providerRequest = send(
+      target,
+      { method: request.method, headers },
+      (providerResponse) => forwardResponse(providerResponse, response),
+    );
+  } catch {
+    request.resume();
+    fail(response, 502, "Provider request could not be started");
+    return;
+  }
+  providerRequest.setTimeout(10 * 60_000, () =>
+    providerRequest.destroy(Error("provider timeout")),
+  );
+  requests.add(providerRequest);
+  providerRequest.once("close", () => requests.delete(providerRequest));
+  request.on("data", (chunk: Buffer) => {
+    sent += chunk.length;
+    if (sent > MAX_REQUEST_BYTES) {
+      providerRequest.destroy(Error("request too large"));
+      request.destroy();
+    }
+  });
+  request.on("error", () => providerRequest.destroy());
+  providerRequest.on("error", () =>
+    fail(
+      response,
+      sent > MAX_REQUEST_BYTES ? 413 : 502,
+      "Provider unavailable",
+    ),
+  );
+  request.pipe(providerRequest);
+}
+
+export async function createCredentialHttpRelay(
+  options: CredentialHttpRelayOptions,
+): Promise<CredentialHttpRelay> {
+  const { upstream, allowedMethods } = validateProviderRelayPolicy({
+    upstream: options.upstream,
+    allowedPathPrefix: options.allowedPathPrefix,
+    credentialHeader: options.credential.header,
+    allowedMethods: options.allowedMethods,
+    allowHttpForTests: options.allowHttpForTests,
+  });
+  if (!options.credential.value || /[\r\n]/.test(options.credential.value)) {
+    throw Error("Invalid credential relay policy");
+  }
+  const token = randomBytes(32).toString("base64url");
   await mkdir(dirname(options.socketPath), { recursive: true, mode: 0o700 });
   await unlink(options.socketPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
   let closing = false;
   const requests = new Set<ClientRequest>();
+  const policy: ProviderRelayPolicy = {
+    upstream,
+    allowedPathPrefix: options.allowedPathPrefix,
+    allowedMethods,
+    credentialHeader: options.credential.header,
+    credentialValue: () =>
+      options.authorize ? options.authorize() : options.credential.value,
+  };
   const server = createServer((request, response) => {
     void forward(request, response).catch(() => {
       request.resume();
@@ -138,68 +285,13 @@ export async function createCredentialHttpRelay(
       fail(response, 401, "Credential relay authorization failed");
       return;
     }
-    if (!request.method || !allowedMethods.has(request.method.toUpperCase())) {
-      request.resume();
-      fail(response, 405, "Provider request method is outside relay policy");
-      return;
-    }
-    let target: URL;
-    try {
-      target = new URL(request.url ?? "", upstream);
-    } catch {
-      request.resume();
-      fail(response, 400, "Invalid provider request");
-      return;
-    }
-    if (
-      target.origin !== upstream.origin ||
-      !target.pathname.startsWith(options.allowedPathPrefix)
-    ) {
-      request.resume();
-      fail(response, 403, "Provider request is outside relay policy");
-      return;
-    }
-    const headers = safeHeaders(request.headers, options.credential.header);
-    headers.host = upstream.host;
-    headers[options.credential.header] = options.authorize
-      ? await options.authorize()
-      : options.credential.value;
-    if (closing || request.destroyed) throw Error("Relay is closed");
-    const send = upstream.protocol === "https:" ? httpsRequest : httpRequest;
-    let sent = 0;
-    let providerRequest: ClientRequest;
-    try {
-      providerRequest = send(
-        target,
-        { method: request.method, headers },
-        (providerResponse) => forwardResponse(providerResponse, response),
-      );
-    } catch {
-      request.resume();
-      fail(response, 502, "Provider request could not be started");
-      return;
-    }
-    providerRequest.setTimeout(10 * 60_000, () =>
-      providerRequest.destroy(Error("provider timeout")),
-    );
-    requests.add(providerRequest);
-    providerRequest.once("close", () => requests.delete(providerRequest));
-    request.on("data", (chunk: Buffer) => {
-      sent += chunk.length;
-      if (sent > MAX_REQUEST_BYTES) {
-        providerRequest.destroy(Error("request too large"));
-        request.destroy();
-      }
+    await forwardProviderRequest({
+      request,
+      response,
+      policy,
+      requests,
+      isClosed: () => closing,
     });
-    request.on("error", () => providerRequest.destroy());
-    providerRequest.on("error", () =>
-      fail(
-        response,
-        sent > MAX_REQUEST_BYTES ? 413 : 502,
-        "Provider unavailable",
-      ),
-    );
-    request.pipe(providerRequest);
   }
   server.on("connect", (_request, socket) => socket.destroy());
   server.on("upgrade", (_request, socket) => socket.destroy());

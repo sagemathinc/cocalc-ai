@@ -17,7 +17,12 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => "account-a",
   useAccountOtherSetting: () => undefined,
-  redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
+  redux: {
+    getActions: () => ({ erase_active_key_handler: jest.fn() }),
+    // the controller runtime: no collaborator warning in these tests
+    getStore: (name: string) =>
+      name === "customize" ? { get: () => "controller" } : undefined,
+  },
 }));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: ({ date }: { date: string }) => <span>at {date}</span>,

@@ -478,3 +478,51 @@ describe("project-host computer tokens", () => {
     ).toThrow("audience");
   });
 });
+
+describe("agent (CLI) bearer lifetime", () => {
+  // what an in-project agent's CLI bearer is issued with: the hub requests
+  // no ttl_seconds for it, so it gets the default
+  const issueAgent = (now_ms: number) =>
+    issueProjectHostAuthToken({
+      host_id: hostId,
+      account_id: accountId,
+      project_id: projectId,
+      session_id: sessionId,
+      auth_actor: "agent",
+      private_key: privateKeyPem,
+      now_ms,
+    });
+  const verifyAt = (token: string, now_ms: number) =>
+    verifyProjectHostAuthToken({
+      token,
+      host_id: hostId,
+      public_key: publicKeyPem,
+      now_ms,
+    });
+
+  it("is signed for exactly 10 minutes", () => {
+    const issued = issueAgent(1_000_000_000);
+    expect(issued.claims.exp - issued.claims.iat).toBe(600);
+    expect(issued.expires_at).toBe(issued.claims.exp * 1000);
+  });
+
+  it("is accepted for clock skew until just under 31 seconds after exp", () => {
+    const issued = issueAgent(1_000_000_000);
+    const exp = issued.claims.exp * 1000;
+    expect(verifyAt(issued.token, exp + 30_999)).toMatchObject({
+      sub: accountId,
+    });
+    expect(() => verifyAt(issued.token, exp + 31_000)).toThrow("expired");
+  });
+
+  it("from a mid-second issue, is refused before 10 minutes 31 seconds pass", () => {
+    const issuedAt = 1_000_000_999; // iat floors to 1_000_000 s
+    const issued = issueAgent(issuedAt);
+    expect(() =>
+      verifyAt(issued.token, issuedAt + (10 * 60 + 31) * 1000),
+    ).toThrow("expired");
+    expect(
+      verifyAt(issued.token, issued.claims.exp * 1000 + 30_999),
+    ).toBeTruthy();
+  });
+});
