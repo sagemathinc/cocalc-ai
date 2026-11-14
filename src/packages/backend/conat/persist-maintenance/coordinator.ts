@@ -5,6 +5,7 @@
 
 import {
   assertPersistMaintenanceOpenAllowed,
+  fsyncMaintenanceOutput,
   runArmedMaintenanceWrite,
 } from "../persist-durability";
 import { maintenanceOwner } from "./owner";
@@ -725,6 +726,8 @@ export class PersistMaintenanceCoordinator {
       } finally {
         sourceDb.close();
       }
+      // the source (the rollback copy to be) durable before we go on (§4A 10)
+      fsyncMaintenanceOutput(checked.path);
     });
     rmSync(`${checked.path}-wal`, { force: true });
     rmSync(`${checked.path}-shm`, { force: true });

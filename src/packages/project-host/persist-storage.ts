@@ -34,6 +34,7 @@ import {
 import { projectPersistTemplates } from "@cocalc/backend/conat/persist-volume-template";
 import {
   assertPersistMaintenanceOpenAllowed,
+  fsyncMaintenanceOutput,
   runArmedMaintenanceWrite,
 } from "@cocalc/backend/conat/persist-durability";
 import {
@@ -369,6 +370,8 @@ function compact(path: string, owner: string): void {
     } finally {
       db.close();
     }
+    // the rewritten file durable before the trim completes (§4A 10)
+    fsyncMaintenanceOutput(`${path}.db`);
   });
 }
 

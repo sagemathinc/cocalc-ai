@@ -13,6 +13,8 @@ import { join } from "node:path";
 
 import {
   assertPersistMaintenanceOpenAllowed,
+  fsyncMaintenanceOutput,
+  MaintenanceFsyncError,
   runArmedMaintenanceWrite,
   persistDurabilityRecords,
   persistRunDir,
@@ -247,6 +249,37 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       const err = Object.assign(new Error("database is locked"), { errcode: 5 });
       expect(() => runArmedMaintenanceWrite("/r/x.db", "P", "p", () => { throw err; }, f.records)).toThrow(err);
       expect(f.calls).toEqual(["arm /r/x P", "disarm /r/x"]);
+    });
+    it("an fsync of ours (MaintenanceFsyncError) is a sync error; EDQUOT/ENOSPC also poisons the PROJECT (Q-F)", () => {
+      for (const [code, project] of [["EIO", false], ["EDQUOT", true], ["ENOSPC", true]] as const) {
+        const calls: string[] = [];
+        const records = {
+          arm: () => {}, disarm: () => calls.push("disarm"),
+          poison: (id: string, info: any) => calls.push(`poison ${id} ${info.errno}`),
+          poisonProject: (owner: string, info: any) => calls.push(`project ${owner} ${info.errno}`),
+        } as any;
+        const err = new MaintenanceFsyncError("/r/x.db", Object.assign(new Error(code), { code }) as any);
+        expect(() => runArmedMaintenanceWrite("/r/x.db", "P", "trim:compact", () => { throw err; }, records)).toThrow(err);
+        expect(calls).toEqual(project ? [`poison /r/x ${code}`, `project P ${code}`] : [`poison /r/x ${code}`]);
+      }
+    });
+    it("fsyncMaintenanceOutput fsyncs the file (O_NOFOLLOW), then its directory; an error is a MaintenanceFsyncError", () => {
+      const calls: string[] = [];
+      const fsx = {
+        openSync: (p: string, flags: number) => (calls.push(`open ${p} ${flags & fs.constants.O_NOFOLLOW ? "nofollow" : ""}${flags & fs.constants.O_DIRECTORY ? "dir" : ""}`), calls.length),
+        fsyncSync: (fd: number) => calls.push(`fsync ${fd}`),
+        closeSync: (fd: number) => calls.push(`close ${fd}`),
+      } as any;
+      fsyncMaintenanceOutput("/r/sub/x.db", fsx);
+      expect(calls).toEqual(["open /r/sub/x.db nofollow", "fsync 1", "close 1", "open /r/sub dir", "fsync 4", "close 4"]);
+      const bad = { ...fsx, fsyncSync: () => { throw Object.assign(new Error("EIO"), { code: "EIO" }); } };
+      expect(() => fsyncMaintenanceOutput("/r/sub/x.db", bad)).toThrow(MaintenanceFsyncError);
+    });
+    it("the trim's compact and promotion's checkpoint fsync their output inside the armed write", () => {
+      const trim = fs.readFileSync(join(packages, "project-host/persist-storage.ts"), "utf8");
+      expect(trim).toMatch(/runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:compact", \(\) => \{[\s\S]{0,400}db\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*\}\);/);
+      const coord = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/coordinator.ts"), "utf8");
+      expect(coord).toMatch(/runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{[\s\S]{0,400}sourceDb\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(checked\.path\);\s*\}\);/);
     });
     it("the record can't be created: refused, the write never runs", () => {
       let ran = false;

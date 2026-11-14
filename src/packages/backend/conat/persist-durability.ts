@@ -279,12 +279,48 @@ export function assertPersistMaintenanceOpenAllowed(
 // in this boot and after a reboot via the post-reboot record); the record
 // is disarmed only when fn returned or threw a non-sync error.  If the
 // record can't be created, the write does not start.
+// An fsync a maintenance write makes itself (fsyncMaintenanceOutput): its
+// error is a sync error like SQLite's (§3.2.2), and EDQUOT/ENOSPC there is
+// the project's quota (Q-F, §3.2.3).
+export class MaintenanceFsyncError extends Error {
+  constructor(
+    readonly path: string,
+    readonly cause: NodeJS.ErrnoException,
+  ) {
+    super(`fsync ${path}: ${cause?.code ?? cause}`);
+  }
+}
+
+// DESIGN §4A row 10 (astra 3548): a maintenance write's output is durable
+// BEFORE the maintenance step completes -- the file and its directory are
+// fsync'd here (O_NOFOLLOW), the next open's barrier is no substitute.
+export function fsyncMaintenanceOutput(dbPath: string, fsx: Pick<typeof fs, "openSync" | "fsyncSync" | "closeSync"> = fs): void {
+  for (const [path, flags] of [
+    [dbPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW],
+    [posix.dirname(dbPath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY],
+  ] as const) {
+    let fd: number | undefined;
+    try {
+      fd = fsx.openSync(path, flags);
+      fsx.fsyncSync(fd);
+    } catch (err) {
+      throw new MaintenanceFsyncError(path, err as NodeJS.ErrnoException);
+    } finally {
+      if (fd != null) {
+        try {
+          fsx.closeSync(fd);
+        } catch {}
+      }
+    }
+  }
+}
+
 export function runArmedMaintenanceWrite<T>(
   dbPath: string,
   owner: string,
   where: string,
   fn: () => T,
-  records: Pick<DurabilityRecords, "arm" | "disarm" | "poison"> = persistDurabilityRecords(),
+  records: Pick<DurabilityRecords, "arm" | "disarm" | "poison" | "poisonProject"> = persistDurabilityRecords(),
 ): T {
   const id = posix.normalize(dbPath.replace(/\.db$/, ""));
   try {
@@ -298,11 +334,17 @@ export function runArmedMaintenanceWrite<T>(
   try {
     result = fn();
   } catch (err) {
-    if (isSqliteSyncError(err)) {
+    if (isSqliteSyncError(err) || err instanceof MaintenanceFsyncError) {
+      const errno = err instanceof MaintenanceFsyncError ? `${err.cause?.code ?? ""}` : "";
       records.poison(id, {
         where: `maintenance:${where}`,
         errcode: Number((err as any)?.errcode ?? 0),
+        ...(errno ? { errno } : {}),
       });
+      if (errno === "EDQUOT" || errno === "ENOSPC") {
+        // the project's quota at our fsync: every stream of the project (Q-F)
+        records.poisonProject(owner, { where: `maintenance:${where}`, errno, path: dbPath });
+      }
       logger.error(
         "PERSIST FILE POISONED (finding 028): a sync error in a maintenance write; the file is refused until it is verified",
         { dbPath, where, err: `${err}` },
