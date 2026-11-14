@@ -18,6 +18,9 @@ const {
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
 const {
+  setAgentTurnUsageRecorder,
+} = require("../../dist/acp/turn-usage.js");
+const {
   harnessPrompt,
   harnessSessionGuidance,
 } = require("../../dist/acp/harness-context.js");
@@ -4485,4 +4488,65 @@ test("without session/resume the client still falls back to session/load", async
   await client.open("fixture-session");
   assert.ok(Date.now() - started >= 1000, "expected the slow session/load path");
   await client.dispose();
+});
+
+test("a Claude turn reports what it used, by model, with its subscription", async (t) => {
+  const recorded = [];
+  setAgentTurnUsageRecorder((account_id, usage) => {
+    recorded.push({ account_id, usage });
+  });
+  t.after(() => setAgentTurnUsageRecorder());
+  const { agent, request } = adapter(
+    t,
+    ["--claude-adapter", "--subscription-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+  );
+  await agent.evaluate({
+    ...request,
+    prompt: "report-usage",
+    harness_pool: {},
+  });
+  assert.equal(recorded.length, 1);
+  const [{ account_id, usage }] = recorded;
+  assert.equal(account_id, "account-a");
+  assert.equal(usage.provider, "claude");
+  assert.equal(usage.payment, "account-subscription");
+  assert.equal(usage.credential_id, "11111111-1111-4111-8111-111111111111");
+  assert.equal(usage.pool, true);
+  assert.equal(usage.path, "a.chat");
+  assert.equal(usage.thread_id, "conversation-a");
+  assert.equal(usage.outcome, "completed");
+  assert.ok(usage.ended_at >= usage.started_at);
+  assert.deepEqual(usage.models, [
+    {
+      model: "claude-opus-5-5",
+      input_tokens: 10,
+      cached_input_tokens: 1000,
+      cache_write_tokens: 200,
+      output_tokens: 50,
+      reasoning_output_tokens: 0,
+    },
+    {
+      model: "claude-haiku-5-5",
+      input_tokens: 5,
+      cached_input_tokens: 0,
+      cache_write_tokens: 0,
+      output_tokens: 1,
+      reasoning_output_tokens: 0,
+    },
+  ]);
+});
+
+test("project-configured ACP agents report no usage", async (t) => {
+  const recorded = [];
+  setAgentTurnUsageRecorder((account_id, usage) => {
+    recorded.push(usage);
+  });
+  t.after(() => setAgentTurnUsageRecorder());
+  const { agent, request } = adapter(t);
+  await agent.evaluate({ ...request, prompt: "report-usage" });
+  assert.deepEqual(recorded, []);
 });

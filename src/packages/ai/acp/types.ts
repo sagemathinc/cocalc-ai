@@ -51,6 +51,8 @@ export interface AcpEvaluateRequest {
   // enabled agent memory. Supplied by the host, never by the wire.
   agent_memory_context?: string;
   harness_credential?: AcpHarnessCredential;
+  // Claude Auto picked this turn's subscription (from the request).
+  harness_pool?: { claude_ai_connectors?: false };
   // Internal, validated by the execution service for this human's current input.
   mentionReferences?: AgentMentionReference[];
   // Internal project-local chat replica accessor, never a wire-supplied callback.

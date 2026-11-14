@@ -61,6 +61,10 @@ import type {
 import type { SiteFundedUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import {
+  claudeTurnModelUsage,
+  type AgentTurnModelUsage,
+} from "@cocalc/util/ai/agent-turn-usage";
+import {
   isSupportedClaudeSubscriptionPlan,
   CLAUDE_SUBSCRIPTION_PLAN_ERROR,
 } from "@cocalc/util/ai/claude-subscription-plan";
@@ -1136,7 +1140,7 @@ export class AcpHarnessClient {
     listener: (event: HarnessEvent) => Promise<void>,
     images: readonly AcpImageAttachment[] = [],
     beforeSend?: () => Promise<void>,
-  ): Promise<{ stopReason: StopReason }> {
+  ): Promise<{ stopReason: StopReason; models: AgentTurnModelUsage[] }> {
     this.assertRuntimeOpen();
     if (!this.session || this.active || this.configuring)
       throw Error("ACP session must be idle and open");
@@ -1204,7 +1208,11 @@ export class AcpHarnessClient {
           "outcome_unknown",
           "ACP output could not be persisted",
         );
-      return { stopReason: result.stopReason };
+      return {
+        stopReason: result.stopReason,
+        // What the turn used, by model (claude-agent-acp's quota metadata).
+        models: claudeTurnModelUsage(result),
+      };
     } finally {
       if (this.cancelTimer) clearTimeout(this.cancelTimer);
       this.cancelTimer = undefined;
