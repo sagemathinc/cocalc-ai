@@ -31,9 +31,10 @@ import {
 } from "./payment-selections";
 import {
   MAX_TURNS_PER_HOST_PER_HOUR,
-  setTurnUsageDbForTests,
+  setTurnUsageTransactionForTests,
   turnUsagePathHash,
 } from "./turn-usage";
+import { agentStore } from "./store";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -77,7 +78,7 @@ describeDb("agent turn usage (account home bay)", () => {
   beforeEach(() => {
     homeBay = "bay-a";
     remote.recordTurnUsage.mockReset();
-    setTurnUsageDbForTests();
+    setTurnUsageTransactionForTests();
   });
 
   test("stores each turn with its totals, on the home bay", async () => {
@@ -187,16 +188,53 @@ describeDb("agent turn usage (account home bay)", () => {
     expect(rows.map((r) => r.thread_id)).toEqual(["last", "other"]);
   });
 
+  test("concurrent reports cannot overspend a host's budget", async () => {
+    const account_id = randomUUID();
+    const host_id = randomUUID();
+    const remaining = 20;
+    await getPool().query(
+      `INSERT INTO agent_turn_usage
+         (account_id,id,project_id,path_hash,thread_id,provider,payment,models,
+          outcome,started_at,ended_at,host_id)
+       SELECT $1, gen_random_uuid(), $2, 'h', 't', 'claude', 'x', '[]'::jsonb,
+              'completed', now(), now(), $3
+         FROM generate_series(1, $4::int)`,
+      [account_id, randomUUID(), host_id, MAX_TURNS_PER_HOST_PER_HOUR - remaining],
+    );
+    const stored = await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        recordAgentTurnUsageForAccount(
+          account_id,
+          Array.from({ length: 10 }, (_, j) => ({
+            usage: usage({ thread_id: `c${i}-${j}` }),
+            host_id,
+          })),
+        ),
+      ),
+    );
+    expect(stored.reduce((a, b) => a + b, 0)).toBe(remaining);
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM agent_turn_usage WHERE host_id=$1",
+      [host_id],
+    );
+    expect(rows[0].n).toBe(MAX_TURNS_PER_HOST_PER_HOUR);
+  });
+
   test("refuses far-future turns, and one refused row keeps the rest", async () => {
     const account_id = randomUUID();
     let inserts = 0;
-    setTurnUsageDbForTests(() => ({
-      query: async (sql: string, values?: unknown[]) => {
-        if (sql.includes("INSERT") && inserts++ === 0)
-          throw Error("value out of range");
-        return await getPool().query(sql, values as any[]);
-      },
-    }));
+    setTurnUsageTransactionForTests((fn) =>
+      agentStore().transaction((client) =>
+        fn({
+          query: async (sql: string, values?: unknown[]) => {
+            // The database refuses the first row (inside the transaction).
+            if (sql.includes("INSERT") && inserts++ === 0)
+              await client.query("SELECT 1/0");
+            return await client.query(sql, values as any[]);
+          },
+        }),
+      ),
+    );
     await expect(
       recordAgentTurnUsageForAccount(account_id, [
         { usage: usage({ thread_id: "refused-by-db" }) },
@@ -209,7 +247,7 @@ describeDb("agent turn usage (account home bay)", () => {
         { usage: usage({ thread_id: "kept" }) },
       ]),
     ).resolves.toBe(1);
-    setTurnUsageDbForTests();
+    setTurnUsageTransactionForTests();
     const { rows } = await getPool().query(
       "SELECT thread_id FROM agent_turn_usage WHERE account_id=$1",
       [account_id],
