@@ -4,6 +4,8 @@ import { setConatPassword } from "@cocalc/backend/data";
 import { connect } from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
 import { disposeAcpAgents, runDetachedAcpQueueWorker } from "./hub/acp";
+import { installLiteHarnessLauncher } from "./hub/acp/local-harness";
+import { preferContainerExecutor } from "./hub/acp/workspace-root";
 
 const logger = getLogger("lite:acp-worker");
 
@@ -67,6 +69,8 @@ export async function main(): Promise<void> {
     conat: createConatClient,
     getLogger,
   });
+  // Turns run in this worker: it needs the same local launcher as main.
+  if (!preferContainerExecutor()) installLiteHarnessLauncher();
   const client = createConatClient();
   registerPidFile(pidFile, async () => {
     await disposeAcpAgents();

@@ -52,6 +52,8 @@ import {
 import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
 import { fetchPaymentSelectionForSend } from "./payment-selection-store";
 import { healedHarnessCredential } from "./harness-credential-heal";
+import { lite } from "@cocalc/frontend/lite";
+import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import {
   confirmClaudeSubscriptionSharing,
   needsClaudeSubscriptionSharingConfirm,
@@ -421,14 +423,18 @@ export async function processAcpLLM({
     projectId: project_id,
     threadKey: thread_id,
   });
-  const harnessCredential =
-    runtime?.profile.version === 2 && runtime.profile.id === "claude-code"
-      ? await healedHarnessCredential({
+  const claudeRuntime =
+    runtime?.profile.version === 2 && runtime.profile.id === "claude-code";
+  const harnessCredential: AcpHarnessCredential | undefined = !claudeRuntime
+    ? undefined
+    : lite
+      ? // CoCalc Plus has one: this computer's own Claude Code sign-in.
+        { version: 1, provider: "anthropic", mode: "project-secret" }
+      : await healedHarnessCredential({
           accountId: redux.getStore("account")?.get("account_id"),
           projectId: project_id,
           threadKey: thread_id,
-        })
-      : undefined;
+        });
   // Before every turn: with other collaborators here, a session paid by the
   // user's own subscription is usable by them; the user is told first.
   const sharingCheck = {
@@ -444,6 +450,7 @@ export async function processAcpLLM({
       }),
   };
   if (
+    !lite &&
     needsClaudeSubscriptionSharingConfirm(sharingCheck) &&
     !(await confirmClaudeSubscriptionSharing(sharingCheck))
   ) {

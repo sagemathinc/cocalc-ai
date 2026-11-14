@@ -10,10 +10,11 @@ import {
 import { createHash } from "node:crypto";
 
 type Conversation = { path: string; threadId: string; sessionId?: string };
-type Factory = (
+export type HarnessLaunchFactory = (
   binding: HarnessBinding,
   conversation: Conversation,
 ) => ReturnType<HarnessLauncher>;
+type Factory = HarnessLaunchFactory;
 let launcher: Factory | undefined;
 let authorityValidator:
   ((binding: HarnessBinding) => Promise<void>) | undefined;
@@ -47,6 +48,10 @@ export async function drainHarnessDiscovery(projectId: string): Promise<void> {
 
 export function setHarnessLauncher(next?: Factory): void {
   launcher = next;
+}
+
+export function getHarnessLauncher(): Factory | undefined {
+  return launcher;
 }
 
 let rateLimitRecorder:
@@ -216,8 +221,9 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     request.harness_credential,
     runtime.profile,
   );
-  // On wherever a project-host launcher exists: Claude Code ships with the
-  // host's tools (like codex). COCALC_ACP_HARNESSES=0 is an operator kill switch.
+  // On wherever a launcher exists: the project host's (Claude Code ships with
+  // its tools, like codex) or CoCalc Plus's local one (local-harness.ts).
+  // COCALC_ACP_HARNESSES=0 is an operator kill switch.
   if (!launcher || process.env.COCALC_ACP_HARNESSES === "0")
     throw Error("ACP harness execution is not enabled on this host");
   if (

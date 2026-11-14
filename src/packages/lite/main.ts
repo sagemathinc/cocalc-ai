@@ -27,6 +27,8 @@ import { hubApi, init as initHubApi } from "./hub/api";
 import { createLiteArtifactCatalog } from "./artifacts/service";
 import { LitePersonalLibrary } from "./artifacts/personal-library";
 import { init as initAcp } from "./hub/acp";
+import { installLiteHarnessLauncher } from "./hub/acp/local-harness";
+import { preferContainerExecutor } from "./hub/acp/workspace-root";
 import { initWatchdog, closeWatchdog } from "./watchdog";
 import {
   account_id,
@@ -261,6 +263,8 @@ export async function main(opts?: {
   process.once("exit", artifactCatalog.stop);
 
   logger.debug("start acp conat server");
+  // Claude Code and ACP agents run as local processes, like Codex here.
+  if (!preferContainerExecutor()) installLiteHarnessLauncher();
   await initAcp(conatClient);
 
   logger.debug("start watchdog");

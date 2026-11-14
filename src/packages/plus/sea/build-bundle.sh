@@ -251,6 +251,9 @@ if [ ! -f "$OUT/bundle/node_modules/reflect-sync/dist/index.js" ]; then
   exit 1
 fi
 
+echo "- Install the Claude Code ACP adapter (runs the user's own claude)"
+"$ROOT/packages/plus/sea/install-claude-agent-acp.sh" "$OUT/bundle/claude-agent-acp"
+
 echo "- Copy static frontend assets"
 mkdir -p "$OUT"/static
 rsync -a --delete \

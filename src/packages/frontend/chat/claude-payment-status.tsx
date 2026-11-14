@@ -27,6 +27,12 @@ import {
   SHARING_DOCS_SLUG,
   claudeSubscriptionSharingRisk,
 } from "./claude-subscription-sharing";
+import { lite } from "@cocalc/frontend/lite";
+
+/** CoCalc Plus: Claude Code runs with the computer's own sign-in. */
+export const LITE_CLAUDE_LABEL = "This computer's Claude sign-in";
+export const LITE_CLAUDE_DESCRIPTION =
+  "Claude Code runs on this computer with its own sign-in: the account or API key that `claude` uses in your terminal. Usage counts against that Claude plan or key.";
 
 const CLAUDE_CREDENTIALS_EVENT = "cocalc:claude-credentials";
 const CLAUDE_CREDENTIALS_MAX_AGE_MS = 60_000;
@@ -162,6 +168,7 @@ export function useClaudePaymentLabel(
       : undefined,
   );
   if (!projectId || !threadKey) return undefined;
+  if (lite) return LITE_CLAUDE_LABEL;
   if (readClaudePoolSelection({ accountId, projectId, threadKey }))
     return CLAUDE_POOL_LABEL;
   return claudePaymentName(selection?.mode, row);
@@ -202,6 +209,7 @@ export function ClaudePaymentStatus({
       ? credential.credentialId
       : undefined;
   const pool = !!readClaudePoolSelection({ accountId, projectId, threadKey });
+  if (lite) return <LitePaymentStatus onConfigure={onConfigure} />;
   const sharedProject =
     (pool || credential?.mode === "account-subscription") &&
     claudeSubscriptionSharingRisk({ accountId, projectId }).show;
@@ -224,6 +232,30 @@ function SharedProjectHelp({ projectId }: { projectId: string }) {
         Using your subscription in a shared project
       </DocsLink>
     </div>
+  );
+}
+
+function LitePaymentStatus({ onConfigure }: { onConfigure: () => void }) {
+  return (
+    <Popover
+      trigger={["hover", "focus"]}
+      content={
+        <div style={{ width: 290, maxWidth: "calc(100vw - 48px)" }}>
+          <Typography.Text strong>{LITE_CLAUDE_LABEL}</Typography.Text>
+          <p style={{ margin: "8px 0 0" }}>{LITE_CLAUDE_DESCRIPTION}</p>
+        </div>
+      }
+    >
+      <Button
+        type="text"
+        size="small"
+        onClick={onConfigure}
+        aria-label={`${LITE_CLAUDE_LABEL}: Claude settings`}
+        aria-haspopup="dialog"
+      >
+        {LITE_CLAUDE_LABEL}
+      </Button>
+    </Popover>
   );
 }
 
