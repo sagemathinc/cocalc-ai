@@ -5,7 +5,6 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { mkdirSync } from "node:fs";
 import { syncFiles } from "@cocalc/backend/data";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
