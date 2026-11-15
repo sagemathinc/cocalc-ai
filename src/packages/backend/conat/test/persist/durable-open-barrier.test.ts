@@ -380,6 +380,36 @@ describe("028 B-2: the open barrier", () => {
       ).rejects.toThrow("had a sync error");
     });
 
+    it("the test-only owner fallback is set nowhere outside tests (SA 3381)", () => {
+      // every non-test source of the persist packages: only context.ts (the
+      // definition) and test-durability.ts (the test context) name it
+      const packages = join(__dirname, "../../../..");
+      const allowed = new Set([
+        "conat/persist/context.ts",
+        "conat/persist/test-durability.ts",
+      ]);
+      const hits: string[] = [];
+      const walk = (rel: string) => {
+        for (const e of fs.readdirSync(join(packages, rel), { withFileTypes: true })) {
+          const r = `${rel}/${e.name}`;
+          if (e.isDirectory()) {
+            if (["node_modules", "dist", "test", "tests", "__tests__"].includes(e.name)) continue;
+            walk(r);
+          } else if (/\.(ts|js)$/.test(e.name) && !/\.test\.(ts|js)$/.test(e.name)) {
+            const src = fs.readFileSync(join(packages, r), "utf8");
+            if (/unregisteredStreamOwner|setUnregisteredStreamOwnerForTests/.test(src) && !allowed.has(r)) hits.push(r);
+          }
+        }
+      };
+      for (const dir of ["conat", "backend", "project-host", "hub", "server"]) {
+        if (fs.existsSync(join(packages, dir))) walk(dir);
+      }
+      expect(hits).toEqual([]);
+      // and the production context never sets it
+      const persist = fs.readFileSync(join(packages, "backend/conat/persist.ts"), "utf8");
+      expect(persist).not.toMatch(/unregisteredStreamOwner/);
+    });
+
     it("a stream whose owner is not known (no server registration, no fallback) is refused before anything is armed", async () => {
       const records = persistDurabilityRecords();
       const path = join(dir, "sync-no-owner");

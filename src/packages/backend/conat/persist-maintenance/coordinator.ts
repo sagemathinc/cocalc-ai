@@ -8,6 +8,7 @@ import {
   fsyncMaintenanceOutput,
   runArmedMaintenanceWrite,
   runArmedMaintenanceWriteAsync,
+  withMaintenanceConnection,
 } from "../persist-durability";
 import { maintenanceOwner } from "./owner";
 import { syncFiles } from "@cocalc/backend/data";
@@ -728,13 +729,8 @@ export class PersistMaintenanceCoordinator {
     const owner = this.assertOpenAllowed(checked.path, row);
     // armed: a sync error here poisons the stream (SA-B2-1)
     runArmedMaintenanceWrite(checked.path, owner, "promote:checkpoint", () => {
-      const sourceDb = new DatabaseSync(checked.path);
-      try {
-        sourceDb.exec("PRAGMA busy_timeout=1000");
-        sourceDb.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
-      } finally {
-        sourceDb.close();
-      }
+      // the TRUNCATE checkpoint itself and the close
+      withMaintenanceConnection(checked.path, 1000, () => {});
       // the source (the rollback copy to be) durable before we go on (§4A 10)
       fsyncMaintenanceOutput(checked.path);
     });

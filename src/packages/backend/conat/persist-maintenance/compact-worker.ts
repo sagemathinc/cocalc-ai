@@ -5,7 +5,7 @@
 
 import { spawn } from "node:child_process";
 
-import { MaintenanceWorkerUnreportedError } from "../persist-durability";
+import { MaintenanceCompletionUnprovenError } from "../persist-durability";
 import type {
   PersistMaintenanceFileIdentity,
   PersistMaintenancePageStats,
@@ -54,6 +54,12 @@ let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => input += chunk);
 process.stdin.on("end", () => {
+  // (028 SA-B2-3) where a failure happened, for the parent: "before-open"
+  // (the source not yet opened read-write: nothing written), "source-open"
+  // (opened read-write and not closed after its explicit checkpoint: its
+  // close may have checkpointed, unreported), "source-closed" (checkpointed
+  // and closed: the source is settled)
+  let phase = "before-open";
   try {
     try { os.setPriority(10); } catch {}
     const options = JSON.parse(input);
@@ -69,17 +75,23 @@ process.stdin.on("end", () => {
       if (fs.existsSync(options.outputPath)) {
         throw new Error("compact output already exists");
       }
+      phase = "source-open";
       const db = new DatabaseSync(options.sourcePath);
       try {
         db.exec("PRAGMA busy_timeout=5000");
         db.prepare("VACUUM INTO ?").run(options.outputPath);
-        // (028 SA-B2-3) this read-write connection may be the source's last
-        // one: an explicit checkpoint surfaces a sync error, and leaves the
-        // close nothing to write
+        // this read-write connection may be the source's last one: an
+        // explicit checkpoint surfaces a sync error, and leaves the close
+        // nothing to write
         db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      } finally {
-        db.close();
+      } catch (err) {
+        try { db.close(); } catch (closeErr) {
+          if (closeErr && (closeErr.errcode === 1034 || closeErr.errcode === 1290)) throw closeErr;
+        }
+        throw err;
       }
+      db.close();
+      phase = "source-closed";
       outputStats = inspect(options.outputPath, true);
       outputStats.reclaimableBytes = outputStats.pageSize * outputStats.freelistCount;
       if (outputStats.quickCheck !== "ok") {
@@ -88,65 +100,72 @@ process.stdin.on("end", () => {
       outputIdentity = identity(options.outputPath);
     }
     process.stdout.write(JSON.stringify({
-      beforeIdentity,
-      beforeStats,
-      outputIdentity,
-      outputStats,
+      ok: true,
+      result: { beforeIdentity, beforeStats, outputIdentity, outputStats },
     }));
   } catch (err) {
-    // a SQLite sync error (IOERR_FSYNC, IOERR_DIR_FSYNC), reported to the
-    // parent, which poisons the stream (028)
-    if (err && (err.errcode === 1034 || err.errcode === 1290)) {
-      process.stderr.write("SQLITE-SYNC-ERROR " + JSON.stringify({ errcode: err.errcode }) + "\n");
-    }
+    // the report is stdout's ONLY content (warnings go to stderr)
+    const errcode = err && (err.errcode === 1034 || err.errcode === 1290) ? err.errcode : null;
+    process.stdout.write(JSON.stringify({ ok: false, phase, errcode }));
     process.stderr.write(String(err && err.stack || err));
     process.exitCode = 1;
   }
 });
 `;
 
-// How a worker run that did not succeed fails (028 SA-B2-3):
-// - killed or timed out: MaintenanceWorkerUnreportedError (it may have
-//   consumed a sync error it never reported; the caller keeps the stream's
-//   record armed);
-// - a SQLite sync error the child reported: an Error with that errcode (the
-//   caller poisons the stream);
-// - anything else: a plain Error.
-export function workerFailure({
+// How a worker run ends (028 SA-B2-3; strict, from stdout only):
+// - exit 0 with exactly {ok: true, result}: the result;
+// - a failure report {ok: false, phase, errcode}: a SQLite sync errcode
+//   (1034, 1290) -> an Error with that errcode (the caller poisons); phase
+//   "before-open" or "source-closed" -> a plain Error (the source is settled:
+//   disarmed); phase "source-open" -> unproven;
+// - killed, timed out, or anything else (no report, a malformed or partial
+//   one): MaintenanceCompletionUnprovenError (the record stays armed).
+export function workerOutcome({
   code,
   signal,
   timedOut,
   timeoutMs,
+  stdout,
   stderr,
+  sourcePath,
 }: {
   code: number | null;
   signal: string | null;
   timedOut: boolean;
   timeoutMs: number;
+  stdout: string;
   stderr: string;
-}): Error | undefined {
-  if (timedOut || code == null) {
-    return new MaintenanceWorkerUnreportedError(
-      timedOut
-        ? `SQLite maintenance worker timed out after ${timeoutMs}ms`
-        : `SQLite maintenance worker killed by ${signal}`,
-    );
+  sourcePath: string;
+}): { result: PersistMaintenanceWorkerResult } | { error: Error } {
+  const unproven = (why: string) => ({
+    error: new MaintenanceCompletionUnprovenError(sourcePath, why),
+  });
+  if (timedOut) return unproven(`SQLite maintenance worker timed out after ${timeoutMs}ms`);
+  if (code == null) return unproven(`SQLite maintenance worker killed by ${signal}`);
+  let report: any;
+  try {
+    report = JSON.parse(stdout);
+  } catch {
+    return unproven(`no parseable worker report (code=${code}): ${stderr.slice(0, 2000)}`);
   }
-  if (code === 0) return;
-  const sync = stderr.match(/^SQLITE-SYNC-ERROR (\{.*\})$/m);
-  if (sync != null) {
-    let errcode = 0;
-    try {
-      errcode = Number(JSON.parse(sync[1]).errcode);
-    } catch {}
-    return Object.assign(
-      new Error(`SQLite maintenance worker: a sync error: ${stderr.slice(0, 8000)}`),
-      { errcode },
-    );
+  const keys = report != null && typeof report == "object" ? Object.keys(report).sort().join(",") : "";
+  if (code === 0 && report.ok === true && keys === "ok,result" && report.result != null && typeof report.result == "object") {
+    return { result: report.result as PersistMaintenanceWorkerResult };
   }
-  return new Error(
-    `SQLite maintenance worker failed code=${code} signal=${signal}: ${stderr.slice(0, 8000)}`,
-  );
+  if (code !== 0 && report.ok === false && keys === "errcode,ok,phase") {
+    const why = `SQLite maintenance worker failed (code=${code}, phase ${report.phase}): ${stderr.slice(0, 8000)}`;
+    if (report.errcode === 1034 || report.errcode === 1290) {
+      return { error: Object.assign(new Error(why), { errcode: report.errcode }) };
+    }
+    if (report.errcode === null && (report.phase === "before-open" || report.phase === "source-closed")) {
+      return { error: new Error(why) };
+    }
+    if (report.errcode === null && report.phase === "source-open") {
+      return unproven(why);
+    }
+  }
+  return unproven(`a malformed worker report (code=${code}): ${stdout.slice(0, 500)}`);
 }
 
 export interface PersistMaintenanceWorkerResult {
@@ -199,18 +218,17 @@ export async function runPersistMaintenanceWorker({
       });
       child.on("exit", (code, signal) => {
         finish(() => {
-          const failure = workerFailure({ code, signal, timedOut, timeoutMs, stderr });
-          if (failure != null) {
-            reject(failure);
-            return;
-          }
-          try {
-            resolve(JSON.parse(stdout) as PersistMaintenanceWorkerResult);
-          } catch (err) {
-            reject(
-              new Error(`invalid SQLite maintenance worker result: ${err}`),
-            );
-          }
+          const outcome = workerOutcome({
+            code,
+            signal,
+            timedOut,
+            timeoutMs,
+            stdout,
+            stderr,
+            sourcePath,
+          });
+          if ("error" in outcome) reject(outcome.error);
+          else resolve(outcome.result);
         });
       });
       child.stdin.end(JSON.stringify({ sourcePath, outputPath }));
