@@ -323,7 +323,7 @@ describe("028 B-2: the open barrier", () => {
         }));
 
     it("a quota errno poisons the project: the open sibling, and a later stream of the project, are refused", async () => {
-      const project = "33333333-2222-4333-8444-555555555555";
+      const project = "5b2c0001-2222-4333-8444-555555555555";
       const sibling = join(dir, "sync-qf-sibling");
       await prepareDurableOpen(sibling, project);
       const sb = pstream({ path: sibling });
@@ -345,7 +345,7 @@ describe("028 B-2: the open barrier", () => {
       ).rejects.toThrow("had a sync error");
       // another project is not affected
       const other = join(dir, "sync-qf-other");
-      await prepareDurableOpen(other, "99999999-3333-4333-8444-555555555555");
+      await prepareDurableOpen(other, "5b2c0003-2222-4333-8444-555555555555");
       const so = pstream({ path: other });
       streams.push(so);
       clearOpenBarrierPass(other);
@@ -353,7 +353,7 @@ describe("028 B-2: the open barrier", () => {
     });
 
     it("control: a non-quota errno (EIO) there poisons only that file", async () => {
-      const project = "44444444-2222-4333-8444-555555555555";
+      const project = "5b2c0002-2222-4333-8444-555555555555";
       const sibling = join(dir, "sync-eio-sibling");
       await prepareDurableOpen(sibling, project);
       const sb = pstream({ path: sibling });
@@ -382,8 +382,9 @@ describe("028 B-2: the open barrier", () => {
 
     it("the test-only owner fallback is set nowhere outside tests (SA 3381)", () => {
       // every non-test source of the persist packages: only context.ts (the
-      // definition) and test-durability.ts (the test context) name it
+      // definition) and test-durability.ts (the test context) set it
       const packages = join(__dirname, "../../../..");
+      // (storage.ts READS it, through the import; nothing else may set it)
       const allowed = new Set([
         "conat/persist/context.ts",
         "conat/persist/test-durability.ts",
@@ -397,7 +398,8 @@ describe("028 B-2: the open barrier", () => {
             walk(r);
           } else if (/\.(ts|js)$/.test(e.name) && !/\.test\.(ts|js)$/.test(e.name)) {
             const src = fs.readFileSync(join(packages, r), "utf8");
-            if (/unregisteredStreamOwner|setUnregisteredStreamOwnerForTests/.test(src) && !allowed.has(r)) hits.push(r);
+            // a setter call, or the context option (`unregisteredStreamOwner:`)
+            if (/setUnregisteredStreamOwnerForTests\(|unregisteredStreamOwner\s*:/.test(src) && !allowed.has(r)) hits.push(r);
           }
         }
       };
