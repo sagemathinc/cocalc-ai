@@ -28,6 +28,12 @@ import {
   clearOpenBarrierPass,
   prepareDurableOpen,
 } from "@cocalc/conat/persist/storage";
+import { evictionIt, probeEvictable } from "./evictable-probe";
+
+// S-q verifies each file before it clears a project: the tests that need it
+// to succeed need a test directory whose page cache can be dropped (see
+// evictable-probe.ts; a real skip only on "pages still resident").
+const itEvicts = evictionIt(probeEvictable(tmpdir()));
 
 const msg = (s: string) => ({
   encoding: DataEncoding.JsonCodec,
@@ -83,7 +89,7 @@ describe("028 B-2: S-q recovery of a poisoned project", () => {
     expect(await persistInventory(root)).toBeUndefined();
   });
 
-  it("a project poisoned by an earlier process is verified and cleared at the next open; its streams are served", async () => {
+  itEvicts("a project poisoned by an earlier process is verified and cleared at the next open; its streams are served", async () => {
     const owner = "55555555-2222-4333-8444-555555555555";
     const [a, b] = makeStreams(["sq-a", "sq-b"]);
     earlierProcessPoisonedProject(owner, [a, b]);
@@ -120,7 +126,7 @@ describe("028 B-2: S-q recovery of a poisoned project", () => {
     expect(records.check(a, owner)).toBe("poisoned");
   });
 
-  it("a file poisoned by a DEVICE error stays poisoned after S-q clears its project", async () => {
+  itEvicts("a file poisoned by a DEVICE error stays poisoned after S-q clears its project", async () => {
     const owner = "88888888-2222-4333-8444-555555555555";
     const [a, b] = makeStreams(["dev-a", "dev-b"]);
     earlierProcessPoisonedProject(owner, [a]);
