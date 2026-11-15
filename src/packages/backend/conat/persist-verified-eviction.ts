@@ -273,18 +273,46 @@ export async function pagecacheHelperSelfTest(
   }
 }
 
-// What the persist server uses: the self-test once (at the first
-// verification, on that file's directory), then each verification under the same cap as the open barrier's
-// fsyncs.  If the self-test failed, every verification is refused (fail
-// closed): an image defect, which pages.
+// What the persist server uses: the self-test (at the first verification,
+// on that file's directory), then each verification under the same cap as
+// the open barrier's fsyncs.  If the self-test failed, every verification is
+// refused (fail closed) and it pages; the self-test is tried again after a
+// backoff (60 s, doubling to 30 min; SA 3350 A1), so a transient failure
+// does not refuse every leftover until a restart.  A pass is kept.
 const limiter = createFairLimiter(OPEN_BARRIER_CONCURRENCY);
+const SELF_TEST_RETRY_MIN_MS = 60_000;
+const SELF_TEST_RETRY_MAX_MS = 30 * 60_000;
 let selfTest: Promise<boolean> | undefined;
+let selfTestRetryAt = 0;
+let selfTestBackoff = SELF_TEST_RETRY_MIN_MS;
+let selfTestImpl = pagecacheHelperSelfTest;
+// tests only
+export function setPagecacheSelfTestForTests(
+  impl: typeof pagecacheHelperSelfTest | undefined,
+): void {
+  selfTestImpl = impl ?? pagecacheHelperSelfTest;
+  selfTest = undefined;
+  selfTestRetryAt = 0;
+  selfTestBackoff = SELF_TEST_RETRY_MIN_MS;
+}
 export async function checkedVerifiedEviction(
   dbPath: string,
 ): Promise<EvictionResult> {
+  if (selfTest != null && selfTestRetryAt > 0 && Date.now() >= selfTestRetryAt) {
+    selfTest = undefined; // a failed self-test: try it again
+  }
   // on the filesystem of the files it will verify (a tmpfs scratch file
   // can't be evicted: its pages ARE the file)
-  selfTest ??= pagecacheHelperSelfTest(dirname(dbPath));
+  selfTest ??= selfTestImpl(dirname(dbPath)).then((ok) => {
+    if (ok) {
+      selfTestRetryAt = 0;
+      selfTestBackoff = SELF_TEST_RETRY_MIN_MS;
+    } else {
+      selfTestRetryAt = Date.now() + selfTestBackoff;
+      selfTestBackoff = Math.min(SELF_TEST_RETRY_MAX_MS, selfTestBackoff * 2);
+    }
+    return ok;
+  });
   if (!(await selfTest)) {
     logger.error(
       "PERSIST ALERT (page): the page-cache helper self-test failed, so streams left mid-write stay refused (finding 028)",
