@@ -38,6 +38,7 @@ import {
   evictionIt,
   fstypeOf,
   probeEvictable,
+  SKIPPABLE_FSTYPES,
 } from "./evictable-probe";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { DataEncoding } from "@cocalc/conat/core/client";
@@ -261,17 +262,30 @@ describe("028 B-2 tests: the eviction probe skips ONLY on pages still resident (
     Buffer.from(
       `{"v":1,"page_size":4096,"pages":16,"resident_after":${resident}}\n`,
     );
-  it("a clean run with 0 resident is evictable; with N resident it is not-evictable, with that why", () => {
+  it("a clean run with 0 resident is evictable; with N resident on tmpfs it is not-evictable, with that why", () => {
     expect(classifyHelperRun(run({ stdout: line(0) }), "ext4")).toEqual({
       kind: "evictable",
       fstype: "ext4",
     });
-    expect(classifyHelperRun(run({ stdout: line(16) }), "overlay")).toEqual({
+    expect(classifyHelperRun(run({ stdout: line(16) }), "tmpfs")).toEqual({
       kind: "not-evictable",
-      fstype: "overlay",
+      fstype: "tmpfs",
       why: "16 pages still resident",
     });
   });
+  it("only tmpfs may skip", () => {
+    expect([...SKIPPABLE_FSTYPES]).toEqual(["tmpfs"]);
+  });
+  it.each(["ext4", "btrfs", "xfs", "overlay", "zfs", "Tmpfs", "tmpfs2"])(
+    "N resident on %s is an error, never a skip",
+    (fstype) => {
+      const v = classifyHelperRun(run({ stdout: line(16) }), fstype);
+      expect(v).toEqual({
+        kind: "error",
+        error: `not evictable on ${fstype} (16 pages still resident); only tmpfs may skip`,
+      });
+    },
+  );
   it.each([
     ["a spawn error", { error: new Error("ENOENT") }],
     ["a timeout or signal", { signal: "SIGTERM", status: null }],
