@@ -351,6 +351,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
           { busy: 0, log: null, checkpointed: null },
           { busy: "0", log: 0, checkpointed: 0 },
           { busy: 0, log: 1.5, checkpointed: 1.5 },
+          { busy: 0, log: 0 }, // checkpointed missing (SA 3416)
           undefined,
         ]) {
           const f = fakeDb({ row });
@@ -386,8 +387,12 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
         expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ close: new Error("close failed") }).db))).toEqual(["arm"]);
         expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ close: sync() }).db))).toEqual(["arm", "poison"]);
         // 088: an incomplete checkpoint -- busy, a partial one, or no integer log -- stays ARMED
-        for (const row of [{ busy: 1, log: 3, checkpointed: 3 }, { busy: 0, log: 5, checkpointed: 4 }, { busy: 0, log: null, checkpointed: null }]) {
+        for (const row of [{ busy: 1, log: 3, checkpointed: 3 }, { busy: 0, log: 5, checkpointed: 4 }, { busy: 0, log: null, checkpointed: null }, { busy: "0", log: 0, checkpointed: 0 }, { busy: 0, log: 1.5, checkpointed: 1.5 }, { busy: 0, log: 0 }]) {
           expect([row, run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ row }).db))]).toEqual([row, ["arm"]]);
+        }
+        // positive controls (SA 3416): not in WAL mode (-1/-1, as #195 accepts) and a full TRUNCATE (7/7) -> success -> disarmed
+        for (const row of [{ busy: 0, log: -1, checkpointed: -1 }, { busy: 0, log: 7, checkpointed: 7 }]) {
+          expect([row, run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ row }).db))]).toEqual([row, ["arm", "disarm"]]);
         }
       });
     });
