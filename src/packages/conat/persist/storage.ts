@@ -803,7 +803,8 @@ const exitWithoutClosing = (): void => {
 // nothing (good: no checkpoint), but drops the writes still QUEUED for a
 // group commit.  This commits them first (each COMMIT is durable), then
 // re-raises the signal so its default action ends the process as before.
-// A signal that already has a listener is left alone.
+// A signal that already has a listener is left alone; one that gets a
+// listener later is flushed, and then that listener owns the shutdown.
 let signalFlushInstalled = false;
 export const PERSIST_FLUSH_SIGNALS: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
 export function installPersistSignalFlush(): void {
@@ -819,6 +820,11 @@ export function installPersistSignalFlush(): void {
         logger.warn("persist: flush at a signal failed", { sig, err: `${err}` });
       }
       for (const [s, h] of handlers) process.removeListener(s, h);
+      // another handler of this process, installed after this one, got the
+      // same signal and owns the shutdown (e.g. start-server.ts waiting for
+      // its forked children): no re-raise, it would end the process by the
+      // default action before that handler finished (SA 3351 A4)
+      if (process.listenerCount(sig) > 0) return;
       process.kill(process.pid, sig);
     };
     handlers.set(sig, handler);

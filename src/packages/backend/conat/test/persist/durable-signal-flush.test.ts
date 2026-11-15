@@ -24,7 +24,12 @@ const [dist, conatDist, mode, path] = process.argv.slice(2);
 const persist = require(dist + "/conat/persist.js");
 const storage = require(conatDist + "/persist/storage.js");
 persist.installPersistExitGuard();
-if (mode === "flush") persist.installPersistSignalFlush();
+if (mode === "flush" || mode === "flush-owned") persist.installPersistSignalFlush();
+if (mode === "flush-owned") {
+  // another handler, installed later, owns the shutdown (like start-server.ts
+  // waiting for its forked children): it must still get to finish
+  process.once("SIGTERM", () => setTimeout(() => process.exit(42), 200));
+}
 // hold group commits back, so the writes are still QUEUED at the signal
 storage.setWriteBatchWindowMs(60000);
 const stream = persist.pstream({ path, noCache: true });
@@ -60,7 +65,7 @@ describe("028 B-3a: a signal commits the queued writes, then ends by the signal"
     await rm(dir, { recursive: true, force: true });
   });
 
-  const run = (mode: "flush" | "noflush") => {
+  const run = (mode: "flush" | "noflush" | "flush-owned") => {
     const path = join(dir, mode);
     const r = spawnSync(process.execPath, [child, BACKEND_DIST, CONAT_DIST, mode, path], {
       env: process.env,
@@ -80,6 +85,13 @@ describe("028 B-3a: a signal commits the queued writes, then ends by the signal"
     const { r, path } = run("noflush");
     expect(r.signal).toBe("SIGTERM");
     expect(rows(path)).toBe(0);
+  });
+
+  it("another handler owns the shutdown (SA 3351 A4): the writes are committed, NO re-raise; that handler finishes and decides the exit", () => {
+    const { r, path } = run("flush-owned");
+    expect(r.signal).toBeNull();
+    expect(r.status).toBe(42);
+    expect(rows(path)).toBe(5);
   });
 
   it("every persist entry point without its own signal path installs it", () => {
