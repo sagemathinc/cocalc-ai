@@ -94,6 +94,10 @@ import {
   rateLimitedError,
   type Charge,
 } from "./write-budget";
+import {
+  writeOrderError,
+  type WriteOrder,
+} from "./write-order";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
 import {
@@ -254,6 +258,8 @@ interface WriteRequest {
   kind: "set" | "setMany";
   ops: WriteOperation[];
   bytes: number;
+  // the client's write order (AS-B3-ORDER-1); none for in-process callers
+  order?: WriteOrder;
   resolve?: (value: any) => void;
   reject?: (err: unknown) => void;
   outcome?: WriteOutcome;
@@ -3822,15 +3828,51 @@ export class PersistentStream extends EventEmitter {
   // returned (or failed)
   setQueued = (
     operation: WriteOperation,
+    order?: WriteOrder,
   ): Promise<{ seq: number; time: number }> =>
     new Promise((resolve, reject) => {
-      this.enqueueWrite({ kind: "set", ops: [operation], resolve, reject });
+      this.enqueueWrite({ kind: "set", ops: [operation], resolve, reject, order });
     });
 
-  setManyQueued = (operations: WriteOperation[]): Promise<SetManyResult> =>
+  setManyQueued = (
+    operations: WriteOperation[],
+    order?: WriteOrder,
+  ): Promise<SetManyResult> =>
     new Promise((resolve, reject) => {
-      this.enqueueWrite({ kind: "setMany", ops: operations, resolve, reject });
+      this.enqueueWrite({ kind: "setMany", ops: operations, resolve, reject, order });
     });
+
+  // A write of a client that is not a set/setMany (delete, metadata, config,
+  // checkpoints, ...), run in its order (AS-B3-ORDER-1).  The queued sets
+  // commit first -- the queue holds every earlier set of every connection in
+  // arrival order -- so the order check sees their refusals; then the check,
+  // then fn (whose own budget check may refuse it).
+  runOrdered = <T>(order: WriteOrder | undefined, fn: () => T): T => {
+    if (order == null) return fn();
+    this.drainWriteQueue();
+    const { state, wseq, wfloor } = order;
+    const verdict = state.check(wseq, wfloor);
+    if (verdict == "stale" || verdict == "overflow") {
+      throw writeOrderError(verdict);
+    }
+    if (verdict == "blocked") {
+      if (!state.noteRefused(wseq)) throw writeOrderError("overflow");
+      throw rateLimitedError(this.budgetOwner() ?? "host");
+    }
+    try {
+      const result = fn();
+      state.noteAdmitted(wseq);
+      return result;
+    } catch (err) {
+      if ((err as any)?.code === "rate_limited") {
+        if (!state.noteRefused(wseq)) throw writeOrderError("overflow");
+      } else {
+        // resolved (failed): the client won't resend it
+        state.noteAdmitted(wseq);
+      }
+      throw err;
+    }
+  };
 
   // The same, synchronously: whatever is queued commits first (arrival
   // order), then this, as one batch of its own.
@@ -4042,12 +4084,36 @@ export class PersistentStream extends EventEmitter {
       // batch is refused too (SA-B3a-1): a smaller later write that would fit
       // must not commit ahead of the refused one (the client resends both, in
       // order).
-      const charge = chargeFor(request.bytes);
-      if (budget != null && (refusedInBatch || !budget.fits(charge, pending))) {
-        refusedInBatch = true;
-        this.settle(request, { error: rateLimitedError(budgetOwner!) });
+      //
+      // AS-B3-ORDER-1: a write with its client's order is checked against
+      // that connection's state instead, across batches: refused while an
+      // earlier write of the connection is still refused; a stale copy of a
+      // write the client already resolved is never applied.
+      const order = request.order;
+      const verdict = order?.state.check(order.wseq, order.wfloor) ?? "ok";
+      if (verdict == "stale" || verdict == "overflow") {
+        this.settle(request, { error: writeOrderError(verdict) });
         continue;
       }
+      const charge = chargeFor(request.bytes);
+      if (
+        verdict == "blocked" ||
+        (budget != null &&
+          ((order == null && refusedInBatch) || !budget.fits(charge, pending)))
+      ) {
+        if (order == null) refusedInBatch = true;
+        if (order != null && !order.state.noteRefused(order.wseq)) {
+          this.settle(request, { error: writeOrderError("overflow") });
+          continue;
+        }
+        this.settle(request, {
+          error: rateLimitedError(budgetOwner ?? "host"),
+        });
+        continue;
+      }
+      // past the order and the budget: resolved here, whatever happens next
+      // (committed, or failed with its own error; the client won't resend)
+      order?.state.noteAdmitted(order.wseq);
       const name = `req_${n++}`;
       try {
         this.db.exec(`SAVEPOINT ${name}`);

@@ -149,7 +149,7 @@ describe("028 B-3a: every write path resends a rate_limited refusal; one admissi
     host().commit({ txn: 1, bytes: 0 });
     expect(host().snapshot().txn).toBe(0);
     // the FIRST refused request gets the longest pause, the second the
-    // shortest: without the retry chain, B would resend (and commit) first
+    // shortest: without the wseq order, B would resend (and commit) first
     // (the retry's own jitter, so nothing else consumes these values)
     const pauses = [0.999, 0.0];
     setRateLimitedJitterForTests(() => pauses.shift() ?? 0.5);

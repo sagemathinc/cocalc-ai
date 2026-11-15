@@ -81,6 +81,7 @@ import {
 } from "./board-policy";
 import { throttle } from "lodash";
 import { type SetOptions } from "./client";
+import { parseWriteOrder, WriteOrderState } from "./write-order";
 import { once } from "@cocalc/util/async-utils";
 import { UsageMonitor } from "@cocalc/conat/monitor/usage";
 import { getLogger } from "@cocalc/conat/logger";
@@ -341,6 +342,9 @@ export function server({
     // The policy refused this socket's stream: never open it (no retry).
     let policyRefused = false;
     let stream: undefined | PersistentStream = undefined;
+    // 028 B-3a (AS-B3-ORDER-1): this connection's write order, kept here (not
+    // under a client-chosen key) and dropped with the connection
+    const writeOrder = new WriteOrderState();
     let user = "";
     let added = false;
     // in-progress replays on this socket; stopped when it closes
@@ -580,12 +584,18 @@ export function server({
           );
         };
         assertBoardCommandAllowed(boardAccess, request);
+        // the client's write order: absent, or strictly valid (else refused)
+        const order = isWriteCommand(request)
+          ? parseWriteOrder(request, writeOrder)
+          : undefined;
         if (isWriteCommand(request)) {
           assertCurrentInstance({
             replacedInstance: stream.replacedInstance,
             claimed: request.persist_instance,
           });
         }
+        // a write that is not a set/setMany runs in that order too
+        const ordered = <T>(fn: () => T): T => stream!.runOrdered(order, fn);
         if (request.cmd == "set") {
           // acked once the batch it commits in is durable (028 group commit)
           respondSync(
@@ -598,7 +608,7 @@ export function server({
               headers: request.headers,
               msgID: request.msgID,
               checkpoint: request.checkpoint,
-            }),
+            }, order),
           );
         } else if (request.cmd == "setMany") {
           respondSync(
@@ -622,32 +632,33 @@ export function server({
                   encoding: messageData.encoding,
                 }),
               ),
+              order,
             ),
           );
         } else if (request.cmd == "delete") {
-          respondSync(stream.delete(request));
+          respondSync(ordered(() => stream!.delete(request)));
         } else if (request.cmd == "config") {
-          respondSync(stream.config(request.config));
+          respondSync(isWriteCommand(request) ? ordered(() => stream!.config(request.config)) : stream.config(request.config));
         } else if (request.cmd == "metadata") {
           respondSync(stream.getMetadata());
         } else if (request.cmd == "setMetadata") {
-          respondSync(stream.setMetadata(mesg.data));
+          respondSync(ordered(() => stream!.setMetadata(mesg.data)));
         } else if (request.cmd == "patchMetadata") {
-          respondSync(stream.patchMetadata(mesg.data));
+          respondSync(ordered(() => stream!.patchMetadata(mesg.data)));
         } else if (request.cmd == "resetHistory") {
-          respondSync(stream.resetHistory(mesg.data ?? {}));
+          respondSync(ordered(() => stream!.resetHistory(mesg.data ?? {})));
         } else if (request.cmd == "historyInclusion") {
           respondSync(stream.historyInclusion(mesg.data ?? {}));
         } else if (request.cmd == "historyArchives") {
           respondSync(stream.historyArchives());
         } else if (request.cmd == "purgeArchivedHistory") {
-          respondSync(stream.purgeArchivedHistory());
+          respondSync(ordered(() => stream!.purgeArchivedHistory()));
         } else if (request.cmd == "checkpoints") {
           respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {
-          respondSync(stream.setCheckpoint(mesg.data));
+          respondSync(ordered(() => stream!.setCheckpoint(mesg.data)));
         } else if (request.cmd == "deleteCheckpoint") {
-          stream.deleteCheckpoint(request.name);
+          ordered(() => stream!.deleteCheckpoint(request.name));
           respondSync(null);
         } else if (request.cmd == "inventory") {
           respondSync(stream.inventory());
@@ -671,7 +682,7 @@ export function server({
           if (!ENABLE_SQLITE_GENERAL_QUERIES) {
             throw Error("sqlite command not currently supported");
           }
-          const resp = stream.sqlite(request.statement, request.params);
+          const resp = ordered(() => stream!.sqlite(request.statement, request.params));
           respondSync(resp);
         } else if (request.cmd == "serverId") {
           respondSync(server.id);
