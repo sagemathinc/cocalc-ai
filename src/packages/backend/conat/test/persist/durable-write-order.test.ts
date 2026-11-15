@@ -188,6 +188,32 @@ describe("028 B-3a AS-B3-ORDER-1: the storage, with a connection's order state",
     expect(await code(s.setQueued(A(), { state: st, wseq: 1, wfloor: 1 }))).toBe("write_stale");
   });
 
+  // LIMIT PINS (SA-B3-LATE-1, ops0 3688): the order holds WITHIN one
+  // connection only.  These pin today's cross-connection behaviour; the
+  // follow-up (a nonce-bound floor, with 030 v2) flips them on purpose.
+  it("LIMIT PIN: a late copy of write k on the OLD connection is admitted after k+1 committed on a NEW one (and after the client gave up on k)", async () => {
+    const s = await open("limit-old");
+    limits(1e12);
+    const oldConn = new WriteOrderState();
+    const newConn = new WriteOrderState();
+    // k = 1 was sent on the old connection; the client timed it out (resolved)
+    // and recovered onto a new connection, where k+1 carries floor 2
+    expect(await code(s.setQueued(B(), { state: newConn, wseq: 2, wfloor: 2 }))).toBe("ok");
+    // the late copy of k, still in transit on the old connection, with its old floor
+    expect(await code(s.setQueued(A(), { state: oldConn, wseq: 1, wfloor: 1 }))).toBe("ok");
+    expect(sizes(s)).toEqual([100, 6000]); // k applied AFTER k+1
+  });
+
+  it("LIMIT PIN: a late copy of write k arriving as the FIRST message of a fresh connection is admitted", async () => {
+    const s = await open("limit-fresh");
+    limits(1e12);
+    const first = new WriteOrderState();
+    expect(await code(s.setQueued(B(), { state: first, wseq: 2, wfloor: 2 }))).toBe("ok");
+    const fresh = new WriteOrderState();
+    expect(await code(s.setQueued(A(), { state: fresh, wseq: 1, wfloor: 1 }))).toBe("ok");
+    expect(sizes(s)).toEqual([100, 6000]);
+  });
+
   it("another connection (its own state) is not blocked, and can't clear this one's fence", async () => {
     const s = await open("two");
     await spend(s);

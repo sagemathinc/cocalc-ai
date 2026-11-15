@@ -1,6 +1,15 @@
 /*
-028 B-3a (AS-B3-ORDER-1, SA 3381): one client's writes commit in the order it
-issued them, also when the write budget refuses some of them.
+028 B-3a (AS-B3-ORDER-1, SA 3381): WITHIN ONE CONNECTION, one client's writes
+commit in the order it issued them, also when the write budget refuses some
+of them.
+
+LIMIT (SA-B3-LATE-1, ops0 3688; a follow-up: a nonce-bound floor, with 030
+v2): the state is per connection, so across connections the order is NOT
+guaranteed.  A copy of a write still in transit on a closed or older
+connection, or arriving as the first message of a fresh connection, can be
+applied after a later write -- even after the client was told it failed (a
+timeout does not prove non-execution).  That is the pre-B-3a at-least-once
+behaviour, unchanged; durable-write-order's "LIMIT PIN" tests pin it.
 
 The client numbers every write when it is ISSUED (wseq, before the first
 send) and sends with it wfloor: the smallest wseq it has not resolved yet
@@ -14,9 +23,9 @@ connection can't touch it.  For a write with (wseq, wfloor):
   client already resolved that write, so this copy is stale (a late or
   duplicate delivery) and is rejected, never applied;
 - an earlier write not yet SEEN here (a gap between the floor and this
-  wseq: it is still in transit, e.g. across a reconnect, or was lost until
-  the client resolves it): refused (rate_limited) and recorded -- so the
-  order does not rest on the transport delivering in order;
+  wseq: it is still in transit on this connection, or was lost until the
+  client resolves it): refused (rate_limited) and recorded -- so, within a
+  connection, the order does not rest on the transport delivering in order;
 - an earlier write of this connection still refused (not yet resent and
   admitted): refused too (rate_limited), and recorded;
 - otherwise it goes on to the budget; refused there -> recorded; admitted ->
@@ -32,7 +41,8 @@ setMany is checked when its batch commits, in queue (arrival) order; any
 other write first drains that queue, then is checked
 (PersistentStream.runOrdered).  wseqs are per PersistStreamClient, and that
 client writes to one stream only, so they are contiguous there: the gap rule
-above makes the order hold even if the transport reorders.
+above makes the order hold, within a connection, even if the transport
+reorders.  (A new connection starts with fresh state: see the LIMIT above.)
 */
 
 import { ConatError } from "@cocalc/conat/core/client";
