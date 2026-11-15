@@ -23,9 +23,18 @@ if (!process.env.COCALC_PERSIST_STATE_DIR) {
   );
 }
 
-// the persist streams' sync root (syncFiles.local, backend/data.ts): also this
-// test process's, never a developer's live {root}/data/sync -- the persist and
-// maintenance tests create their databases under it (ops0 3707)
+// the data dir (backend/data.ts: COCALC_DATA_DIR ?? DATA ?? {root}/data) and
+// the persist streams' sync root (syncFiles.local = COCALC_SYNC ?? {data}/sync):
+// this test process's own, never a developer's live {root}/data -- the persist
+// and maintenance tests create their databases there (ops0 3707, SA 3420).
+// Here in setupFiles, before any test file imports @cocalc/backend/data
+// (which computes them at module load).
+if (!process.env.COCALC_DATA_DIR && !process.env.DATA) {
+  const { mkdtempSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  process.env.COCALC_DATA_DIR = mkdtempSync(join(tmpdir(), "cocalc-data-"));
+}
 if (!process.env.COCALC_SYNC) {
   const { mkdtempSync } = require("node:fs");
   const { join } = require("node:path");
