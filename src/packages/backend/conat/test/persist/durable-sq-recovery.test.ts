@@ -89,20 +89,23 @@ describe("028 B-2: S-q recovery of a poisoned project", () => {
     expect(await persistInventory(root)).toBeUndefined();
   });
 
-  itEvicts("a project poisoned by an earlier process is verified and cleared at the next open; its streams are served", async () => {
-    const owner = "55555555-2222-4333-8444-555555555555";
-    const [a, b] = makeStreams(["sq-a", "sq-b"]);
-    earlierProcessPoisonedProject(owner, [a, b]);
-    const records = persistDurabilityRecords();
-    expect(records.check(a, owner)).toBe("poisoned");
-    await prepareDurableOpen(a, owner, root);
-    const s = pstream({ path: a });
-    streams.push(s);
-    clearOpenBarrierPass(a);
-    expect(records.check(a, owner)).toBe("ok");
-    expect(records.check(b, owner)).toBe("ok");
-    expect(Buffer.from(s.get({ seq: 1 })!.raw).toString()).toBe("sq-a");
-  });
+  itEvicts(
+    "a project poisoned by an earlier process is verified and cleared at the next open; its streams are served",
+    async () => {
+      const owner = "55555555-2222-4333-8444-555555555555";
+      const [a, b] = makeStreams(["sq-a", "sq-b"]);
+      earlierProcessPoisonedProject(owner, [a, b]);
+      const records = persistDurabilityRecords();
+      expect(records.check(a, owner)).toBe("poisoned");
+      await prepareDurableOpen(a, owner, root);
+      const s = pstream({ path: a });
+      streams.push(s);
+      clearOpenBarrierPass(a);
+      expect(records.check(a, owner)).toBe("ok");
+      expect(records.check(b, owner)).toBe("ok");
+      expect(Buffer.from(s.get({ seq: 1 })!.raw).toString()).toBe("sq-a");
+    },
+  );
 
   it("an ambiguous inventory keeps the project poisoned", async () => {
     const owner = "66666666-2222-4333-8444-555555555555";
@@ -126,25 +129,28 @@ describe("028 B-2: S-q recovery of a poisoned project", () => {
     expect(records.check(a, owner)).toBe("poisoned");
   });
 
-  itEvicts("a file poisoned by a DEVICE error stays poisoned after S-q clears its project", async () => {
-    const owner = "88888888-2222-4333-8444-555555555555";
-    const [a, b] = makeStreams(["dev-a", "dev-b"]);
-    earlierProcessPoisonedProject(owner, [a]);
-    const earlier = createDurabilityRecords({
-      root: persistRunDir(),
-      generation: `earlier-dev-${Math.random()}`,
-      fs: fs as any,
-      sha256: sha256Hex,
-      pid: 0,
-    });
-    earlier.arm(b, owner);
-    earlier.poison(b, { where: "test", errno: "EIO" }); // file scope
-    await prepareDurableOpen(a, owner, root);
-    const s = pstream({ path: a });
-    streams.push(s);
-    clearOpenBarrierPass(a);
-    expect(persistDurabilityRecords().check(b, owner)).toBe("poisoned");
-  });
+  itEvicts(
+    "a file poisoned by a DEVICE error stays poisoned after S-q clears its project",
+    async () => {
+      const owner = "88888888-2222-4333-8444-555555555555";
+      const [a, b] = makeStreams(["dev-a", "dev-b"]);
+      earlierProcessPoisonedProject(owner, [a]);
+      const earlier = createDurabilityRecords({
+        root: persistRunDir(),
+        generation: `earlier-dev-${Math.random()}`,
+        fs: fs as any,
+        sha256: sha256Hex,
+        pid: 0,
+      });
+      earlier.arm(b, owner);
+      earlier.poison(b, { where: "test", errno: "EIO" }); // file scope
+      await prepareDurableOpen(a, owner, root);
+      const s = pstream({ path: a });
+      streams.push(s);
+      clearOpenBarrierPass(a);
+      expect(persistDurabilityRecords().check(b, owner)).toBe("poisoned");
+    },
+  );
 
   it("a damaged database fails S-q's integrity_check: the project stays poisoned", async () => {
     const owner = "99999999-2222-4333-8444-555555555555";
