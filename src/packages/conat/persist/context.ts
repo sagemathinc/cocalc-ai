@@ -149,6 +149,18 @@ export interface PersistOpenBarrier {
 }
 export let openBarrier: PersistOpenBarrier | undefined = undefined;
 
+// The owner of a disk stream constructed WITHOUT the persist server (which
+// registers the owner in prepareDurableOpen), for the synchronous open
+// barrier's quota scope (Q-F).  Only tests set it: every production open goes
+// through the server.  Unset or undefined -> such an open is refused.
+export let unregisteredStreamOwner: ((id: string) => string | undefined) | undefined =
+  undefined;
+export function setUnregisteredStreamOwnerForTests(
+  fn: ((id: string) => string | undefined) | undefined,
+): void {
+  unregisteredStreamOwner = fn;
+}
+
 // Verified page-cache eviction (finding 028, DESIGN §3.2.6 H-b): for a stream
 // a dead process left mid-write, make the page cache equal the disk (fsync,
 // DONTNEED, mincore = 0, remove the -shm) before the normal open.  Anything
@@ -229,6 +241,7 @@ export function initContext(opts: {
   writeCounter?: PersistWriteCounter;
   durability?: PersistDurabilityRecords;
   openBarrier?: PersistOpenBarrier;
+  unregisteredStreamOwner?: (id: string) => string | undefined;
   verifiedEviction?: (dbPath: string) => Promise<VerifiedEvictionResult>;
   integrityCheck?: (dbPath: string) => Promise<{ ok: boolean; why?: string }>;
   projectRecovery?: (
@@ -252,6 +265,10 @@ export function initContext(opts: {
   writeCounter = opts.writeCounter;
   durability = opts.durability;
   openBarrier = opts.openBarrier;
+  if ("unregisteredStreamOwner" in opts) {
+    // (kept otherwise: a test's re-init doesn't drop the fallback its setup set)
+    unregisteredStreamOwner = opts.unregisteredStreamOwner;
+  }
   verifiedEviction = opts.verifiedEviction;
   integrityCheck = opts.integrityCheck;
   projectRecovery = opts.projectRecovery;

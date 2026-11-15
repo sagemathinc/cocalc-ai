@@ -77,6 +77,7 @@ import {
   writeCounter,
   durability,
   openBarrier,
+  unregisteredStreamOwner,
   type OpenBarrierResult,
   verifiedEviction,
   type VerifiedEvictionResult,
@@ -373,6 +374,24 @@ function settleOpenBarrier(
   throw retryableWriteError("poisoned");
 }
 
+// The owner for a synchronous barrier: the one the server registered, else
+// the context's fallback (tests only).  Unknown -> refused, before anything
+// is armed: a quota errno could not be scoped to its project (Q-F, AS-B2-SYNC-OWNER).
+function ownerForSyncOpen(id: string): string {
+  const owner = streamOwners.get(id) ?? unregisteredStreamOwner?.(id);
+  if (owner == null) {
+    logger.warn("persist: a disk stream's owner is not known; refused (finding 028)", {
+      id,
+    });
+    throw new ConatError(
+      "persist: this stream's owner is not known, so it is refused",
+      { code: 503 },
+    );
+  }
+  streamOwners.set(id, owner);
+  return owner;
+}
+
 function runOpenBarrierSync(id: string, dbPath: string): void {
   if (openBarrier == null) {
     throw new ConatError(
@@ -380,6 +399,7 @@ function runOpenBarrierSync(id: string, dbPath: string): void {
       { code: 503 },
     );
   }
+  const owner = ownerForSyncOpen(id);
   armForBarrier(id);
   let result: OpenBarrierResult;
   try {
@@ -387,7 +407,7 @@ function runOpenBarrierSync(id: string, dbPath: string): void {
   } catch (err) {
     result = { kind: "discovery", path: dbPath, why: `${err}` };
   }
-  settleOpenBarrier(id, result);
+  settleOpenBarrier(id, result, owner);
 }
 
 // The persist server, right before it gets the stream for path (resolved,
