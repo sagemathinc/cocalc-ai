@@ -384,16 +384,26 @@ function lastSeqBefore(
 ): number | undefined {
   // (not read-only: that can't read a database in WAL mode without its -shm)
   assertPersistMaintenanceOpenAllowed(`${path}.db`, undefined, () => owner);
-  const db = new DatabaseSync(`${path}.db`);
-  try {
-    db.exec("PRAGMA busy_timeout=5000");
-    const row = db
-      .prepare("SELECT MAX(seq) AS seq FROM messages WHERE time < ?")
-      .get(before / 1000) as { seq: number | null } | undefined;
-    return row?.seq == null ? undefined : Number(row.seq);
-  } finally {
-    db.close();
-  }
+  // armed (SA-B2-3): this read-write connection is the last one of a closed
+  // stream, so its close would checkpoint the WAL, unreported; the explicit
+  // checkpoint surfaces a sync error first and leaves the close nothing
+  return runArmedMaintenanceWrite(`${path}.db`, owner, "trim:last-seq", () => {
+    let seq: number | undefined;
+    const db = new DatabaseSync(`${path}.db`);
+    try {
+      db.exec("PRAGMA busy_timeout=5000");
+      const row = db
+        .prepare("SELECT MAX(seq) AS seq FROM messages WHERE time < ?")
+        .get(before / 1000) as { seq: number | null } | undefined;
+      seq = row?.seq == null ? undefined : Number(row.seq);
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } finally {
+      db.close();
+    }
+    // what the checkpoint wrote durable before the trim goes on (§4A 10)
+    fsyncMaintenanceOutput(`${path}.db`);
+    return seq;
+  });
 }
 
 // Keeps only what the action's policy keeps of the stream at `path` (closed

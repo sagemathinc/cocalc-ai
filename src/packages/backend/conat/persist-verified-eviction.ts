@@ -300,6 +300,8 @@ export async function checkedVerifiedEviction(
 ): Promise<EvictionResult> {
   if (selfTest != null && selfTestRetryAt > 0 && Date.now() >= selfTestRetryAt) {
     selfTest = undefined; // a failed self-test: try it again
+    // (SA 3367 advisory) once: concurrent callers share the retry in flight
+    selfTestRetryAt = 0;
   }
   // on the filesystem of the files it will verify (a tmpfs scratch file
   // can't be evicted: its pages ARE the file)

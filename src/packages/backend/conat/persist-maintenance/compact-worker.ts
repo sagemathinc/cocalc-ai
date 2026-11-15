@@ -5,6 +5,7 @@
 
 import { spawn } from "node:child_process";
 
+import { MaintenanceWorkerUnreportedError } from "../persist-durability";
 import type {
   PersistMaintenanceFileIdentity,
   PersistMaintenancePageStats,
@@ -72,6 +73,10 @@ process.stdin.on("end", () => {
       try {
         db.exec("PRAGMA busy_timeout=5000");
         db.prepare("VACUUM INTO ?").run(options.outputPath);
+        // (028 SA-B2-3) this read-write connection may be the source's last
+        // one: an explicit checkpoint surfaces a sync error, and leaves the
+        // close nothing to write
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       } finally {
         db.close();
       }
@@ -89,11 +94,60 @@ process.stdin.on("end", () => {
       outputStats,
     }));
   } catch (err) {
+    // a SQLite sync error (IOERR_FSYNC, IOERR_DIR_FSYNC), reported to the
+    // parent, which poisons the stream (028)
+    if (err && (err.errcode === 1034 || err.errcode === 1290)) {
+      process.stderr.write("SQLITE-SYNC-ERROR " + JSON.stringify({ errcode: err.errcode }) + "\n");
+    }
     process.stderr.write(String(err && err.stack || err));
     process.exitCode = 1;
   }
 });
 `;
+
+// How a worker run that did not succeed fails (028 SA-B2-3):
+// - killed or timed out: MaintenanceWorkerUnreportedError (it may have
+//   consumed a sync error it never reported; the caller keeps the stream's
+//   record armed);
+// - a SQLite sync error the child reported: an Error with that errcode (the
+//   caller poisons the stream);
+// - anything else: a plain Error.
+export function workerFailure({
+  code,
+  signal,
+  timedOut,
+  timeoutMs,
+  stderr,
+}: {
+  code: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  timeoutMs: number;
+  stderr: string;
+}): Error | undefined {
+  if (timedOut || code == null) {
+    return new MaintenanceWorkerUnreportedError(
+      timedOut
+        ? `SQLite maintenance worker timed out after ${timeoutMs}ms`
+        : `SQLite maintenance worker killed by ${signal}`,
+    );
+  }
+  if (code === 0) return;
+  const sync = stderr.match(/^SQLITE-SYNC-ERROR (\{.*\})$/m);
+  if (sync != null) {
+    let errcode = 0;
+    try {
+      errcode = Number(JSON.parse(sync[1]).errcode);
+    } catch {}
+    return Object.assign(
+      new Error(`SQLite maintenance worker: a sync error: ${stderr.slice(0, 8000)}`),
+      { errcode },
+    );
+  }
+  return new Error(
+    `SQLite maintenance worker failed code=${code} signal=${signal}: ${stderr.slice(0, 8000)}`,
+  );
+}
 
 export interface PersistMaintenanceWorkerResult {
   beforeIdentity: PersistMaintenanceFileIdentity;
@@ -145,20 +199,9 @@ export async function runPersistMaintenanceWorker({
       });
       child.on("exit", (code, signal) => {
         finish(() => {
-          if (timedOut) {
-            reject(
-              new Error(
-                `SQLite maintenance worker timed out after ${timeoutMs}ms`,
-              ),
-            );
-            return;
-          }
-          if (code !== 0) {
-            reject(
-              new Error(
-                `SQLite maintenance worker failed code=${code} signal=${signal}: ${stderr.slice(0, 8000)}`,
-              ),
-            );
+          const failure = workerFailure({ code, signal, timedOut, timeoutMs, stderr });
+          if (failure != null) {
+            reject(failure);
             return;
           }
           try {
