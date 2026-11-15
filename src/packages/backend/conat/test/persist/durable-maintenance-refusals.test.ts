@@ -111,6 +111,36 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     }
   });
 
+  it("client-facing refusals carry the stream's name only: no host path, no reason detail", () => {
+    const secret = join(tmpdir(), "outside-secret-dir");
+    const msg = (f: () => void) => {
+      try {
+        f();
+      } catch (err) {
+        return `${(err as Error).message}`;
+      }
+      throw new Error("expected a refusal");
+    };
+    const texts = [
+      msg(() => assertPersistMaintenanceOpenAllowed(join(secret, "s1.db"), () => "ok", () => undefined)),
+      msg(() => assertPersistMaintenanceOpenAllowed(join(secret, "s2.db"), () => "poisoned", () => "host")),
+      msg(() =>
+        runArmedMaintenanceWrite(join(secret, "s3.db"), "P", "p", () => {}, {
+          arm: () => { throw new Error(`EROFS: ${secret}/records`); },
+          disarm: () => {},
+          poison: () => {},
+        } as any),
+      ),
+    ];
+    expect(texts[0]).toMatch(/owner can't be derived: s1$/);
+    expect(texts[1]).toMatch(/the stream is poisoned: s2$/);
+    expect(texts[2]).toMatch(/dirty record can't be created: s3$/);
+    for (const t of texts) {
+      expect(t).not.toContain(secret);
+      expect(t).not.toMatch(/finding|\(0\d\d\)/);
+    }
+  });
+
   it("a path whose owner can't be derived is refused", () => {
     expect(ownerOfLocalPath(join(tmpdir(), "outside", "x"))).toBeUndefined();
     expect(() =>
@@ -216,7 +246,9 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     it("the coordinator takes the owner only from this rule, and refuses on a refusal", () => {
       const src = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/coordinator.ts"), "utf8");
       expect(src).toMatch(/const r = maintenanceOwner\(\{/);
-      expect(src).toMatch(/if \("refused" in r\) \{[\s\S]{0,240}throw new Error\(`persist maintenance open refused \(finding 028\): \$\{r\.refused\}`\);/);
+      expect(src).toMatch(/if \("refused" in r\) \{[\s\S]{0,400}throw new Error\(\s*`persist maintenance open refused: the stream's owner is not known: \$\{maintenanceStreamName\(physicalPath\)\}`,?\s*\);/);
+      // the thrown text can reach a client: never the reason (it names paths)
+      expect(src).not.toMatch(/throw new Error\([^)]*\$\{r\.refused\}/);
       expect(src).toMatch(/assertPersistMaintenanceOpenAllowed\(path, undefined, \(\) => owner\);/);
       expect(src).not.toMatch(/projectOfStoragePath|ownerOfLocalPath/);
     });

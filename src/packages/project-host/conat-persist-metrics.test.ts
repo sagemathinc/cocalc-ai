@@ -105,6 +105,38 @@ describe("project-host conat-persist metric reader", () => {
     });
   });
 
+  it("carries only a fixed class for the maintenance error, never its text", () => {
+    const project = "aaaaaaaa-0890-4000-8000-000000000089";
+    const path = `/mnt/cocalc/data/sync/projects/${project}/abc.db`;
+    for (const [text, cls] of [
+      [`persist maintenance write not proven complete: ${path}: busy`, "unproven"],
+      [`promotion barrier: WAL checkpoint incomplete (busy=1 log=3 checkpointed=0) ${path}`, "checkpoint-incomplete"],
+      [`fsync ${path}: EIO`, "fsync"],
+      [`SQLite maintenance worker timed out after 60000ms ${path}`, "timeout"],
+      [`persist maintenance open refused: the stream is poisoned: ${path}`, "refused"],
+      [`something else entirely at ${path}`, "other"],
+    ] as const) {
+      const summary = summarizeConatPersistDiagnostics(
+        {
+          ...DIAGNOSTICS,
+          conat: {
+            ...DIAGNOSTICS.conat,
+            persistence: {
+              ...DIAGNOSTICS.conat.persistence,
+              maintenance: { enabled: true, last_error: text },
+            },
+          },
+        },
+        5,
+      );
+      expect(summary.maintenance_last_error).toBe(cls);
+      const all = JSON.stringify(summary);
+      expect(all).not.toContain(project);
+      expect(all).not.toContain("/mnt/cocalc");
+      expect(all).not.toContain("abc.db");
+    }
+  });
+
   it("fetches loopback diagnostics and suppresses collection when disabled", async () => {
     const fetchImpl = jest.fn(async () => ({
       ok: true,
