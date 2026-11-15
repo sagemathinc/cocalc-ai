@@ -11,7 +11,8 @@ import type {
   PersistMaintenancePageStats,
 } from "@cocalc/conat/persist/maintenance/types";
 
-const WORKER_SOURCE = String.raw`
+// (exported for the worker's own tests, which run it under a preload)
+export const WORKER_SOURCE = String.raw`
 const fs = require("node:fs");
 const os = require("node:os");
 const { DatabaseSync } = require("node:sqlite");
@@ -83,8 +84,13 @@ process.stdin.on("end", () => {
         db.prepare("VACUUM INTO ?").run(options.outputPath);
         // this read-write connection may be the source's last one: an
         // explicit checkpoint surfaces a sync error, and leaves the close
-        // nothing to write
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        // nothing to write -- only if it is COMPLETE (088): busy 0, log and
+        // checkpointed equal integers; else it throws here, phase still
+        // source-open (unproven)
+        const ck = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() || {};
+        if (ck.busy !== 0 || !Number.isInteger(ck.log) || !Number.isInteger(ck.checkpointed) || ck.log !== ck.checkpointed) {
+          throw new Error("source WAL checkpoint incomplete (busy=" + ck.busy + " log=" + ck.log + " checkpointed=" + ck.checkpointed + ")");
+        }
       } catch (err) {
         try { db.close(); } catch (closeErr) {
           if (closeErr && (closeErr.errcode === 1034 || closeErr.errcode === 1290)) throw closeErr;

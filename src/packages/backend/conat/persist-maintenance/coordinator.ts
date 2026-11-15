@@ -724,16 +724,30 @@ export class PersistMaintenanceCoordinator {
     }
 
     // With no owners and worker opens waiting for begin-open acknowledgement,
-    // this checkpoint is exclusive. It removes stale WAL state before swapping
-    // the main database inode.  (Never on a poisoned or unverified file: 028.)
+    // this checkpoint is exclusive among persist streams, but a connection that
+    // is not a stream owner (e.g., an integrity_check child) can still hold the
+    // file open.  The source's own inode becomes the rollback copy below, so a
+    // WAL removed before every frame is in the main file would drop committed
+    // rows from it.  Only a complete checkpoint with no other connection left
+    // lets the promotion go on; otherwise it stops here with every file as it
+    // was (finding 088).  (Never on a poisoned or unverified file: 028.)
     const owner = this.assertOpenAllowed(checked.path, row);
-    // armed: a sync error here poisons the stream (SA-B2-1)
+    // armed: a sync error here poisons the stream (SA-B2-1); an incomplete
+    // checkpoint row leaves completion unproven, so it stays armed (088,
+    // ops0 3703: withMaintenanceConnection checks the row)
+    let checkpoint: unknown;
     runArmedMaintenanceWrite(checked.path, owner, "promote:checkpoint", () => {
-      // the TRUNCATE checkpoint itself and the close
-      withMaintenanceConnection(checked.path, 1000, () => {});
+      // the TRUNCATE checkpoint (its row checked) and the close
+      withMaintenanceConnection(checked.path, 1000, () => {}, undefined, (r) => {
+        checkpoint = r;
+      });
       // the source (the rollback copy to be) durable before we go on (§4A 10)
       fsyncMaintenanceOutput(checked.path);
     });
+    // #195: the row once more, and no other connection left (the WAL is gone
+    // after our close) -- immediately before the sidecars are removed, with
+    // no write in between
+    assertPromotionCheckpointComplete(checked.path, checkpoint);
     rmSync(`${checked.path}-wal`, { force: true });
     rmSync(`${checked.path}-shm`, { force: true });
 
@@ -1112,5 +1126,37 @@ export function createPersistMaintenanceCoordinator(options: {
       }
     }
     return new PersistMaintenanceCoordinator({ ...options, config });
+  }
+}
+
+// The barrier's checkpoint must have moved every WAL frame into the main
+// file: busy is 0 (no reader blocked it) and checkpointed equals log (both 0
+// after a TRUNCATE, both -1 when the file is not in WAL mode).  And the WAL
+// must be gone after the close: SQLite deletes it on the last connection's
+// close, so a WAL still present (even empty) means another connection has the
+// file open, and may map its -shm.  Throws otherwise, before anything is
+// removed (finding 088).
+export function assertPromotionCheckpointComplete(
+  path: string,
+  checkpoint: unknown,
+): void {
+  const row = (checkpoint ?? {}) as Record<string, unknown>;
+  const busy = row.busy;
+  const log = row.log;
+  const checkpointed = row.checkpointed;
+  if (
+    busy !== 0 ||
+    typeof log !== "number" ||
+    !Number.isInteger(log) ||
+    log !== checkpointed
+  ) {
+    throw new Error(
+      `promotion barrier: WAL checkpoint incomplete (busy=${String(busy)} log=${String(log)} checkpointed=${String(checkpointed)})`,
+    );
+  }
+  if (existsSync(`${path}-wal`)) {
+    throw new Error(
+      "promotion barrier: the WAL is still present after the checkpoint (another connection has the database open)",
+    );
   }
 }
