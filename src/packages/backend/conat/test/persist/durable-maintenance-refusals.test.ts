@@ -330,6 +330,11 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
         const e4 = sync();
         expect(() => withMaintenanceConnection("/r/x.db", 7, () => { throw new Error("x"); }, () => fakeDb({ close: e4 }).db)).toThrow(e4);
       });
+      it("an ORDINARY error from the close after fn and the checkpoint succeeded: UNPROVEN, never a plain error (REVIEW-B2-CLOSE-1)", () => {
+        const f = fakeDb({ close: Object.assign(new Error("database is locked"), { errcode: 5 }) });
+        expect(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => f.db)).toThrow(MaintenanceCompletionUnprovenError);
+        expect(f.calls).toEqual(["PRAGMA busy_timeout=7", "PRAGMA wal_checkpoint(TRUNCATE)", "close"]);
+      });
       it("a failure to open: nothing was opened, the error as is (the runner disarms)", () => {
         const err = new Error("unable to open database file");
         expect(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => { throw err; })).toThrow(err);
@@ -347,6 +352,9 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
         expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => { throw new Error("SELECT failed"); }, () => fakeDb().db))).toEqual(["arm"]);
         expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => {}, () => fakeDb({ checkpoint: sync() }).db))).toEqual(["arm", "poison"]);
         expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => { throw new Error("ENOENT"); }))).toEqual(["arm", "disarm"]);
+        // an ordinary close error after success: stays ARMED; a sync close error: poisoned
+        expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ close: new Error("close failed") }).db))).toEqual(["arm"]);
+        expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ close: sync() }).db))).toEqual(["arm", "poison"]);
       });
     });
     it("SA-B2-3: the worker checkpoints explicitly before its close, and reports its phase and any sync errcode on stdout", () => {

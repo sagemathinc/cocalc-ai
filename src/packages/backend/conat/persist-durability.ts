@@ -382,7 +382,14 @@ export function withMaintenanceConnection<T>(
     if (isSqliteSyncError(err)) throw err;
     throw new MaintenanceCompletionUnprovenError(dbPath, err);
   }
-  db.close(); // a sync error here propagates: the runner poisons
+  try {
+    db.close();
+  } catch (err) {
+    // a sync error propagates (the runner poisons); any other close error
+    // leaves completion unproven too (REVIEW-B2-CLOSE-1)
+    if (isSqliteSyncError(err)) throw err;
+    throw new MaintenanceCompletionUnprovenError(dbPath, err);
+  }
   return result;
 }
 
