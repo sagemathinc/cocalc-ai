@@ -75,8 +75,9 @@ process.stdin.on("end", () => {
       if (fs.existsSync(options.outputPath)) {
         throw new Error("compact output already exists");
       }
-      phase = "source-open";
+      // (an open that fails is still before-open: nothing was opened)
       const db = new DatabaseSync(options.sourcePath);
+      phase = "source-open";
       try {
         db.exec("PRAGMA busy_timeout=5000");
         db.prepare("VACUUM INTO ?").run(options.outputPath);

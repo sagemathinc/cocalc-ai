@@ -23,7 +23,7 @@ import {
   MaintenanceCompletionUnprovenError,
   withMaintenanceConnection,
 } from "@cocalc/backend/conat/persist-durability";
-import { workerOutcome } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
+import { runPersistMaintenanceWorker, workerOutcome } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { ownerOfLocalPath, resolveLocalPath } from "@cocalc/conat/persist/util";
@@ -359,8 +359,37 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     });
     it("SA-B2-3: the worker checkpoints explicitly before its close, and reports its phase and any sync errcode on stdout", () => {
       const worker = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/compact-worker.ts"), "utf8");
-      expect(worker).toMatch(/phase = "source-open";\s*const db = new DatabaseSync\(options\.sourcePath\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*db\.prepare\("VACUUM INTO \?"\)\.run\(options\.outputPath\);\s*(\/\/[^\n]*\n\s*)*db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} catch \(err\) \{[\s\S]{0,300}throw err;\s*\}\s*db\.close\(\);\s*phase = "source-closed";/);
+      expect(worker).toMatch(/(\/\/[^\n]*\n\s*)*const db = new DatabaseSync\(options\.sourcePath\);\s*phase = "source-open";\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*db\.prepare\("VACUUM INTO \?"\)\.run\(options\.outputPath\);\s*(\/\/[^\n]*\n\s*)*db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} catch \(err\) \{[\s\S]{0,300}throw err;\s*\}\s*db\.close\(\);\s*phase = "source-closed";/);
       expect(worker).toMatch(/process\.stdout\.write\(JSON\.stringify\(\{ ok: false, phase, errcode \}\)\);/);
+    });
+    it("REVIEW-B2-WORKER-PHASE-1: the REAL worker failing before its read-write open reports before-open, and the armed runner DISARMS", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "persist-028-worker-phase-"));
+      try {
+        const source = join(dir, "s.db");
+        const db = new (require("node:sqlite").DatabaseSync)(source);
+        db.exec("CREATE TABLE t(x); INSERT INTO t VALUES (1)");
+        db.close();
+        const outputPath = join(dir, "out.db");
+        fs.writeFileSync(outputPath, ""); // "compact output already exists": thrown before the read-write open
+        let err: any;
+        try {
+          await runPersistMaintenanceWorker({ sourcePath: source, outputPath, timeoutMs: 30_000 });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeDefined();
+        expect(err).not.toBeInstanceOf(MaintenanceCompletionUnprovenError);
+        expect(`${err}`).toContain("phase before-open");
+        const calls: string[] = [];
+        const records = {
+          arm: () => calls.push("arm"), disarm: () => calls.push("disarm"),
+          poison: () => calls.push("poison"), poisonProject: () => calls.push("project"),
+        } as any;
+        await expect(runArmedMaintenanceWriteAsync(source, "P", "compact:vacuum-into", async () => { throw err; }, records)).rejects.toBe(err);
+        expect(calls).toEqual(["arm", "disarm"]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     });
     it("SA-B2-3 / review: workerOutcome is strict: only an exact report proves anything", () => {
       const base = { signal: null, timedOut: false, timeoutMs: 1000, stderr: "", sourcePath: "/r/x.db" };
