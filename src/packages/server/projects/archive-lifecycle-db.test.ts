@@ -22,6 +22,11 @@ import {
   clearProjectArchiveLifecycleFinalBackup,
   createProjectArchiveLifecycleJob,
   failStuckManualArchiveJobs,
+  claimManualArchiveJobForRecovery,
+  findUnresolvedManualArchiveJob,
+  listManualArchiveJobsToRecover,
+  resumeManualArchiveJob,
+  settleManualArchiveJob,
   getProjectArchiveLifecycleFinalBackup,
   MANUAL_ARCHIVE_HEARTBEAT_MS,
   STUCK_MANUAL_ARCHIVE_MS,
@@ -263,5 +268,121 @@ describe("project archive lifecycle job persistence", () => {
         /COALESCE\((job\.)?failure_category, ''\) NOT IN \('oversized-files', 'admin-reopen'\)/,
       );
     }
+  });
+});
+
+describe("manual archive jobs that may hold a freeze", () => {
+  beforeEach(() => {
+    query.mockReset();
+    query.mockResolvedValue({ rows: [], rowCount: 1 });
+  });
+
+  it("finds the project's newest manual job that is running or holds an unresolved freeze", async () => {
+    await findUnresolvedManualArchiveJob(project.project_id);
+    const [sql, parameters] = query.mock.calls[0];
+    expect(sql).toContain("reason = 'manual'");
+    expect(sql).toContain("status = 'running'");
+    expect(sql).toMatch(
+      /status = 'failed'\s+AND \(final_backup_id IS NOT NULL\s+OR failure_category = ANY\(\$2::text\[\]\)\)/,
+    );
+    expect(sql).toContain("ORDER BY created_at DESC");
+    expect(parameters[0]).toBe(project.project_id);
+    expect(parameters[1]).toEqual([
+      "stuck-manual-archive",
+      "manual-archive-freeze-uncertain",
+      "manual-archive-finalize-pending",
+      "manual-archive-freeze-quarantined",
+    ]);
+  });
+
+  it("resumes a job in place, keeping its id and its recorded final backup", async () => {
+    expect(await resumeManualArchiveJob("j-1")).toBe(true);
+    const [sql, parameters] = query.mock.calls[0];
+    expect(sql).toContain("SET status = 'running'");
+    expect(sql).toContain("WHERE id = $1");
+    expect(sql).toContain("reason = 'manual'");
+    expect(sql).not.toContain("final_backup_id");
+    expect(sql).not.toContain("backup_generation");
+    // a quarantined job is never resumed
+    expect(sql).toContain("COALESCE(failure_category, '') <> $3");
+    expect(parameters[0]).toBe("j-1");
+    expect(parameters[2]).toBe("manual-archive-freeze-quarantined");
+    query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    expect(await resumeManualArchiveJob("j-2")).toBe(false);
+  });
+
+  it("lists failed manual jobs to recover, never quarantined ones", async () => {
+    await listManualArchiveJobsToRecover(5);
+    const [sql, parameters] = query.mock.calls[0];
+    expect(sql).toContain("reason = 'manual'");
+    expect(sql).toContain("status = 'failed'");
+    expect(sql).toMatch(
+      /final_backup_id IS NOT NULL\s+OR failure_category = ANY\(\$1::text\[\]\)/,
+    );
+    expect(sql).toContain("COALESCE(failure_category, '') <> $2");
+    expect(parameters).toEqual([
+      [
+        "stuck-manual-archive",
+        "manual-archive-freeze-uncertain",
+        "manual-archive-finalize-pending",
+      ],
+      "manual-archive-freeze-quarantined",
+      5,
+    ]);
+  });
+
+  it("claims a failed manual job atomically, on the attempts it saw", async () => {
+    query.mockResolvedValueOnce({ rows: [{ attempts: 4 }], rowCount: 1 });
+    expect(
+      await claimManualArchiveJobForRecovery({ job_id: "j-1", attempts: 3 }),
+    ).toBe(4);
+    const [sql, parameters] = query.mock.calls[0];
+    expect(sql).toContain("SET status = 'running'");
+    expect(sql).toContain("attempts = COALESCE(attempts, 0) + 1");
+    expect(sql).toContain("AND status = 'failed'");
+    expect(sql).toContain("AND COALESCE(attempts, 0) = $2");
+    expect(parameters).toEqual(["j-1", 3]);
+    query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    expect(
+      await claimManualArchiveJobForRecovery({ job_id: "j-1", attempts: 3 }),
+    ).toBeUndefined();
+  });
+
+  it("fences a recovery settle on its claim, so it can't land on a resumed job", async () => {
+    query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    expect(
+      await settleManualArchiveJob({
+        job_id: "j-1",
+        status: "failed",
+        failure_category: "manual-archive-freeze-released",
+        clear_final_backup: true,
+        claimed_attempts: 4,
+      }),
+    ).toBe(false);
+    const [sql, parameters] = query.mock.calls[0];
+    expect(sql).toContain(
+      "ELSE status = 'running' AND COALESCE(attempts, 0) = $6::int",
+    );
+    expect(parameters[5]).toBe(4);
+  });
+
+  it("clears the recorded final backup only when asked to", async () => {
+    await settleManualArchiveJob({
+      job_id: "j-1",
+      status: "failed",
+      failure_category: "manual-archive-freeze-quarantined",
+      clear_final_backup: false,
+    });
+    const [sql, parameters] = query.mock.calls[0];
+    expect(sql).toContain(
+      "final_backup_id = CASE WHEN $4::boolean THEN NULL ELSE final_backup_id END",
+    );
+    expect(sql).toContain("reason = 'manual'");
+    expect(parameters.slice(0, 4)).toEqual([
+      "j-1",
+      "failed",
+      "manual-archive-freeze-quarantined",
+      false,
+    ]);
   });
 });
