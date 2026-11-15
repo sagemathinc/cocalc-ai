@@ -6,6 +6,7 @@
 import {
   assertPersistMaintenanceOpenAllowed,
   fsyncMaintenanceOutput,
+  maintenanceStreamName,
   runArmedMaintenanceWrite,
   runArmedMaintenanceWriteAsync,
   withMaintenanceConnection,
@@ -920,7 +921,11 @@ export class PersistMaintenanceCoordinator {
         physicalPath,
         reason: r.refused,
       });
-      throw new Error(`persist maintenance open refused (finding 028): ${r.refused}`);
+      // (the reason names host paths: the server log only; the thrown text
+      // can reach a client)
+      throw new Error(
+        `persist maintenance open refused: the stream's owner is not known: ${maintenanceStreamName(physicalPath)}`,
+      );
     }
     return r.owner;
   }

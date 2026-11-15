@@ -55,6 +55,26 @@ function largeObjectSpaceUsedBytes(value: any): number | undefined {
   return found ? total : undefined;
 }
 
+export type MaintenanceErrorClass =
+  | "unproven"
+  | "fsync"
+  | "checkpoint-incomplete"
+  | "refused"
+  | "timeout"
+  | "other";
+
+// the class of a maintenance error's text, from a closed set
+export function maintenanceErrorClass(text: string): MaintenanceErrorClass {
+  if (/not proven complete/.test(text)) return "unproven";
+  if (/checkpoint incomplete|WAL is still present/.test(text)) {
+    return "checkpoint-incomplete";
+  }
+  if (/\bfsync\b/.test(text)) return "fsync";
+  if (/timed out/.test(text)) return "timeout";
+  if (/\brefused\b/.test(text)) return "refused";
+  return "other";
+}
+
 export function summarizeConatPersistDiagnostics(
   diagnostics: any,
   durationMs: number,
@@ -135,9 +155,12 @@ export function summarizeConatPersistDiagnostics(
       typeof maintenance.pause_reason === "string"
         ? maintenance.pause_reason.slice(0, 500)
         : undefined,
+    // host metrics reach clients that can list the host: a fixed class only,
+    // never the error's text (it names stream paths, so project ids); the
+    // text stays in the persist server's log and its loopback diagnostics
     maintenance_last_error:
       typeof maintenance.last_error === "string"
-        ? maintenance.last_error.slice(0, 500)
+        ? maintenanceErrorClass(maintenance.last_error)
         : undefined,
     diagnostics_duration_ms: Math.max(0, Math.round(durationMs)),
   };

@@ -258,17 +258,29 @@ export function assertPersistMaintenanceOpenAllowed(
 ): void {
   const id = posix.normalize(dbPath.replace(/\.db$/, ""));
   const owner = ownerOf(id);
+  // (the thrown text can reach a client: the stream's name only; the full
+  // path goes to the server log)
   if (owner == null) {
+    logger.warn("persist maintenance open refused: owner can't be derived", {
+      dbPath,
+    });
     throw new Error(
-      `persist maintenance open refused (finding 028): the stream's owner can't be derived from its path: ${dbPath}`,
+      `persist maintenance open refused: the stream's owner can't be derived: ${maintenanceStreamName(dbPath)}`,
     );
   }
   const state = check(id, owner);
   if (state !== "ok") {
+    logger.warn("persist maintenance open refused", { dbPath, state });
     throw new Error(
-      `persist maintenance open refused (finding 028): the stream is ${state}: ${dbPath}`,
+      `persist maintenance open refused: the stream is ${state}: ${maintenanceStreamName(dbPath)}`,
     );
   }
+}
+
+// the name a client-facing maintenance error carries for a stream: its file
+// name without .db, never the host path
+export function maintenanceStreamName(dbPath: string): string {
+  return posix.basename(dbPath).replace(/\.db$/, "");
 }
 
 // SA-B2-1: a maintenance WRITE to a stream file (the trim's VACUUM and its
@@ -453,8 +465,12 @@ function armMaintenanceWrite(
   try {
     records.arm(id, owner);
   } catch (err) {
+    logger.error("persist maintenance write refused: the dirty record can't be created", {
+      dbPath,
+      err: `${err}`,
+    });
     throw new Error(
-      `persist maintenance write refused (finding 028): the dirty record can't be created: ${dbPath}: ${err}`,
+      `persist maintenance write refused: the dirty record can't be created: ${maintenanceStreamName(dbPath)}`,
     );
   }
   return id;
