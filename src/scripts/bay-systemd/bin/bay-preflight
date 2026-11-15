@@ -63,7 +63,7 @@ fi
 # crash stays refused.  Refuse to start instead.
 if [[ "$service" == "persist" ]]; then
   if ! /usr/bin/python3 -I -S -c 1 >/dev/null 2>&1; then
-    bay_log "persist needs /usr/bin/python3 (the page-cache helper, finding 028): '/usr/bin/python3 -I -S -c 1' failed"
+    bay_log "/usr/bin/python3 -I -S -c 1 failed: install python3"
     exit 1
   fi
 fi
