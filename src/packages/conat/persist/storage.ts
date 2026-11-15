@@ -459,6 +459,9 @@ interface ParkedStream {
   timer?: ReturnType<typeof setTimeout>;
 }
 const parked = new Map<string, ParkedStream>();
+// generations are unique across ALL entries (a re-parked path gets a new
+// entry; a stale retry's generation must never equal a later one's)
+let parkGeneration = 0;
 
 function parkStream(stream: PersistentStream): void {
   const path = stream.localPath();
@@ -472,7 +475,7 @@ function parkStream(stream: PersistentStream): void {
   };
   entry.stream = stream;
   entry.state = "ownerless";
-  entry.generation += 1;
+  entry.generation = ++parkGeneration;
   parked.set(path, entry);
   logger.warn(
     "persist alert (non-paging): a stream's final checkpoint failed; it stays open and is retried (finding 028)",
@@ -528,7 +531,7 @@ function adoptParked(path: string): PersistentStream | undefined {
   const entry = parked.get(path);
   if (entry == null) return;
   if (entry.timer != null) clearTimeout(entry.timer);
-  entry.generation += 1; // a retry in flight now does nothing
+  entry.generation = ++parkGeneration; // a retry in flight now does nothing
   parked.delete(path);
   entry.stream.readopted();
   return entry.stream;
@@ -541,6 +544,15 @@ export function retryParkedStreams(under: (path: string) => boolean): void {
     if (!under(path)) continue;
     attemptParkedClose(path, entry.generation);
   }
+}
+
+// tests only: a retry that captured `generation` (e.g. one in flight across
+// an adoption and a new park)
+export function attemptParkedCloseForTests(path: string, generation: number): boolean {
+  return attemptParkedClose(path, generation);
+}
+export function parkedGenerationForTests(path: string): number | undefined {
+  return parked.get(path)?.generation;
 }
 
 export function parkedStreamPaths(): string[] {

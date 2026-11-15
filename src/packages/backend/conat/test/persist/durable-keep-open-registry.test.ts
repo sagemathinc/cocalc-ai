@@ -17,6 +17,8 @@ import {
   PARK_RETRY_INITIAL_MS,
   PersistentStream,
   openDiskStreamPaths,
+  attemptParkedCloseForTests,
+  parkedGenerationForTests,
   parkedStreamPaths,
   retryParkedStreams,
 } from "@cocalc/conat/persist/storage";
@@ -110,6 +112,28 @@ describe("028 B-2: the keep-open registry", () => {
     adopted.set(msg("b"));
     expect(rows(adopted)).toBe(2);
     adopted.close();
+  });
+
+  it("a STALE retry (its generation from before an adoption and a new park) does nothing (SA-B2-2 e)", () => {
+    const path = join(dir, "stale");
+    const s = pstream({ path });
+    s.set(msg("a"));
+    failCheckpoints(s);
+    s.close(); // parked (generation g1)
+    const stale = parkedGenerationForTests(path)!;
+    jest.restoreAllMocks();
+    const adopted = pstream({ path }); // re-adopted: g1 is stale now
+    failCheckpoints(adopted);
+    adopted.close(); // parked AGAIN: a new entry, a new generation
+    jest.restoreAllMocks();
+    expect(parkedGenerationForTests(path)).not.toBe(stale);
+    // the stale retry must not act on the new entry
+    expect(attemptParkedCloseForTests(path, stale)).toBe(false);
+    expect(parkedStreamPaths()).toContain(path);
+    expect((adopted as any).db.isOpen).toBe(true);
+    // the current generation's retry does close it
+    expect(attemptParkedCloseForTests(path, parkedGenerationForTests(path)!)).toBe(true);
+    expect(parkedStreamPaths()).not.toContain(path);
   });
 
   it("no second connection to a parked path: a direct construction is refused", () => {
