@@ -409,6 +409,16 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       unproven({ code: 0, stdout: '{"ok":false,"phase":"before-open","errcode":null}' }); // a failure report with exit 0
       unproven({ code: 1, stdout: JSON.stringify({ ok: true, result: ok }) }); // success with exit 1
       unproven({ code: 0, stdout: "x" + JSON.stringify({ ok: true, result: ok }) });
+      // AS-B2-WORKER-NULL-1: any JSON root that is not a plain object, at exit 0 and 1: unproven, never a throw
+      for (const root of ["null", "true", "0", '"ok"', "[]", '[{"ok":true,"result":{}}]']) {
+        for (const code of [0, 1]) {
+          expect(() => workerOutcome({ ...base, code, stdout: root })).not.toThrow();
+          unproven({ code, stdout: root });
+        }
+      }
+      // a success whose result is not an object
+      unproven({ code: 0, stdout: '{"ok":true,"result":null}' });
+      unproven({ code: 0, stdout: '{"ok":true,"result":[1]}' });
       // a SQLite sync error keeps its errcode (in any phase)
       expect(err({ code: 1, stdout: '{"ok":false,"phase":"source-open","errcode":1034}' }).errcode).toBe(1034);
       expect(err({ code: 1, stdout: '{"ok":false,"phase":"source-closed","errcode":1290}' }).errcode).toBe(1290);
