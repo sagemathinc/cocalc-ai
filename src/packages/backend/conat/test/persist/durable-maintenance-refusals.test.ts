@@ -389,6 +389,11 @@ m.DatabaseSync = function (p, o) {
           timeout: 30_000,
         });
         expect(JSON.parse(r.stdout)).toEqual({ ok: false, phase: "before-open", errcode: null });
+        // it really failed AT the read-write constructor (SA 3413): the
+        // injected error, not the read-only inspection's nor "output exists"
+        expect(r.stderr).toContain("injected read-write open failure");
+        expect(r.stderr).not.toContain("compact output already exists");
+        expect(r.stderr).not.toContain("quick_check");
         const outcome = workerOutcome({ code: r.status, signal: r.signal, timedOut: false, timeoutMs: 30_000, stdout: r.stdout, stderr: r.stderr, sourcePath: source }) as any;
         expect(outcome.error).toBeDefined();
         expect(outcome.error).not.toBeInstanceOf(MaintenanceCompletionUnprovenError);
