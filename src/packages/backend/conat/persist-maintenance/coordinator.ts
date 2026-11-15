@@ -746,7 +746,12 @@ export class PersistMaintenanceCoordinator {
     });
     // #195: the row once more, and no other connection left (the WAL is gone
     // after our close) -- immediately before the sidecars are removed, with
-    // no write in between
+    // no write in between.  This refusal sits OUTSIDE the armed scope on
+    // purpose (SA 3418): our checkpoint was complete and our close is done,
+    // so our write is settled and the record rightly disarmed; a WAL still
+    // present means ANOTHER connection holds the file, which is a separate
+    // reason to stop (nothing is removed or swapped), not an unproven write
+    // of ours.
     assertPromotionCheckpointComplete(checked.path, checkpoint);
     rmSync(`${checked.path}-wal`, { force: true });
     rmSync(`${checked.path}-shm`, { force: true });
