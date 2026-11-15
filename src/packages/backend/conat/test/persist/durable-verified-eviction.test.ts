@@ -27,6 +27,8 @@ import {
   parseHelperOutput,
   readCheckedHelper,
   verifiedEviction,
+  checkedVerifiedEviction,
+  setPagecacheSelfTestForTests,
 } from "@cocalc/backend/conat/persist-verified-eviction";
 import * as context from "@cocalc/conat/persist/context";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
@@ -65,6 +67,36 @@ function plantDirtyRecord(
     procStart,
   }).arm(id, owner);
 }
+
+describe("028 B-2: the helper self-test is retried after a failure (SA 3350 A1)", () => {
+  afterEach(() => {
+    setPagecacheSelfTestForTests(undefined);
+    jest.restoreAllMocks();
+  });
+  it("a failed self-test refuses and is NOT re-run within its backoff; after it, a pass lets verification proceed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "persist-028-selftest-"));
+    const db = join(dir, "s.db");
+    await writeFile(db, Buffer.alloc(8192, 1));
+    let t = 1_800_000_000_000;
+    jest.spyOn(Date, "now").mockImplementation(() => t);
+    let calls = 0;
+    let pass = false;
+    setPagecacheSelfTestForTests(async () => (calls++, pass));
+    expect(await checkedVerifiedEviction(db)).toMatchObject({ verified: false, why: "page-cache helper self-test failed" });
+    t += 30_000; // within the 60 s backoff: refused, not re-run
+    expect(await checkedVerifiedEviction(db)).toMatchObject({ verified: false });
+    expect(calls).toBe(1);
+    t += 31_000; // past it: re-run; it passes now
+    pass = true;
+    const r = await checkedVerifiedEviction(db);
+    expect(calls).toBe(2);
+    expect((r as any)?.why).not.toBe("page-cache helper self-test failed");
+    // a pass is kept: no more self-tests
+    await checkedVerifiedEviction(db);
+    expect(calls).toBe(2);
+    await rm(dir, { recursive: true, force: true });
+  });
+});
 
 describe("028 B-2: verified eviction of a stream left mid-write", () => {
   let dir: string;
