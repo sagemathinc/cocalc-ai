@@ -138,7 +138,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     // promotion's exclusive checkpoint
     [
       "backend/conat/persist-maintenance/coordinator.ts",
-      /const owner = this\.assertOpenAllowed\(checked\.path, row\);\s*\/\/ armed: a sync error here poisons the stream \(SA-B2-1\)\s*runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\(checked\.path, 1000, \(\) => \{\}\);/,
+      /const owner = this\.assertOpenAllowed\(checked\.path, row\);\s*(\/\/[^\n]*\n\s*)*let checkpoint: unknown;\s*runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\(checked\.path, 1000, \(\) => \{\}, undefined, \(r\) => \{\s*checkpoint = r;\s*\}\);/,
     ],
     // the quick_check of an output or source
     [
@@ -293,7 +293,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       expect(trim).toMatch(/"trim:compact", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\([^\n]*\n\s*(\/\/[^\n]*\n\s*)*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*\}\);/);
       expect(trim).toMatch(/"trim:last-seq", \(\) => \{[\s\S]{0,700}\}\);\s*(\/\/[^\n]*\n\s*)*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*return seq;/);
       const coord = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/coordinator.ts"), "utf8");
-      expect(coord).toMatch(/"promote:checkpoint", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\(checked\.path, 1000, \(\) => \{\}\);\s*(\/\/[^\n]*\n\s*)*fsyncMaintenanceOutput\(checked\.path\);\s*\}\);/);
+      expect(coord).toMatch(/"promote:checkpoint", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\(checked\.path, 1000, \(\) => \{\}, undefined, \(r\) => \{\s*checkpoint = r;\s*\}\);\s*(\/\/[^\n]*\n\s*)*fsyncMaintenanceOutput\(checked\.path\);\s*\}\);\s*(\/\/[^\n]*\n\s*)*assertPromotionCheckpointComplete\(checked\.path, checkpoint\);\s*rmSync\(`\$\{checked\.path\}-wal`/);
     });
     describe("SA-B2-3 / review: withMaintenanceConnection (open, fn, explicit TRUNCATE checkpoint, close)", () => {
       const fakeDb = (fail: Partial<Record<"fn" | "checkpoint" | "close" | "row", unknown>> = {}) => {

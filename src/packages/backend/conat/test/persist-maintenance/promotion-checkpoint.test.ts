@@ -8,7 +8,8 @@ barrier is the case that blocks the checkpoint.
 */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { syncFiles } from "@cocalc/backend/data";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,11 @@ describe("promotion barrier checkpoint (finding 088)", () => {
   let sourcePath: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "persist-maintenance-088-"));
+    // (028 B-2, B2-M1: a maintained file's owner must be derivable, so the
+    // root lives under the persist root, as in coordinator.test.ts; this is
+    // the only change to #195's test in the merged tree)
+    mkdirSync(syncFiles.local, { recursive: true });
+    root = await mkdtemp(join(syncFiles.local, "persist-maintenance-088-"));
     sourcePath = join(root, "source.db");
     createBloatedDatabase(sourcePath);
   });
