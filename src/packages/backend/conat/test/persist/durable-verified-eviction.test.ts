@@ -33,12 +33,20 @@ import {
   startupPagecacheHelperCheck,
 } from "@cocalc/backend/conat/persist-verified-eviction";
 import * as context from "@cocalc/conat/persist/context";
+import { classifyHelperRun, evictionIt, fstypeOf, probeEvictable } from "./evictable-probe";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { DataEncoding } from "@cocalc/conat/core/client";
 import {
   clearOpenBarrierPass,
   prepareDurableOpen,
 } from "@cocalc/conat/persist/storage";
+
+// Can this test directory's page cache be dropped at all (CI: "16 pages still
+// resident")?  Decided here, at definition time, by the real helper on a dir
+// under the same parent the tests use; only that outcome skips the tests
+// below that need real eviction (itEvicts), any other probe failure fails
+// them.  The slot-B DEV runs them in full.
+const itEvicts = evictionIt(probeEvictable(tmpdir()));
 
 const msg = (s: string) => ({
   encoding: DataEncoding.JsonCodec,
@@ -193,13 +201,44 @@ describe("028 B-2: the startup check of the page-cache helper (B' v8 finding: it
     expect(await startupPagecacheHelperCheck(join(tmpdir(), "persist-028-no-such-store"))).toBe(false);
     expect(pagecacheHelperHealth()).toMatchObject({ state: "failed" });
   });
-  it("the real self-test passes where /usr/bin/python3 exists (it does on this test host)", async () => {
+  it("the page-cache helper's interpreter exists on this test host: /usr/bin/python3", () => {
+    expect(fs.existsSync(PYTHON)).toBe(true);
+  });
+  itEvicts("the real self-test passes where /usr/bin/python3 exists (it does on this test host)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "persist-028-startup-real-"));
     setPagecacheSelfTestForTests(undefined);
     expect(fs.existsSync(PYTHON)).toBe(true);
     expect(await startupPagecacheHelperCheck(dir)).toBe(true);
     expect(pagecacheHelperHealth()).toMatchObject({ state: "ok" });
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("028 B-2 tests: the eviction probe skips ONLY on pages still resident (SA 3593)", () => {
+  const run = (o: any) => ({ signal: null, status: 0, stdout: Buffer.from(""), stderr: Buffer.from(""), ...o });
+  const line = (resident: number) =>
+    Buffer.from(`{"v":1,"page_size":4096,"pages":16,"resident_after":${resident}}\n`);
+  it("a clean run with 0 resident is evictable; with N resident it is not-evictable, with that why", () => {
+    expect(classifyHelperRun(run({ stdout: line(0) }), "ext4")).toEqual({ kind: "evictable", fstype: "ext4" });
+    expect(classifyHelperRun(run({ stdout: line(16) }), "overlay")).toEqual({
+      kind: "not-evictable",
+      fstype: "overlay",
+      why: "16 pages still resident",
+    });
+  });
+  it.each([
+    ["a spawn error", { error: new Error("ENOENT") }],
+    ["a timeout or signal", { signal: "SIGTERM", status: null }],
+    ["a nonzero exit", { status: 1, stdout: line(16) }],
+    ["stderr text", { stdout: line(16), stderr: Buffer.from("Traceback") }],
+    ["an unparsable line", { stdout: Buffer.from("garbage\n") }],
+    ["the wrong page count", { stdout: Buffer.from('{"v":1,"page_size":4096,"pages":3,"resident_after":3}\n') }],
+  ])("%s is an error, never a skip", (_name, o) => {
+    expect(classifyHelperRun(run(o), "ext4").kind).toBe("error");
+  });
+  it("the reason line's fstype is read from /proc/self/mountinfo", () => {
+    expect(fstypeOf(tmpdir())).toMatch(/^[a-z0-9._-]+$/);
+    expect(fstypeOf(tmpdir())).not.toBe("unknown");
   });
 });
 
@@ -248,7 +287,7 @@ describe("028 B-2: verified eviction of a stream left mid-write", () => {
     expect(parseHelperOutput("", 0)).toBeUndefined();
   });
 
-  it("evicts a real file: fsync, DONTNEED, mincore = 0, and removes the -shm", async () => {
+  itEvicts("evicts a real file: fsync, DONTNEED, mincore = 0, and removes the -shm", async () => {
     const db = join(dir, "real.db");
     await writeFile(db, Buffer.alloc(256 * 1024, 7));
     await writeFile(`${db}-wal`, Buffer.alloc(64 * 1024, 7));
@@ -269,7 +308,7 @@ describe("028 B-2: verified eviction of a stream left mid-write", () => {
       return real(cmd, args, opts);
     };
     const r = await verifiedEviction(db, { spawnFn: spy as any });
-    expect(r.verified).toBe(true);
+    // the spawn contract, whatever this directory's eviction outcome
     expect(calls).toHaveLength(1);
     expect(calls[0].cmd).toBe(PYTHON);
     expect(calls[0].args).toEqual(["-I", "-S", "-"]);
@@ -277,6 +316,20 @@ describe("028 B-2: verified eviction of a stream left mid-write", () => {
     expect(calls[0].opts.env).toEqual({});
     expect(calls[0].opts.stdio.slice(0, 3)).toEqual(["pipe", "pipe", "pipe"]);
     expect(typeof calls[0].opts.stdio[3]).toBe("number");
+    // the helper ran and answered: verified, or (only) pages still resident
+    if (!r.verified) expect((r as any).why).toMatch(/^\d+ pages still resident$/);
+  });
+
+  itEvicts("the spawned helper verifies a real file (the spawn contract, end to end)", async () => {
+    const db = join(dir, "spy2.db");
+    await writeFile(db, Buffer.alloc(4096, 1));
+    const real = require("node:child_process").spawn;
+    let n = 0;
+    const r = await verifiedEviction(db, {
+      spawnFn: ((cmd, args, opts) => (n++, real(cmd, args, opts))) as any,
+    });
+    expect(n).toBe(1);
+    expect(r.verified).toBe(true);
   });
 
   // a fake child: whatever output, exit code, stderr
@@ -347,7 +400,7 @@ describe("028 B-2: verified eviction of a stream left mid-write", () => {
     expect(isWriterAlive(process.pid)).toBe(true);
   });
 
-  it("a dead writer's record: the server's open verifies, removes it and serves the stream", async () => {
+  itEvicts("a dead writer's record: the server's open verifies, removes it and serves the stream", async () => {
     const path = join(dir, "left");
     const s0 = pstream({ path });
     s0.set(msg("committed"));
@@ -365,7 +418,7 @@ describe("028 B-2: verified eviction of a stream left mid-write", () => {
     expect(Buffer.from(s.get({ seq: 1 })!.raw).toString()).toBe("committed");
   });
 
-  it("a failed verification refuses (retryable), keeps the record and poisons nothing; a later retry admits", async () => {
+  itEvicts("a failed verification refuses (retryable), keeps the record and poisons nothing; a later retry admits", async () => {
     const path = join(dir, "retry");
     const s0 = pstream({ path });
     s0.set(msg("x"));
@@ -395,7 +448,7 @@ describe("028 B-2: verified eviction of a stream left mid-write", () => {
     expect(records.check(path)).toBe("ok");
   });
 
-  it("a project's leftovers are verified together: opening one stream verifies every file the project left mid-write first", async () => {
+  itEvicts("a project's leftovers are verified together: opening one stream verifies every file the project left mid-write first", async () => {
     const project = "33333333-2222-4333-8444-555555555555";
     const a = join(dir, "proj-a");
     const b = join(dir, "proj-b");
