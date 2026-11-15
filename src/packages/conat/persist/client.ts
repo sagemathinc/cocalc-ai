@@ -1615,8 +1615,13 @@ class PersistStreamClient extends EventEmitter {
     const wseq = ++this.writeSeq;
     this.unresolvedWrites.push(wseq);
     try {
-      // (only earlier refused writes: a later one waits for this one)
-      await this.untilWrites(() => !this.refusedBefore(wseq));
+      // (only earlier refused writes: a later one waits for this one).  No
+      // await at all otherwise: the send stays in the same tick, so a write
+      // and a request issued right after it go out in that order (DEV r12:
+      // limits.test.ts)
+      if (this.refusedBefore(wseq)) {
+        await this.untilWrites(() => !this.refusedBefore(wseq));
+      }
       return await this.sendRetryingRateLimited(data, opts, wseq);
     } finally {
       this.resolvedWrites.add(wseq);

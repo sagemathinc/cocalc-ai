@@ -256,6 +256,22 @@ describe("028 B-3a AS-B3-ORDER-1: the client", () => {
     expect(f).toEqual([...f].sort((a, b) => a - b));
   };
 
+  it("SAME TICK: a write and a read issued right after it are sent in that order (no added tick when nothing is refused)", async () => {
+    const order: string[] = [];
+    const inner = client.requestOnce;
+    client.requestOnce = (data: any, opts: any) => {
+      order.push(opts?.headers?.cmd);
+      return inner(data, opts);
+    };
+    const pw = write();
+    const pr = client.request(null, { headers: { cmd: "keys" } });
+    pr.catch(() => {});
+    expect(order).toEqual(["setMetadata", "keys"]);
+    await until(() => sends.length == 1);
+    sends[0].respond(true);
+    await pw;
+  });
+
   it("wseq is reserved at ISSUE, before the first send; wfloor is the lowest unresolved", async () => {
     const all = [write(), write(), write()];
     await until(() => sends.length == 3);
