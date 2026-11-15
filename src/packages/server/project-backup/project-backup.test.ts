@@ -298,7 +298,10 @@ describe("project-backup", () => {
       if (sql.includes("ALTER TABLE project_moves")) {
         return { rows: [] };
       }
-      if (sql.includes("project_copies")) {
+      if (
+        sql.includes("project_copies") ||
+        sql.includes("project_copy_snapshot_claims")
+      ) {
         return { rows: [] };
       }
       if (

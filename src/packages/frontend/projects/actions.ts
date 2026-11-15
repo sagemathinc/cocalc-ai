@@ -5409,6 +5409,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   };
 
+  // Advisory only: the server always makes its own frozen final backup before
+  // it deletes anything from a live host. A backup here just keeps that final
+  // backup small enough to finish within the archive call.
+  //
   // Returns the precondition the owning bay must confirm when the final
   // backup was skipped because this client saw the host deprovisioned: its
   // view may be stale, and archiving a project that moved to a live host
@@ -5519,6 +5523,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       latestBackupTime != null &&
       (!(lastEdited instanceof Date) || latestBackupTime >= lastEdited);
     if (backupCoversLatestEdits) {
+      // Skips only the extra backup; the server still makes the final one.
       const backupTime = latestBackupTime;
       actions?.setState?.({ control_status: "Archiving project..." });
       await this.project_log(project_id, {
