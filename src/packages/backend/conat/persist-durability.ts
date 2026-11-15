@@ -357,22 +357,49 @@ export class MaintenanceCompletionUnprovenError extends Error {
 // A read-write maintenance connection to a stream's file: opened, fn run,
 // then an explicit TRUNCATE checkpoint (a sync error surfaces here, and the
 // close has nothing left to write) and the close.  Any failure after the
-// open that is not a sync error is MaintenanceCompletionUnprovenError.
-// Stated limit (all sites): a checkpoint that stays busy is not detected;
-// these run under the maintenance claim or the project fence, so no other
-// connection exists.
+// open that is not a sync error is MaintenanceCompletionUnprovenError,
+// including a checkpoint whose row shows it incomplete (busy, or not every
+// frame moved: checkpointIncomplete).  onCheckpoint gets the complete row
+// (the promotion site re-checks it with #195's barrier).
+// Why a TRUNCATE checkpoint's result row says it did NOT move every WAL frame
+// into the main file, or undefined if it did: busy must be exactly 0 (no
+// reader blocked it) and log and checkpointed integers and equal (both 0
+// after a TRUNCATE, both -1 when the file is not in WAL mode).  (088, SA 3415,
+// ops0 3703)
+export function checkpointIncomplete(row: unknown): string | undefined {
+  const r = (row != null && typeof row == "object" ? row : {}) as Record<string, unknown>;
+  const { busy, log, checkpointed } = r;
+  if (
+    busy !== 0 ||
+    typeof log != "number" ||
+    !Number.isInteger(log) ||
+    typeof checkpointed != "number" ||
+    !Number.isInteger(checkpointed) ||
+    log !== checkpointed
+  ) {
+    return `WAL checkpoint incomplete (busy=${String(busy)} log=${String(log)} checkpointed=${String(checkpointed)})`;
+  }
+}
+
 export function withMaintenanceConnection<T>(
   dbPath: string,
   busyTimeoutMs: number,
   fn: (db: any) => T,
   open: (path: string) => any = (path) => new (require("node:sqlite").DatabaseSync)(path),
+  onCheckpoint?: (row: unknown) => void,
 ): T {
   const db = open(dbPath); // a failure here: nothing was opened, nothing written
   let result: T;
   try {
     db.exec(`PRAGMA busy_timeout=${busyTimeoutMs}`);
     result = fn(db);
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    // the checkpoint's row is CHECKED (088): an incomplete one leaves frames
+    // that a later close -- ours or another connection's -- would
+    // checkpoint unarmed, so completion is unproven (the catch below)
+    const row = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    const incomplete = checkpointIncomplete(row);
+    if (incomplete != null) throw new Error(incomplete);
+    onCheckpoint?.(row);
   } catch (err) {
     try {
       db.close();

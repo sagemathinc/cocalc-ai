@@ -22,6 +22,7 @@ import {
   runArmedMaintenanceWriteAsync,
   MaintenanceCompletionUnprovenError,
   withMaintenanceConnection,
+  checkpointIncomplete,
 } from "@cocalc/backend/conat/persist-durability";
 import { runPersistMaintenanceWorker, WORKER_SOURCE, workerOutcome } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
 import { spawnSync } from "node:child_process";
@@ -295,13 +296,20 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       expect(coord).toMatch(/"promote:checkpoint", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\(checked\.path, 1000, \(\) => \{\}\);\s*(\/\/[^\n]*\n\s*)*fsyncMaintenanceOutput\(checked\.path\);\s*\}\);/);
     });
     describe("SA-B2-3 / review: withMaintenanceConnection (open, fn, explicit TRUNCATE checkpoint, close)", () => {
-      const fakeDb = (fail: Partial<Record<"fn" | "checkpoint" | "close", unknown>> = {}) => {
+      const fakeDb = (fail: Partial<Record<"fn" | "checkpoint" | "close" | "row", unknown>> = {}) => {
         const calls: string[] = [];
         const db = {
           exec: (sql: string) => {
             calls.push(sql);
-            if (sql.includes("wal_checkpoint") && fail.checkpoint) throw fail.checkpoint;
           },
+          // the checkpoint is read as a row (088): {busy, log, checkpointed}
+          prepare: (sql: string) => ({
+            get: () => {
+              calls.push(sql);
+              if (sql.includes("wal_checkpoint") && fail.checkpoint) throw fail.checkpoint;
+              return "row" in fail ? fail.row : { busy: 0, log: 0, checkpointed: 0 };
+            },
+          }),
           close: () => {
             calls.push("close");
             if (fail.close) throw fail.close;
@@ -336,6 +344,27 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
         expect(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => f.db)).toThrow(MaintenanceCompletionUnprovenError);
         expect(f.calls).toEqual(["PRAGMA busy_timeout=7", "PRAGMA wal_checkpoint(TRUNCATE)", "close"]);
       });
+      it("088 (SA 3415, ops0 3703): an INCOMPLETE checkpoint row is completion-unproven, never a plain error; a complete one (incl. not WAL: -1/-1) passes and reaches onCheckpoint", () => {
+        for (const row of [
+          { busy: 1, log: 3, checkpointed: 3 },
+          { busy: 0, log: 5, checkpointed: 4 },
+          { busy: 0, log: null, checkpointed: null },
+          { busy: "0", log: 0, checkpointed: 0 },
+          { busy: 0, log: 1.5, checkpointed: 1.5 },
+          undefined,
+        ]) {
+          const f = fakeDb({ row });
+          expect(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => f.db)).toThrow(MaintenanceCompletionUnprovenError);
+          expect([row, f.calls]).toEqual([row, ["PRAGMA busy_timeout=7", "PRAGMA wal_checkpoint(TRUNCATE)", "close"]]);
+        }
+        for (const row of [{ busy: 0, log: 0, checkpointed: 0 }, { busy: 0, log: -1, checkpointed: -1 }]) {
+          const seen: unknown[] = [];
+          expect(withMaintenanceConnection("/r/x.db", 7, () => 2, () => fakeDb({ row }).db, (r) => seen.push(r))).toBe(2);
+          expect(seen).toEqual([row]);
+        }
+        expect(checkpointIncomplete({ busy: 0, log: 0, checkpointed: 0 })).toBeUndefined();
+        expect(checkpointIncomplete({ busy: 1, log: 0, checkpointed: 0 })).toMatch(/busy=1/);
+      });
       it("a failure to open: nothing was opened, the error as is (the runner disarms)", () => {
         const err = new Error("unable to open database file");
         expect(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => { throw err; })).toThrow(err);
@@ -356,11 +385,15 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
         // an ordinary close error after success: stays ARMED; a sync close error: poisoned
         expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ close: new Error("close failed") }).db))).toEqual(["arm"]);
         expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ close: sync() }).db))).toEqual(["arm", "poison"]);
+        // 088: an incomplete checkpoint -- busy, a partial one, or no integer log -- stays ARMED
+        for (const row of [{ busy: 1, log: 3, checkpointed: 3 }, { busy: 0, log: 5, checkpointed: 4 }, { busy: 0, log: null, checkpointed: null }]) {
+          expect([row, run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => fakeDb({ row }).db))]).toEqual([row, ["arm"]]);
+        }
       });
     });
     it("SA-B2-3: the worker checkpoints explicitly before its close, and reports its phase and any sync errcode on stdout", () => {
       const worker = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/compact-worker.ts"), "utf8");
-      expect(worker).toMatch(/(\/\/[^\n]*\n\s*)*const db = new DatabaseSync\(options\.sourcePath\);\s*phase = "source-open";\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*db\.prepare\("VACUUM INTO \?"\)\.run\(options\.outputPath\);\s*(\/\/[^\n]*\n\s*)*db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} catch \(err\) \{[\s\S]{0,300}throw err;\s*\}\s*db\.close\(\);\s*phase = "source-closed";/);
+      expect(worker).toMatch(/(\/\/[^\n]*\n\s*)*const db = new DatabaseSync\(options\.sourcePath\);\s*phase = "source-open";\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*db\.prepare\("VACUUM INTO \?"\)\.run\(options\.outputPath\);\s*(\/\/[^\n]*\n\s*)*const ck = db\.prepare\("PRAGMA wal_checkpoint\(TRUNCATE\)"\)\.get\(\) \|\| \{\};\s*if \(ck\.busy !== 0 \|\| !Number\.isInteger\(ck\.log\) \|\| !Number\.isInteger\(ck\.checkpointed\) \|\| ck\.log !== ck\.checkpointed\) \{\s*throw new Error\([^\n]*\);\s*\}\s*\} catch \(err\) \{[\s\S]{0,300}throw err;\s*\}\s*db\.close\(\);\s*phase = "source-closed";/);
       expect(worker).toMatch(/process\.stdout\.write\(JSON\.stringify\(\{ ok: false, phase, errcode \}\)\);/);
     });
     it("REVIEW-B2-WORKER-PHASE-1 (behavioural): the REAL worker whose READ-WRITE open itself throws reports before-open, and the armed runner DISARMS", async () => {
