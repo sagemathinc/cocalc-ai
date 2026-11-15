@@ -84,6 +84,10 @@ describe("028 B-3a: the bucket", () => {
       () => t,
     );
     const big = chargeFor(3 * MiB);
+    // SA-B2-2/k: NOT full (one small charge spent): the big one waits
+    b.commit(chargeFor(0));
+    expect(b.fits(big)).toBe(false);
+    t += 1000; // refilled: full again
     expect(b.fits(big)).toBe(true); // idle and full: admitted
     expect(b.fits(big, { txn: 1, bytes: 1 })).toBe(false); // not alone
     b.commit(big);
@@ -247,6 +251,20 @@ describe("028 B-3a: enforcement in the persist storage", () => {
     expect(r.map((x) => (x as any).reason?.code)).toEqual(["rate_limited", "rate_limited"]);
     // nothing of the batch was applied: B did not commit ahead of A
     expect([...s.getAll()].length).toBe(before);
+  });
+
+  it("committed-work accounting: a failed request in a batch that COMMITS (another request succeeded) spends nothing", async () => {
+    limits(3);
+    const s = await open("cas2");
+    const first = await s.setQueued(msg("v0", { key: "k" })); // 1 spent
+    const r = await Promise.allSettled([
+      s.setQueued(msg("v1", { key: "k", previousSeq: first.seq + 100 })), // fails
+      s.setQueued(msg("ok")), // commits: 1 spent
+    ]);
+    expect(r.map((x) => x.status)).toEqual(["rejected", "fulfilled"]);
+    // exactly one token left: the failed request was not charged
+    await s.setQueued(msg("a"));
+    await expect(s.setQueued(msg("b"))).rejects.toMatchObject({ code: "rate_limited" });
   });
 
   it("other mutating commands spend the budget too (config, metadata, delete)", async () => {

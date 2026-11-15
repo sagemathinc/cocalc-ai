@@ -96,6 +96,11 @@ const logger = getLogger("persist:client");
 export const RATE_LIMITED_RETRY = { start: 150, decay: 1.3, max: 10_000 };
 export let RATE_LIMITED_RETRY_MS = 60_000;
 export const rateLimitedRetryStats = { refused: 0, retried: 0, gaveUp: 0 };
+// the jitter of a retry's pause, in [0, 1) (tests make it deterministic)
+let rateLimitedJitter: () => number = Math.random;
+export function setRateLimitedJitterForTests(fn: (() => number) | undefined): void {
+  rateLimitedJitter = fn ?? Math.random;
+}
 // the commands that change a stream (as server.ts isWriteCommand): they wait
 // behind this client's refused writes, so their order holds (SA-B3a-1)
 const WRITE_CMDS = new Set([
@@ -1583,7 +1588,7 @@ class PersistStreamClient extends EventEmitter {
       let refused = first.refused;
       while (true) {
         rateLimitedRetryStats.refused += 1;
-        const pause = wait * (0.5 + Math.random() / 2);
+        const pause = wait * (0.5 + rateLimitedJitter() / 2);
         if (this.isClosed() || Date.now() - start + pause > RATE_LIMITED_RETRY_MS) {
           rateLimitedRetryStats.gaveUp += 1;
           throw refused;

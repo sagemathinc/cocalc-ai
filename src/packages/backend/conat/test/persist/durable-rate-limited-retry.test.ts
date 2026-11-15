@@ -13,6 +13,7 @@ import { before, after, connect } from "@cocalc/backend/conat/test/setup";
 import {
   stream,
   rateLimitedRetryStats,
+  setRateLimitedJitterForTests,
   setRateLimitedRetryMsForTests,
 } from "@cocalc/conat/persist/client";
 import {
@@ -149,8 +150,9 @@ describe("028 B-3a: every write path resends a rate_limited refusal; one admissi
     expect(host().snapshot().txn).toBe(0);
     // the FIRST refused request gets the longest pause, the second the
     // shortest: without the retry chain, B would resend (and commit) first
+    // (the retry's own jitter, so nothing else consumes these values)
     const pauses = [0.999, 0.0];
-    const spy = jest.spyOn(Math, "random").mockImplementation(() => pauses.shift() ?? 0.5);
+    setRateLimitedJitterForTests(() => pauses.shift() ?? 0.5);
     try {
       const before = rateLimitedRetryStats.refused;
       const results: any[] = [];
@@ -164,7 +166,7 @@ describe("028 B-3a: every write path resends a rate_limited refusal; one admissi
       expect(results.map(([w]) => w)).toEqual(["A", "B"]);
       expect(results[0][1]).toBeLessThan(results[1][1]);
     } finally {
-      spy.mockRestore();
+      setRateLimitedJitterForTests(undefined);
     }
   });
 
