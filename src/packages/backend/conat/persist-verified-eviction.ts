@@ -297,11 +297,16 @@ interface SelfTestState {
 }
 const selfTests = new Map<number, SelfTestState>();
 let selfTestImpl = pagecacheHelperSelfTest;
+// sync: concurrent callers must see one shared state (SA 3367 advisory)
+const lstatDev = (dir: string): number => fs.lstatSync(dir).dev;
+let devOf = lstatDev;
 // tests only
 export function setPagecacheSelfTestForTests(
   impl: typeof pagecacheHelperSelfTest | undefined,
+  devOfImpl?: (dir: string) => number,
 ): void {
   selfTestImpl = impl ?? pagecacheHelperSelfTest;
+  devOf = devOfImpl ?? lstatDev;
   selfTests.clear();
   startupHealth = { state: "pending" };
 }
@@ -310,8 +315,7 @@ export function setPagecacheSelfTestForTests(
 function selfTestFor(dir: string): Promise<boolean> | undefined {
   let dev: number;
   try {
-    // sync: concurrent callers must see one shared state (SA 3367 advisory)
-    dev = fs.lstatSync(dir).dev;
+    dev = devOf(dir);
   } catch {
     return;
   }

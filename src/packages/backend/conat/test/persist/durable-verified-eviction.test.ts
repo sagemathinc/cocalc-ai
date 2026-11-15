@@ -131,16 +131,14 @@ describe("028 B-2: the helper self-test is retried after a failure (SA 3350 A1)"
     const b = await mkdtemp(join(tmpdir(), "persist-028-selftest-b-"));
     await writeFile(join(a, "s.db"), Buffer.alloc(8192, 1));
     await writeFile(join(b, "s.db"), Buffer.alloc(8192, 1));
-    // two directories on "different filesystems"
-    const lstatSync = fs.lstatSync;
-    jest.spyOn(fs, "lstatSync").mockImplementation(((p: string, ...rest: any[]) => {
-      const st = (lstatSync as any)(p, ...rest);
-      if (p === a) return { ...st, dev: 1001 };
-      if (p === b) return { ...st, dev: 1002 };
-      return st;
-    }) as any);
+    // two directories on "different filesystems" (the real lstat still runs:
+    // a dir that can't be examined throws as before)
+    const devOf = (d: string) => {
+      const dev = fs.lstatSync(d).dev;
+      return d === a ? 1001 : d === b ? 1002 : dev;
+    };
     const seen: string[] = [];
-    setPagecacheSelfTestForTests(async (d) => (seen.push(d), d === b));
+    setPagecacheSelfTestForTests(async (d) => (seen.push(d), d === b), devOf);
     expect(await checkedVerifiedEviction(join(a, "s.db"))).toMatchObject({ verified: false, why: "page-cache helper self-test failed" });
     const rb = await checkedVerifiedEviction(join(b, "s.db"));
     expect((rb as any)?.why).not.toBe("page-cache helper self-test failed");
