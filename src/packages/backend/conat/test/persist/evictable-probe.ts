@@ -38,14 +38,17 @@ export function fstypeOf(path: string): string {
   const real = fs.realpathSync(path);
   let best = "";
   let type = "unknown";
-  for (const line of fs.readFileSync("/proc/self/mountinfo", "utf8").split("\n")) {
+  for (const line of fs
+    .readFileSync("/proc/self/mountinfo", "utf8")
+    .split("\n")) {
     const sep = line.indexOf(" - ");
     if (sep < 0) continue;
     const fields = line.slice(0, sep).split(" ");
     const mount = (fields[4] ?? "").replace(/\\([0-7]{3})/g, (_m, o) =>
       String.fromCharCode(parseInt(o, 8)),
     );
-    const inside = real === mount || real.startsWith(mount === "/" ? "/" : `${mount}/`);
+    const inside =
+      real === mount || real.startsWith(mount === "/" ? "/" : `${mount}/`);
     if (inside && mount.length >= best.length) {
       best = mount;
       type = line.slice(sep + 3).split(" ")[0] || "unknown";
@@ -71,19 +74,73 @@ export function classifyHelperRun(
 ): EvictableProbe {
   if (r.error) return { kind: "error", error: `spawn: ${r.error.message}` };
   if (r.signal) return { kind: "error", error: `helper killed by ${r.signal}` };
-  if (r.status !== 0) return { kind: "error", error: `helper exit ${r.status}` };
+  if (r.status !== 0)
+    return { kind: "error", error: `helper exit ${r.status}` };
   if (r.stderr.length > 0) {
-    return { kind: "error", error: `helper stderr: ${r.stderr.toString().slice(0, 200)}` };
+    return {
+      kind: "error",
+      error: `helper stderr: ${r.stderr.toString().slice(0, 200)}`,
+    };
   }
   const parsed = parseHelperOutput(r.stdout.toString(), pages);
   if (parsed == null) {
-    return { kind: "error", error: `unparsable helper output: ${r.stdout.toString().slice(0, 200)}` };
+    return {
+      kind: "error",
+      error: `unparsable helper output: ${r.stdout.toString().slice(0, 200)}`,
+    };
   }
   if (parsed.resident === 0) return { kind: "evictable", fstype };
-  return { kind: "not-evictable", fstype, why: `${parsed.resident} pages still resident` };
+  return {
+    kind: "not-evictable",
+    fstype,
+    why: `${parsed.resident} pages still resident`,
+  };
 }
 
+// Never throws: any failure, cleanup included, is an "error" verdict (a crash
+// at module load would hide which named tests were meant to run; SA 3594).
 export function probeEvictable(parent: string): EvictableProbe {
+  let verdict: EvictableProbe;
+  let dir: string | undefined;
+  let fd: number | undefined;
+  try {
+    verdict = probeIn(
+      parent,
+      (d) => (dir = d),
+      (f) => (fd = f),
+    );
+  } catch (err) {
+    verdict = { kind: "error", error: `${err}` };
+  }
+  const cleanup: string[] = [];
+  if (fd != null) {
+    try {
+      fs.closeSync(fd);
+    } catch (err) {
+      cleanup.push(`close: ${err}`);
+    }
+  }
+  if (dir != null) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      cleanup.push(`rm: ${err}`);
+    }
+  }
+  if (cleanup.length > 0) {
+    return {
+      kind: "error",
+      error: `probe cleanup failed: ${cleanup.join("; ")}`,
+    };
+  }
+  return verdict;
+}
+
+function probeIn(
+  parent: string,
+  setDir: (dir: string) => void,
+  setFd: (fd: number) => void,
+): EvictableProbe {
   if (!fs.existsSync(PYTHON)) {
     return { kind: "error", error: `${PYTHON} does not exist` };
   }
@@ -91,31 +148,31 @@ export function probeEvictable(parent: string): EvictableProbe {
   if (program == null) {
     return { kind: "error", error: "the helper's sha256 differs" };
   }
-  let dir: string | undefined;
-  let fd: number | undefined;
-  try {
-    dir = fs.mkdtempSync(join(parent, "persist-028-probe-"));
-    const file = join(dir, "probe.db");
-    fs.writeFileSync(file, Buffer.alloc(SIZE, 1));
-    fd = fs.openSync(file, "r");
-    fs.fsyncSync(fd);
-    fs.readFileSync(file); // resident now
-    const fstype = fstypeOf(dir);
-    const r = spawnSync(PYTHON, PYTHON_ARGS, {
-      input: program,
-      stdio: ["pipe", "pipe", "pipe", fd],
-      env: {},
-      cwd: "/",
-      shell: false,
-      timeout: 20_000,
-    });
-    return classifyHelperRun(r, fstype);
-  } catch (err) {
-    return { kind: "error", error: `${err}` };
-  } finally {
-    if (fd != null) fs.closeSync(fd);
-    if (dir != null) fs.rmSync(dir, { recursive: true, force: true });
+  const dir = fs.mkdtempSync(join(parent, "persist-028-probe-"));
+  setDir(dir);
+  const file = join(dir, "probe.db");
+  fs.writeFileSync(file, Buffer.alloc(SIZE, 1));
+  const fd = fs.openSync(file, "r");
+  setFd(fd);
+  fs.fsyncSync(fd);
+  fs.readFileSync(file); // resident now
+  const fstype = fstypeOf(dir);
+  // an unclassified filesystem must never become a skip
+  if (fstype === "unknown") {
+    return {
+      kind: "error",
+      error: "the probe dir's fstype is not in /proc/self/mountinfo",
+    };
   }
+  const r = spawnSync(PYTHON, PYTHON_ARGS, {
+    input: program,
+    stdio: ["pipe", "pipe", "pipe", fd],
+    env: {},
+    cwd: "/",
+    shell: false,
+    timeout: 20_000,
+  });
+  return classifyHelperRun(r, fstype);
 }
 
 // `it` for a test that needs real eviction in that directory: a real Jest
