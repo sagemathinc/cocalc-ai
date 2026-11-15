@@ -1,3 +1,11 @@
+// finding 028 (AS-B2-SYNC-OWNER): a production open registers its owner through
+// the persist server (prepareDurableOpen); a test that constructs a disk
+// stream directly counts as "host" (no project scope).  The refusal's own
+// tests unset it.
+require("@cocalc/conat/persist/context").setUnregisteredStreamOwnerForTests(
+  () => "host",
+);
+
 // finding 028: in the persist, sync and core suites, every disk-stream
 // connection runs under the statement guard (conat/persist/test-durability):
 // a write outside a transaction throws, so the whole suite passing shows there

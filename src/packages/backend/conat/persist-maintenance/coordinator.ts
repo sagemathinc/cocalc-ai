@@ -7,6 +7,7 @@ import {
   assertPersistMaintenanceOpenAllowed,
   fsyncMaintenanceOutput,
   runArmedMaintenanceWrite,
+  runArmedMaintenanceWriteAsync,
 } from "../persist-durability";
 import { maintenanceOwner } from "./owner";
 import { syncFiles } from "@cocalc/backend/data";
@@ -555,12 +556,20 @@ export class PersistMaintenanceCoordinator {
     let secondary: Array<{ temporary: string; destination: string }> = [];
     try {
       rmSync(outputPath, { force: true });
-      this.assertOpenAllowed(checked.path, row);
-      const result = await this.runWorker({
-        sourcePath: checked.path,
-        outputPath,
-        timeoutMs: this.config.jobTimeoutMs,
-      });
+      const owner = this.assertOpenAllowed(checked.path, row);
+      // armed (SA-B2-3): the worker's read-write source connection (VACUUM
+      // INTO, its checkpoint, its close) may write the stream's file
+      const result = await runArmedMaintenanceWriteAsync(
+        checked.path,
+        owner,
+        "compact:vacuum-into",
+        () =>
+          this.runWorker({
+            sourcePath: checked.path,
+            outputPath,
+            timeoutMs: this.config.jobTimeoutMs,
+          }),
+      );
       if (!result.outputIdentity || !result.outputStats) {
         throw new Error("compact worker did not produce an output");
       }

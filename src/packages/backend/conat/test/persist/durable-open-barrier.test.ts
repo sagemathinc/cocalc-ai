@@ -23,6 +23,7 @@ import {
   setBarrierFsForTests,
 } from "@cocalc/backend/conat/persist-open-barrier";
 import { DataEncoding } from "@cocalc/conat/core/client";
+import { setUnregisteredStreamOwnerForTests } from "@cocalc/conat/persist/context";
 import {
   clearOpenBarrierPass,
   prepareDurableOpen,
@@ -283,6 +284,122 @@ describe("028 B-2: the open barrier", () => {
     streams.push(sb);
     clearOpenBarrierPass(b);
     expect(sb.isPoisoned()).toBe(false);
+  });
+
+  describe("AS-B2-SYNC-OWNER: the SYNCHRONOUS barrier (a newer archive copied at open) settles with the stream's owner", () => {
+    // the archive-copy path: the server's pass was consumed, but initArchive
+    // copied a newer archive over the file, so the constructor runs the
+    // barrier again, synchronously
+    const makeArchive = (name: string) => {
+      const archive = join(dir, `archive-${name}`);
+      const sa = pstream({ path: archive, noCache: true });
+      sa.set(msg("from the archive"));
+      sa.close();
+      return archive;
+    };
+    const openAfterArchiveCopy = async (
+      name: string,
+      owner: string,
+      archive: string,
+    ) => {
+      const path = join(dir, name);
+      await prepareDurableOpen(path, owner);
+      try {
+        const s = pstream({ path, archive });
+        streams.push(s);
+        return s;
+      } finally {
+        clearOpenBarrierPass(path);
+      }
+    };
+    const syncError = (errno: string) =>
+      jest
+        .spyOn(persistOpenBarrier, "runSync")
+        .mockImplementation((dbPath: string) => ({
+          kind: "sync-error",
+          path: dbPath,
+          errno,
+          synced: [],
+        }));
+
+    it("a quota errno poisons the project: the open sibling, and a later stream of the project, are refused", async () => {
+      const project = "33333333-2222-4333-8444-555555555555";
+      const sibling = join(dir, "sync-qf-sibling");
+      await prepareDurableOpen(sibling, project);
+      const sb = pstream({ path: sibling });
+      streams.push(sb);
+      clearOpenBarrierPass(sibling);
+      const archive = makeArchive("sync-qf-a");
+      const spy = syncError("EDQUOT");
+      await expect(
+        openAfterArchiveCopy("sync-qf-a", project, archive),
+      ).rejects.toThrow(
+        "had a sync error",
+      );
+      // it really was the synchronous barrier, on the copied file
+      expect(spy).toHaveBeenCalledWith(join(dir, "sync-qf-a.db"));
+      jest.restoreAllMocks();
+      expect(sb.isPoisoned()).toBe(true);
+      await expect(
+        prepareDurableOpen(join(dir, "sync-qf-c"), project),
+      ).rejects.toThrow("had a sync error");
+      // another project is not affected
+      const other = join(dir, "sync-qf-other");
+      await prepareDurableOpen(other, "99999999-3333-4333-8444-555555555555");
+      const so = pstream({ path: other });
+      streams.push(so);
+      clearOpenBarrierPass(other);
+      expect(so.isPoisoned()).toBe(false);
+    });
+
+    it("control: a non-quota errno (EIO) there poisons only that file", async () => {
+      const project = "44444444-2222-4333-8444-555555555555";
+      const sibling = join(dir, "sync-eio-sibling");
+      await prepareDurableOpen(sibling, project);
+      const sb = pstream({ path: sibling });
+      streams.push(sb);
+      clearOpenBarrierPass(sibling);
+      const archive = makeArchive("sync-eio-a");
+      syncError("EIO");
+      await expect(
+        openAfterArchiveCopy("sync-eio-a", project, archive),
+      ).rejects.toThrow(
+        "had a sync error",
+      );
+      jest.restoreAllMocks();
+      expect(sb.isPoisoned()).toBe(false);
+      const c = join(dir, "sync-eio-c");
+      await prepareDurableOpen(c, project);
+      const sc = pstream({ path: c });
+      streams.push(sc);
+      clearOpenBarrierPass(c);
+      expect(sc.isPoisoned()).toBe(false);
+      // the file itself stays refused
+      await expect(
+        prepareDurableOpen(join(dir, "sync-eio-a"), project),
+      ).rejects.toThrow("had a sync error");
+    });
+
+    it("a stream whose owner is not known (no server registration, no fallback) is refused before anything is armed", async () => {
+      const records = persistDurabilityRecords();
+      const path = join(dir, "sync-no-owner");
+      const armSpy = jest.spyOn(records, "arm");
+      const runSpy = jest.spyOn(persistOpenBarrier, "runSync");
+      setUnregisteredStreamOwnerForTests(undefined);
+      try {
+        expect(() => pstream({ path, noCache: true })).toThrow(
+          "this stream's owner is not known",
+        );
+      } finally {
+        setUnregisteredStreamOwnerForTests(() => "host");
+      }
+      expect(armSpy).not.toHaveBeenCalled();
+      expect(runSpy).not.toHaveBeenCalled();
+      // nothing was left behind: with an owner it opens normally
+      const s = pstream({ path, noCache: true });
+      streams.push(s);
+      expect(s.isPoisoned()).toBe(false);
+    });
   });
 
   it("the fair limiter caps concurrency and serves owners round-robin", async () => {

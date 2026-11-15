@@ -19,7 +19,10 @@ import {
   persistDurabilityRecords,
   persistRunDir,
   sha256Hex,
+  runArmedMaintenanceWriteAsync,
+  MaintenanceWorkerUnreportedError,
 } from "@cocalc/backend/conat/persist-durability";
+import { workerFailure } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { ownerOfLocalPath, resolveLocalPath } from "@cocalc/conat/persist/util";
@@ -144,9 +147,16 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       "project-host/persist-storage.ts",
       /function compact\(path: string, owner: string\): void \{\s*assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*\/\/ armed: a sync error in the VACUUM, its checkpoints or the close poisons\s*\/\/ the stream \(SA-B2-1\)\s*runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:compact", \(\) => \{\s*const db = new DatabaseSync/,
     ],
+    // SA-B2-3: the trim's read is armed too (its read-write close is a write)
     [
       "project-host/persist-storage.ts",
-      /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*const db = new DatabaseSync\(`\$\{path\}\.db`\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
+      /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*(\/\/[^\n]*\n\s*)*return runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:last-seq", \(\) => \{\s*let seq: number \| undefined;\s*const db = new DatabaseSync\(`\$\{path\}\.db`\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
+    ],
+    // SA-B2-3: the compaction worker's read-write source connection runs
+    // armed (the parent arms around the worker)
+    [
+      "backend/conat/persist-maintenance/coordinator.ts",
+      /const owner = this\.assertOpenAllowed\(checked\.path, row\);\s*(\/\/[^\n]*\n\s*)*const result = await runArmedMaintenanceWriteAsync\(\s*checked\.path,\s*owner,\s*"compact:vacuum-into",\s*\(\) =>\s*this\.runWorker\(\{\s*sourcePath: checked\.path,\s*outputPath,/,
     ],
   ];
   it("ownerOfLocalPath inverts every project-template form resolveLocalPath builds", () => {
@@ -281,6 +291,60 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       const coord = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/coordinator.ts"), "utf8");
       expect(coord).toMatch(/runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{[\s\S]{0,400}sourceDb\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(checked\.path\);\s*\}\);/);
     });
+    it("SA-B2-3: the trim's read and the worker's VACUUM INTO checkpoint explicitly before their close; the worker reports a sync error", () => {
+      const trim = fs.readFileSync(join(packages, "project-host/persist-storage.ts"), "utf8");
+      expect(trim).toMatch(/"trim:last-seq", \(\) => \{[\s\S]{0,600}db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} finally \{\s*db\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*return seq;/);
+      const worker = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/compact-worker.ts"), "utf8");
+      expect(worker).toMatch(/const db = new DatabaseSync\(options\.sourcePath\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*db\.prepare\("VACUUM INTO \?"\)\.run\(options\.outputPath\);\s*(\/\/[^\n]*\n\s*)*db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} finally \{\s*db\.close\(\);/);
+      expect(worker).toMatch(/if \(err && \(err\.errcode === 1034 \|\| err\.errcode === 1290\)\) \{\s*process\.stderr\.write\("SQLITE-SYNC-ERROR " \+ JSON\.stringify\(\{ errcode: err\.errcode \}\) \+ "\\n"\);/);
+    });
+    it("SA-B2-3: how a worker run fails: killed/timed out = unreported; a reported sync error keeps its errcode; else plain", () => {
+      const base = { signal: null, timedOut: false, timeoutMs: 1000, stderr: "" };
+      expect(workerFailure({ ...base, code: 0 })).toBeUndefined();
+      expect(workerFailure({ ...base, code: null, signal: "SIGKILL" })).toBeInstanceOf(MaintenanceWorkerUnreportedError);
+      expect(workerFailure({ ...base, code: null, timedOut: true })).toBeInstanceOf(MaintenanceWorkerUnreportedError);
+      const sync = workerFailure({ ...base, code: 1, stderr: 'x\nSQLITE-SYNC-ERROR {"errcode":1034}\nError: disk I/O error' }) as any;
+      expect(sync.errcode).toBe(1034);
+      const plain = workerFailure({ ...base, code: 1, stderr: "Error: source quick_check failed" }) as any;
+      expect(plain).not.toBeInstanceOf(MaintenanceWorkerUnreportedError);
+      expect(plain.errcode).toBeUndefined();
+    });
+    describe("SA-B2-3: runArmedMaintenanceWriteAsync (the compaction worker)", () => {
+      const fakeRecords = () => {
+        const calls: string[] = [];
+        return {
+          calls,
+          records: {
+            arm: (id: string, owner?: string) => calls.push(`arm ${id} ${owner}`),
+            disarm: (id: string) => calls.push(`disarm ${id}`),
+            poison: (id: string, info: any) => calls.push(`poison ${id} ${info.where} ${info.errcode}`),
+            poisonProject: (owner: string) => calls.push(`project ${owner}`),
+          } as any,
+        };
+      };
+      it("success: armed around the run, then disarmed", async () => {
+        const f = fakeRecords();
+        await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "compact:vacuum-into", async () => (f.calls.push("run"), 1), f.records)).resolves.toBe(1);
+        expect(f.calls).toEqual(["arm /r/x P", "run", "disarm /r/x"]);
+      });
+      it("a reported sync error: poisoned, never disarmed", async () => {
+        const f = fakeRecords();
+        const err = workerFailure({ code: 1, signal: null, timedOut: false, timeoutMs: 1, stderr: 'SQLITE-SYNC-ERROR {"errcode":1034}' })!;
+        await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "compact:vacuum-into", async () => { throw err; }, f.records)).rejects.toBe(err);
+        expect(f.calls).toEqual(["arm /r/x P", "poison /r/x maintenance:compact:vacuum-into 1034"]);
+      });
+      it("a killed or timed-out worker: the record stays ARMED (neither disarmed nor poisoned)", async () => {
+        const f = fakeRecords();
+        const err = workerFailure({ code: null, signal: null, timedOut: true, timeoutMs: 1, stderr: "" })!;
+        await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "compact:vacuum-into", async () => { throw err; }, f.records)).rejects.toBe(err);
+        expect(f.calls).toEqual(["arm /r/x P"]);
+      });
+      it("any other failure: disarmed", async () => {
+        const f = fakeRecords();
+        await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "c", async () => { throw new Error("quick_check failed"); }, f.records)).rejects.toThrow("quick_check");
+        expect(f.calls).toEqual(["arm /r/x P", "disarm /r/x"]);
+      });
+    });
     it("the record can't be created: refused, the write never runs", () => {
       let ran = false;
       const records = { arm: () => { throw new Error("EROFS"); }, disarm: () => {}, poison: () => {} } as any;
@@ -298,12 +362,13 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       join(packages, "backend/conat/persist-maintenance/coordinator.ts"),
       "utf8",
     );
-    const dispatches = [...source.matchAll(/await this\.runWorker\(\{/g)];
+    const dispatches = [...source.matchAll(/this\.runWorker\(\{/g)];
     expect(dispatches).toHaveLength(2);
     for (const d of dispatches) {
-      const before = source.slice(Math.max(0, d.index! - 200), d.index);
+      const before = source.slice(Math.max(0, d.index! - 400), d.index);
+      // the inspection directly; the compaction through the armed runner
       expect(before).toMatch(
-        /this\.assertOpenAllowed\(checked\.path, row\);\s*(const \w+ = )?$/,
+        /this\.assertOpenAllowed\(checked\.path, row\);\s*(const \w+ = )?(await )?$|const owner = this\.assertOpenAllowed\(checked\.path, row\);\s*(\/\/[^\n]*\n\s*)*const result = await runArmedMaintenanceWriteAsync\([^)]*\(\) =>\s*$/,
       );
     }
   });
@@ -317,5 +382,10 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       expect(source.match(/new DatabaseSync\(/g)).toHaveLength(expected);
       expect(source.match(/assertPersistMaintenanceOpenAllowed\(/g)!.length).toBeGreaterThanOrEqual(expected);
     }
+    // the worker: one read-only inspection opener, one read-write source
+    // opener (the parent checks and arms, SA-B2-3)
+    const worker = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/compact-worker.ts"), "utf8");
+    expect(worker.match(/new DatabaseSync\(/g)).toHaveLength(2);
+    expect(worker).toMatch(/new DatabaseSync\(path, \{ readOnly \}\)/);
   });
 });

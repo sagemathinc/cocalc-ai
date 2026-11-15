@@ -304,13 +304,18 @@ export function fsyncMaintenanceOutput(dbPath: string, fsx: Pick<typeof fs, "ope
       fd = fsx.openSync(path, flags);
       fsx.fsyncSync(fd);
     } catch (err) {
-      throw new MaintenanceFsyncError(path, err as NodeJS.ErrnoException);
-    } finally {
       if (fd != null) {
         try {
           fsx.closeSync(fd);
         } catch {}
       }
+      throw new MaintenanceFsyncError(path, err as NodeJS.ErrnoException);
+    }
+    try {
+      fsx.closeSync(fd);
+    } catch (err) {
+      // (review advisory) not swallowed: the step is not reported done
+      throw new MaintenanceFsyncError(path, err as NodeJS.ErrnoException);
     }
   }
 }
@@ -320,8 +325,62 @@ export function runArmedMaintenanceWrite<T>(
   owner: string,
   where: string,
   fn: () => T,
-  records: Pick<DurabilityRecords, "arm" | "disarm" | "poison" | "poisonProject"> = persistDurabilityRecords(),
+  records: ArmedRecords = persistDurabilityRecords(),
 ): T {
+  const id = armMaintenanceWrite(dbPath, owner, records);
+  let result: T;
+  try {
+    result = fn();
+  } catch (err) {
+    settleMaintenanceWriteError(id, dbPath, owner, where, err, records);
+    throw err;
+  }
+  records.disarm(id);
+  return result;
+}
+
+// The same for a write that runs asynchronously, e.g., in a child process
+// (the compact worker's VACUUM INTO, SA-B2-3): a sync error the child
+// reports carries its SQLite errcode.  A child that did not report (killed,
+// timed out) may have consumed a sync error: its record stays armed (the
+// stream stays refused; verified at the next process start, H-b).
+export class MaintenanceWorkerUnreportedError extends Error {}
+export async function runArmedMaintenanceWriteAsync<T>(
+  dbPath: string,
+  owner: string,
+  where: string,
+  fn: () => Promise<T>,
+  records: ArmedRecords = persistDurabilityRecords(),
+): Promise<T> {
+  const id = armMaintenanceWrite(dbPath, owner, records);
+  let result: T;
+  try {
+    result = await fn();
+  } catch (err) {
+    if (err instanceof MaintenanceWorkerUnreportedError) {
+      logger.error(
+        "persist: a maintenance write ended without a report; its record stays armed and the stream refused (finding 028)",
+        { dbPath, where, err: `${err}` },
+      );
+      throw err;
+    }
+    settleMaintenanceWriteError(id, dbPath, owner, where, err, records);
+    throw err;
+  }
+  records.disarm(id);
+  return result;
+}
+
+type ArmedRecords = Pick<
+  DurabilityRecords,
+  "arm" | "disarm" | "poison" | "poisonProject"
+>;
+
+function armMaintenanceWrite(
+  dbPath: string,
+  owner: string,
+  records: ArmedRecords,
+): string {
   const id = posix.normalize(dbPath.replace(/\.db$/, ""));
   try {
     records.arm(id, owner);
@@ -330,32 +389,38 @@ export function runArmedMaintenanceWrite<T>(
       `persist maintenance write refused (finding 028): the dirty record can't be created: ${dbPath}: ${err}`,
     );
   }
-  let result: T;
-  try {
-    result = fn();
-  } catch (err) {
-    if (isSqliteSyncError(err) || err instanceof MaintenanceFsyncError) {
-      const errno = err instanceof MaintenanceFsyncError ? `${err.cause?.code ?? ""}` : "";
-      records.poison(id, {
-        where: `maintenance:${where}`,
-        errcode: Number((err as any)?.errcode ?? 0),
-        ...(errno ? { errno } : {}),
-      });
-      if (errno === "EDQUOT" || errno === "ENOSPC") {
-        // the project's quota at our fsync: every stream of the project (Q-F)
-        records.poisonProject(owner, { where: `maintenance:${where}`, errno, path: dbPath });
-      }
-      logger.error(
-        "PERSIST FILE POISONED (finding 028): a sync error in a maintenance write; the file is refused until it is verified",
-        { dbPath, where, err: `${err}` },
-      );
-      throw err;
+  return id;
+}
+
+// a sync error: the record becomes the poison record (never disarmed); any
+// other error: disarmed
+function settleMaintenanceWriteError(
+  id: string,
+  dbPath: string,
+  owner: string,
+  where: string,
+  err: unknown,
+  records: ArmedRecords,
+): void {
+  if (isSqliteSyncError(err) || err instanceof MaintenanceFsyncError) {
+    const errno =
+      err instanceof MaintenanceFsyncError ? `${err.cause?.code ?? ""}` : "";
+    records.poison(id, {
+      where: `maintenance:${where}`,
+      errcode: Number((err as any)?.errcode ?? 0),
+      ...(errno ? { errno } : {}),
+    });
+    if (errno === "EDQUOT" || errno === "ENOSPC") {
+      // the project's quota at our fsync: every stream of the project (Q-F)
+      records.poisonProject(owner, { where: `maintenance:${where}`, errno, path: dbPath });
     }
-    records.disarm(id);
-    throw err;
+    logger.error(
+      "PERSIST FILE POISONED (finding 028): a sync error in a maintenance write; the file is refused until it is verified",
+      { dbPath, where, err: `${err}` },
+    );
+    return;
   }
   records.disarm(id);
-  return result;
 }
 
 // the records of this process (one generation per process)

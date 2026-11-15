@@ -96,6 +96,34 @@ describe("028 B-2: the helper self-test is retried after a failure (SA 3350 A1)"
     expect(calls).toBe(2);
     await rm(dir, { recursive: true, force: true });
   });
+  it("concurrent callers past the backoff share ONE retry (SA 3367 advisory)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "persist-028-selftest-"));
+    const db = join(dir, "s.db");
+    await writeFile(db, Buffer.alloc(8192, 1));
+    let t = 1_800_000_000_000;
+    jest.spyOn(Date, "now").mockImplementation(() => t);
+    let calls = 0;
+    let release!: () => void;
+    let gate: Promise<void> = Promise.resolve();
+    setPagecacheSelfTestForTests(async () => {
+      calls++;
+      await gate;
+      return false;
+    });
+    await checkedVerifiedEviction(db);
+    expect(calls).toBe(1);
+    t += 61_000; // past the backoff
+    gate = new Promise<void>((r) => (release = r));
+    const all = [1, 2, 3, 4].map(() => checkedVerifiedEviction(db));
+    await new Promise((r) => setImmediate(r));
+    expect(calls).toBe(2); // one retry in flight, not four
+    release();
+    for (const r of await Promise.all(all)) {
+      expect(r).toMatchObject({ verified: false, why: "page-cache helper self-test failed" });
+    }
+    expect(calls).toBe(2);
+    await rm(dir, { recursive: true, force: true });
+  });
 });
 
 describe("028 B-2: verified eviction of a stream left mid-write", () => {

@@ -219,11 +219,14 @@ export function testDurabilityContext(): {
   durability: PersistDurabilityRecords;
   writeCounter: PersistWriteCounter;
   openBarrier: PersistOpenBarrier;
+  unregisteredStreamOwner: (id: string) => string | undefined;
 } {
   const records = testDurabilityRecords();
   return {
     durability: records,
     writeCounter: guardedWriteCounter(undefined, records),
     openBarrier: testOpenBarrier(),
+    // streams these tests construct directly (no persist server) are "host"
+    unregisteredStreamOwner: () => "host",
   };
 }
