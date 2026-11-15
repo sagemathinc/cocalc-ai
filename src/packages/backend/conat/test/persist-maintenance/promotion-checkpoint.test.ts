@@ -11,7 +11,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { syncFiles } from "@cocalc/backend/data";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
