@@ -149,6 +149,17 @@ describe("028 B-3a AS-B3-ORDER-1: the storage, with a connection's order state",
     expect(s.getMetadata()).toEqual({ x: 1 });
   });
 
+  it("runOrdered drains the queue first: a queued set of the connection that IS admitted lets a following ordered write through in the same call (liveness; the gap rule alone would refuse it)", async () => {
+    const s = await open("drain");
+    limits(1e12);
+    const st = new WriteOrderState();
+    const pa = s.setQueued(A(), { state: st, wseq: 1, wfloor: 1 });
+    s.runOrdered({ state: st, wseq: 2, wfloor: 1 }, () => s.setMetadata({ y: 2 }));
+    expect(await code(pa)).toBe("ok");
+    expect(s.getMetadata()).toEqual({ y: 2 });
+    expect(sizes(s)).toEqual([6000]);
+  });
+
   it("GAP (reconnect/resend): B arrives before A: blocked; A admitted; B's resend after it", async () => {
     const s = await open("gap");
     limits(1e12);
@@ -234,7 +245,12 @@ describe("028 B-3a AS-B3-ORDER-1: the client", () => {
       client.close();
     } catch {}
   });
-  const write = () => client.request(null, { headers: { cmd: "setMetadata" } });
+  // (a failing test may leave writes pending: never an unhandled rejection)
+  const write = () => {
+    const p = client.request(null, { headers: { cmd: "setMetadata" } });
+    p.catch(() => {});
+    return p;
+  };
   const floorsNonDecreasing = () => {
     const f = sends.map((x) => x.wfloor);
     expect(f).toEqual([...f].sort((a, b) => a - b));
