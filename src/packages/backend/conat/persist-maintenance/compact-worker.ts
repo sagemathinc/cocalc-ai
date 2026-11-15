@@ -150,8 +150,13 @@ export function workerOutcome({
   } catch {
     return unproven(`no parseable worker report (code=${code}): ${stderr.slice(0, 2000)}`);
   }
-  const keys = report != null && typeof report == "object" ? Object.keys(report).sort().join(",") : "";
-  if (code === 0 && report.ok === true && keys === "ok,result" && report.result != null && typeof report.result == "object") {
+  // (AS-B2-WORKER-NULL-1) only a plain object is a report: null, a scalar or an
+  // array proves nothing (and is never dereferenced)
+  if (report === null || typeof report != "object" || Array.isArray(report)) {
+    return unproven(`a worker report that is not an object (code=${code}): ${stdout.slice(0, 200)}`);
+  }
+  const keys = Object.keys(report).sort().join(",");
+  if (code === 0 && report.ok === true && keys === "ok,result" && report.result != null && typeof report.result == "object" && !Array.isArray(report.result)) {
     return { result: report.result as PersistMaintenanceWorkerResult };
   }
   if (code !== 0 && report.ok === false && keys === "errcode,ok,phase") {
@@ -219,15 +224,23 @@ export async function runPersistMaintenanceWorker({
       });
       child.on("exit", (code, signal) => {
         finish(() => {
-          const outcome = workerOutcome({
-            code,
-            signal,
-            timedOut,
-            timeoutMs,
-            stdout,
-            stderr,
-            sourcePath,
-          });
+          let outcome: ReturnType<typeof workerOutcome>;
+          try {
+            outcome = workerOutcome({
+              code,
+              signal,
+              timedOut,
+              timeoutMs,
+              stdout,
+              stderr,
+              sourcePath,
+            });
+          } catch (err) {
+            // never an uncaught exception from the exit callback: unproven
+            outcome = {
+              error: new MaintenanceCompletionUnprovenError(sourcePath, `classifying the worker report: ${err}`),
+            };
+          }
           if ("error" in outcome) reject(outcome.error);
           else resolve(outcome.result);
         });
