@@ -282,6 +282,11 @@ export async function pagecacheHelperSelfTest(
 // A pass is kept.  The result is per filesystem (st_dev of the directory;
 // 028 B' v8, SA 3575): a pass on one does not vouch for another, and a
 // failure on one mount does not refuse verification on the others.
+// On btrfs st_dev is the SUBVOLUME's (anonymous) device, so on a project-host
+// each project subvolume gets its own self-test (a 64 KiB scratch write +
+// fsync + one helper run in that directory) at its first leftover, and one
+// entry here for the life of the process: rare (crash leftovers only) and
+// fail closed (SA 3580 N1).
 const limiter = createFairLimiter(OPEN_BARRIER_CONCURRENCY);
 const SELF_TEST_RETRY_MIN_MS = 60_000;
 const SELF_TEST_RETRY_MAX_MS = 30 * 60_000;
