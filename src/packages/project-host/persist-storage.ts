@@ -20,7 +20,6 @@ The volume is host-only, so its users can't do that themselves.
   then compacts the database.
 */
 
-import { DatabaseSync } from "node:sqlite";
 import { lstat, open, opendir, rmdir, unlink } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import getLogger from "@cocalc/backend/logger";
@@ -36,6 +35,7 @@ import {
   assertPersistMaintenanceOpenAllowed,
   fsyncMaintenanceOutput,
   runArmedMaintenanceWrite,
+  withMaintenanceConnection,
 } from "@cocalc/backend/conat/persist-durability";
 import {
   MAX_PERSIST_STORAGE_ACTIONS,
@@ -362,14 +362,8 @@ function compact(path: string, owner: string): void {
   // armed: a sync error in the VACUUM, its checkpoints or the close poisons
   // the stream (SA-B2-1)
   runArmedMaintenanceWrite(`${path}.db`, owner, "trim:compact", () => {
-    const db = new DatabaseSync(`${path}.db`);
-    try {
-      db.exec("PRAGMA busy_timeout=5000");
-      db.exec("VACUUM");
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    } finally {
-      db.close();
-    }
+    // the explicit checkpoint and the close: withMaintenanceConnection
+    withMaintenanceConnection(`${path}.db`, 5000, (db) => db.exec("VACUUM"));
     // the rewritten file durable before the trim completes (§4A 10)
     fsyncMaintenanceOutput(`${path}.db`);
   });
@@ -385,21 +379,16 @@ function lastSeqBefore(
   // (not read-only: that can't read a database in WAL mode without its -shm)
   assertPersistMaintenanceOpenAllowed(`${path}.db`, undefined, () => owner);
   // armed (SA-B2-3): this read-write connection is the last one of a closed
-  // stream, so its close would checkpoint the WAL, unreported; the explicit
-  // checkpoint surfaces a sync error first and leaves the close nothing
+  // stream, so its close would checkpoint the WAL, unreported
   return runArmedMaintenanceWrite(`${path}.db`, owner, "trim:last-seq", () => {
-    let seq: number | undefined;
-    const db = new DatabaseSync(`${path}.db`);
-    try {
-      db.exec("PRAGMA busy_timeout=5000");
+    // the explicit checkpoint and the close: withMaintenanceConnection (a
+    // failure after the open leaves the record armed)
+    const seq = withMaintenanceConnection(`${path}.db`, 5000, (db) => {
       const row = db
         .prepare("SELECT MAX(seq) AS seq FROM messages WHERE time < ?")
         .get(before / 1000) as { seq: number | null } | undefined;
-      seq = row?.seq == null ? undefined : Number(row.seq);
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    } finally {
-      db.close();
-    }
+      return row?.seq == null ? undefined : Number(row.seq);
+    });
     // what the checkpoint wrote durable before the trim goes on (§4A 10)
     fsyncMaintenanceOutput(`${path}.db`);
     return seq;

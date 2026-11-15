@@ -20,9 +20,10 @@ import {
   persistRunDir,
   sha256Hex,
   runArmedMaintenanceWriteAsync,
-  MaintenanceWorkerUnreportedError,
+  MaintenanceCompletionUnprovenError,
+  withMaintenanceConnection,
 } from "@cocalc/backend/conat/persist-durability";
-import { workerFailure } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
+import { workerOutcome } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { ownerOfLocalPath, resolveLocalPath } from "@cocalc/conat/persist/util";
@@ -135,7 +136,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     // promotion's exclusive checkpoint
     [
       "backend/conat/persist-maintenance/coordinator.ts",
-      /const owner = this\.assertOpenAllowed\(checked\.path, row\);\s*\/\/ armed: a sync error here poisons the stream \(SA-B2-1\)\s*runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{\s*const sourceDb = new DatabaseSync\(checked\.path\);/,
+      /const owner = this\.assertOpenAllowed\(checked\.path, row\);\s*\/\/ armed: a sync error here poisons the stream \(SA-B2-1\)\s*runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\(checked\.path, 1000, \(\) => \{\}\);/,
     ],
     // the quick_check of an output or source
     [
@@ -145,12 +146,12 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
     // the trim's offline compaction and read
     [
       "project-host/persist-storage.ts",
-      /function compact\(path: string, owner: string\): void \{\s*assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*\/\/ armed: a sync error in the VACUUM, its checkpoints or the close poisons\s*\/\/ the stream \(SA-B2-1\)\s*runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:compact", \(\) => \{\s*const db = new DatabaseSync/,
+      /function compact\(path: string, owner: string\): void \{\s*assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*\/\/ armed: a sync error in the VACUUM, its checkpoints or the close poisons\s*\/\/ the stream \(SA-B2-1\)\s*runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:compact", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\(`\$\{path\}\.db`, 5000, \(db\) => db\.exec\("VACUUM"\)\);/,
     ],
     // SA-B2-3: the trim's read is armed too (its read-write close is a write)
     [
       "project-host/persist-storage.ts",
-      /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*(\/\/[^\n]*\n\s*)*return runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:last-seq", \(\) => \{\s*let seq: number \| undefined;\s*const db = new DatabaseSync\(`\$\{path\}\.db`\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
+      /assertPersistMaintenanceOpenAllowed\(`\$\{path\}\.db`, undefined, \(\) => owner\);\s*(\/\/[^\n]*\n\s*)*return runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:last-seq", \(\) => \{\s*(\/\/[^\n]*\n\s*)*const seq = withMaintenanceConnection\(`\$\{path\}\.db`, 5000, \(db\) => \{\s*const row = db\s*\.prepare\("SELECT MAX\(seq\)/,
     ],
     // SA-B2-3: the compaction worker's read-write source connection runs
     // armed (the parent arms around the worker)
@@ -285,29 +286,101 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       const bad = { ...fsx, fsyncSync: () => { throw Object.assign(new Error("EIO"), { code: "EIO" }); } };
       expect(() => fsyncMaintenanceOutput("/r/sub/x.db", bad)).toThrow(MaintenanceFsyncError);
     });
-    it("the trim's compact and promotion's checkpoint fsync their output inside the armed write", () => {
+    it("the trim's compact and read, and promotion's checkpoint, fsync their output inside the armed write, after withMaintenanceConnection", () => {
       const trim = fs.readFileSync(join(packages, "project-host/persist-storage.ts"), "utf8");
-      expect(trim).toMatch(/runArmedMaintenanceWrite\(`\$\{path\}\.db`, owner, "trim:compact", \(\) => \{[\s\S]{0,400}db\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*\}\);/);
+      expect(trim).toMatch(/"trim:compact", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\([^\n]*\n\s*(\/\/[^\n]*\n\s*)*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*\}\);/);
+      expect(trim).toMatch(/"trim:last-seq", \(\) => \{[\s\S]{0,700}\}\);\s*(\/\/[^\n]*\n\s*)*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*return seq;/);
       const coord = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/coordinator.ts"), "utf8");
-      expect(coord).toMatch(/runArmedMaintenanceWrite\(checked\.path, owner, "promote:checkpoint", \(\) => \{[\s\S]{0,400}sourceDb\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(checked\.path\);\s*\}\);/);
+      expect(coord).toMatch(/"promote:checkpoint", \(\) => \{\s*(\/\/[^\n]*\n\s*)*withMaintenanceConnection\(checked\.path, 1000, \(\) => \{\}\);\s*(\/\/[^\n]*\n\s*)*fsyncMaintenanceOutput\(checked\.path\);\s*\}\);/);
     });
-    it("SA-B2-3: the trim's read and the worker's VACUUM INTO checkpoint explicitly before their close; the worker reports a sync error", () => {
-      const trim = fs.readFileSync(join(packages, "project-host/persist-storage.ts"), "utf8");
-      expect(trim).toMatch(/"trim:last-seq", \(\) => \{[\s\S]{0,600}db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} finally \{\s*db\.close\(\);\s*\}\s*\/\/[^\n]*\n\s*fsyncMaintenanceOutput\(`\$\{path\}\.db`\);\s*return seq;/);
+    describe("SA-B2-3 / review: withMaintenanceConnection (open, fn, explicit TRUNCATE checkpoint, close)", () => {
+      const fakeDb = (fail: Partial<Record<"fn" | "checkpoint" | "close", unknown>> = {}) => {
+        const calls: string[] = [];
+        const db = {
+          exec: (sql: string) => {
+            calls.push(sql);
+            if (sql.includes("wal_checkpoint") && fail.checkpoint) throw fail.checkpoint;
+          },
+          close: () => {
+            calls.push("close");
+            if (fail.close) throw fail.close;
+          },
+        };
+        return { calls, db };
+      };
+      const sync = () => Object.assign(new Error("disk I/O error"), { errcode: 1034 });
+      it("success: fn, then the checkpoint, then the close", () => {
+        const f = fakeDb();
+        expect(withMaintenanceConnection("/r/x.db", 7, () => (f.calls.push("fn"), 3), () => f.db)).toBe(3);
+        expect(f.calls).toEqual(["PRAGMA busy_timeout=7", "fn", "PRAGMA wal_checkpoint(TRUNCATE)", "close"]);
+      });
+      it("an ordinary exception after the open (e.g. the SELECT): completion UNPROVEN (the record stays armed); closed", () => {
+        const f = fakeDb();
+        expect(() => withMaintenanceConnection("/r/x.db", 7, () => { throw new Error("no such table"); }, () => f.db)).toThrow(MaintenanceCompletionUnprovenError);
+        expect(f.calls).toEqual(["PRAGMA busy_timeout=7", "close"]);
+      });
+      it("a sync error in fn, the checkpoint or the close is rethrown as is (the runner poisons)", () => {
+        const e1 = sync();
+        expect(() => withMaintenanceConnection("/r/x.db", 7, () => { throw e1; }, () => fakeDb().db)).toThrow(e1);
+        const e2 = sync();
+        expect(() => withMaintenanceConnection("/r/x.db", 7, () => {}, () => fakeDb({ checkpoint: e2 }).db)).toThrow(e2);
+        const e3 = sync();
+        expect(() => withMaintenanceConnection("/r/x.db", 7, () => {}, () => fakeDb({ close: e3 }).db)).toThrow(e3);
+        // a sync error at the close after an ordinary failure wins
+        const e4 = sync();
+        expect(() => withMaintenanceConnection("/r/x.db", 7, () => { throw new Error("x"); }, () => fakeDb({ close: e4 }).db)).toThrow(e4);
+      });
+      it("a failure to open: nothing was opened, the error as is (the runner disarms)", () => {
+        const err = new Error("unable to open database file");
+        expect(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => { throw err; })).toThrow(err);
+      });
+      it("in the runner: unproven -> stays ARMED; sync -> poisoned; open failure -> disarmed", () => {
+        const run = (fn: () => unknown) => {
+          const calls: string[] = [];
+          const records = {
+            arm: () => calls.push("arm"), disarm: () => calls.push("disarm"),
+            poison: () => calls.push("poison"), poisonProject: () => calls.push("project"),
+          } as any;
+          try { runArmedMaintenanceWrite("/r/x.db", "P", "trim:last-seq", fn, records); } catch {}
+          return calls;
+        };
+        expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => { throw new Error("SELECT failed"); }, () => fakeDb().db))).toEqual(["arm"]);
+        expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => {}, () => fakeDb({ checkpoint: sync() }).db))).toEqual(["arm", "poison"]);
+        expect(run(() => withMaintenanceConnection("/r/x.db", 7, () => 1, () => { throw new Error("ENOENT"); }))).toEqual(["arm", "disarm"]);
+      });
+    });
+    it("SA-B2-3: the worker checkpoints explicitly before its close, and reports its phase and any sync errcode on stdout", () => {
       const worker = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/compact-worker.ts"), "utf8");
-      expect(worker).toMatch(/const db = new DatabaseSync\(options\.sourcePath\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*db\.prepare\("VACUUM INTO \?"\)\.run\(options\.outputPath\);\s*(\/\/[^\n]*\n\s*)*db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} finally \{\s*db\.close\(\);/);
-      expect(worker).toMatch(/if \(err && \(err\.errcode === 1034 \|\| err\.errcode === 1290\)\) \{\s*process\.stderr\.write\("SQLITE-SYNC-ERROR " \+ JSON\.stringify\(\{ errcode: err\.errcode \}\) \+ "\\n"\);/);
+      expect(worker).toMatch(/phase = "source-open";\s*const db = new DatabaseSync\(options\.sourcePath\);\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*db\.prepare\("VACUUM INTO \?"\)\.run\(options\.outputPath\);\s*(\/\/[^\n]*\n\s*)*db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} catch \(err\) \{[\s\S]{0,300}throw err;\s*\}\s*db\.close\(\);\s*phase = "source-closed";/);
+      expect(worker).toMatch(/process\.stdout\.write\(JSON\.stringify\(\{ ok: false, phase, errcode \}\)\);/);
     });
-    it("SA-B2-3: how a worker run fails: killed/timed out = unreported; a reported sync error keeps its errcode; else plain", () => {
-      const base = { signal: null, timedOut: false, timeoutMs: 1000, stderr: "" };
-      expect(workerFailure({ ...base, code: 0 })).toBeUndefined();
-      expect(workerFailure({ ...base, code: null, signal: "SIGKILL" })).toBeInstanceOf(MaintenanceWorkerUnreportedError);
-      expect(workerFailure({ ...base, code: null, timedOut: true })).toBeInstanceOf(MaintenanceWorkerUnreportedError);
-      const sync = workerFailure({ ...base, code: 1, stderr: 'x\nSQLITE-SYNC-ERROR {"errcode":1034}\nError: disk I/O error' }) as any;
-      expect(sync.errcode).toBe(1034);
-      const plain = workerFailure({ ...base, code: 1, stderr: "Error: source quick_check failed" }) as any;
-      expect(plain).not.toBeInstanceOf(MaintenanceWorkerUnreportedError);
-      expect(plain.errcode).toBeUndefined();
+    it("SA-B2-3 / review: workerOutcome is strict: only an exact report proves anything", () => {
+      const base = { signal: null, timedOut: false, timeoutMs: 1000, stderr: "", sourcePath: "/r/x.db" };
+      const ok = { beforeIdentity: {}, beforeStats: {} };
+      expect(workerOutcome({ ...base, code: 0, stdout: JSON.stringify({ ok: true, result: ok }) })).toEqual({ result: ok });
+      const err = (o: any) => (workerOutcome({ ...base, ...o }) as any).error;
+      const unproven = (o: any) => expect(err(o)).toBeInstanceOf(MaintenanceCompletionUnprovenError);
+      unproven({ code: null, signal: "SIGKILL", stdout: "" });
+      unproven({ code: null, timedOut: true, stdout: "" });
+      unproven({ code: 1, stdout: "" }); // no report
+      unproven({ code: 1, stdout: '{"ok":false,"phase":"source-open","errcode":null}' }); // the close may have checkpointed
+      unproven({ code: 1, stdout: '{"ok":false,"phase":"source-op' }); // truncated
+      unproven({ code: 1, stdout: '{"ok":false,"phase":"before-open"}' }); // a missing field
+      unproven({ code: 1, stdout: '{"ok":false,"phase":"before-open","errcode":null,"x":1}' }); // an extra field
+      unproven({ code: 1, stdout: '{"ok":false,"phase":"elsewhere","errcode":null}' }); // an unknown phase
+      unproven({ code: 1, stdout: '{"ok":false,"phase":"before-open","errcode":5}' }); // another errcode
+      unproven({ code: 0, stdout: '{"ok":false,"phase":"before-open","errcode":null}' }); // a failure report with exit 0
+      unproven({ code: 1, stdout: JSON.stringify({ ok: true, result: ok }) }); // success with exit 1
+      unproven({ code: 0, stdout: "x" + JSON.stringify({ ok: true, result: ok }) });
+      // a SQLite sync error keeps its errcode (in any phase)
+      expect(err({ code: 1, stdout: '{"ok":false,"phase":"source-open","errcode":1034}' }).errcode).toBe(1034);
+      expect(err({ code: 1, stdout: '{"ok":false,"phase":"source-closed","errcode":1290}' }).errcode).toBe(1290);
+      // the source settled: plain errors (disarmed)
+      for (const phase of ["before-open", "source-closed"]) {
+        const e = err({ code: 1, stdout: JSON.stringify({ ok: false, phase, errcode: null }) });
+        expect(e).not.toBeInstanceOf(MaintenanceCompletionUnprovenError);
+        expect(e.errcode).toBeUndefined();
+      }
     });
     describe("SA-B2-3: runArmedMaintenanceWriteAsync (the compaction worker)", () => {
       const fakeRecords = () => {
@@ -322,6 +395,8 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
           } as any,
         };
       };
+      const outcomeError = (o: any) =>
+        (workerOutcome({ signal: null, timedOut: false, timeoutMs: 1, stderr: "", sourcePath: "/r/x.db", code: 1, stdout: "", ...o }) as any).error;
       it("success: armed around the run, then disarmed", async () => {
         const f = fakeRecords();
         await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "compact:vacuum-into", async () => (f.calls.push("run"), 1), f.records)).resolves.toBe(1);
@@ -329,20 +404,25 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       });
       it("a reported sync error: poisoned, never disarmed", async () => {
         const f = fakeRecords();
-        const err = workerFailure({ code: 1, signal: null, timedOut: false, timeoutMs: 1, stderr: 'SQLITE-SYNC-ERROR {"errcode":1034}' })!;
+        const err = outcomeError({ stdout: '{"ok":false,"phase":"source-open","errcode":1034}' });
         await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "compact:vacuum-into", async () => { throw err; }, f.records)).rejects.toBe(err);
         expect(f.calls).toEqual(["arm /r/x P", "poison /r/x maintenance:compact:vacuum-into 1034"]);
       });
-      it("a killed or timed-out worker: the record stays ARMED (neither disarmed nor poisoned)", async () => {
-        const f = fakeRecords();
-        const err = workerFailure({ code: null, signal: null, timedOut: true, timeoutMs: 1, stderr: "" })!;
-        await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "compact:vacuum-into", async () => { throw err; }, f.records)).rejects.toBe(err);
-        expect(f.calls).toEqual(["arm /r/x P"]);
+      it("unproven (killed, timed out, an ordinary failure with the source open, no or a malformed report): the record stays ARMED", async () => {
+        for (const o of [{ code: null, timedOut: true }, { code: null, signal: "SIGKILL" }, { stdout: '{"ok":false,"phase":"source-open","errcode":null}' }, { stdout: "" }, { stdout: "{" }]) {
+          const f = fakeRecords();
+          const err = outcomeError(o);
+          await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "compact:vacuum-into", async () => { throw err; }, f.records)).rejects.toBe(err);
+          expect([o, f.calls]).toEqual([o, ["arm /r/x P"]]);
+        }
       });
-      it("any other failure: disarmed", async () => {
-        const f = fakeRecords();
-        await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "c", async () => { throw new Error("quick_check failed"); }, f.records)).rejects.toThrow("quick_check");
-        expect(f.calls).toEqual(["arm /r/x P", "disarm /r/x"]);
+      it("a failure before the source was opened read-write, or after it was checkpointed and closed: disarmed", async () => {
+        for (const phase of ["before-open", "source-closed"]) {
+          const f = fakeRecords();
+          const err = outcomeError({ stdout: JSON.stringify({ ok: false, phase, errcode: null }) });
+          await expect(runArmedMaintenanceWriteAsync("/r/x.db", "P", "c", async () => { throw err; }, f.records)).rejects.toBe(err);
+          expect(f.calls).toEqual(["arm /r/x P", "disarm /r/x"]);
+        }
       });
     });
     it("the record can't be created: refused, the write never runs", () => {
@@ -374,13 +454,17 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
   });
 
   it("no other DatabaseSync opener of persist files exists in these modules", () => {
-    for (const [file, expected] of [
-      ["backend/conat/persist-maintenance/coordinator.ts", 2],
-      ["project-host/persist-storage.ts", 2],
+    for (const [file, expected, rw] of [
+      // [file, read-only DatabaseSync openers, read-write openers through
+      // withMaintenanceConnection]
+      ["backend/conat/persist-maintenance/coordinator.ts", 1, 1],
+      ["project-host/persist-storage.ts", 0, 2],
     ] as const) {
       const source = fs.readFileSync(join(packages, file), "utf8");
-      expect(source.match(/new DatabaseSync\(/g)).toHaveLength(expected);
-      expect(source.match(/assertPersistMaintenanceOpenAllowed\(/g)!.length).toBeGreaterThanOrEqual(expected);
+      expect((source.match(/new DatabaseSync\(/g) ?? []).length).toBe(expected);
+      expect((source.match(/new DatabaseSync\([^)]*readOnly: true/g) ?? []).length).toBe(expected);
+      expect(source.match(/withMaintenanceConnection\(/g)).toHaveLength(rw);
+      expect(source.match(/assertPersistMaintenanceOpenAllowed\(/g)!.length).toBeGreaterThanOrEqual(expected + rw);
     }
     // the worker: one read-only inspection opener, one read-write source
     // opener (the parent checks and arms, SA-B2-3)

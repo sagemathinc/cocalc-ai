@@ -339,12 +339,53 @@ export function runArmedMaintenanceWrite<T>(
   return result;
 }
 
-// The same for a write that runs asynchronously, e.g., in a child process
-// (the compact worker's VACUUM INTO, SA-B2-3): a sync error the child
-// reports carries its SQLite errcode.  A child that did not report (killed,
-// timed out) may have consumed a sync error: its record stays armed (the
-// stream stays refused; verified at the next process start, H-b).
-export class MaintenanceWorkerUnreportedError extends Error {}
+// A maintenance write whose completion can't be proven: a failure after a
+// read-write connection to the stream's file was opened that is not a sync
+// error (the close may still have checkpointed, unreported), or a worker
+// that ended without its report (killed, timed out, no parseable result).
+// Its record stays ARMED: the stream stays refused in this process and is
+// verified at the next start (H-b).  (SA-B2-3; review's design note)
+export class MaintenanceCompletionUnprovenError extends Error {
+  constructor(
+    readonly path: string,
+    readonly why: unknown,
+  ) {
+    super(`persist maintenance write not proven complete: ${path}: ${why}`);
+  }
+}
+
+// A read-write maintenance connection to a stream's file: opened, fn run,
+// then an explicit TRUNCATE checkpoint (a sync error surfaces here, and the
+// close has nothing left to write) and the close.  Any failure after the
+// open that is not a sync error is MaintenanceCompletionUnprovenError.
+// Stated limit (all sites): a checkpoint that stays busy is not detected;
+// these run under the maintenance claim or the project fence, so no other
+// connection exists.
+export function withMaintenanceConnection<T>(
+  dbPath: string,
+  busyTimeoutMs: number,
+  fn: (db: any) => T,
+  open: (path: string) => any = (path) => new (require("node:sqlite").DatabaseSync)(path),
+): T {
+  const db = open(dbPath); // a failure here: nothing was opened, nothing written
+  let result: T;
+  try {
+    db.exec(`PRAGMA busy_timeout=${busyTimeoutMs}`);
+    result = fn(db);
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch (err) {
+    try {
+      db.close();
+    } catch (closeErr) {
+      if (isSqliteSyncError(closeErr)) throw closeErr;
+    }
+    if (isSqliteSyncError(err)) throw err;
+    throw new MaintenanceCompletionUnprovenError(dbPath, err);
+  }
+  db.close(); // a sync error here propagates: the runner poisons
+  return result;
+}
+
 export async function runArmedMaintenanceWriteAsync<T>(
   dbPath: string,
   owner: string,
@@ -357,13 +398,6 @@ export async function runArmedMaintenanceWriteAsync<T>(
   try {
     result = await fn();
   } catch (err) {
-    if (err instanceof MaintenanceWorkerUnreportedError) {
-      logger.error(
-        "persist: a maintenance write ended without a report; its record stays armed and the stream refused (finding 028)",
-        { dbPath, where, err: `${err}` },
-      );
-      throw err;
-    }
     settleMaintenanceWriteError(id, dbPath, owner, where, err, records);
     throw err;
   }
@@ -392,8 +426,8 @@ function armMaintenanceWrite(
   return id;
 }
 
-// a sync error: the record becomes the poison record (never disarmed); any
-// other error: disarmed
+// a sync error: the record becomes the poison record (never disarmed);
+// completion unproven: stays armed; any other error: disarmed
 function settleMaintenanceWriteError(
   id: string,
   dbPath: string,
@@ -402,6 +436,14 @@ function settleMaintenanceWriteError(
   err: unknown,
   records: ArmedRecords,
 ): void {
+  if (err instanceof MaintenanceCompletionUnprovenError) {
+    // neither disarmed nor poisoned: the record stays armed
+    logger.error(
+      "persist: a maintenance write could not be proven complete; its record stays armed and the stream refused (finding 028)",
+      { dbPath, where, err: `${err}` },
+    );
+    return;
+  }
   if (isSqliteSyncError(err) || err instanceof MaintenanceFsyncError) {
     const errno =
       err instanceof MaintenanceFsyncError ? `${err.cause?.code ?? ""}` : "";
