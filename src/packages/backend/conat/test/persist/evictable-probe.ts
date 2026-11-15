@@ -1,9 +1,10 @@
 /*
 Finding 028 B-2 tests: can the page cache of a file in this test directory be
 dropped at all?  The real-eviction tests need that (DONTNEED + mincore = 0).
-On some filesystems it can't be (CI runners: "16 pages still resident"); B
-then refuses verification, fail closed, as designed, and those tests can only
-be skipped there.  The slot-B DEV runs them in full and gates on that.
+On tmpfs it can't be (CI runners: "16 pages still resident"); B then refuses
+verification, fail closed, as designed, and those tests can only be skipped
+there.  On any other filesystem, not evictable is an error.  The slot-B DEV
+runs them in full and gates on that.
 
 The probe runs the REAL helper, synchronously (at test definition time, so a
 skip is a real Jest skip), on a 64 KiB fsync'd file in a fresh directory under
@@ -31,6 +32,12 @@ export type EvictableProbe =
 
 const SIZE = 64 * 1024;
 const PAGES = SIZE / 4096;
+
+// The only filesystems where "pages still resident" may become a skip: the
+// one observed on the CI runners ("test dir not evictable: tmpfs; why: 16
+// pages still resident").  Not evictable anywhere else (ext4, btrfs, xfs, ...)
+// is an error: the tests fail instead of hiding a broken eviction path.
+export const SKIPPABLE_FSTYPES: ReadonlySet<string> = new Set(["tmpfs"]);
 
 // the filesystem type of path, from /proc/self/mountinfo (the mount with the
 // longest mount point that contains the path's realpath)
@@ -66,7 +73,8 @@ export interface HelperRunResult {
 }
 
 // The probe's verdict on one helper run (pure; unit-tested).  ONLY a clean
-// run that reports pages still resident is "not-evictable".
+// run that reports pages still resident, on a SKIPPABLE_FSTYPES filesystem,
+// is "not-evictable".
 export function classifyHelperRun(
   r: HelperRunResult,
   fstype: string,
@@ -90,6 +98,12 @@ export function classifyHelperRun(
     };
   }
   if (parsed.resident === 0) return { kind: "evictable", fstype };
+  if (!SKIPPABLE_FSTYPES.has(fstype)) {
+    return {
+      kind: "error",
+      error: `not evictable on ${fstype} (${parsed.resident} pages still resident); only ${[...SKIPPABLE_FSTYPES].join(", ")} may skip`,
+    };
+  }
   return {
     kind: "not-evictable",
     fstype,
