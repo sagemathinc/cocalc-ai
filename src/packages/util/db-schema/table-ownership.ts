@@ -1358,6 +1358,19 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  // Copy-cleanup tombstones (server/projects/copy-db.ts). Project rehome does
+  // not copy these rows, so they must never be classed as drop-safe, portable
+  // or rebuildable until it does (pinned in table-ownership.test.ts).
+  ...adHocEntries(["project_copy_snapshot_claims"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    source: "server project copy schema bootstrap (projects/copy-db.ts)",
+    migrate_to_schema: true,
+    notes:
+      "Copy-cleanup tombstones: a row (src_project_id, snapshot_id) means copy cleanup decided to delete this source backup snapshot and may have done so; no copy may reuse it. Keyed by src_project_id (the source project); this manifest has no field for a differently named authority column. The bay drain preflight reports this table as block; project rehome does not copy these rows and does not enforce the drain preflight. An unsafe_rehome override loses these tombstones: audit or copy the rows first. Never drop-safe (cache, ephemeral, projection), portable or rebuildable until project rehome copies these rows.",
+  }),
+
   ...adHocEntries(["project_site_migrations"], {
     ownership: "project-owning",
     authority: "project_id",
