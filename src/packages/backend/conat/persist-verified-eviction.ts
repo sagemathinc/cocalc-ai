@@ -273,48 +273,102 @@ export async function pagecacheHelperSelfTest(
   }
 }
 
-// What the persist server uses: the self-test (at the first verification,
-// on that file's directory), then each verification under the same cap as
-// the open barrier's fsyncs.  If the self-test failed, every verification is
-// refused (fail closed) and it pages; the self-test is tried again after a
-// backoff (60 s, doubling to 30 min; SA 3350 A1), so a transient failure
-// does not refuse every leftover until a restart.  A pass is kept.
+// What the persist server uses: the self-test (at the first verification on
+// a filesystem, on that file's directory), then each verification under the
+// same cap as the open barrier's fsyncs.  If the self-test failed, every
+// verification on that filesystem is refused (fail closed) and it pages; the
+// self-test is tried again after a backoff (60 s, doubling to 30 min; SA 3350
+// A1), so a transient failure does not refuse every leftover until a restart.
+// A pass is kept.  The result is per filesystem (st_dev of the directory;
+// 028 B' v8, SA 3575): a pass on one does not vouch for another, and a
+// failure on one mount does not refuse verification on the others.
 const limiter = createFairLimiter(OPEN_BARRIER_CONCURRENCY);
 const SELF_TEST_RETRY_MIN_MS = 60_000;
 const SELF_TEST_RETRY_MAX_MS = 30 * 60_000;
-let selfTest: Promise<boolean> | undefined;
-let selfTestRetryAt = 0;
-let selfTestBackoff = SELF_TEST_RETRY_MIN_MS;
+interface SelfTestState {
+  result?: Promise<boolean>;
+  retryAt: number;
+  backoff: number;
+}
+const selfTests = new Map<number, SelfTestState>();
 let selfTestImpl = pagecacheHelperSelfTest;
 // tests only
 export function setPagecacheSelfTestForTests(
   impl: typeof pagecacheHelperSelfTest | undefined,
 ): void {
   selfTestImpl = impl ?? pagecacheHelperSelfTest;
-  selfTest = undefined;
-  selfTestRetryAt = 0;
-  selfTestBackoff = SELF_TEST_RETRY_MIN_MS;
+  selfTests.clear();
+  startupHealth = { state: "pending" };
 }
-export async function checkedVerifiedEviction(
-  dbPath: string,
-): Promise<EvictionResult> {
-  if (selfTest != null && selfTestRetryAt > 0 && Date.now() >= selfTestRetryAt) {
-    selfTest = undefined; // a failed self-test: try it again
-    // (SA 3367 advisory) once: concurrent callers share the retry in flight
-    selfTestRetryAt = 0;
+// The self-test result for dir's filesystem (shared by concurrent callers),
+// or undefined if dir can't be examined.
+function selfTestFor(dir: string): Promise<boolean> | undefined {
+  let dev: number;
+  try {
+    // sync: concurrent callers must see one shared state (SA 3367 advisory)
+    dev = fs.lstatSync(dir).dev;
+  } catch {
+    return;
   }
+  let s = selfTests.get(dev);
+  if (s == null) {
+    s = { retryAt: 0, backoff: SELF_TEST_RETRY_MIN_MS };
+    selfTests.set(dev, s);
+  }
+  if (s.result != null && s.retryAt > 0 && Date.now() >= s.retryAt) {
+    s.result = undefined; // a failed self-test: try it again
+    // (SA 3367 advisory) once: concurrent callers share the retry in flight
+    s.retryAt = 0;
+  }
+  const state = s;
   // on the filesystem of the files it will verify (a tmpfs scratch file
   // can't be evicted: its pages ARE the file)
-  selfTest ??= selfTestImpl(dirname(dbPath)).then((ok) => {
+  state.result ??= selfTestImpl(dir).then((ok) => {
     if (ok) {
-      selfTestRetryAt = 0;
-      selfTestBackoff = SELF_TEST_RETRY_MIN_MS;
+      state.retryAt = 0;
+      state.backoff = SELF_TEST_RETRY_MIN_MS;
     } else {
-      selfTestRetryAt = Date.now() + selfTestBackoff;
-      selfTestBackoff = Math.min(SELF_TEST_RETRY_MAX_MS, selfTestBackoff * 2);
+      state.retryAt = Date.now() + state.backoff;
+      state.backoff = Math.min(SELF_TEST_RETRY_MAX_MS, state.backoff * 2);
     }
     return ok;
   });
+  return state.result;
+}
+
+// The startup check (028 B' v8 finding: the helper needs /usr/bin/python3).
+// The persist daemon runs it once at start on its store's filesystem, so a
+// missing or broken interpreter is a loud health error at start, not a
+// surprise at the first stream left mid-write.  It seeds the same
+// per-filesystem result the verifications use.  It never refuses anything by
+// itself; streams are refused only by the verification, as before.
+export type PagecacheHelperHealth =
+  | { state: "pending" }
+  | { state: "ok" | "failed"; at: number };
+let startupHealth: PagecacheHelperHealth = { state: "pending" };
+export function pagecacheHelperHealth(): PagecacheHelperHealth {
+  return startupHealth;
+}
+export async function startupPagecacheHelperCheck(dir: string): Promise<boolean> {
+  const ok = (await selfTestFor(dir)) === true;
+  startupHealth = { state: ok ? "ok" : "failed", at: Date.now() };
+  if (ok) {
+    logger.info("persist: page-cache helper self-test passed at startup (finding 028)");
+  } else {
+    logger.error(
+      `PERSIST HEALTH (page): the page-cache helper self-test FAILED at startup; streams left mid-write will stay refused until it is fixed (it needs ${PYTHON}) (finding 028)`,
+    );
+  }
+  return ok;
+}
+
+export async function checkedVerifiedEviction(
+  dbPath: string,
+): Promise<EvictionResult> {
+  const selfTest = selfTestFor(dirname(dbPath));
+  if (selfTest == null) {
+    return notVerified(dbPath, "lstat dir failed");
+  }
   if (!(await selfTest)) {
     logger.error(
       "PERSIST ALERT (page): the page-cache helper self-test failed, so streams left mid-write stay refused (finding 028)",

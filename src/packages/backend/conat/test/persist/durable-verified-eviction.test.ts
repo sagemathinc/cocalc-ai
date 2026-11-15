@@ -29,6 +29,8 @@ import {
   verifiedEviction,
   checkedVerifiedEviction,
   setPagecacheSelfTestForTests,
+  pagecacheHelperHealth,
+  startupPagecacheHelperCheck,
 } from "@cocalc/backend/conat/persist-verified-eviction";
 import * as context from "@cocalc/conat/persist/context";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
@@ -122,6 +124,83 @@ describe("028 B-2: the helper self-test is retried after a failure (SA 3350 A1)"
       expect(r).toMatchObject({ verified: false, why: "page-cache helper self-test failed" });
     }
     expect(calls).toBe(2);
+    await rm(dir, { recursive: true, force: true });
+  });
+  it("the result is per filesystem: a failure on one does not refuse another, a pass on one does not vouch for another (SA 3575)", async () => {
+    const a = await mkdtemp(join(tmpdir(), "persist-028-selftest-a-"));
+    const b = await mkdtemp(join(tmpdir(), "persist-028-selftest-b-"));
+    await writeFile(join(a, "s.db"), Buffer.alloc(8192, 1));
+    await writeFile(join(b, "s.db"), Buffer.alloc(8192, 1));
+    // two directories on "different filesystems"
+    const lstatSync = fs.lstatSync;
+    jest.spyOn(fs, "lstatSync").mockImplementation(((p: string, ...rest: any[]) => {
+      const st = (lstatSync as any)(p, ...rest);
+      if (p === a) return { ...st, dev: 1001 };
+      if (p === b) return { ...st, dev: 1002 };
+      return st;
+    }) as any);
+    const seen: string[] = [];
+    setPagecacheSelfTestForTests(async (d) => (seen.push(d), d === b));
+    expect(await checkedVerifiedEviction(join(a, "s.db"))).toMatchObject({ verified: false, why: "page-cache helper self-test failed" });
+    const rb = await checkedVerifiedEviction(join(b, "s.db"));
+    expect((rb as any)?.why).not.toBe("page-cache helper self-test failed");
+    expect(seen).toEqual([a, b]); // each filesystem tested once, on its own dir
+    expect(await checkedVerifiedEviction(join(a, "s.db"))).toMatchObject({ why: "page-cache helper self-test failed" });
+    expect(seen).toEqual([a, b]); // a's failure is in its backoff; b's pass is kept
+    await rm(a, { recursive: true, force: true });
+    await rm(b, { recursive: true, force: true });
+  });
+  it("a directory that can't be examined is not verified", async () => {
+    let calls = 0;
+    setPagecacheSelfTestForTests(async () => (calls++, true));
+    expect(await checkedVerifiedEviction(join(tmpdir(), "persist-028-no-such-dir", "s.db"))).toMatchObject({
+      verified: false,
+      why: "lstat dir failed",
+    });
+    expect(calls).toBe(0);
+  });
+});
+
+describe("028 B-2: the startup check of the page-cache helper (B' v8 finding: it needs /usr/bin/python3)", () => {
+  afterEach(() => {
+    setPagecacheSelfTestForTests(undefined);
+    jest.restoreAllMocks();
+  });
+  it("a failure is a loud health state at start, and seeds the verifications' result for that filesystem", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "persist-028-startup-"));
+    let calls = 0;
+    setPagecacheSelfTestForTests(async () => (calls++, false));
+    expect(pagecacheHelperHealth()).toEqual({ state: "pending" });
+    expect(await startupPagecacheHelperCheck(dir)).toBe(false);
+    expect(pagecacheHelperHealth()).toMatchObject({ state: "failed" });
+    await writeFile(join(dir, "s.db"), Buffer.alloc(8192, 1));
+    expect(await checkedVerifiedEviction(join(dir, "s.db"))).toMatchObject({ verified: false, why: "page-cache helper self-test failed" });
+    expect(calls).toBe(1); // the same result, not a second self-test inside the backoff
+    await rm(dir, { recursive: true, force: true });
+  });
+  it("a pass is ok and kept", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "persist-028-startup-"));
+    let calls = 0;
+    setPagecacheSelfTestForTests(async () => (calls++, true));
+    expect(await startupPagecacheHelperCheck(dir)).toBe(true);
+    expect(pagecacheHelperHealth()).toMatchObject({ state: "ok" });
+    await writeFile(join(dir, "s.db"), Buffer.alloc(8192, 1));
+    const r = await checkedVerifiedEviction(join(dir, "s.db"));
+    expect((r as any)?.why).not.toBe("page-cache helper self-test failed");
+    expect(calls).toBe(1);
+    await rm(dir, { recursive: true, force: true });
+  });
+  it("a store dir that can't be examined is failed, not ok", async () => {
+    setPagecacheSelfTestForTests(async () => true);
+    expect(await startupPagecacheHelperCheck(join(tmpdir(), "persist-028-no-such-store"))).toBe(false);
+    expect(pagecacheHelperHealth()).toMatchObject({ state: "failed" });
+  });
+  it("the real self-test passes where /usr/bin/python3 exists (it does on this test host)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "persist-028-startup-real-"));
+    setPagecacheSelfTestForTests(undefined);
+    expect(fs.existsSync(PYTHON)).toBe(true);
+    expect(await startupPagecacheHelperCheck(dir)).toBe(true);
+    expect(pagecacheHelperHealth()).toMatchObject({ state: "ok" });
     await rm(dir, { recursive: true, force: true });
   });
 });
