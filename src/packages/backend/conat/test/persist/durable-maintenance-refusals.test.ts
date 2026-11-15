@@ -23,7 +23,8 @@ import {
   MaintenanceCompletionUnprovenError,
   withMaintenanceConnection,
 } from "@cocalc/backend/conat/persist-durability";
-import { runPersistMaintenanceWorker, workerOutcome } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
+import { runPersistMaintenanceWorker, WORKER_SOURCE, workerOutcome } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
+import { spawnSync } from "node:child_process";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { ownerOfLocalPath, resolveLocalPath } from "@cocalc/conat/persist/util";
@@ -361,6 +362,46 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
       const worker = fs.readFileSync(join(packages, "backend/conat/persist-maintenance/compact-worker.ts"), "utf8");
       expect(worker).toMatch(/(\/\/[^\n]*\n\s*)*const db = new DatabaseSync\(options\.sourcePath\);\s*phase = "source-open";\s*try \{\s*db\.exec\("PRAGMA busy_timeout=5000"\);\s*db\.prepare\("VACUUM INTO \?"\)\.run\(options\.outputPath\);\s*(\/\/[^\n]*\n\s*)*db\.exec\("PRAGMA wal_checkpoint\(TRUNCATE\)"\);\s*\} catch \(err\) \{[\s\S]{0,300}throw err;\s*\}\s*db\.close\(\);\s*phase = "source-closed";/);
       expect(worker).toMatch(/process\.stdout\.write\(JSON\.stringify\(\{ ok: false, phase, errcode \}\)\);/);
+    });
+    it("REVIEW-B2-WORKER-PHASE-1 (behavioural): the REAL worker whose READ-WRITE open itself throws reports before-open, and the armed runner DISARMS", async () => {
+      // SA 3411 / review advisory: fail exactly at the read-write
+      // DatabaseSync constructor.  A preload makes every non-readOnly open
+      // throw (the read-only inspection before it still works), and the
+      // worker source runs unchanged under it.
+      const dir = await mkdtemp(join(tmpdir(), "persist-028-worker-open-"));
+      try {
+        const source = join(dir, "s.db");
+        const db = new (require("node:sqlite").DatabaseSync)(source);
+        db.exec("CREATE TABLE t(x); INSERT INTO t VALUES (1)");
+        db.close();
+        const preload = join(dir, "fail-rw-open.js");
+        fs.writeFileSync(
+          preload,
+          `const m = require("node:sqlite"); const Orig = m.DatabaseSync;
+m.DatabaseSync = function (p, o) {
+  if (!(o && o.readOnly)) throw Object.assign(new Error("injected read-write open failure"), { code: "ERR_SQLITE_ERROR" });
+  return new Orig(p, o);
+};`,
+        );
+        const r = spawnSync(process.execPath, ["-r", preload, "-e", WORKER_SOURCE], {
+          input: JSON.stringify({ sourcePath: source, outputPath: join(dir, "out.db") }),
+          encoding: "utf8",
+          timeout: 30_000,
+        });
+        expect(JSON.parse(r.stdout)).toEqual({ ok: false, phase: "before-open", errcode: null });
+        const outcome = workerOutcome({ code: r.status, signal: r.signal, timedOut: false, timeoutMs: 30_000, stdout: r.stdout, stderr: r.stderr, sourcePath: source }) as any;
+        expect(outcome.error).toBeDefined();
+        expect(outcome.error).not.toBeInstanceOf(MaintenanceCompletionUnprovenError);
+        const calls: string[] = [];
+        const records = {
+          arm: () => calls.push("arm"), disarm: () => calls.push("disarm"),
+          poison: () => calls.push("poison"), poisonProject: () => calls.push("project"),
+        } as any;
+        await expect(runArmedMaintenanceWriteAsync(source, "P", "compact:vacuum-into", async () => { throw outcome.error; }, records)).rejects.toBe(outcome.error);
+        expect(calls).toEqual(["arm", "disarm"]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     });
     it("REVIEW-B2-WORKER-PHASE-1: the REAL worker failing before its read-write open reports before-open, and the armed runner DISARMS", async () => {
       const dir = await mkdtemp(join(tmpdir(), "persist-028-worker-phase-"));

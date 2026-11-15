@@ -11,7 +11,8 @@ import type {
   PersistMaintenancePageStats,
 } from "@cocalc/conat/persist/maintenance/types";
 
-const WORKER_SOURCE = String.raw`
+// (exported for the worker's own tests, which run it under a preload)
+export const WORKER_SOURCE = String.raw`
 const fs = require("node:fs");
 const os = require("node:os");
 const { DatabaseSync } = require("node:sqlite");
