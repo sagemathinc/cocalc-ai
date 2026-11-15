@@ -207,6 +207,8 @@ setInterval(() => {}, 1000);`,
     expect(markerCount()).toBe(MARKERS);
   }, BLOCKED_TIMEOUT_MS);
 
+  // (the rollback variant is refused at promote's checkpoint, BEFORE the
+  // rollback path: it pins the outcome under that config, not rollback code)
   for (const [label, promotionBarrierMs] of [
     ["", undefined],
     [" (the rollback variant: promotionBarrierMs -1)", -1],
