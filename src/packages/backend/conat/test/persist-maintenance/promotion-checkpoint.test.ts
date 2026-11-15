@@ -24,6 +24,10 @@ import {
 } from "@cocalc/backend/conat/test/persist-maintenance/helpers";
 
 const MARKERS = 50;
+// (028 B-2: the compaction worker's own checkpoint waits out its 5 s
+// busy_timeout behind the blocking reader before it refuses, so the two
+// blocked cases need more than jest's 5 s default)
+const BLOCKED_TIMEOUT_MS = 20_000;
 
 describe("promotion barrier checkpoint (finding 088)", () => {
   let root: string;
@@ -31,8 +35,8 @@ describe("promotion barrier checkpoint (finding 088)", () => {
 
   beforeEach(async () => {
     // (028 B-2, B2-M1: a maintained file's owner must be derivable, so the
-    // root lives under the persist root, as in coordinator.test.ts; this is
-    // the only change to #195's test in the merged tree)
+    // root lives under the persist root, as in coordinator.test.ts; this and
+    // BLOCKED_TIMEOUT_MS are the only changes to #195's test in the merged tree)
     mkdirSync(syncFiles.local, { recursive: true });
     root = await mkdtemp(join(syncFiles.local, "persist-maintenance-088-"));
     sourcePath = join(root, "source.db");
@@ -175,7 +179,7 @@ setInterval(() => {}, 1000);`,
     await killReader();
     coordinator.close();
     expect(markerCount()).toBe(MARKERS);
-  });
+  }, BLOCKED_TIMEOUT_MS);
 
   it("keeps every committed row when a promotion would roll back after a blocked checkpoint", async () => {
     // promotionBarrierMs -1 forces the rollback path: before the fix, the WAL
@@ -189,7 +193,7 @@ setInterval(() => {}, 1000);`,
     await killReader();
     coordinator.close();
     expect(markerCount()).toBe(MARKERS);
-  });
+  }, BLOCKED_TIMEOUT_MS);
 
   it("aborts the promotion while an idle connection in another process has the file open", async () => {
     // the checkpoint itself completes (nothing blocks it), so only the
