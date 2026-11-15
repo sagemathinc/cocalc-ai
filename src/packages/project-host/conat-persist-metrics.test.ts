@@ -179,6 +179,29 @@ describe("project-host conat-persist metric reader", () => {
       available: false,
       schema_version: 1,
     });
-    expect(result?.error).toBe("Error: connection refused private detail");
+    expect(result?.error).toBe("unavailable");
+  });
+
+  it("carries only a fixed reason for an unavailable sample, never the error's text", async () => {
+    const project = "aaaaaaaa-0890-4000-8000-000000000089";
+    const leak = `/mnt/cocalc/data/sync/projects/${project}/abc.db`;
+    const cases: [any, string][] = [
+      [async () => { throw new Error(`connection refused ${leak}`); }, "unavailable"],
+      [async () => { throw Object.assign(new Error(`timed out ${leak}`), { name: "TimeoutError" }); }, "timeout"],
+      [async () => ({ ok: false, status: 503, json: async () => ({}) }), "http-503"],
+      [async () => ({ ok: true, status: 200, json: async () => JSON.parse(`{"last_error": "${leak}`) }), "parse"],
+    ];
+    for (const [impl, reason] of cases) {
+      const result = await readConatPersistMetrics({
+        enabled: true,
+        port: 9202,
+        fetchImpl: jest.fn(impl) as any,
+      });
+      expect(result?.available).toBe(false);
+      expect(result?.error).toBe(reason);
+      const all = JSON.stringify(result);
+      expect(all).not.toContain(project);
+      expect(all).not.toContain("/mnt/cocalc");
+    }
   });
 });
