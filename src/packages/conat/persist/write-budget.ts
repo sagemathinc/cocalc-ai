@@ -152,14 +152,40 @@ export class OwnerBudget {
   snapshot(): { txn: number; bytes: number } {
     return { txn: this.txn.available(), bytes: this.bytes.available() };
   }
+  // the same state as a new bucket
+  isFull(): boolean {
+    return this.txn.available() >= this.txn.burst && this.bytes.available() >= this.bytes.burst;
+  }
 }
 
 const budgets = new Map<string, OwnerBudget>();
 let clock: () => number = Date.now;
 
+// SA 3351 A3: one bucket per owner ever seen would grow without bound; a
+// FULL bucket is the same state as a new one, so full buckets are dropped
+// (checked whenever the map has grown by SWEEP_EVERY since the last sweep).
+const SWEEP_EVERY = 1000;
+let sweepAt = SWEEP_EVERY;
+export function sweepFullBudgets(): number {
+  let dropped = 0;
+  for (const [owner, b] of budgets) {
+    if (b.isFull()) {
+      budgets.delete(owner);
+      dropped += 1;
+    }
+  }
+  sweepAt = budgets.size + SWEEP_EVERY;
+  return dropped;
+}
+
+export function budgetCount(): number {
+  return budgets.size;
+}
+
 export function ownerBudget(owner: string): OwnerBudget {
   let b = budgets.get(owner);
   if (b == null) {
+    if (budgets.size >= sweepAt) sweepFullBudgets();
     b = new OwnerBudget(
       owner === "host" ? hostBudgetLimits() : projectBudgetLimits(),
       clock,
@@ -184,6 +210,7 @@ export function rateLimitedError(owner: string): ConatError {
 // tests only
 export function resetBudgetsForTests(now?: () => number): void {
   budgets.clear();
+  sweepAt = SWEEP_EVERY;
   clock = now ?? Date.now;
   budgetStats.refused_total = 0;
 }

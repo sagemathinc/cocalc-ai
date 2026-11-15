@@ -182,7 +182,9 @@ export let projectRecovery:
 // they fail, disk-backed streams are refused with code
 // "persist_unavailable"; ephemeral streams still run.  Without it, nothing
 // is checked (in-browser and test contexts that set nothing else).
-export let startupCheck: (() => { ok: boolean; reason?: string }) | undefined =
+export let startupCheck:
+  | (() => { ok: boolean; reason?: string; overrides?: string[] })
+  | undefined =
   undefined;
 
 export let integrityCheck:
@@ -239,7 +241,7 @@ export function initContext(opts: {
   openBarrier?: PersistOpenBarrier;
   verifiedEviction?: (dbPath: string) => Promise<VerifiedEvictionResult>;
   integrityCheck?: (dbPath: string) => Promise<{ ok: boolean; why?: string }>;
-  startupCheck?: () => { ok: boolean; reason?: string };
+  startupCheck?: () => { ok: boolean; reason?: string; overrides?: string[] };
   projectRecovery?: (
     owner: string,
     storeRoot: string,

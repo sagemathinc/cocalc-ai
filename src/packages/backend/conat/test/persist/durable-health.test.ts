@@ -40,6 +40,8 @@ describe("028 B-3a: durability health", () => {
       host_healthy: true,
     });
     expect(typeof h.budget_refused_total).toBe("number");
+    // SA 3351 A1: the test setup's tmpfs override is visible
+    expect(h.startup_overrides).toEqual(["COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS"]);
     expect(typeof h.msgid_conflicts_total).toBe("number");
   });
 

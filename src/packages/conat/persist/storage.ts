@@ -6555,6 +6555,7 @@ export function getPersistentStreamDiagnostics() {
         const start = startupCheck?.();
         return start != null && !start.ok ? (start.reason ?? "refused") : null;
       })(),
+      startup_overrides: startupCheck?.()?.overrides ?? [],
       host_healthy:
         durabilityHealth.device_poisons_total == 0 &&
         !(startupCheck?.()?.ok === false),

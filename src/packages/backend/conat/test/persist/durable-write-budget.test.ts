@@ -26,6 +26,9 @@ import {
   MIN_TXN_BYTES,
   OwnerBudget,
   budgetStats,
+  budgetCount,
+  ownerBudget,
+  sweepFullBudgets,
   chargeFor,
   resetBudgetsForTests,
 } from "@cocalc/conat/persist/write-budget";
@@ -89,6 +92,25 @@ describe("028 B-3a: the bucket", () => {
     expect(b.fits(big)).toBe(false);
     t += 1000; // full again
     expect(b.fits(big)).toBe(true);
+  });
+});
+
+describe("028 B-3a: the per-owner map stays bounded (SA 3351 A3)", () => {
+  afterEach(() => resetBudgetsForTests());
+  it("full buckets (the same state as new ones) are dropped; a spent one is kept", () => {
+    let t = 1_800_000_000_000;
+    resetBudgetsForTests(() => t);
+    ownerBudget("spent").commit({ txn: 5, bytes: 4096 });
+    for (let i = 0; i < 1500; i++) ownerBudget(`full-${i}`);
+    // the sweep ran when the map reached 1000: the full ones went, the spent one stayed
+    expect(budgetCount()).toBeLessThan(1000);
+    expect(ownerBudget("spent").isFull()).toBe(false);
+    expect(sweepFullBudgets()).toBeGreaterThan(0);
+    expect(budgetCount()).toBe(1);
+    // once refilled it is full too, and goes at the next sweep
+    t += 3_600_000;
+    expect(sweepFullBudgets()).toBe(1);
+    expect(budgetCount()).toBe(0);
   });
 });
 

@@ -448,11 +448,27 @@ export function checkNofile(
   return undefined;
 }
 
-let startup: { ok: boolean; reason?: string } | undefined;
-export function persistStartupCheck(): { ok: boolean; reason?: string } {
+let startup: { ok: boolean; reason?: string; overrides?: string[] } | undefined;
+export function persistStartupCheck(): {
+  ok: boolean;
+  reason?: string;
+  overrides?: string[];
+} {
   if (startup == null) {
     const reason = checkPersistRunDir(persistRunDir()) ?? checkNofile();
-    startup = reason == null ? { ok: true } : { ok: false, reason };
+    // SA 3351 A1: the tmpfs override is for tests; on a host it is visible
+    // (diagnostics) and logged at start
+    const overrides =
+      process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS === "1"
+        ? ["COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS"]
+        : [];
+    if (overrides.length > 0) {
+      logger.warn(
+        "persist: the records root is NOT required to be on tmpfs (an override for tests; finding 028)",
+        { overrides },
+      );
+    }
+    startup = reason == null ? { ok: true, overrides } : { ok: false, reason, overrides };
     if (reason != null) {
       logger.error(
         "PERSIST ALERT (page): disk-backed persist streams are refused on this host until fixed (finding 028)",
