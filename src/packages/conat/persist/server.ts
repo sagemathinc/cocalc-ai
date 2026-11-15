@@ -595,7 +595,8 @@ export function server({
           });
         }
         // a write that is not a set/setMany runs in that order too
-        const ordered = <T>(fn: () => T): T => stream!.runOrdered(order, fn);
+        const ordered = <T>(fn: () => T): T =>
+          order == null ? fn() : stream!.runOrdered(order, fn);
         if (request.cmd == "set") {
           // acked once the batch it commits in is durable (028 group commit)
           respondSync(

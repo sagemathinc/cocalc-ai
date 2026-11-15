@@ -22,6 +22,9 @@ const CONAT_DIST = join(PACKAGES, "conat", "dist");
 const CHILD = `
 const [dist, conatDist, mode, path] = process.argv.slice(2);
 const persist = require(dist + "/conat/persist.js");
+// 028 AS-B2-SYNC-OWNER: a direct open needs an owner (no persist server here)
+require(require.resolve("@cocalc/conat/persist/context", { paths: [dist] }))
+  .setUnregisteredStreamOwnerForTests(() => "host");
 const storage = require(conatDist + "/persist/storage.js");
 persist.installPersistExitGuard();
 if (mode === "flush" || mode === "flush-owned") persist.installPersistSignalFlush();

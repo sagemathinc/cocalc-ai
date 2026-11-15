@@ -183,11 +183,11 @@ describe("028 B-3a AS-B3-ORDER-1: the storage, with a connection's order state",
     const st1 = new WriteOrderState();
     const st2 = new WriteOrderState();
     expect(await code(s.setQueued(A(), { state: st1, wseq: 1, wfloor: 1 }))).toBe("rate_limited");
+    limits(1e12); // the refill: only the order can refuse now
     // connection 2 sends the same numbers, admitted on its own
     expect(await code(s.setQueued(B(), { state: st2, wseq: 1, wfloor: 1 }))).toBe("ok");
     expect(await code(s.setQueued(B(), { state: st2, wseq: 2, wfloor: 2 }))).toBe("ok");
     // connection 1's fence is still there
-    limits(1e12);
     expect(await code(s.setQueued(B(), { state: st1, wseq: 2, wfloor: 1 }))).toBe("rate_limited");
   });
 });
@@ -274,6 +274,7 @@ describe("028 B-3a AS-B3-ORDER-1: the client", () => {
     const pA = write();
     await until(() => sends.length == 1);
     sends[0].respond(false);
+    await new Promise((r) => setTimeout(r, 20)); // A's refusal processed
     const pC = write(); // issued while A waits to be resent
     await until(() => sends.length == 2);
     expect(sends[1].wseq).toBe(1); // A's resend, not C
@@ -292,6 +293,7 @@ describe("028 B-3a AS-B3-ORDER-1: the client", () => {
     const pA = write();
     await until(() => sends.length == 1);
     sends[0].respond(false);
+    await new Promise((r) => setTimeout(r, 20)); // A's refusal processed
     const pB = write(); // waits behind A
     // refuse every send of A until A gives up
     let answered = 1;
