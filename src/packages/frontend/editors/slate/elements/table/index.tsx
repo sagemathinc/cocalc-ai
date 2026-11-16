@@ -72,7 +72,12 @@ export const StaticElement = ({ attributes, children, element }) => {
       return (
         <th
           {...attributes}
-          style={{ textAlign: element.align ?? "left" } as CSS}
+          style={
+            {
+              ...getStyles().cellStyle,
+              textAlign: element.align ?? "left",
+            } as CSS
+          }
         >
           {children}
         </th>
@@ -81,7 +86,12 @@ export const StaticElement = ({ attributes, children, element }) => {
       return (
         <td
           {...attributes}
-          style={{ textAlign: element.align ?? "left" } as CSS}
+          style={
+            {
+              ...getStyles().cellStyle,
+              textAlign: element.align ?? "left",
+            } as CSS
+          }
         >
           {children}
         </td>
