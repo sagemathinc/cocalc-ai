@@ -12,7 +12,8 @@ export default function getStyles(focused: boolean = false) {
       margin: "5px 0",
     },
     cellStyle: {
-      border: "1px solid var(--cocalc-ui-border, #d9d9d9)",
+      border:
+        "1px solid var(--cocalc-slate-table-border, var(--cocalc-ui-border, #d9d9d9))",
       padding: "4px 12px",
       minWidth: "3em",
       height: "1.8em",

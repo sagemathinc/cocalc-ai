@@ -14,7 +14,10 @@ describe("Markdown table styles", () => {
 
   it("draw a grid in the theme's border color, with room in empty cells", () => {
     const { cellStyle } = getStyles();
-    expect(cellStyle.border).toContain("var(--cocalc-ui-border");
+    // a slate-specific override (--cocalc-slate-table-border) still wins
+    expect(cellStyle.border).toContain(
+      "var(--cocalc-slate-table-border, var(--cocalc-ui-border",
+    );
     expect(cellStyle.minWidth).toBeTruthy();
     expect(cellStyle.height).toBeTruthy();
   });
