@@ -40,6 +40,7 @@ import { stat } from "node:fs/promises";
 import { Worker } from "node:worker_threads";
 
 import getLogger from "@cocalc/backend/logger";
+import { DATABASE_SYNC_SOURCE } from "@cocalc/backend/sqlite";
 
 const logger = getLogger("backend:sqlite-checkpoint");
 
@@ -98,7 +99,7 @@ export interface CheckpointResult {
 
 const WORKER_SOURCE = `
 const { parentPort } = require("node:worker_threads");
-const { DatabaseSync } = require("node:sqlite");
+const DatabaseSync = ${DATABASE_SYNC_SOURCE};
 const connections = new Map();
 parentPort.on("message", (msg) => {
   if (msg?.type === "forget") {

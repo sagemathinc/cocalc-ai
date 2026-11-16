@@ -563,6 +563,7 @@ const harnessIdle = new HarnessIdleDisposer<AcpAgent>({
     return true;
   },
   dispose: async (agent) => await agent.dispose?.(),
+  busy: async (agent) => (await agent.hasBackgroundWork?.()) ?? false,
   onError: (key, err, attempt) =>
     logger.warn("failed to dispose idle ACP harness agent", {
       key,

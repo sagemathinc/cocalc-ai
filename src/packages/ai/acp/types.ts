@@ -99,5 +99,8 @@ export interface AcpAgent {
     backgroundTerminals: number;
     activeDescendants: number;
   };
+  /** Work the agent started in a shell is still running: an idle agent is
+   * not disposed while it is. */
+  hasBackgroundWork?(): Promise<boolean>;
   dispose?(): Promise<void>;
 }

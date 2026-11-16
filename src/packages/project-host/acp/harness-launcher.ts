@@ -53,6 +53,10 @@ import {
 } from "./site-funded-claude-turns";
 import type { CredentialHttpRelay } from "./credential-http-relay";
 import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
+import {
+  claudeSubscriptionRuntime,
+  launchClaudeSubscriptionInProject,
+} from "./claude-subscription-in-project";
 import { claudeCodeToolsDir } from "./claude-code-tools";
 import {
   startClaudeRestrictedEgress,
@@ -114,11 +118,20 @@ export async function launchHarnessInProject(
       candidate?.package.version !== profile.revision
     )
       throw Error("Unsupported Claude subscription profile");
-    return await launchClaudeSubscriptionController(binding, {
+    const sessionConversation = {
       path,
       threadId,
       ...(conversation.sessionId ? { sessionId: conversation.sessionId } : {}),
-    });
+    };
+    if ((await claudeSubscriptionRuntime()) === "project")
+      return await launchClaudeSubscriptionInProject(
+        binding,
+        sessionConversation,
+      );
+    return await launchClaudeSubscriptionController(
+      binding,
+      sessionConversation,
+    );
   }
   const harnessCommand = resolveHarnessCommand(
     profile,

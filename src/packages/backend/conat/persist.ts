@@ -9,7 +9,7 @@ additional persist server:
 */
 
 import "./index";
-import sqlite from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import { initContext } from "@cocalc/conat/persist/context";
 const {
   zstdCompressSync,
@@ -29,7 +29,7 @@ import {
 const zstdDecompressAsync = promisify(zstdDecompress);
 
 initContext({
-  sqlite,
+  sqlite: { DatabaseSync },
   compress: zstdCompressSync,
   // stored data is not trusted: always limit the output
   decompress: (data: Buffer, maxOutputLength?: number) =>

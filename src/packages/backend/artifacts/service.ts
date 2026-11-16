@@ -2,7 +2,7 @@
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "@cocalc/backend/sqlite";
 import type {
   ArtifactCatalogItem,
   ArtifactCatalogSnapshot,
