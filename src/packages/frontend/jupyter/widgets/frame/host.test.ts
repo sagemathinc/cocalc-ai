@@ -86,6 +86,14 @@ describe("applyTheme", () => {
     expect(style.getPropertyValue("--jp-border-color1")).toBe(
       "rgb(90, 90, 90)",
     );
+    // tag input, selected tab and open accordion header text
+    expect(style.getPropertyValue("--jp-ui-font-color0")).toBe(
+      "rgb(230, 230, 230)",
+    );
+    // inactive tabs and closed accordion headers: dimmed text
+    expect(style.getPropertyValue("--jp-ui-font-color2")).toBe(
+      "color-mix(in srgb, rgb(230, 230, 230) 70%, transparent)",
+    );
     expect(style.getPropertyValue("--shell-text")).toBe("rgb(230, 230, 230)");
     expect(style.colorScheme).toBe("dark");
   });
