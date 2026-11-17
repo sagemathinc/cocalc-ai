@@ -134,10 +134,14 @@ The wrapper is intentionally conservative:
 - it calls `cocalc host upgrade --all-online --wait` for project hosts, and
   fails if the upgrade reports `"ok": false`
 - `--wait` can return before every host reports its new software, so it then
-  re-reads the hosts' software state until it is unchanged on two further
-  reads in a row (`--host-settle-tries`, `--host-settle-interval`,
+  re-reads the online hosts' software state until it is unchanged on two
+  further reads in a row (`--host-settle-tries`, `--host-settle-interval`,
   `--host-settle-confirms`; `--host-settle-tries 0` keeps the old single
   read). Every read is kept in the report directory
+- pass `--expect-host-version <version>` to also require every online host
+  to report exactly that version; a stable old or partly upgraded fleet then
+  fails. Without it, only stability is checked, and
+  `project-host-target.txt` records `host_target_verified=no`
 - it runs `ssh`/`scp` non-interactively with a 30 second connect timeout and
   keepalives, so a stalled connection fails instead of hanging; set
   `BAY_UPGRADE_SSH_OPTS` to use other options

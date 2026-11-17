@@ -44,6 +44,10 @@ CLI_PATH="${SRC_ROOT}/packages/cli/dist/bin/cocalc.js"
 HOST_SETTLE_TRIES=20
 HOST_SETTLE_INTERVAL=30
 HOST_SETTLE_CONFIRMS=2
+# With --expect-host-version, every online host must report exactly this
+# version before the state counts as settled.
+HOST_EXPECT_VERSION=""
+HOST_ONLINE_MINUTES=10
 
 # Non-interactive ssh with a bounded connect and keepalives, so a stalled
 # connection fails instead of hanging the deploy. Override with
@@ -143,6 +147,11 @@ Options:
   --host-settle-interval <s>  seconds between those reads (default: 30)
   --host-settle-confirms <n>  unchanged reads required after the first
                               (default: 2)
+  --expect-host-version <v>   also require every online host (a heartbeat
+                              in the last 10 minutes) to report exactly
+                              version v; without it only stability is
+                              checked and the report says
+                              host_target_verified=no
   --keep-remote-artifacts     leave uploaded /tmp artifacts on the VM
   --cleanup-local-bundle      remove the local bundle after upload
   -h, --help                  show help
@@ -277,6 +286,8 @@ parse_args() {
         HOST_SETTLE_INTERVAL="$2"; shift 2 ;;
       --host-settle-confirms)
         HOST_SETTLE_CONFIRMS="$2"; shift 2 ;;
+      --expect-host-version)
+        HOST_EXPECT_VERSION="$2"; shift 2 ;;
       --keep-remote-artifacts)
         KEEP_REMOTE_ARTIFACTS=1; shift ;;
       --cleanup-local-bundle)
@@ -1058,39 +1069,44 @@ upgrade_project_hosts() {
   fi
 }
 
-# settle_confirm <label> <file prefix> <command...>
+# settle_confirm <label> <file prefix> <predicate> <command...>
 # Runs the command up to HOST_SETTLE_TRIES times, HOST_SETTLE_INTERVAL seconds
-# apart. Every read is kept as <prefix>.read-<n> and logged with its exit code
-# and sha256. A read counts only if the command exited 0. Returns 0 once
-# HOST_SETTLE_CONFIRMS reads in a row are byte-identical to the read before
-# them, with the settled output copied to <prefix>.txt; returns 1 if that never
-# happens. A failed read resets the run, so a flapping state never passes.
+# apart, and keeps every read as <prefix>.read-<n>. A read is GOOD only if the
+# command exited 0 and `<predicate> <read file>` exits 0 (use `true` for no
+# predicate). Returns 0 once HOST_SETTLE_CONFIRMS good reads in a row are
+# byte-identical to the good read before them, with the settled output copied
+# to <prefix>.txt. Any read that is not good resets the run, so neither a
+# flapping state nor a stable wrong state passes. Returns 1 if it never settles,
+# and 2 if its own evidence (the settle log or the copy) cannot be written.
+# Every read is logged to <prefix>.settle.log with its rc, predicate rc and sha.
 settle_confirm() {
-  local label="$1" prefix="$2"
-  shift 2
-  local tries="$HOST_SETTLE_TRIES" i rc sum prev="" same=0
+  local label="$1" prefix="$2" predicate="$3"
+  shift 3
+  local tries="$HOST_SETTLE_TRIES" i rc prc sum prev="" same=0
   [[ "$tries" -ge 1 ]] || tries=1
   for ((i = 1; i <= tries; i++)); do
     rc=0
     "$@" >"${prefix}.read-${i}" 2>&1 || rc=$?
-    sum="$(sha256sum <"${prefix}.read-${i}")" || die "sha256sum failed on ${prefix}.read-${i}"
+    sum="$(sha256sum <"${prefix}.read-${i}")" || return 2
     sum="${sum%% *}"
-    if [[ "$rc" -ne 0 ]]; then
+    prc=-
+    if [[ "$rc" -eq 0 ]]; then
+      prc=0
+      "$predicate" "${prefix}.read-${i}" || prc=$?
+    fi
+    if [[ "$rc" -ne 0 || "$prc" -ne 0 ]]; then
       prev=""; same=0
     elif [[ "$sum" == "$prev" ]]; then
       same=$((same + 1))
     else
       prev="$sum"; same=0
     fi
-    printf '%s read %d/%d rc=%d sha256=%s unchanged=%d/%d\n' \
-      "$label" "$i" "$tries" "$rc" "$sum" "$same" "$HOST_SETTLE_CONFIRMS" \
-      | tee -a "${prefix}.settle.log"
-    if [[ "$HOST_SETTLE_TRIES" -eq 0 && "$rc" -eq 0 ]]; then
-      cp "${prefix}.read-${i}" "${prefix}.txt"
-      return 0
-    fi
-    if [[ "$same" -ge "$HOST_SETTLE_CONFIRMS" ]]; then
-      cp "${prefix}.read-${i}" "${prefix}.txt"
+    printf '%s read %d/%d rc=%d predicate=%s sha256=%s unchanged=%d/%d\n' \
+      "$label" "$i" "$tries" "$rc" "$prc" "$sum" "$same" "$HOST_SETTLE_CONFIRMS" \
+      | tee -a "${prefix}.settle.log" || return 2
+    if [[ "$HOST_SETTLE_TRIES" -eq 0 && "$rc" -eq 0 && "$prc" == 0 ]] \
+      || [[ "$same" -ge "$HOST_SETTLE_CONFIRMS" ]]; then
+      cp "${prefix}.read-${i}" "${prefix}.txt" || return 2
       return 0
     fi
     if [[ "$i" -lt "$tries" ]]; then
@@ -1100,16 +1116,30 @@ settle_confirm() {
   return 1
 }
 
+# Online = a heartbeat in the last HOST_ONLINE_MINUTES minutes: the hosts that
+# `host upgrade --all-online` upgrades.
 read_project_host_software() {
-  remote_psql "-Atq" <<'SQL'
+  remote_psql "-Atq -v ON_ERROR_STOP=1 -v minutes=${HOST_ONLINE_MINUTES}" <<'SQL'
 SELECT
   name || '|' ||
   COALESCE(version, '') || '|' ||
   COALESCE((metadata->'software')::text, '')
 FROM project_hosts
 WHERE deleted IS NULL
+  AND last_seen > NOW() - make_interval(mins => :minutes)
 ORDER BY name;
 SQL
+}
+
+# hosts_at_expected_version <read file>: exit 0 only if the read has at least
+# one host and every host's version is exactly HOST_EXPECT_VERSION. Without
+# --expect-host-version there is no target to check, and it always passes.
+hosts_at_expected_version() {
+  [[ -n "$HOST_EXPECT_VERSION" ]] || return 0
+  awk -F'|' -v want="$HOST_EXPECT_VERSION" '
+    NF < 2 || $2 != want { bad = 1 }
+    END { exit (NR == 0 || bad) ? 1 : 0 }
+  ' "$1"
 }
 
 verify_project_hosts() {
@@ -1117,10 +1147,21 @@ verify_project_hosts() {
     log "Skip project host software verification"
     return 0
   fi
-  log "Wait for the project host software state to settle"
+  if [[ -n "$HOST_EXPECT_VERSION" ]]; then
+    log "Wait until every online host reports ${HOST_EXPECT_VERSION}, then confirm"
+  else
+    log "Wait for the project host software state to settle (no --expect-host-version: the target version is NOT checked)"
+  fi
+  local rc=0
   settle_confirm project-host-software "${REPORT_DIR}/project-host-software-settle" \
-    read_project_host_software \
-    || die "project host software state did not settle after ${HOST_SETTLE_TRIES} reads; see ${REPORT_DIR}/project-host-software-settle.*"
+    hosts_at_expected_version read_project_host_software || rc=$?
+  case "$rc" in
+    0) ;;
+    2) die "could not write the settle evidence under ${REPORT_DIR}" ;;
+    *) die "project host software did not settle${HOST_EXPECT_VERSION:+ at ${HOST_EXPECT_VERSION}} after ${HOST_SETTLE_TRIES} reads; see ${REPORT_DIR}/project-host-software-settle.*" ;;
+  esac
+  printf 'host_target_verified=%s\n' "$([[ -n "$HOST_EXPECT_VERSION" ]] && echo yes || echo no)" \
+    | tee "${REPORT_DIR}/project-host-target.txt"
   log "Verify project host software state"
   remote_psql "-Atq" <<'SQL' | tee "${REPORT_DIR}/project-host-software.txt"
 SELECT
