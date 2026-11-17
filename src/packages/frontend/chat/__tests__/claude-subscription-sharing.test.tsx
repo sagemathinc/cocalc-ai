@@ -9,6 +9,7 @@ import {
 
 let projectMap: any;
 let runtime: string | undefined;
+let loaded = true;
 let readFails = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -25,7 +26,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
           ? // only the public site-settings name: the one /customize sends
             {
               get: (key: string) =>
-                key === "claude_subscription_runtime" ? runtime : undefined,
+                key === "claude_subscription_runtime"
+                  ? runtime
+                  : key === "_is_configured"
+                    ? loaded
+                    : undefined,
             }
           : undefined,
   },
@@ -54,6 +59,7 @@ let answer: "ok" | "cancel";
 beforeEach(() => {
   localStorage.clear();
   runtime = "project";
+  loaded = true;
   readFails = false;
   answer = "ok";
   confirmSpy = jest.spyOn(Modal, "confirm").mockImplementation((props: any) => {
@@ -147,6 +153,24 @@ test("an unknown or unset runtime is the controller, as on the backend: no warni
     expect(await confirm(subscription, true)).toBe(true);
   }
   expect(confirmSpy).not.toHaveBeenCalled();
+});
+
+test("before /customize has loaded: shown with a collaborator (fails toward showing)", async () => {
+  users(ME, OTHER);
+  loaded = false;
+  for (const value of [undefined, "controller"]) {
+    runtime = value;
+    expect(
+      claudeSubscriptionSharingRisk({ accountId: ME, projectId: PROJECT }).show,
+    ).toBe(true);
+  }
+  expect(await confirm()).toBe(true);
+  expect(confirmSpy).toHaveBeenCalledTimes(1);
+  // alone in the project: still nothing to warn about
+  users(ME);
+  expect(
+    claudeSubscriptionSharingRisk({ accountId: ME, projectId: PROJECT }).show,
+  ).toBe(false);
 });
 
 test("the project runtime and no project id: shown, and never remembered", async () => {

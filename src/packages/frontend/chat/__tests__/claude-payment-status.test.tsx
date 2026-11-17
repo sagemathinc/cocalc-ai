@@ -26,7 +26,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       name === "customize"
         ? {
             get: (key: string) =>
-              key === "claude_subscription_runtime" ? mockRuntime : undefined,
+              key === "claude_subscription_runtime"
+                ? mockRuntime
+                : key === "_is_configured"
+                  ? true
+                  : undefined,
           }
         : name === "projects"
           ? {

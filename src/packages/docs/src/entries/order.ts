@@ -111,6 +111,7 @@ export const DOCS_ENTRY_IDS = [
   "hosts.logs",
   "hosts.exam-scratchpads",
   "projects.collaborators",
+  "projects.collaborator-trust",
   "collaboration.chat",
   "collaboration.mentions",
   "files.timetravel",

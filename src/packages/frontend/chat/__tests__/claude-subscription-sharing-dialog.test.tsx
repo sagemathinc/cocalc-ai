@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import { fromJS } from "immutable";
 import {
-  SHARING_DOCS_SLUG,
+  COLLABORATORS_DOCS_SLUG,
   SHARING_TEXT,
   SHARING_TITLE,
   confirmClaudeSubscriptionSharing,
@@ -31,7 +31,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
         : name === "customize"
           ? {
               get: (key: string) =>
-                key === "claude_subscription_runtime" ? "project" : undefined,
+                key === "claude_subscription_runtime"
+                  ? "project"
+                  : key === "_is_configured"
+                    ? true
+                    : undefined,
             }
           : undefined,
   },
@@ -70,7 +74,7 @@ test("the warning is a named dialog with the short text and a docs link, Escape 
     name: "Learn more about shared projects",
   });
   expect(more.getAttribute("href")).toMatch(
-    new RegExp(`/docs/${SHARING_DOCS_SLUG}$`),
+    new RegExp(`/docs/${COLLABORATORS_DOCS_SLUG}$`),
   );
   expect(more.getAttribute("target")).toBe("_blank");
   expect(

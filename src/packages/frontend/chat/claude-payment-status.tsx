@@ -177,8 +177,10 @@ export function ClaudePaymentStatus({
   onConfigure: () => void;
 }) {
   const accountId = useTypedRedux("account", "account_id");
-  // subscribed, so a collaborator added or removed updates the help link
+  // subscribed, so a collaborator added or removed, or the site settings
+  // loading, updates the help link
   useTypedRedux("projects", "project_map");
+  useTypedRedux("customize", "_is_configured");
   const [, setVersion] = useState(0);
   useEffect(() => {
     const update = () => setVersion((value) => value + 1);
