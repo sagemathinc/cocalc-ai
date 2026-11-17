@@ -22,7 +22,11 @@ import {
 } from "./claude-pool";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { ClaudeUsageLimitWarning } from "./claude-credential-list";
-import { ClaudeSubscriptionSharingBanner } from "./claude-subscription-sharing";
+import { DocsLink } from "@cocalc/frontend/docs/link";
+import {
+  SHARING_DOCS_SLUG,
+  claudeSubscriptionSharingRisk,
+} from "./claude-subscription-sharing";
 
 const CLAUDE_CREDENTIALS_EVENT = "cocalc:claude-credentials";
 const CLAUDE_CREDENTIALS_MAX_AGE_MS = 60_000;
@@ -173,6 +177,8 @@ export function ClaudePaymentStatus({
   onConfigure: () => void;
 }) {
   const accountId = useTypedRedux("account", "account_id");
+  // subscribed, so a collaborator added or removed updates the help link
+  useTypedRedux("projects", "project_map");
   const [, setVersion] = useState(0);
   useEffect(() => {
     const update = () => setVersion((value) => value + 1);
@@ -194,21 +200,28 @@ export function ClaudePaymentStatus({
       ? credential.credentialId
       : undefined;
   const pool = !!readClaudePoolSelection({ accountId, projectId, threadKey });
+  const sharedProject =
+    (pool || credential?.mode === "account-subscription") &&
+    claudeSubscriptionSharingRisk({ accountId, projectId }).show;
   return (
-    <>
-      {(pool || credential?.mode === "account-subscription") && (
-        <ClaudeSubscriptionSharingBanner
-          accountId={accountId}
-          projectId={projectId}
-        />
-      )}
-      <PaymentStatus
-        key={JSON.stringify([accountId, projectId, credential, pool])}
-        credentialId={credentialId}
-        mode={pool ? CLAUDE_POOL_VALUE : (credential?.mode ?? "project-secret")}
-        onConfigure={onConfigure}
-      />
-    </>
+    <PaymentStatus
+      key={JSON.stringify([accountId, projectId, credential, pool])}
+      credentialId={credentialId}
+      mode={pool ? CLAUDE_POOL_VALUE : (credential?.mode ?? "project-secret")}
+      onConfigure={onConfigure}
+      sharedProjectHelp={sharedProject ? projectId : undefined}
+    />
+  );
+}
+
+/** A link to the docs about using a subscription in a shared project. */
+function SharedProjectHelp({ projectId }: { projectId: string }) {
+  return (
+    <div style={{ marginTop: 8 }}>
+      <DocsLink projectId={projectId} slug={SHARING_DOCS_SLUG}>
+        Using your subscription in a shared project
+      </DocsLink>
+    </div>
   );
 }
 
@@ -216,10 +229,13 @@ function PaymentStatus({
   credentialId,
   mode,
   onConfigure,
+  sharedProjectHelp,
 }: {
   credentialId?: string;
   mode: string;
   onConfigure: () => void;
+  /** The project id, when the shared-project docs link applies there. */
+  sharedProjectHelp?: string;
 }) {
   const [open, setOpen] = useState(false);
   // Counts openings: the hidden popover keeps its content mounted, so a
@@ -303,6 +319,9 @@ function PaymentStatus({
                   Each turn uses one of your Claude subscriptions; the
                   conversation shows which.
                 </Typography.Paragraph>
+                {sharedProjectHelp && (
+                  <SharedProjectHelp projectId={sharedProjectHelp} />
+                )}
               </div>
             ) : subscription ? (
               <>
@@ -348,6 +367,9 @@ function PaymentStatus({
                 >
                   View usage on Claude
                 </a>
+                {sharedProjectHelp && (
+                  <SharedProjectHelp projectId={sharedProjectHelp} />
+                )}
               </>
             ) : mode === "site-funded" ? (
               // Opening the details reloads the allowance.

@@ -13,15 +13,31 @@ import {
   writeHarnessCredentialSelection,
 } from "../harness-credential-selection";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { fromJS } from "immutable";
 
+// the controller runtime unless a test says otherwise: no shared-project link
+let mockRuntime = "controller";
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => "account-a",
   useAccountOtherSetting: () => undefined,
   redux: {
     getActions: () => ({ erase_active_key_handler: jest.fn() }),
-    // the controller runtime: no collaborator warning in these tests
     getStore: (name: string) =>
-      name === "customize" ? { get: () => "controller" } : undefined,
+      name === "customize"
+        ? {
+            get: (key: string) =>
+              key === "claude_subscription_runtime" ? mockRuntime : undefined,
+          }
+        : name === "projects"
+          ? {
+              getIn: (path: string[]) =>
+                fromJS({
+                  "project-a": {
+                    users: { "account-a": {}, "account-b": {} },
+                  },
+                }).getIn(path.slice(1)),
+            }
+          : undefined,
   },
 }));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
@@ -61,6 +77,7 @@ beforeEach(() => {
   localStorage.clear();
   jest.clearAllMocks();
   clearClaudeCredentialsForTests();
+  mockRuntime = "controller";
 });
 
 test("payment status shows saved subscription limits on focus and dismisses with Escape", async () => {
@@ -292,4 +309,47 @@ test("an Auto agent's footer says Auto, and its details summarize the pool", asy
   expect(
     await screen.findByText(/1 of 1 subscription with room now/),
   ).toBeTruthy();
+});
+
+test("in a shared project under the project runtime, the subscription details link to the docs", async () => {
+  choose("account-subscription");
+  listCredentials.mockResolvedValue(credential({}));
+  const { unmount } = render(
+    <ClaudePaymentStatus
+      projectId="project-a"
+      threadKey="thread-a"
+      onConfigure={jest.fn()}
+    />,
+  );
+  // the controller runtime (the default): no link, and no banner either
+  let button = await screen.findByRole("button", {
+    name: /payment settings/,
+  });
+  act(() => button.focus());
+  await screen.findByText(/View usage on Claude/);
+  expect(
+    screen.queryByRole("link", {
+      name: "Using your subscription in a shared project",
+    }),
+  ).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  unmount();
+  mockRuntime = "project";
+  render(
+    <ClaudePaymentStatus
+      projectId="project-a"
+      threadKey="thread-a"
+      onConfigure={jest.fn()}
+    />,
+  );
+  button = await screen.findByRole("button", { name: /payment settings/ });
+  act(() => button.focus());
+  const link = await screen.findByRole("link", {
+    name: "Using your subscription in a shared project",
+  });
+  expect(link.getAttribute("href")).toMatch(
+    /\/docs\/ai\/claude-subscription-in-project$/,
+  );
+  // still no banner: the only prompt is the first-turn dialog
+  expect(screen.queryByRole("alert")).toBeNull();
 });
