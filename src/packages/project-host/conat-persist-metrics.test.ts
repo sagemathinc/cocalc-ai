@@ -105,6 +105,38 @@ describe("project-host conat-persist metric reader", () => {
     });
   });
 
+  it("carries only a fixed class for the maintenance error, never its text", () => {
+    const project = "aaaaaaaa-0890-4000-8000-000000000089";
+    const path = `/mnt/cocalc/data/sync/projects/${project}/abc.db`;
+    for (const [text, cls] of [
+      [`persist maintenance write not proven complete: ${path}: busy`, "unproven"],
+      [`promotion barrier: WAL checkpoint incomplete (busy=1 log=3 checkpointed=0) ${path}`, "checkpoint-incomplete"],
+      [`fsync ${path}: EIO`, "fsync"],
+      [`SQLite maintenance worker timed out after 60000ms ${path}`, "timeout"],
+      [`persist maintenance open refused: the stream is poisoned: ${path}`, "refused"],
+      [`something else entirely at ${path}`, "other"],
+    ] as const) {
+      const summary = summarizeConatPersistDiagnostics(
+        {
+          ...DIAGNOSTICS,
+          conat: {
+            ...DIAGNOSTICS.conat,
+            persistence: {
+              ...DIAGNOSTICS.conat.persistence,
+              maintenance: { enabled: true, last_error: text },
+            },
+          },
+        },
+        5,
+      );
+      expect(summary.maintenance_last_error).toBe(cls);
+      const all = JSON.stringify(summary);
+      expect(all).not.toContain(project);
+      expect(all).not.toContain("/mnt/cocalc");
+      expect(all).not.toContain("abc.db");
+    }
+  });
+
   it("fetches loopback diagnostics and suppresses collection when disabled", async () => {
     const fetchImpl = jest.fn(async () => ({
       ok: true,
@@ -147,6 +179,29 @@ describe("project-host conat-persist metric reader", () => {
       available: false,
       schema_version: 1,
     });
-    expect(result?.error).toBe("Error: connection refused private detail");
+    expect(result?.error).toBe("unavailable");
+  });
+
+  it("carries only a fixed reason for an unavailable sample, never the error's text", async () => {
+    const project = "aaaaaaaa-0890-4000-8000-000000000089";
+    const leak = `/mnt/cocalc/data/sync/projects/${project}/abc.db`;
+    const cases: [any, string][] = [
+      [async () => { throw new Error(`connection refused ${leak}`); }, "unavailable"],
+      [async () => { throw Object.assign(new Error(`timed out ${leak}`), { name: "TimeoutError" }); }, "timeout"],
+      [async () => ({ ok: false, status: 503, json: async () => ({}) }), "http-503"],
+      [async () => ({ ok: true, status: 200, json: async () => JSON.parse(`{"last_error": "${leak}`) }), "parse"],
+    ];
+    for (const [impl, reason] of cases) {
+      const result = await readConatPersistMetrics({
+        enabled: true,
+        port: 9202,
+        fetchImpl: jest.fn(impl) as any,
+      });
+      expect(result?.available).toBe(false);
+      expect(result?.error).toBe(reason);
+      const all = JSON.stringify(result);
+      expect(all).not.toContain(project);
+      expect(all).not.toContain("/mnt/cocalc");
+    }
   });
 });

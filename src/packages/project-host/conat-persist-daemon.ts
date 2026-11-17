@@ -5,7 +5,10 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
-import { drainPersistStreamReleaseQueue } from "@cocalc/conat/persist/server";
+import {
+  flushAllPersistWrites,
+  installPersistExitGuard,
+} from "@cocalc/backend/conat/persist";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { startStandaloneProjectHostConatPersist } from "./conat-persist";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
@@ -19,6 +22,8 @@ export interface ProjectHostConatPersistDaemonContext {
 }
 
 export async function main(): Promise<ProjectHostConatPersistDaemonContext> {
+  // 028 E-1: a natural exit must not close (and checkpoint) the disk streams
+  installPersistExitGuard();
   const stopEventLoopStallMonitor = startEventLoopStallMonitor({
     loggerName: "project-host:conat-persist-daemon:event-loop-stalls",
     label: "project-host conat persist daemon",
@@ -50,7 +55,11 @@ export async function main(): Promise<ProjectHostConatPersistDaemonContext> {
     closed = true;
     try {
       await Promise.all([persistServer.end(), boardPersistServer.end()]);
-      await drainPersistStreamReleaseQueue();
+      // 028 (SA F): commit what is queued (each COMMIT is durable), then the
+      // process exits WITHOUT closing any stream: a close checkpoints, which
+      // takes long on a spot VM's grace period and would also checkpoint a
+      // poisoned file.  Every WAL is recovered at the next open.
+      flushAllPersistWrites();
     } finally {
       fenceService.close();
       maintenance?.close();

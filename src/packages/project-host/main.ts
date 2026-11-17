@@ -27,7 +27,10 @@ import {
 } from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
 import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
-import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import {
+  server as createPersistServer,
+  installPersistExitGuard,
+} from "@cocalc/backend/conat/persist";
 import { installProjectPersistVolumes } from "./persist-volume";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { initPersistFenceService } from "@cocalc/conat/persist/fence";
@@ -383,6 +386,8 @@ export async function main(
   _config: ProjectHostConfig = {},
 ): Promise<ProjectHostContext> {
   configureProjectHostAcpWorkerLauncher({ entryPoint: __filename });
+  // 028 E-1: a natural exit must not close (and checkpoint) the disk streams
+  installPersistExitGuard();
   const runnerId = process.env.PROJECT_RUNNER_NAME || "project-host";
   const host = _config.host ?? process.env.HOST ?? "127.0.0.1";
   const port = _config.port ?? (Number(process.env.PORT) || (await getPort()));

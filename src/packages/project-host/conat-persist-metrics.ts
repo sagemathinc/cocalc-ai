@@ -10,6 +10,9 @@ import {
   resolveProjectHostConatPersistHealthPort,
 } from "./conat-persist";
 import { PROJECT_HOST_PERSIST_DIAGNOSTICS_PATH } from "./persist-diagnostics";
+import getLogger from "@cocalc/backend/logger";
+
+const logger = getLogger("project-host:conat-persist-metrics");
 
 const DEFAULT_TIMEOUT_MS = Math.max(
   250,
@@ -41,6 +44,32 @@ function errorMessage(err: unknown): string {
   return `${err}`.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
+// why a sample is unavailable, from a closed set: host metrics reach clients
+// that can list the host, and an error's text can quote the diagnostics body
+// (stream paths); the text goes to the log only
+export type UnavailableReason =
+  | "unavailable"
+  | "timeout"
+  | `http-${number}`
+  | "parse"
+  | "not-configured";
+
+class DiagnosticsHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`diagnostics returned HTTP ${status}`);
+  }
+}
+
+export function unavailableReason(err: unknown): UnavailableReason {
+  if (err instanceof DiagnosticsHttpError) {
+    return `http-${Number.isInteger(err.status) ? err.status : 0}`;
+  }
+  const name = (err as any)?.name;
+  if (name === "TimeoutError" || name === "AbortError") return "timeout";
+  if (err instanceof SyntaxError) return "parse";
+  return "unavailable";
+}
+
 function largeObjectSpaceUsedBytes(value: any): number | undefined {
   if (!Array.isArray(value)) return undefined;
   let total = 0;
@@ -53,6 +82,26 @@ function largeObjectSpaceUsedBytes(value: any): number | undefined {
     found = true;
   }
   return found ? total : undefined;
+}
+
+export type MaintenanceErrorClass =
+  | "unproven"
+  | "fsync"
+  | "checkpoint-incomplete"
+  | "refused"
+  | "timeout"
+  | "other";
+
+// the class of a maintenance error's text, from a closed set
+export function maintenanceErrorClass(text: string): MaintenanceErrorClass {
+  if (/not proven complete/.test(text)) return "unproven";
+  if (/checkpoint incomplete|WAL is still present/.test(text)) {
+    return "checkpoint-incomplete";
+  }
+  if (/\bfsync\b/.test(text)) return "fsync";
+  if (/timed out/.test(text)) return "timeout";
+  if (/\brefused\b/.test(text)) return "refused";
+  return "other";
 }
 
 export function summarizeConatPersistDiagnostics(
@@ -135,9 +184,12 @@ export function summarizeConatPersistDiagnostics(
       typeof maintenance.pause_reason === "string"
         ? maintenance.pause_reason.slice(0, 500)
         : undefined,
+    // host metrics reach clients that can list the host: a fixed class only,
+    // never the error's text (it names stream paths, so project ids); the
+    // text stays in the persist server's log and its loopback diagnostics
     maintenance_last_error:
       typeof maintenance.last_error === "string"
-        ? maintenance.last_error.slice(0, 500)
+        ? maintenanceErrorClass(maintenance.last_error)
         : undefined,
     diagnostics_duration_ms: Math.max(0, Math.round(durationMs)),
   };
@@ -163,7 +215,7 @@ export async function readConatPersistMetrics({
       schema_version: 1,
       collected_at: new Date().toISOString(),
       available: false,
-      error: "conat-persist diagnostics port is not configured",
+      error: "not-configured" satisfies UnavailableReason,
       diagnostics_duration_ms: Date.now() - started,
     };
   }
@@ -175,18 +227,21 @@ export async function readConatPersistMetrics({
       },
     );
     if (!response.ok) {
-      throw new Error(`diagnostics returned HTTP ${response.status}`);
+      throw new DiagnosticsHttpError(response.status);
     }
     return summarizeConatPersistDiagnostics(
       await response.json(),
       Date.now() - started,
     );
   } catch (err) {
+    logger.debug("conat-persist diagnostics unavailable", {
+      err: errorMessage(err),
+    });
     return {
       schema_version: 1,
       collected_at: new Date().toISOString(),
       available: false,
-      error: errorMessage(err),
+      error: unavailableReason(err),
       diagnostics_duration_ms: Date.now() - started,
     };
   }

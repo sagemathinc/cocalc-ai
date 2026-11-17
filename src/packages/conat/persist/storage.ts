@@ -74,7 +74,30 @@ import {
   ensureContainingDirectoryExists,
   assertSafeDatabasePath,
   isProjectOwnedDatabasePath,
+  writeCounter,
+  durability,
+  openBarrier,
+  unregisteredStreamOwner,
+  type OpenBarrierResult,
+  verifiedEviction,
+  type VerifiedEvictionResult,
+  integrityCheck,
+  projectRecovery,
+  startupCheck,
 } from "./context";
+import { posix } from "path";
+import { isMainThread } from "worker_threads";
+import {
+  budgetStats,
+  chargeFor,
+  ownerBudget,
+  rateLimitedError,
+  type Charge,
+} from "./write-budget";
+import {
+  writeOrderError,
+  type WriteOrder,
+} from "./write-order";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
 import {
@@ -91,6 +114,767 @@ import { decode } from "@cocalc/conat/core/codec";
 import { historyLimits, type HistoryLimits } from "./history-limits";
 
 const logger = getLogger("persist:storage");
+
+// ---------------------------------------------------------------------------
+// Durability (finding 028, DESIGN §3, §3.2).  Disk-backed streams run with
+// synchronous=FULL: a COMMIT that returned OK has synced its WAL frames.
+
+// SQLITE_IOERR_FSYNC and SQLITE_IOERR_DIR_FSYNC: errors returned by fsync,
+// from ANY SQLite call (a statement's spill, COMMIT, a checkpoint, close).
+// The data they were about may be gone from the disk while still in the page
+// cache, so the file is poisoned: never read, written, checkpointed or closed
+// again in this process (§3.2.2 A, §3.2.4).
+export const SQLITE_IOERR_FSYNC = 1034;
+export const SQLITE_IOERR_DIR_FSYNC = 1290;
+
+export function isSqliteSyncError(err: unknown): boolean {
+  const code = (err as any)?.errcode;
+  return code === SQLITE_IOERR_FSYNC || code === SQLITE_IOERR_DIR_FSYNC;
+}
+
+// group commit: at most this much per batch; the rest waits for the next one
+export const WRITE_BATCH_MAX_REQUESTS = 500;
+export const WRITE_BATCH_MAX_BYTES = 4 * 1024 * 1024;
+// an explicit, checked checkpoint once the WAL reaches this many pages (§4.7)
+export const CHECKPOINT_WAL_PAGES = 1000;
+
+// W (§3): how long a flush waits for more requests.  0 = only until the
+// event loop's current I/O phase ends.  Only the benchmark changes it.
+let writeBatchWindowMs = 0;
+export function setWriteBatchWindowMs(ms: number): void {
+  writeBatchWindowMs = Math.max(0, ms);
+}
+
+// 087: another write under a msgID already used (stored, or earlier in the
+// same batch).  Not retryable: the same msgID with that body will never be
+// accepted.
+export function msgIDConflictError(): ConatError {
+  return new ConatError(
+    "persist: this msgID was already used for a different message",
+    { code: "msgid-conflict" },
+  );
+}
+
+// bounded: the msgID is cut, the body is never logged
+function logMsgIDConflict(
+  path: string | undefined,
+  msgID: string,
+  where: "stored" | "batch",
+): void {
+  streamLifecycle.msgid_conflicts_total += 1;
+  logger.warn("persist: msgID reused for a different message (087)", {
+    path,
+    where,
+    msgID: `${msgID}`.slice(0, 64),
+  });
+}
+
+// The same write (087): every field a client sends with a message.
+export function sameWriteOperation(
+  a: WriteOperation,
+  b: WriteOperation,
+): boolean {
+  return (
+    Number(a.encoding) === Number(b.encoding) &&
+    Buffer.from(a.raw).equals(Buffer.from(b.raw)) &&
+    JSON.stringify(a.headers ?? null) === JSON.stringify(b.headers ?? null) &&
+    (a.key ?? null) === (b.key ?? null) &&
+    (a.ttl ?? null) === (b.ttl ?? null) &&
+    (a.previousSeq ?? null) === (b.previousSeq ?? null) &&
+    JSON.stringify(a.checkpoint ?? null) === JSON.stringify(b.checkpoint ?? null)
+  );
+}
+
+// A write that did not commit and can be sent again (the client retries).
+export function retryableWriteError(
+  reason: "poisoned" | "closing" | "aborted" | "unarmed",
+): ConatError {
+  const message = {
+    poisoned:
+      "persist: this stream's storage had a sync error and is refused until it is verified; try again later",
+    closing: "persist: this stream is closing; try again",
+    aborted: "persist: the write was not committed; try again",
+    unarmed:
+      "persist: the stream's durability record could not be written; try again later",
+  }[reason];
+  return new ConatError(message, { code: 503 });
+}
+
+function lostTransactionError(): ConatError {
+  return new ConatError(
+    "persist: SQLite rolled back the transaction; the write was not committed; try again",
+    { code: 503 },
+  );
+}
+
+// The class of a write error that every request of its batch gets (V-2): an
+// out-of-space error is the stream's, not one request's, so its clients do
+// not retry in a loop.  The quota probe that tells quota from a full
+// filesystem comes with B-3; until then, none.
+let classifyBatchWriteError: (
+  err: unknown,
+  path: string | undefined,
+) => ConatError | undefined = () => undefined;
+export function setBatchWriteErrorClassifier(
+  f: (err: unknown, path: string | undefined) => ConatError | undefined,
+): void {
+  classifyBatchWriteError = f;
+}
+function writeErrorForEveryRequest(
+  err: unknown,
+  path: string | undefined,
+): ConatError | undefined {
+  try {
+    return classifyBatchWriteError(err, path);
+  } catch {
+    return undefined;
+  }
+}
+
+export interface WriteOperation {
+  encoding: DataEncoding;
+  raw: Buffer;
+  headers?: JSONValue;
+  key?: string;
+  ttl?: number;
+  previousSeq?: number;
+  // if given, any attempt to publish something again with the same msgID
+  // is deduplicated. Use this to prevent accidentally writing twice, e.g.,
+  // due to not getting a response back from the server.
+  msgID?: string;
+  checkpoint?: CheckpointUpdate;
+}
+export type SetManyResult = Array<
+  { seq: number; time: number } | { error: string; code?: any }
+>;
+type WriteOutcome = { value: any } | { error: unknown };
+// per op of a request in a batch: its result, its error, or the earlier op
+// of the batch with the same msgID
+type OpResult =
+  | { value: { seq: number; time: number } }
+  | { error: unknown }
+  | { duplicateOf: { request: WriteRequest; op: number } };
+interface WriteRequest {
+  kind: "set" | "setMany";
+  ops: WriteOperation[];
+  bytes: number;
+  // the client's write order (AS-B3-ORDER-1); none for in-process callers
+  order?: WriteOrder;
+  resolve?: (value: any) => void;
+  reject?: (err: unknown) => void;
+  outcome?: WriteOutcome;
+}
+
+// How many open connections of this process hold the dirty record of a
+// logical id (arms are per process, the record is per process: two
+// connections to one file, e.g., a cached stream and a noCache one, or files
+// shared in NORMAL locking, must not remove it under each other).
+const armedConnections = new Map<string, number>();
+
+// Poisoned streams, by path: held here (a strong reference) so that their
+// connection is never closed, nor garbage collected, which would checkpoint
+// it (§3.2.4 step 5).  The process exits with them open.
+const poisonedStreams = new Set<PersistentStream>();
+// 028 B-3a: the durability health of this process (alert routing, DESIGN
+// §3.2.10; host health, §3.2.3 / §3.2.0).  Only a DEVICE-class poison of a
+// file the user cannot write marks the host unhealthy; a poison of a
+// user-writable (in-project) file, a quota (Q-F) poison or a failed
+// verification never does.
+const durabilityHealth = {
+  device_poisons_total: 0,
+  user_writable_poisons_total: 0,
+  project_poisons_total: 0,
+  verification_failures_total: 0,
+};
+function recordFilePoison(id: string | undefined, quota: boolean): void {
+  if (quota) return; // counted as a project poison
+  if (id != null && isProjectOwnedDatabasePath(`${id}.db`)) {
+    durabilityHealth.user_writable_poisons_total += 1;
+  } else {
+    durabilityHealth.device_poisons_total += 1;
+  }
+}
+
+export function poisonedStreamPaths(): string[] {
+  return [...new Set([...poisonedStreams].map((s) => s.poisonedPath!))];
+}
+
+// The disk-backed streams whose connection is open: from the open until a
+// close returned OK (a poisoned one, or one whose close could not be armed,
+// stays here).
+const liveDiskConnections = new Set<PersistentStream>();
+
+// ---------------------------------------------------------------------------
+// Fault phases (028 B-3a, DESIGN §7).  Production code only ever calls this
+// no-op callback; it has no reset capability.  The STAGING fault-test build
+// (its own build target, never part of a production bundle) sets it, to time
+// a hard reset into a phase.
+export type FaultPhase =
+  | "commit"
+  | "acked"
+  | "checkpoint"
+  | "after-restart"
+  | "close";
+let faultPhase:
+  | ((phase: FaultPhase, info: Record<string, string | number>) => void)
+  | undefined = undefined;
+export function setFaultPhaseCallback(
+  cb:
+    | ((phase: FaultPhase, info: Record<string, string | number>) => void)
+    | undefined,
+): void {
+  faultPhase = cb;
+}
+
+// ---------------------------------------------------------------------------
+// The open barrier (028 B-2, DESIGN §3.2.6): before a disk-backed stream is
+// served, its -wal, .db and directory are fsync'd.  The persist server runs
+// it asynchronously (prepareDurableOpen) right before it constructs the
+// stream, which then consumes that pass; any other construction runs it
+// synchronously.  A pass is good for exactly one construction.
+const openBarrierPassed = new Set<string>();
+
+// The logical owner (a project id, or "host") of each disk stream the server
+// opened, for the project-scope poison (Q-F, §3.2.3, §3.2.4).
+const streamOwners = new Map<string, string>();
+
+// A quota error RETURNED BY an fsync of ours on a project path (Q-F): every
+// stream of that project is poisoned -- its record, and every open
+// connection of this process to one of its streams.
+function poisonProject(owner: string, info: Record<string, string | number>) {
+  if (owner === "host") return;
+  durability?.poisonProject(owner, info);
+  durabilityHealth.project_poisons_total += 1;
+  for (const stream of [...openStreams.keys()]) {
+    if (stream.logicalId != null && streamOwners.get(stream.logicalId) === owner) {
+      stream.poisonForProject(`${info.where ?? "project"}`, owner);
+    }
+  }
+  logger.warn(
+    "persist alert (non-paging): a project's persist files are poisoned after a quota error at fsync (Q-F, finding 028)",
+    { owner, ...info },
+  );
+}
+
+const QUOTA_ERRNOS = new Set(["EDQUOT", "ENOSPC"]);
+
+// The barrier's fsyncs can consume a sync error, so the dirty record exists
+// around them (§3.2.6 (e)), held like a connection's arm.
+function armForBarrier(id: string): void {
+  if (durability == null) throw retryableWriteError("unarmed");
+  const holders = armedConnections.get(id) ?? 0;
+  if (holders == 0) {
+    try {
+      durability.arm(id, streamOwners.get(id));
+    } catch (err) {
+      logger.error("persist: could not create a dirty record (finding 028)", {
+        id,
+        err: `${err}`,
+      });
+      throw retryableWriteError("unarmed");
+    }
+  }
+  armedConnections.set(id, holders + 1);
+}
+
+function releaseBarrierArm(id: string): void {
+  const holders = (armedConnections.get(id) ?? 1) - 1;
+  if (holders > 0) {
+    armedConnections.set(id, holders);
+    return;
+  }
+  armedConnections.delete(id);
+  durability?.disarm(id);
+}
+
+// What a barrier result means for the open: ok, or a refusal.  A sync error
+// poisons the file (its dirty record, armed before, becomes the poisoned-file
+// record); a discovery error proves nothing and is retried (§3.2.1 E0).
+function settleOpenBarrier(
+  id: string,
+  result: OpenBarrierResult,
+  owner?: string,
+): void {
+  if (result.kind == "ok") {
+    releaseBarrierArm(id);
+    return;
+  }
+  if (result.kind == "discovery") {
+    releaseBarrierArm(id);
+    logger.warn("persist: open barrier could not check a file (finding 028)", {
+      id,
+      path: result.path,
+      why: result.why,
+    });
+    throw new ConatError(
+      "persist: this stream's storage could not be verified yet; try again later",
+      { code: 503 },
+    );
+  }
+  // a sync error: the record stays and becomes the poison record
+  armedConnections.delete(id);
+  const projectScope =
+    owner != null && owner !== "host" && QUOTA_ERRNOS.has(result.errno);
+  durability?.poison(id, {
+    where: "open-barrier",
+    errno: result.errno,
+    ...(projectScope ? { scope: "project", owner: owner! } : {}),
+  });
+  recordFilePoison(id, projectScope);
+  if (projectScope) {
+    // Q-F: the project's quota, not this file: every stream of the project
+    poisonProject(owner, { where: "open-barrier", errno: result.errno });
+  }
+  logger.error(
+    "PERSIST FILE POISONED (finding 028): the open barrier's fsync returned an error; the file is refused until it is verified",
+    { id, path: result.path, errno: result.errno },
+  );
+  throw retryableWriteError("poisoned");
+}
+
+// The owner for a synchronous barrier: the one the server registered, else
+// the context's fallback (tests only).  Unknown -> refused, before anything
+// is armed: a quota errno could not be scoped to its project (Q-F, AS-B2-SYNC-OWNER).
+function ownerForSyncOpen(id: string): string {
+  const owner = streamOwners.get(id) ?? unregisteredStreamOwner?.(id);
+  if (owner == null) {
+    logger.warn("persist: a disk stream's owner is not known; refused (finding 028)", {
+      id,
+    });
+    throw new ConatError(
+      "persist: this stream's owner is not known, so it is refused",
+      { code: 503 },
+    );
+  }
+  streamOwners.set(id, owner);
+  return owner;
+}
+
+function runOpenBarrierSync(id: string, dbPath: string): void {
+  if (openBarrier == null) {
+    throw new ConatError(
+      "persist: the open barrier is not configured, so disk-backed streams are refused",
+      { code: 503 },
+    );
+  }
+  const owner = ownerForSyncOpen(id);
+  armForBarrier(id);
+  let result: OpenBarrierResult;
+  try {
+    result = openBarrier.runSync(dbPath);
+  } catch (err) {
+    result = { kind: "discovery", path: dbPath, why: `${err}` };
+  }
+  settleOpenBarrier(id, result, owner);
+}
+
+// The persist server, right before it gets the stream for path (resolved,
+// as passed to pstream): if that will construct a new connection, run the
+// open barrier first, off the main thread.  owner: the logical owner (a
+// project id, or "host"), for fairness between owners.
+export async function prepareDurableOpen(
+  path: string,
+  owner: string,
+  storeRoot?: string,
+): Promise<void> {
+  if (cache.info().count[path] != null) {
+    // a live connection: what it serves is committed, hence durable
+    return;
+  }
+  if (openBarrier == null) {
+    throw new ConatError(
+      "persist: the open barrier is not configured, so disk-backed streams are refused",
+      { code: 503 },
+    );
+  }
+  const id = posix.normalize(path);
+  streamOwners.set(id, owner);
+  let state = durability?.check(id, owner);
+  if (state == "poisoned" && storeRoot != null) {
+    // a project poisoned by an EARLIER process (quota at fsync): S-q
+    if (await recoverProject(owner, storeRoot)) {
+      state = durability?.check(id, owner);
+    }
+  }
+  if (state == "poisoned") throw retryableWriteError("poisoned");
+  if (state == "unverified") throw unverifiedStreamError();
+  if (state == "needs-check") {
+    // poisoned in an earlier boot: a full integrity_check first (§3.2.6)
+    await checkAfterReboot(id, `${path}.db`);
+  }
+  // a dead process left this stream, or another of its project, mid-write:
+  // every such file of the project is verified before any is served (H-b,
+  // single-flight per project, §3.2.5 (b)); then open normally
+  await verifyProjectLeftovers(id, `${path}.db`, owner);
+  armForBarrier(id);
+  let result: OpenBarrierResult;
+  try {
+    result = await openBarrier.run(`${path}.db`, owner);
+  } catch (err) {
+    result = { kind: "discovery", path, why: `${err}` };
+  }
+  settleOpenBarrier(id, result, owner);
+  openBarrierPassed.add(id);
+}
+
+// ---------------------------------------------------------------------------
+// The keep-open registry (028 B-2, DESIGN §4 items 8-10).  A disk stream whose
+// final checkpoint failed WITHOUT a sync error (e.g., its project is at quota)
+// is not closed: SQLite's own close would checkpoint again, and a connection
+// that is not really closed must stay counted as open for the fence (a
+// restore or move must never replace files under it).  It is parked here
+// INTACT (options, msgIDs, trash registration), retried with backoff, and
+// re-adopted by the next get of its path.  Every transition is one
+// synchronous step; a retry re-checks its generation before acting, so an
+// adoption always wins over a retry in flight.
+export const PARK_RETRY_INITIAL_MS = 5_000;
+export const PARK_RETRY_MAX_MS = 5 * 60_000;
+interface ParkedStream {
+  stream: PersistentStream;
+  state: "ownerless" | "retrying";
+  generation: number;
+  delayMs: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+const parked = new Map<string, ParkedStream>();
+// generations are unique across ALL entries (a re-parked path gets a new
+// entry; a stale retry's generation must never equal a later one's)
+let parkGeneration = 0;
+
+function parkStream(stream: PersistentStream): void {
+  const path = stream.localPath();
+  if (path == null) return;
+  const existing = parked.get(path);
+  const entry: ParkedStream = existing ?? {
+    stream,
+    state: "ownerless",
+    generation: 0,
+    delayMs: PARK_RETRY_INITIAL_MS,
+  };
+  entry.stream = stream;
+  entry.state = "ownerless";
+  entry.generation = ++parkGeneration;
+  parked.set(path, entry);
+  logger.warn(
+    "persist alert (non-paging): a stream's final checkpoint failed; it stays open and is retried (finding 028)",
+    { path, retry_ms: entry.delayMs },
+  );
+  scheduleParkedRetry(path, entry);
+}
+
+function scheduleParkedRetry(path: string, entry: ParkedStream): void {
+  if (entry.timer != null) clearTimeout(entry.timer);
+  const generation = entry.generation;
+  entry.timer = setTimeout(() => {
+    entry.timer = undefined;
+    attemptParkedClose(path, generation);
+  }, entry.delayMs);
+  (entry.timer as any).unref?.();
+}
+
+// One close attempt for a parked stream, if it is still the same parked
+// generation (not re-adopted meanwhile).  True if it closed.
+function attemptParkedClose(path: string, generation: number): boolean {
+  const entry = parked.get(path);
+  if (entry == null || entry.generation !== generation) return false;
+  if (entry.state !== "ownerless") return false;
+  entry.state = "retrying";
+  // (B-3's quota probe would run here, awaited; the generation is
+  // re-checked after it before acting.)
+  if (parked.get(path) !== entry || entry.generation !== generation) {
+    return false;
+  }
+  const stream = entry.stream;
+  const outcome = stream.checkpointOutcome("FULL");
+  if (outcome == "poisoned") {
+    // never closed in this boot; it stays open and counted (poisonedStreams)
+    if (entry.timer != null) clearTimeout(entry.timer);
+    parked.delete(path);
+    return false;
+  }
+  if (outcome == "ok" || outcome == "busy") {
+    if (entry.timer != null) clearTimeout(entry.timer);
+    parked.delete(path);
+    stream.finishParkedClose();
+    return true;
+  }
+  entry.state = "ownerless";
+  entry.delayMs = Math.min(entry.delayMs * 2, PARK_RETRY_MAX_MS);
+  scheduleParkedRetry(path, entry);
+  return false;
+}
+
+// The next get of a parked path gets the parked object back, intact.
+function adoptParked(path: string): PersistentStream | undefined {
+  const entry = parked.get(path);
+  if (entry == null) return;
+  if (entry.timer != null) clearTimeout(entry.timer);
+  entry.generation = ++parkGeneration; // a retry in flight now does nothing
+  parked.delete(path);
+  entry.stream.readopted();
+  return entry.stream;
+}
+
+// A project fence (fence.ts) attempts the parked closes under it at once,
+// instead of waiting for their backoff.
+export function retryParkedStreams(under: (path: string) => boolean): void {
+  for (const [path, entry] of [...parked]) {
+    if (!under(path)) continue;
+    attemptParkedClose(path, entry.generation);
+  }
+}
+
+// tests only: a retry that captured `generation` (e.g. one in flight across
+// an adoption and a new park)
+export function attemptParkedCloseForTests(path: string, generation: number): boolean {
+  return attemptParkedClose(path, generation);
+}
+export function parkedGenerationForTests(path: string): number | undefined {
+  return parked.get(path)?.generation;
+}
+
+export function parkedStreamPaths(): string[] {
+  return [...parked.keys()];
+}
+
+// A stream poisoned in an earlier boot: after a reboot the page cache is gone
+// and the disk is the truth, but the device may have damaged the file; a full
+// integrity_check (off the main thread) must pass before it is served, and
+// only then is its durable record removed.  A failure keeps refusing, with an
+// alert (§3.2.6 POST-REBOOT).
+const checking = new Map<string, Promise<{ ok: boolean; why?: string }>>();
+async function checkAfterReboot(id: string, dbPath: string): Promise<void> {
+  if (integrityCheck == null) throw unverifiedStreamError();
+  let pending = checking.get(id);
+  if (pending == null) {
+    const run = integrityCheck;
+    pending = (async () => {
+      try {
+        return await run(dbPath);
+      } catch (err) {
+        return { ok: false, why: `${err}` };
+      }
+    })().finally(() => checking.delete(id));
+    checking.set(id, pending);
+  }
+  const result = await pending;
+  if (!result.ok) {
+    logger.error(
+      "PERSIST ALERT: a stream poisoned before the reboot failed its integrity_check; it stays refused (finding 028)",
+      { id, why: result.why },
+    );
+    throw unverifiedStreamError();
+  }
+  try {
+    durability?.clearPostReboot(id);
+  } catch (err) {
+    logger.warn("persist: could not remove a post-reboot record", {
+      id,
+      err: `${err}`,
+    });
+    throw unverifiedStreamError();
+  }
+  logger.info("persist: integrity_check passed after a poison (finding 028)", {
+    id,
+  });
+}
+
+// The project's leftovers (all of them, this stream's included), verified
+// together and once: concurrent opens of any of its streams wait for the
+// same verification.  Host-owned streams are verified one by one.
+const verifyingProject = new Map<string, Promise<void>>();
+async function verifyProjectLeftovers(
+  id: string,
+  dbPath: string,
+  owner: string,
+): Promise<void> {
+  if (durability == null) return;
+  if (owner === "host") {
+    if (durability.check(id, owner) == "leftover") await verifyLeftover(id, dbPath);
+    return;
+  }
+  let pending = verifyingProject.get(owner);
+  if (pending == null) {
+    pending = (async () => {
+      const ids = durability!.leftoverIdsOf(owner);
+      if (ids == null) {
+        logger.warn(
+          "persist alert (non-paging): a project's leftover records can't be listed; its streams stay refused (finding 028)",
+          { owner },
+        );
+        throw unverifiedStreamError();
+      }
+      for (const other of ids) {
+        if (durability!.check(other, owner) == "leftover") {
+          await verifyLeftover(other, `${other}.db`);
+        }
+      }
+    })().finally(() => verifyingProject.delete(owner));
+    verifyingProject.set(owner, pending);
+  }
+  await pending;
+  // a leftover of this stream without an owner in its record (B-1's)
+  if (durability.check(id, owner) == "leftover") {
+    await verifyLeftover(id, dbPath);
+  }
+}
+
+// S-q (§3.2.6): only in a process that holds no connection to the files,
+// i.e. one whose generation did not write the poison (after an exit-path
+// restart); once per project at a time.  True if the project was cleared.
+const recoveringProject = new Map<string, Promise<boolean>>();
+async function recoverProject(
+  owner: string,
+  storeRoot: string,
+): Promise<boolean> {
+  if (owner === "host" || durability == null || projectRecovery == null) {
+    return false;
+  }
+  const writer = durability.projectPoisonGeneration(owner);
+  if (writer == null || writer === durability.generation) return false;
+  let pending = recoveringProject.get(owner);
+  if (pending == null) {
+    const run = projectRecovery;
+    pending = (async () => {
+      let result: { ok: boolean; files?: string[]; why?: string };
+      try {
+        result = await run(owner, storeRoot);
+      } catch (err) {
+        result = { ok: false, why: `${err}` };
+      }
+      if (!result.ok) {
+        logger.warn(
+          "persist alert (non-paging): S-q could not verify a poisoned project; it stays poisoned (finding 028)",
+          { owner, why: result.why },
+        );
+        return false;
+      }
+      const cleared = durability!.clearProjectPoison(owner);
+      logger.info("persist: S-q verified a poisoned project (finding 028)", {
+        owner,
+        files: result.files?.length,
+        cleared: cleared.length,
+      });
+      return true;
+    })().finally(() => recoveringProject.delete(owner));
+    recoveringProject.set(owner, pending);
+  }
+  return await pending;
+}
+
+// One verification at a time per stream (concurrent opens wait for it).
+const verifying = new Map<string, Promise<VerifiedEvictionResult>>();
+
+async function verifyLeftover(id: string, dbPath: string): Promise<void> {
+  if (verifiedEviction == null) {
+    throw unverifiedStreamError();
+  }
+  let pending = verifying.get(id);
+  if (pending == null) {
+    const run = verifiedEviction;
+    pending = (async () => {
+      try {
+        return await run(dbPath);
+      } catch (err) {
+        return { verified: false as const, path: dbPath, why: `${err}` };
+      }
+    })().finally(() => verifying.delete(id));
+    verifying.set(id, pending);
+  }
+  const result = await pending;
+  if (!result.verified) {
+    durabilityHealth.verification_failures_total += 1;
+    // non-paging, names the stream; no host effect (§3.2.0, §3.2.10)
+    logger.warn(
+      "persist alert (non-paging): a stream left mid-write could not be verified; it stays refused and is retried (finding 028)",
+      { id, path: result.path, why: result.why },
+    );
+    throw unverifiedStreamError();
+  }
+  // the page cache now equals the disk: the dead writers' records go
+  durability?.clearLeftovers(id);
+  logger.info("persist: verified a stream left mid-write (finding 028)", {
+    id,
+    files: result.files,
+  });
+}
+
+function unverifiedStreamError(): ConatError {
+  return new ConatError(
+    "persist: this stream's storage was left mid-write by a crash and is not verified yet; try again later",
+    { code: 503 },
+  );
+}
+
+// After the get that followed prepareDurableOpen: an unused pass (a cache hit
+// after all, or a refusal before the construction) must not serve a later
+// construction.
+export function clearOpenBarrierPass(path: string): void {
+  openBarrierPassed.delete(posix.normalize(path));
+}
+
+// At a NATURAL exit (the event loop drains), Node's teardown closes every
+// live DatabaseSync, however referenced: that close checkpoints, unarmed,
+// and for a poisoned file it is exactly the close §3.2.4 forbids.
+// process.exit skips it (as do an uncaught exception and a signal's default
+// action), and the WAL stays for the next open to recover.  Only for the
+// processes that serve disk streams, which opt in at their entry point
+// (hub, persist nodes, lite, project-host and its persist daemon): a library
+// import or a test runner exits normally.  A worker thread can't use this,
+// its exit always closes: disk streams are never opened in one (finding 028
+// E-1).
+let exitGuardInstalled = false;
+const exitWithoutClosing = (): void => {
+  if (liveDiskConnections.size == 0) return;
+  logger.warn(
+    "persist: exiting without closing the open disk streams (finding 028)",
+    {
+      open: liveDiskConnections.size,
+      poisoned: poisonedStreams.size,
+    },
+  );
+  process.exit();
+};
+// 028 B-3a (DESIGN §3.2.4 (ii), SA F): a persist process without a signal
+// path of its own (the hub's persist servers, the forked persist nodes, the
+// standalone binary) still dies by a signal's DEFAULT action, which closes
+// nothing (good: no checkpoint), but drops the writes still QUEUED for a
+// group commit.  This commits them first (each COMMIT is durable), then
+// re-raises the signal so its default action ends the process as before.
+// A signal that already has a listener is left alone; one that gets a
+// listener later is flushed, and then that listener owns the shutdown.
+let signalFlushInstalled = false;
+export const PERSIST_FLUSH_SIGNALS: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
+export function installPersistSignalFlush(): void {
+  if (signalFlushInstalled) return;
+  signalFlushInstalled = true;
+  const handlers = new Map<NodeJS.Signals, () => void>();
+  for (const sig of PERSIST_FLUSH_SIGNALS) {
+    if (process.listenerCount(sig) > 0) continue;
+    const handler = () => {
+      try {
+        flushAllPersistWrites();
+      } catch (err) {
+        logger.warn("persist: flush at a signal failed", { sig, err: `${err}` });
+      }
+      for (const [s, h] of handlers) process.removeListener(s, h);
+      // another handler of this process, installed after this one, got the
+      // same signal and owns the shutdown (e.g. start-server.ts waiting for
+      // its forked children): no re-raise, it would end the process by the
+      // default action before that handler finished (SA 3351 A4)
+      if (process.listenerCount(sig) > 0) return;
+      process.kill(process.pid, sig);
+    };
+    handlers.set(sig, handler);
+    process.once(sig, handler);
+  }
+}
+
+export function installPersistExitGuard(): void {
+  if (exitGuardInstalled) return;
+  exitGuardInstalled = true;
+  process.on("beforeExit", exitWithoutClosing);
+}
 
 export interface PartialInventory {
   // how much space is used by this stream
@@ -1191,6 +1975,10 @@ const streamLifecycle = {
   closed_disk_total: 0,
   open_ephemeral: 0,
   open_disk: 0,
+  // 028: a close reached with uncommitted writes queued (a bug: they fail)
+  closed_with_queued_writes_total: 0,
+  // 087: a write refused because its msgID was used for a different message
+  msgid_conflicts_total: 0,
 };
 
 const openCacheSizes = {
@@ -1274,6 +2062,7 @@ function updateCacheSizeCount(
 }
 
 function recordStreamOpen(kind: StreamStorageKind, cacheKiB: number): void {
+  writeCounter?.streamOpened(kind);
   streamLifecycle.opened_total += 1;
   streamLifecycle[`opened_${kind}_total`] += 1;
   streamLifecycle[`open_${kind}`] += 1;
@@ -1347,7 +2136,35 @@ export class PersistentStream extends EventEmitter {
   private readonly db: Database;
   private readonly dbPath?: string;
   private readonly storageKind: StreamStorageKind;
+  // messages added by the transaction in progress (for writeCounter)
+  private pendingRows = 0;
+  private pendingBytes = 0;
+  private takeRows = () => {
+    const rows = { rows: this.pendingRows, bytes: this.pendingBytes };
+    this.pendingRows = this.pendingBytes = 0;
+    return rows;
+  };
   private readonly sqliteCacheKiB: number;
+  // durability (disk-backed streams; finding 028): the id of the stream's
+  // records, whether its dirty record exists, and whether a sync error
+  // poisoned it
+  readonly logicalId?: string;
+  // the path, once poisoned (kept: the stream is never torn down)
+  poisonedPath?: string;
+  private armed = false;
+  private poisoned = false;
+  // a checkpoint completed since the last batch (028 B-3a fault phase F3)
+  private walRestarted = false;
+  private walPageBytes = 4096;
+  // group commit: the set/setMany requests not committed yet
+  private writeQueue: WriteRequest[] = [];
+  private flushTimer?:
+    | ReturnType<typeof setImmediate>
+    | ReturnType<typeof setTimeout>;
+  private flushing = false;
+  // changes waiting to be emitted, and whether they are being emitted now
+  private pendingEmits: ChangefeedOperation[] = [];
+  private emitting = false;
   private readonly msgIDs = new TTL({ ttl: 2 * 60 * 1000 });
   private conf: Configuration;
   private throttledBackup?;
@@ -1359,8 +2176,19 @@ export class PersistentStream extends EventEmitter {
     PersistMaintenanceHandle
   >();
 
+  // close as defined here, before a cache wraps it (re-adoption restores it)
+  private readonly closeUnderlying: () => void;
+
   constructor(options: StorageOptions) {
     super();
+    this.closeUnderlying = this.close;
+    if (parked.has(options.path)) {
+      // a parked connection to this path is still open: never a second one
+      throw new ConatError(
+        "persist: this stream is still closing; try again",
+        { code: 503 },
+      );
+    }
     openPaths.add(options.path);
     try {
       logger.debug("constructor ", options.path);
@@ -1377,21 +2205,39 @@ export class PersistentStream extends EventEmitter {
       if (location !== ":memory:") {
         this.dbPath = location;
         assertSafeDatabasePath(location);
+        // 028: before anything reads or copies the file
+        this.logicalId = posix.normalize(this.options.path);
+        this.assertOpenAllowed();
       }
-      this.initArchive();
+      const copiedArchive = this.initArchive();
       if (location !== ":memory:") {
         // again: initArchive may have written the file
         assertSafeDatabasePath(location);
+        // 028 B-2: nothing is served before the files are fsync'd (the
+        // server's pass covers it unless initArchive just wrote the file)
+        const id = this.logicalId!;
+        if (copiedArchive || !openBarrierPassed.delete(id)) {
+          openBarrierPassed.delete(id);
+          runOpenBarrierSync(id, location);
+        }
       }
       // defensive: no writable_schema or other ways to corrupt the file
-      this.db = createDatabase(location, { defensive: true });
+      const db = createDatabase(location, { defensive: true });
+      // the backend counts its commits (backend/conat/persist-write-rate);
+      // once poisoned, nothing more runs on the connection (028)
+      this.db = this.refuseWhenPoisoned(
+        writeCounter?.wrap(db, this.storageKind, this.takeRows) ?? db,
+      );
+      if (location !== ":memory:") {
+        liveDiskConnections.add(this);
+      }
       try {
         this.hardenConnection(location);
         if (location !== ":memory:") {
           this.assertExpectedSchema();
         }
       } catch (err) {
-        this.db.close();
+        this.closeConnection();
         throw err;
       }
       const configuredCacheKiB = this.options.ephemeral
@@ -1402,6 +2248,7 @@ export class PersistentStream extends EventEmitter {
       }
       this.sqliteCacheKiB = this.readSqliteCacheKiB();
       this.initSchema();
+      this.disarmIfIdle();
       this.maintenanceDirty = false;
       recordStreamOpen(this.storageKind, this.sqliteCacheKiB);
       openStreams.set(this, {
@@ -1415,6 +2262,325 @@ export class PersistentStream extends EventEmitter {
       throw err;
     }
   }
+
+  // ---------------------------------------------------------------------
+  // Durability (finding 028, DESIGN §3.2.4-§3.2.6)
+
+  isPoisoned = (): boolean => this.poisoned;
+
+  // At open, before anything reads or copies the file: a file poisoned in
+  // this boot is refused, and so is one another process left mid-write (a
+  // dirty record of another generation), whose state on disk is unknown.
+  // For a dead process's record the server's asynchronous open
+  // (prepareDurableOpen) runs a verified eviction first, which removes it.
+  private assertOpenAllowed = (): void => {
+    const path = this.options.path;
+    if (!isMainThread) {
+      // a worker thread's exit always closes its connections (E-1)
+      throw new ConatError(
+        "persist: disk-backed streams are not opened in a worker thread",
+        { code: 503 },
+      );
+    }
+    if ([...poisonedStreams].some((s) => s.poisonedPath === path)) {
+      throw retryableWriteError("poisoned");
+    }
+    // 028 B-3a: the host's start-up preconditions (records root, NOFILE)
+    const start = startupCheck?.();
+    if (start != null && !start.ok) {
+      throw new ConatError(
+        `persist: disk-backed streams are unavailable on this host (${start.reason})`,
+        { code: "persist_unavailable" },
+      );
+    }
+    if (durability == null) {
+      throw new ConatError(
+        "persist: durability records are not configured, so disk-backed streams are refused",
+        { code: 503 },
+      );
+    }
+    const state = durability.check(
+      this.logicalId!,
+      streamOwners.get(this.logicalId!),
+    );
+    if (state == "poisoned") {
+      throw retryableWriteError("poisoned");
+    }
+    if (state == "unverified" || state == "leftover" || state == "needs-check") {
+      // another process may be writing it now, or a dead one left it
+      // mid-write; only the server's asynchronous open verifies the latter
+      // (prepareDurableOpen), so this construction is refused
+      logger.warn(
+        "persist: refusing a stream left mid-write by another process (finding 028)",
+        { path, state },
+      );
+      throw unverifiedStreamError();
+    }
+  };
+
+  // Once poisoned, every statement on the connection throws: no read, no
+  // write, no checkpoint, ever (§3.2.4).  Outermost, so it also stops the
+  // statements of the write counter.
+  private refuseWhenPoisoned = (db: Database): Database => {
+    const prepare = db.prepare.bind(db);
+    const exec = db.exec.bind(db);
+    db.prepare = ((...args: any[]) => {
+      if (this.poisoned) throw retryableWriteError("poisoned");
+      return (prepare as any)(...args);
+    }) as any;
+    db.exec = ((sql: string) => {
+      if (this.poisoned) throw retryableWriteError("poisoned");
+      return exec(sql);
+    }) as any;
+    return db;
+  };
+
+  // Before any operation on a disk-backed stream's files that can consume a
+  // sync error -- a write transaction (SQLite can sync inside one, when a
+  // cache spill writes the first frames after a WAL restart), a checkpoint,
+  // the journal_mode switch, a close -- its dirty record exists (§3.2.6).
+  // Throws (a retryable error) if it can't be created: then the operation
+  // must not start.
+  private armBeforeWrite = (): void => {
+    if (this.storageKind != "disk") return;
+    if (this.poisoned) throw retryableWriteError("poisoned");
+    if (this.armed) return;
+    if (durability == null) throw retryableWriteError("unarmed");
+    const id = this.logicalId!;
+    const holders = armedConnections.get(id) ?? 0;
+    if (holders == 0) {
+      try {
+        durability.arm(id, streamOwners.get(id));
+      } catch (err) {
+        logger.error("persist: could not create a dirty record (finding 028)", {
+          path: this.options?.path,
+          err: `${err}`,
+        });
+        throw retryableWriteError("unarmed");
+      }
+    }
+    armedConnections.set(id, holders + 1);
+    this.armed = true;
+  };
+
+  // this connection no longer needs the dirty record; it goes once no
+  // connection of this process does
+  private releaseArm = (): void => {
+    if (!this.armed) return;
+    this.armed = false;
+    const id = this.logicalId!;
+    const holders = (armedConnections.get(id) ?? 1) - 1;
+    if (holders > 0) {
+      armedConnections.set(id, holders);
+      return;
+    }
+    armedConnections.delete(id);
+    durability?.disarm(id);
+  };
+
+  // At a write idle -- nothing queued, no transaction in flight -- every
+  // commit since arming returned OK and is durable: the record goes.
+  private disarmIfIdle = (): void => {
+    if (
+      !this.armed ||
+      this.poisoned ||
+      this.flushing ||
+      this.writeQueue.length > 0 ||
+      this.db?.isTransaction
+    ) {
+      return;
+    }
+    this.releaseArm();
+  };
+
+  // A sync error (§3.2.2 A): synchronously, before anything else runs for
+  // this file, it is refused for good in this process, and its dirty record
+  // becomes the poisoned-file record, so no later open in this boot serves
+  // it either.  The connection is kept open and referenced, never closed.
+  private poison = (
+    err: unknown,
+    where: string,
+    extra: Record<string, string> = {},
+  ): void => {
+    if (this.poisoned) return;
+    this.poisoned = true;
+    const path = this.options?.path;
+    this.poisonedPath = path;
+    poisonedStreams.add(this);
+    if (this.logicalId != null) {
+      durability?.poison(this.logicalId, {
+        where,
+        errcode: Number((err as any)?.errcode ?? 0),
+        ...extra,
+      });
+    }
+    if (this.storageKind == "disk") {
+      recordFilePoison(this.logicalId, extra.scope == "project");
+    }
+    this.trashGeneration += 1;
+    unregisterTrashWork(this);
+    this.throttledBackup?.cancel?.();
+    this.failQueuedWrites("poisoned");
+    logger.error(
+      "PERSIST FILE POISONED (finding 028): a sync error was returned; the file is refused until it is verified",
+      { path, where, err: `${err}`, errcode: (err as any)?.errcode },
+    );
+    // the FILE is poisoned: every other connection of this process to it too
+    // (its record is now the poisoned-file record)
+    if (this.logicalId != null) {
+      armedConnections.delete(this.logicalId);
+      for (const other of openStreams.keys()) {
+        if (other !== this && other.logicalId === this.logicalId) {
+          other.poisonedByPeer(where);
+        }
+      }
+    }
+  };
+
+  // its project was poisoned (Q-F): this connection too, like a sync error
+  poisonForProject = (where: string, owner: string): void => {
+    if (this.poisoned) return;
+    this.poison(
+      Object.assign(new Error("project poisoned (Q-F)"), { errcode: 0 }),
+      `project:${where}`,
+      { scope: "project", owner },
+    );
+  };
+
+  // another connection of this process to the same file got a sync error
+  private poisonedByPeer = (where: string): void => {
+    if (this.poisoned) return;
+    this.armed = false; // the record was renamed by the peer
+    this.poison(
+      new ConatError("a sync error on another connection to this file", {
+        code: 503,
+      }),
+      `${where} (another connection)`,
+    );
+  };
+
+  // after every write transaction (and batch)
+  private afterWrite = (): void => {
+    this.checkpointIfLarge();
+    this.disarmIfIdle();
+  };
+
+  // EXPLICIT, CHECKED checkpoints (§4.7): auto-checkpoint is off, because its
+  // result is ignored; between batches, once the WAL reaches
+  // CHECKPOINT_WAL_PAGES, this runs a PASSIVE checkpoint and checks it.
+  private checkpointIfLarge = (): void => {
+    if (
+      this.storageKind != "disk" ||
+      this.poisoned ||
+      this.closing ||
+      this.db?.isTransaction ||
+      this.dbPath == null
+    ) {
+      return;
+    }
+    if (
+      fileSize(this.dbPath + "-wal") <
+      CHECKPOINT_WAL_PAGES * this.walPageBytes
+    ) {
+      return;
+    }
+    this.checkpoint("PASSIVE");
+  };
+
+  // a checked checkpoint; true if it completed (nothing left in the WAL that
+  // was not copied)
+  private checkpoint = (mode: "PASSIVE" | "FULL"): boolean =>
+    this.checkpointOutcome(mode) == "ok";
+
+  // "ok": everything copied; "busy": a reader held it (no sync error);
+  // "error": a non-sync error (e.g., a user at quota: the WAL stays);
+  // "unarmed": its dirty record could not be created, so it did not run;
+  // "poisoned": a sync error.
+  checkpointOutcome = (
+    mode: "PASSIVE" | "FULL",
+  ): "ok" | "busy" | "error" | "unarmed" | "poisoned" => {
+    if (this.poisoned) return "poisoned";
+    try {
+      this.armBeforeWrite();
+    } catch {
+      return this.poisoned ? "poisoned" : "unarmed";
+    }
+    try {
+      faultPhase?.("checkpoint", { path: `${this.options?.path}`, mode });
+      const result = this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get() as
+        | { busy: number; log: number; checkpointed: number }
+        | undefined;
+      const complete =
+        result != null && !result.busy && result.checkpointed >= result.log;
+      if (complete) this.walRestarted = true;
+      return complete ? "ok" : "busy";
+    } catch (err) {
+      if (isSqliteSyncError(err)) {
+        this.poison(err, `checkpoint(${mode})`);
+      } else {
+        // e.g., a user at quota: the WAL stays and the next checkpoint
+        // retries (no host effect)
+        logger.warn("persist: checkpoint failed", {
+          path: this.options?.path,
+          mode,
+          err: `${err}`,
+        });
+      }
+      return this.poisoned ? "poisoned" : "error";
+    }
+  };
+
+  // Every changefeed emit goes through here: only after the COMMIT that made
+  // the change returned OK (durable), never inside a transaction (§3).
+  // All the changes of one commit are queued at once, before the first is
+  // delivered; a listener that writes (a sync set, or another mutation)
+  // commits at once and its changes are queued after them, delivered by the
+  // outermost call, so the changefeed stays in seq order (#139 B1-5).
+  private emitChange = (...changes: ChangefeedOperation[]): void => {
+    if (this.db?.isTransaction) {
+      throw Error("bug: a change emitted inside a transaction");
+    }
+    this.pendingEmits.push(...changes);
+    if (this.emitting) return;
+    this.emitting = true;
+    try {
+      while (this.pendingEmits.length > 0) {
+        this.emit("change", this.pendingEmits.shift()!);
+      }
+    } finally {
+      this.emitting = false;
+    }
+  };
+
+  // Closes the SQLite connection, which checkpoints it: so armed first, and a
+  // sync error poisons (the connection is then left open, referenced).  True
+  // if it closed.
+  private closeConnection = (): boolean => {
+    if (this.poisoned) return false;
+    try {
+      this.armBeforeWrite();
+    } catch (err) {
+      // can't arm the close's checkpoint: left open until this process
+      // exits (it counts as open for the fence)
+      logger.error("persist: not closing a database that could not be armed", {
+        path: this.options?.path,
+        err: `${err}`,
+      });
+      return false;
+    }
+    try {
+      this.db.close();
+    } catch (err) {
+      if (isSqliteSyncError(err)) {
+        this.poison(err, "close");
+      }
+      throw err;
+    }
+    // closed: everything it committed and checkpointed is on disk
+    liveDiskConnections.delete(this);
+    this.releaseArm();
+    return true;
+  };
 
   addMaintenanceHandle = (handle: PersistMaintenanceHandle): void => {
     if (this.options.ephemeral || this.closing) return;
@@ -1436,10 +2602,11 @@ export class PersistentStream extends EventEmitter {
     }
   };
 
-  private initArchive = () => {
+  // returns whether it copied the archive over the file
+  private initArchive = (): boolean => {
     if (!this.options.archive) {
       this.throttledBackup = () => {};
-      return;
+      return false;
     }
     this.throttledBackup = throttle(
       this.backup,
@@ -1454,7 +2621,9 @@ export class PersistentStream extends EventEmitter {
 
     if (archiveAge > pathAge) {
       copyFileSync(archive, path);
+      return true;
     }
+    return false;
   };
 
   // Limit what this connection can do, whatever the (untrusted) file holds.
@@ -1521,36 +2690,70 @@ export class PersistentStream extends EventEmitter {
   };
 
   private initSchema = () => {
+    if (this.storageKind == "disk") {
+      // Durable writes (finding 028): a COMMIT returns only once its WAL
+      // frames are synced, and checkpoints run only explicitly, checked
+      // (auto-checkpoint ignores their errors).  Refused if not in effect.
+      this.db.exec("PRAGMA synchronous=FULL");
+      this.db.exec("PRAGMA wal_autocheckpoint=0");
+      const synchronous = Number(
+        (this.db.prepare("PRAGMA synchronous").get() as any)?.synchronous,
+      );
+      const autocheckpoint = Number(
+        (this.db.prepare("PRAGMA wal_autocheckpoint").get() as any)
+          ?.wal_autocheckpoint,
+      );
+      if (synchronous !== 2 || autocheckpoint !== 0) {
+        throw new ConatError(
+          `persist: durable mode is not in effect (synchronous=${synchronous}, wal_autocheckpoint=${autocheckpoint}); refusing the stream`,
+          { code: 503 },
+        );
+      }
+      this.walPageBytes =
+        Number((this.db.prepare("PRAGMA page_size").get() as any)?.page_size) ||
+        4096;
+      // SQLite reuses the WAL file from its start after a complete checkpoint
+      // but never shrinks it, so its size would stay above the checkpoint
+      // threshold forever (a checkpoint after every batch: twice the syncs).
+      // This truncates it, when the WAL restarts, below the threshold, so the
+      // file is that large again only once that many pages were written.
+      this.db.exec(
+        `PRAGMA journal_size_limit=${(CHECKPOINT_WAL_PAGES / 2) * this.walPageBytes}`,
+      );
+      // Switching a file into WAL mode writes and syncs it (a no-op on a file
+      // already in WAL mode); it can't run in a transaction, so it is armed
+      // on its own, at every open.
+      this.armBeforeWrite();
+    }
     // WAL, so readers and a writer can use the file at once (see also
     // busy_timeout in hardenConnection).
     this.db.prepare("PRAGMA journal_mode=WAL").run();
-    if (!this.options.sync && !this.options.ephemeral) {
-      // Unless sync is set, we do not require that the filesystem has commited changes
-      // to disk after every insert. This can easily make things 10x faster.  sets are
-      // typically going to come in one-by-one as users edit files, so this works well
-      // for our application.  Also, loss of a few seconds persistence is acceptable
-      // in a lot  of applications, e.g., if it is just edit history for a file.
-      this.db.prepare("PRAGMA synchronous=OFF").run();
-    }
-    this.createMessagesTable();
-    this.db.prepare(SCHEMA.config).run();
-    this.db.prepare(SCHEMA.stream_metadata).run();
-    this.db.prepare(SCHEMA.stream_checkpoints).run();
-    this.db.prepare(SCHEMA.idx_stream_checkpoints_seq).run();
-    for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
-      if (name === "idx_message_ids_msg_id") {
-        this.ensurePurposeIndex("message_ids", "msg_id", name);
-      } else {
+
+    // Every write of the open in ONE transaction (no autocommits; 028 site
+    // (b')).
+    const changes: ChangefeedOperation[] = [];
+    this.runTransaction(() => {
+      this.createMessagesTable();
+      this.db.prepare(SCHEMA.config).run();
+      this.db.prepare(SCHEMA.stream_metadata).run();
+      this.db.prepare(SCHEMA.stream_checkpoints).run();
+      this.db.prepare(SCHEMA.idx_stream_checkpoints_seq).run();
+      for (const [name, sql] of Object.entries(HISTORY_SCHEMA)) {
+        if (name === "idx_message_ids_msg_id") {
+          this.ensurePurposeIndex("message_ids", "msg_id", name);
+        } else {
+          this.db.prepare(sql).run();
+        }
+      }
+      for (const sql of Object.values(RESET_TRASH_SCHEMA)) {
         this.db.prepare(sql).run();
       }
-    }
-    for (const sql of Object.values(RESET_TRASH_SCHEMA)) {
-      this.db.prepare(sql).run();
-    }
-
-    this.conf = this.config();
-    this.ensureCurrentEpoch();
-    this.runTransaction(() => this.ensureCounts());
+      this.applyConfig(this.readConfig(), changes);
+      this.ensureCurrentEpoch();
+      this.ensureCounts();
+    });
+    // nobody listens yet; emitted anyway, after the COMMIT
+    this.emitChange(...changes);
     if (!this.runTrashStep()) registerTrashWork(this);
   };
 
@@ -2107,6 +3310,85 @@ export class PersistentStream extends EventEmitter {
     if (path == null || this.closing) {
       return;
     }
+    if (this.poisoned) {
+      // never closed in this process: closing checkpoints, and would copy
+      // pages that may be gone from the disk into the database (§3.2.4); it
+      // stays open, referenced (poisonedStreams) and counted for the fence
+      return;
+    }
+    if (this.writeQueue.length > 0) {
+      // a caller that bypassed atWriteIdle (releaseDurably/closeDurably):
+      // nothing of these requests was committed, so they fail and are sent
+      // again (§4.5)
+      streamLifecycle.closed_with_queued_writes_total += 1;
+      logger.error("persist: closing a stream with uncommitted writes", {
+        path,
+        queued: this.writeQueue.length,
+      });
+      this.failQueuedWrites("closing");
+    }
+    // a final checked checkpoint, armed (§4.8): a sync error poisons, and
+    // then nothing is closed or torn down.  Any other failure (e.g., a user
+    // at quota: SQLite's own close would checkpoint again and fail the same
+    // way) keeps the connection open and INTACT, counted as open for the
+    // fence, and retried later; the next get re-adopts it (§4.8-§4.10).
+    if (this.db != null && this.storageKind == "disk") {
+      const outcome = this.checkpointOutcome("FULL");
+      if (this.poisoned) return;
+      if (outcome == "error" || outcome == "unarmed") {
+        parkStream(this);
+        return;
+      }
+    }
+    this.finishClose(path);
+  };
+
+  // The owner whose write budget this stream's transactions spend (028
+  // B-3a): disk streams, once open (the open-time writes are not charged).
+  private budgetOwner = (): string | undefined => {
+    if (this.storageKind != "disk" || !this.diagnosticsRegistered) return;
+    return streamOwners.get(this.logicalId!) ?? "host";
+  };
+
+  // The connection's durability PRAGMAs, read back (undefined if poisoned
+  // or unreadable).  Diagnostics only.
+  readDurabilityPragmas = ():
+    | { synchronous: number; walAutocheckpoint: number }
+    | undefined => {
+    if (this.poisoned || this.db == null) return;
+    try {
+      return {
+        synchronous: Number(
+          (this.db.prepare("PRAGMA synchronous").get() as any)?.synchronous,
+        ),
+        walAutocheckpoint: Number(
+          (this.db.prepare("PRAGMA wal_autocheckpoint").get() as any)
+            ?.wal_autocheckpoint,
+        ),
+      };
+    } catch {
+      return;
+    }
+  };
+
+  // A parked stream's retry checkpointed it: now the real close.
+  finishParkedClose = (): void => {
+    const path = this.options?.path;
+    if (path == null || this.closing || this.poisoned) return;
+    this.finishClose(path);
+  };
+
+  // A parked stream handed out again by the cache: its own close again (the
+  // cache's wrapper of the previous reference is spent).
+  readopted = (): void => {
+    this.close = this.closeUnderlying;
+  };
+
+  // The rest of a close, once the final checkpoint is done: the real
+  // db.close() and the teardown (only if it really closed, or for an
+  // ephemeral stream).
+  private finishClose = (path: string): void => {
+    if (this.storageKind == "disk") faultPhase?.("close", { path });
     this.closing = true;
     // the restore fence and every close: nothing of this stream's trash work
     // runs after this, even if already selected for a tick (H1c §5)
@@ -2114,6 +3396,7 @@ export class PersistentStream extends EventEmitter {
     unregisterTrashWork(this);
     logger.debug("close ", path);
     this.throttledBackup?.cancel?.();
+    let keepOpen = false;
     try {
       if (this.db != null) {
         // This must remain synchronous. refCacheSync removes the stream from
@@ -2121,26 +3404,34 @@ export class PersistentStream extends EventEmitter {
         // SQLite path to reopen while this connection was still checkpointing
         // and closing. A full VACUUM on every disconnect was also unnecessary
         // churn and expanded the native SQLite failure surface.
-        try {
-          this.db.prepare("PRAGMA wal_checkpoint(FULL)").run();
-        } catch (err) {
-          logger.debug("WARNING: error checkpointing database on close", {
-            path,
-            err,
-          });
+        if (this.storageKind != "disk") {
+          try {
+            this.db.prepare("PRAGMA wal_checkpoint(FULL)").run();
+          } catch (err) {
+            logger.debug("WARNING: error checkpointing database on close", {
+              path,
+              err,
+            });
+          }
         }
         let closed = false;
         try {
-          this.db.close();
-          closed = true;
+          closed = this.closeConnection();
         } catch (err) {
           logger.warn("WARNING: error closing database", { path, err });
-          // it may still be open: never fenced as closed (fence.ts)
+        }
+        if (this.poisoned) {
+          keepOpen = true;
+          return;
+        }
+        if (!closed) {
+          // it may still be open: never fenced as closed (fence.ts), and
+          // referenced, so it is not closed by garbage collection either
           if (this.storageKind === "disk") {
             unclosedDiskPaths.add(path);
+            unclosedStreams.add(this);
           }
-        }
-        if (closed) {
+        } else {
           this.backupClosedDatabase();
           for (const handle of this.maintenanceHandles.values()) {
             try {
@@ -2155,17 +3446,19 @@ export class PersistentStream extends EventEmitter {
         }
       }
     } finally {
-      // @ts-ignore
-      delete this.options;
-      this.msgIDs?.clear();
-      // @ts-ignore
-      delete this.msgIDs;
-      this.maintenanceHandles.clear();
-      openPaths.delete(path);
-      if (this.diagnosticsRegistered) {
-        openStreams.delete(this);
-        recordStreamClose(this.storageKind, this.sqliteCacheKiB);
-        this.diagnosticsRegistered = false;
+      if (!keepOpen) {
+        // @ts-ignore
+        delete this.options;
+        this.msgIDs?.clear();
+        // @ts-ignore
+        delete this.msgIDs;
+        this.maintenanceHandles.clear();
+        openPaths.delete(path);
+        if (this.diagnosticsRegistered) {
+          openStreams.delete(this);
+          recordStreamClose(this.storageKind, this.sqliteCacheKiB);
+          this.diagnosticsRegistered = false;
+        }
       }
     }
   };
@@ -2229,17 +3522,44 @@ export class PersistentStream extends EventEmitter {
     }
   };
 
-  private runTransaction = <T>(fn: () => T): T => {
-    this.db.exec("BEGIN");
+  // Every write on the connection runs in a transaction opened here, never as
+  // an autocommit (028, V-3): the sets queued before it commit first (arrival
+  // order), the stream is armed, and a sync error poisons the file.  Under
+  // FULL the COMMIT is durable when it returns.
+  private runTransaction = <T>(
+    fn: () => T,
+    { mutation = true }: { mutation?: boolean } = {},
+  ): T => {
+    this.drainWriteQueue();
+    // 028 B-3a: every mutating transaction costs the owner's budget, checked
+    // before it starts and charged only once its COMMIT returned OK
+    const budgetOwner = this.budgetOwner();
+    const budget = budgetOwner == null ? undefined : ownerBudget(budgetOwner);
+    if (budget != null && !budget.fits(chargeFor(0))) {
+      throw rateLimitedError(budgetOwner!);
+    }
+    this.armBeforeWrite();
+    this.pendingRows = 0;
+    this.pendingBytes = 0;
     try {
+      this.db.exec("BEGIN");
       const result = fn();
+      const written = this.pendingBytes;
       this.db.exec("COMMIT");
-      this.markMaintenanceMutation();
+      budget?.commit(chargeFor(written));
+      if (mutation) this.markMaintenanceMutation();
+      this.afterWrite();
       return result;
     } catch (err) {
-      try {
-        this.db.exec("ROLLBACK");
-      } catch {}
+      if (isSqliteSyncError(err)) {
+        this.poison(err, "transaction");
+      } else if (!this.poisoned && this.db.isTransaction) {
+        try {
+          this.db.exec("ROLLBACK");
+        } catch (err2) {
+          if (isSqliteSyncError(err2)) this.poison(err2, "rollback");
+        }
+      }
       throw err;
     }
   };
@@ -2284,6 +3604,8 @@ export class PersistentStream extends EventEmitter {
   }): {
     time: number;
     seq: number;
+    // a resend of a committed message: nothing written, nothing to emit
+    duplicate?: true;
   } => {
     if (previousSeq === null) {
       previousSeq = undefined;
@@ -2291,20 +3613,33 @@ export class PersistentStream extends EventEmitter {
     if (key === null) {
       key = undefined;
     }
-    if (msgID != null && this.msgIDs?.has(msgID)) {
-      const existing = this.msgIDs.get(msgID)! as { seq: number; time: number };
-      changes.push({
-        seq: existing.seq,
-        time: existing.time,
-        key,
-        encoding,
-        raw,
-        headers: headers == null ? undefined : (headers as Headers),
-        msgID,
-      });
-      return {
-        ...existing,
-      };
+    if (msgID != null) {
+      // committed, so durable (028): answered from it, with no second row or
+      // change.  Also after a restart: a client whose ack was lost (e.g., the
+      // host stopped right after the COMMIT) sends it again, and the persisted
+      // msg id finds it (§5, §7 F1).
+      const existing =
+        (this.msgIDs?.get(msgID) as
+          | { seq: number; time: number }
+          | undefined) ?? this.storedMsgID(msgID);
+      if (existing != null) {
+        // 087: only the SAME write is answered as a duplicate; another body
+        // (raw, encoding, headers, key, ttl, checkpoint) under a stored
+        // msgID is refused, and nothing is stored or emitted either way
+        const stored = this.storedWriteMatches(existing.seq, {
+          encoding,
+          raw,
+          headers,
+          key,
+          ttl,
+          checkpoint,
+        });
+        if (stored == "mismatch") {
+          logMsgIDConflict(this.options?.path, msgID, "stored");
+          throw msgIDConflictError();
+        }
+        return { seq: existing.seq, time: existing.time, duplicate: true };
+      }
     }
     this.checkRequiredHeaders(headers);
     if (key !== undefined && previousSeq !== undefined) {
@@ -2352,6 +3687,70 @@ export class PersistentStream extends EventEmitter {
     };
   };
 
+  // Whether the message stored at seq is the same write as op (087).
+  // "gone": the row is no longer there (deleted, trimmed, or expired): there
+  // is nothing to compare, and the duplicate answer stores and emits nothing.
+  // Compared: encoding, raw, headers (as serialized), key, ttl, and a
+  // checkpoint the resend carries (its row must still be where this message
+  // put it).  A checkpoint the stored message had but the resend lacks can't
+  // be told from a later write's.  previousSeq is
+  // not stored (a precondition checked at the first commit), so a committed
+  // duplicate can't be compared on it; a duplicate in the same batch is.
+  private storedWriteMatches = (
+    seq: number,
+    op: {
+      encoding: DataEncoding;
+      raw: Buffer;
+      headers?: JSONValue;
+      key?: string;
+      ttl?: number;
+      checkpoint?: CheckpointUpdate;
+    },
+  ): "match" | "mismatch" | "gone" => {
+    const row = this.db
+      .prepare(
+        `SELECT seq, key, time, compress, encoding, raw, headers, ttl, ${EFFECTIVE_SIZE_SQL} AS size FROM messages WHERE seq=?`,
+      )
+      .get(seq) as any;
+    if (row == null) return "gone";
+    if (Number(row.size) > maxPersistMessageBytes()) return "mismatch";
+    const stored = dbToMessage({ ...row, ttl: undefined }, Number(row.size));
+    if (stored == null) return "gone";
+    if (Number(row.encoding) !== Number(op.encoding)) return "mismatch";
+    if (!Buffer.from(stored.raw).equals(Buffer.from(op.raw))) return "mismatch";
+    const headers = op.headers == null ? null : JSON.stringify(op.headers);
+    if ((row.headers ?? null) !== (headers ?? null)) return "mismatch";
+    if ((row.key ?? null) !== (op.key ?? null)) return "mismatch";
+    if ((row.ttl == null ? null : Number(row.ttl)) !== (op.ttl ?? null)) {
+      return "mismatch";
+    }
+    // a checkpoint: the named one must still be at the seq this message
+    // gave it (a later checkpoint of that name replaces it, and then a
+    // genuine resend is refused too: stated in the 087 item)
+    if (op.checkpoint != null) {
+      const cp = this.db
+        .prepare("SELECT seq FROM stream_checkpoints WHERE name = ?")
+        .get(op.checkpoint.name) as { seq?: number } | undefined;
+      if (cp == null || Number(cp.seq) !== (op.checkpoint.seq ?? seq)) {
+        return "mismatch";
+      }
+    }
+    return "match";
+  };
+
+  // The message a msg id was stored with, if it is still in the stream.
+  private storedMsgID = (
+    msgID: string,
+  ): { seq: number; time: number } | undefined => {
+    const row = this.db
+      .prepare(
+        "SELECT m.seq AS seq, m.time AS time FROM message_ids i JOIN messages m ON m.seq = i.seq WHERE i.msg_id = ? LIMIT 1",
+      )
+      .get(msgID) as { seq: number; time: number } | undefined;
+    if (row == null) return undefined;
+    return { seq: Number(row.seq), time: Number(row.time) * 1000 };
+  };
+
   // Insert one message, with its msg id and checkpoint, after all checks.
   private insertMessage = ({
     encoding,
@@ -2388,7 +3787,10 @@ export class PersistentStream extends EventEmitter {
         ttl ?? null,
       );
     const seq = Number((row as any).seq);
-    this.countAdded(seq, messageSize({ serializedHeaders, raw, key }));
+    const size = messageSize({ serializedHeaders, raw, key });
+    this.countAdded(seq, size);
+    this.pendingRows += 1;
+    this.pendingBytes += size;
     this.db
       .prepare("UPDATE history_epochs SET info_json=? WHERE last_seq IS NULL")
       .run(ledgerInfo(seq));
@@ -2411,95 +3813,552 @@ export class PersistentStream extends EventEmitter {
     return { time, seq };
   };
 
-  set = ({
-    encoding,
-    raw,
-    headers,
-    key,
-    ttl,
-    previousSeq,
-    msgID,
-    checkpoint,
-  }: {
-    encoding: DataEncoding;
-    raw: Buffer;
-    headers?: JSONValue;
-    key?: string;
-    ttl?: number;
-    previousSeq?: number;
-    // if given, any attempt to publish something again with the same msgID
-    // is deduplicated. Use this to prevent accidentally writing twice, e.g.,
-    // due to not getting a response back from the server.
-    msgID?: string;
-    checkpoint?: CheckpointUpdate;
-  }): { seq: number; time: number } => {
-    const changes: ChangefeedOperation[] = [];
-    const result = this.runTransaction(() =>
-      this.setInternal({
-        encoding,
-        raw,
-        headers,
-        key,
-        ttl,
-        previousSeq,
-        msgID,
-        checkpoint,
-        changes,
-      }),
-    );
-    for (const change of changes) {
-      this.emit("change", change);
+  // ---------------------------------------------------------------------
+  // Writes: group commit (finding 028, DESIGN §3).  Disk streams commit with
+  // synchronous=FULL, so a COMMIT that returned OK is durable, and every
+  // set/setMany is acked and emitted only after the COMMIT of its batch
+  // returned OK.  The requests queued for a stream commit together, in one
+  // transaction: each in its own SAVEPOINT (and each op of a setMany in a
+  // nested one), so a failing request or op gets its own error and leaves
+  // nothing behind.  Everything a request does in memory (its changes, its
+  // msgID, the write counter's rows) stays with the batch until the COMMIT
+  // returned OK, and is dropped with a rollback.
+
+  // set/setMany from a client: the promise settles once the batch's COMMIT
+  // returned (or failed)
+  setQueued = (
+    operation: WriteOperation,
+    order?: WriteOrder,
+  ): Promise<{ seq: number; time: number }> =>
+    new Promise((resolve, reject) => {
+      this.enqueueWrite({ kind: "set", ops: [operation], resolve, reject, order });
+    });
+
+  setManyQueued = (
+    operations: WriteOperation[],
+    order?: WriteOrder,
+  ): Promise<SetManyResult> =>
+    new Promise((resolve, reject) => {
+      this.enqueueWrite({ kind: "setMany", ops: operations, resolve, reject, order });
+    });
+
+  // A write of a client that is not a set/setMany (delete, metadata, config,
+  // checkpoints, ...), run in its order (AS-B3-ORDER-1).  The queued sets
+  // commit first -- the queue holds every earlier set of every connection in
+  // arrival order -- so the order check sees their refusals; then the check,
+  // then fn (whose own budget check may refuse it).
+  runOrdered = <T>(order: WriteOrder | undefined, fn: () => T): T => {
+    if (order == null) return fn();
+    this.drainWriteQueue();
+    const { state, wseq, wfloor } = order;
+    const verdict = state.check(wseq, wfloor);
+    if (verdict == "stale" || verdict == "overflow") {
+      throw writeOrderError(verdict);
     }
-    if (changes.length > 0) {
-      this.throttledBackup();
+    if (verdict == "blocked") {
+      if (!state.noteRefused(wseq)) throw writeOrderError("overflow");
+      throw rateLimitedError(this.budgetOwner() ?? "host");
     }
-    if (msgID !== undefined) {
-      this.msgIDs.set(msgID, { time: result.time, seq: result.seq });
+    try {
+      const result = fn();
+      state.noteAdmitted(wseq);
+      return result;
+    } catch (err) {
+      if ((err as any)?.code === "rate_limited") {
+        if (!state.noteRefused(wseq)) throw writeOrderError("overflow");
+      } else {
+        // resolved (failed): the client won't resend it
+        state.noteAdmitted(wseq);
+      }
+      throw err;
     }
-    return { time: result.time, seq: result.seq };
   };
 
-  setMany = (
-    operations: Array<{
-      encoding: DataEncoding;
-      raw: Buffer;
-      headers?: JSONValue;
-      key?: string;
-      ttl?: number;
-      previousSeq?: number;
-      msgID?: string;
-      checkpoint?: CheckpointUpdate;
-    }>,
-  ): Array<{ seq: number; time: number } | { error: string; code?: any }> => {
-    const changes: ChangefeedOperation[] = [];
-    const msgIds: Array<{ msgID: string; time: number; seq: number }> = [];
-    const results = this.runTransaction(() =>
-      operations.map((operation) => {
-        try {
-          const result = this.setInternal({ ...operation, changes });
-          if (operation.msgID !== undefined) {
-            msgIds.push({
-              msgID: operation.msgID,
-              time: result.time,
-              seq: result.seq,
-            });
-          }
-          return { time: result.time, seq: result.seq };
-        } catch (err) {
-          return { error: `${err}`, code: err.code };
-        }
-      }),
+  // The same, synchronously: whatever is queued commits first (arrival
+  // order), then this, as one batch of its own.
+  set = (operation: WriteOperation): { seq: number; time: number } => {
+    const request = this.enqueueWrite(
+      { kind: "set", ops: [operation] },
+      { schedule: false },
     );
-    for (const change of changes) {
-      this.emit("change", change);
+    this.drainWriteQueue();
+    return this.syncOutcome(request);
+  };
+
+  setMany = (operations: WriteOperation[]): SetManyResult => {
+    const request = this.enqueueWrite(
+      { kind: "setMany", ops: operations },
+      { schedule: false },
+    );
+    this.drainWriteQueue();
+    return this.syncOutcome(request);
+  };
+
+  private syncOutcome = (request: WriteRequest): any => {
+    const outcome = request.outcome;
+    if (outcome == null) {
+      throw Error("bug: a write was not settled by its flush");
     }
+    if ("error" in outcome) throw outcome.error;
+    return outcome.value;
+  };
+
+  private enqueueWrite = (
+    request: Omit<WriteRequest, "bytes">,
+    { schedule = true }: { schedule?: boolean } = {},
+  ): WriteRequest => {
+    const queued: WriteRequest = {
+      ...request,
+      bytes: request.ops.reduce(
+        (total, op) => total + (op.raw?.length ?? 0),
+        0,
+      ),
+    };
+    if (this.poisoned || this.closing) {
+      this.settle(queued, {
+        error: retryableWriteError(this.poisoned ? "poisoned" : "closing"),
+      });
+      return queued;
+    }
+    this.writeQueue.push(queued);
+    if (schedule) this.scheduleFlush();
+    return queued;
+  };
+
+  // a flush after the event loop's current I/O phase, so every request that
+  // arrived in it joins the batch; W ms later, if configured (the bench)
+  private scheduleFlush = (): void => {
+    if (this.flushTimer != null) return;
+    const flush = () => {
+      this.flushTimer = undefined;
+      this.flushWriteBatch();
+      if (this.writeQueue.length > 0) this.scheduleFlush();
+    };
+    this.flushTimer =
+      writeBatchWindowMs > 0
+        ? setTimeout(flush, writeBatchWindowMs)
+        : setImmediate(flush);
+  };
+
+  private cancelScheduledFlush = (): void => {
+    const timer = this.flushTimer;
+    if (timer == null) return;
+    this.flushTimer = undefined;
+    clearTimeout(timer as any);
+    clearImmediate(timer as any);
+  };
+
+  // Commits everything queued, now, batch by batch.  Every other write calls
+  // this first, so commands apply in arrival order.
+  drainWriteQueue = (): void => {
+    if (this.flushing) return;
+    this.cancelScheduledFlush();
+    while (this.writeQueue.length > 0) {
+      this.flushWriteBatch();
+    }
+  };
+
+  // Runs fn once nothing is queued and no transaction is in flight: at once,
+  // after committing what is queued (synchronously: storage's SQLite calls
+  // are synchronous).  The release of a reference and every close go through
+  // this, so a close never runs on uncommitted requests (§4.5).
+  atWriteIdle = (fn: () => void): void => {
+    this.drainWriteQueue();
+    fn();
+  };
+
+  private takeWriteBatch = (): WriteRequest[] => {
+    const batch: WriteRequest[] = [];
+    let bytes = 0;
+    while (
+      this.writeQueue.length > 0 &&
+      batch.length < WRITE_BATCH_MAX_REQUESTS
+    ) {
+      const next = this.writeQueue[0];
+      if (batch.length > 0 && bytes + next.bytes > WRITE_BATCH_MAX_BYTES) break;
+      batch.push(this.writeQueue.shift()!);
+      bytes += next.bytes;
+    }
+    return batch;
+  };
+
+  private settle = (request: WriteRequest, outcome: WriteOutcome): void => {
+    if (request.outcome != null) return;
+    request.outcome = outcome;
+    if ("error" in outcome) {
+      request.reject?.(outcome.error);
+    } else {
+      request.resolve?.(outcome.value);
+    }
+  };
+
+  private flushWriteBatch = (): void => {
+    const batch = this.takeWriteBatch();
+    if (batch.length == 0) return;
+    if (this.poisoned || this.closing) {
+      const error = retryableWriteError(this.poisoned ? "poisoned" : "closing");
+      for (const request of batch) this.settle(request, { error });
+      return;
+    }
+    this.flushing = true;
+    let changes: ChangefeedOperation[] = [];
+    try {
+      changes = this.commitWriteBatch(batch);
+    } catch (err) {
+      // a bug: never leave a request unsettled
+      logger.error("persist: write batch failed unexpectedly", {
+        path: this.options?.path,
+        err: `${err}`,
+      });
+      for (const request of batch) this.settle(request, { error: err });
+    } finally {
+      this.flushing = false;
+    }
+    if (this.poisoned) {
+      this.failQueuedWrites("poisoned");
+      return;
+    }
+    // committed (= durable): emitted in arrival order, once the flush is
+    // over, so a listener that writes (a sync set) starts a flush of its own
+    this.emitChange(...changes);
     if (changes.length > 0) {
       this.throttledBackup();
     }
-    for (const { msgID, time, seq } of msgIds) {
-      this.msgIDs.set(msgID, { time, seq });
+    this.afterWrite();
+  };
+
+  // Commits batch; returns the changes to emit, in arrival order (none if
+  // nothing committed).
+  private commitWriteBatch = (batch: WriteRequest[]): ChangefeedOperation[] => {
+    const failAll = (error: unknown) => {
+      for (const request of batch) this.settle(request, { error });
+    };
+    try {
+      this.armBeforeWrite();
+    } catch (err) {
+      failAll(err);
+      return [];
     }
-    return results;
+    if (this.walRestarted) {
+      // the first batch after a completed checkpoint (a WAL restart)
+      this.walRestarted = false;
+      faultPhase?.("after-restart", { path: `${this.options?.path}` });
+    }
+    this.pendingRows = 0;
+    this.pendingBytes = 0;
+    try {
+      this.db.exec("BEGIN");
+    } catch (err) {
+      this.abortWriteBatch(batch, err);
+      return [];
+    }
+
+    // the write budget of the stream's owner, and this batch's charges
+    const budgetOwner = this.budgetOwner();
+    const budget = budgetOwner == null ? undefined : ownerBudget(budgetOwner);
+    const pending: Charge = { txn: 0, bytes: 0 };
+    let refusedInBatch = false;
+    // the requests (and ops) whose msgID is new in this batch, for the
+    // duplicates later in it
+    const owners = new Map<string, { request: WriteRequest; op: number }>();
+    // per request: per op, its result, its error, or the op it duplicates
+    const results = new Map<WriteRequest, OpResult[]>();
+    const changes = new Map<WriteRequest, ChangefeedOperation[]>();
+    const newMsgIDs: { msgID: string; seq: number; time: number }[] = [];
+    let wrote = false;
+    // set when SQLite rolled back the whole transaction, or a sync error:
+    // nothing more is applied (§3, SA H1)
+    let abort: { err: unknown; failing?: WriteRequest } | undefined;
+    const transactionGone = (err?: unknown) =>
+      isSqliteSyncError(err) || !this.db.isTransaction;
+
+    let n = 0;
+    for (const request of batch) {
+      if (!this.db.isTransaction) {
+        abort = { err: lostTransactionError() };
+        break;
+      }
+      // 028 B-3a: the owner's write budget, against what it would have left
+      // after this batch's charges so far; nothing is applied if over.  Once
+      // one request of this stream is refused, every LATER request of the
+      // batch is refused too (SA-B3a-1): a smaller later write that would fit
+      // must not commit ahead of the refused one (the client resends both, in
+      // order).
+      //
+      // AS-B3-ORDER-1: a write with its client's order is checked against
+      // that connection's state instead, across batches: refused while an
+      // earlier write of the connection is still refused; a stale copy of a
+      // write the client already resolved is never applied.
+      const order = request.order;
+      const verdict = order?.state.check(order.wseq, order.wfloor) ?? "ok";
+      if (verdict == "stale" || verdict == "overflow") {
+        this.settle(request, { error: writeOrderError(verdict) });
+        continue;
+      }
+      const charge = chargeFor(request.bytes);
+      if (
+        verdict == "blocked" ||
+        (budget != null &&
+          ((order == null && refusedInBatch) || !budget.fits(charge, pending)))
+      ) {
+        if (order == null) refusedInBatch = true;
+        if (order != null && !order.state.noteRefused(order.wseq)) {
+          this.settle(request, { error: writeOrderError("overflow") });
+          continue;
+        }
+        this.settle(request, {
+          error: rateLimitedError(budgetOwner ?? "host"),
+        });
+        continue;
+      }
+      // past the order and the budget: resolved here, whatever happens next
+      // (committed, or failed with its own error; the client won't resend)
+      order?.state.noteAdmitted(order.wseq);
+      const name = `req_${n++}`;
+      try {
+        this.db.exec(`SAVEPOINT ${name}`);
+      } catch (err) {
+        abort = { err, failing: request };
+        break;
+      }
+      const requestResults: OpResult[] = [];
+      const requestChanges: ChangefeedOperation[] = [];
+      let requestFailed: unknown = undefined;
+      for (let i = 0; i < request.ops.length; i++) {
+        const op = request.ops[i];
+        const owner = op.msgID != null ? owners.get(op.msgID) : undefined;
+        if (owner != null) {
+          // a duplicate of an op earlier in this batch: it gets that op's
+          // result, and writes and emits nothing -- but only if it is the
+          // SAME write; another body under that msgID is refused (087)
+          const ownerOp = owner.request.ops[owner.op];
+          if (!sameWriteOperation(ownerOp, op)) {
+            logMsgIDConflict(this.options?.path, op.msgID!, "batch");
+            requestResults.push({ error: msgIDConflictError() });
+            if (request.kind != "setMany") requestFailed = msgIDConflictError();
+            continue;
+          }
+          requestResults.push({ duplicateOf: owner });
+          continue;
+        }
+        const nested =
+          request.kind == "setMany" ? `${name}_op_${i}` : undefined;
+        if (nested != null) {
+          if (!this.db.isTransaction) {
+            abort = { err: lostTransactionError(), failing: request };
+            break;
+          }
+          try {
+            this.db.exec(`SAVEPOINT ${nested}`);
+          } catch (err) {
+            abort = { err, failing: request };
+            break;
+          }
+        }
+        const opChanges: ChangefeedOperation[] = [];
+        const rows = this.pendingRows;
+        const bytes = this.pendingBytes;
+        try {
+          const result = this.setInternal({ ...op, changes: opChanges });
+          if (nested != null) this.db.exec(`RELEASE ${nested}`);
+          requestResults.push({
+            value: { seq: result.seq, time: result.time },
+          });
+          requestChanges.push(...opChanges);
+          if (!result.duplicate) {
+            wrote = true;
+            if (op.msgID != null) {
+              owners.set(op.msgID, { request, op: i });
+              newMsgIDs.push({
+                msgID: op.msgID,
+                seq: result.seq,
+                time: result.time,
+              });
+            }
+          }
+        } catch (err) {
+          // its rows (and changes, dropped with opChanges) are not committed
+          this.pendingRows = rows;
+          this.pendingBytes = bytes;
+          if (transactionGone(err)) {
+            abort = { err, failing: request };
+            break;
+          }
+          if (nested == null) {
+            // a set: the request fails as a whole
+            requestFailed = err;
+            break;
+          }
+          try {
+            this.db.exec(`ROLLBACK TO ${nested}`);
+            this.db.exec(`RELEASE ${nested}`);
+          } catch (err2) {
+            abort = { err: err2, failing: request };
+            break;
+          }
+          if (!this.db.isTransaction) {
+            abort = { err: lostTransactionError(), failing: request };
+            break;
+          }
+          requestResults.push({ error: err });
+        }
+      }
+      if (abort != null) break;
+      if (requestFailed != null) {
+        try {
+          this.db.exec(`ROLLBACK TO ${name}`);
+          this.db.exec(`RELEASE ${name}`);
+        } catch (err2) {
+          abort = { err: err2, failing: request };
+          break;
+        }
+        if (!this.db.isTransaction) {
+          abort = { err: lostTransactionError(), failing: request };
+          break;
+        }
+        this.settle(request, { error: requestFailed });
+        continue;
+      }
+      try {
+        this.db.exec(`RELEASE ${name}`);
+      } catch (err) {
+        abort = { err, failing: request };
+        break;
+      }
+      results.set(request, requestResults);
+      changes.set(request, requestChanges);
+      // batch-local until COMMIT returned OK (committed-work accounting)
+      pending.txn += charge.txn;
+      pending.bytes += charge.bytes;
+    }
+
+    if (abort != null) {
+      this.abortWriteBatch(batch, abort.err, abort.failing);
+      return [];
+    }
+    if (!this.db.isTransaction) {
+      this.abortWriteBatch(batch, lostTransactionError());
+      return [];
+    }
+    if (!wrote) {
+      // no request wrote anything: no COMMIT, so no sync (group commit must
+      // not add commits)
+      try {
+        this.db.exec("ROLLBACK");
+      } catch (err) {
+        if (isSqliteSyncError(err)) {
+          this.poison(err, "rollback");
+          this.failBatch(batch, retryableWriteError("poisoned"));
+          return [];
+        }
+      }
+    } else {
+      faultPhase?.("commit", { path: `${this.options?.path}`, requests: batch.length });
+      try {
+        this.db.exec("COMMIT");
+      } catch (err) {
+        this.abortWriteBatch(batch, err);
+        return [];
+      }
+      faultPhase?.("acked", { path: `${this.options?.path}`, requests: batch.length });
+      this.markMaintenanceMutation();
+      for (const { msgID, seq, time } of newMsgIDs) {
+        this.msgIDs.set(msgID, { seq, time });
+      }
+      budget?.commit(pending);
+    }
+
+    // committed (= durable): ack, then emit, in arrival order
+    const final = (result: OpResult): { value: any } | { error: unknown } => {
+      if (!("duplicateOf" in result)) return result;
+      // the op it duplicates is earlier in this batch and committed with it
+      // (an owner is recorded only once its op was released)
+      const owner = results.get(result.duplicateOf.request)?.[
+        result.duplicateOf.op
+      ];
+      if (owner == null || "duplicateOf" in owner) {
+        return { error: retryableWriteError("aborted") };
+      }
+      return owner;
+    };
+    for (const request of batch) {
+      if (request.outcome != null) continue; // a set that failed alone
+      const requestResults = (results.get(request) ?? []).map(final);
+      if (request.kind == "set") {
+        this.settle(
+          request,
+          requestResults[0] ?? { error: lostTransactionError() },
+        );
+      } else {
+        this.settle(request, {
+          value: requestResults.map((result) =>
+            "error" in result
+              ? { error: `${result.error}`, code: (result.error as any)?.code }
+              : result.value,
+          ),
+        });
+      }
+    }
+    return batch.flatMap((request) => changes.get(request) ?? []);
+  };
+
+  private failBatch = (batch: WriteRequest[], error: unknown): void => {
+    for (const request of batch) this.settle(request, { error });
+  };
+
+  // Nothing of the batch is committed, and nothing of it is acked or emitted.
+  // A sync error poisons the file (§3.2.2 A); otherwise SQLite rolled back or
+  // the COMMIT failed: the failing request gets its own error, and the class
+  // of an out-of-space error goes to every request of the batch, so clients
+  // at quota don't retry in a loop (V-2); the others retry.
+  private abortWriteBatch = (
+    batch: WriteRequest[],
+    err: unknown,
+    failing?: WriteRequest,
+  ): void => {
+    this.pendingRows = 0;
+    this.pendingBytes = 0;
+    if (isSqliteSyncError(err)) {
+      this.poison(err, "write batch");
+      this.failBatch(batch, retryableWriteError("poisoned"));
+      return;
+    }
+    if (this.db.isTransaction) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch (err2) {
+        if (isSqliteSyncError(err2)) {
+          this.poison(err2, "rollback");
+          this.failBatch(batch, retryableWriteError("poisoned"));
+          return;
+        }
+      }
+    }
+    const shared = writeErrorForEveryRequest(err, this.options?.path);
+    for (const request of batch) {
+      if (shared != null) {
+        this.settle(request, { error: shared });
+      } else if (
+        request === failing ||
+        (failing == null && batch.length == 1)
+      ) {
+        this.settle(request, { error: err });
+      } else {
+        this.settle(request, { error: retryableWriteError("aborted") });
+      }
+    }
+    logger.debug("persist: write batch aborted", {
+      path: this.options?.path,
+      requests: batch.length,
+      err: `${err}`,
+    });
+  };
+
+  private failQueuedWrites = (reason: "poisoned" | "closing"): void => {
+    this.cancelScheduledFlush();
+    const queued = this.writeQueue.splice(0);
+    const error = retryableWriteError(reason);
+    for (const request of queued) this.settle(request, { error });
   };
 
   private checkRequiredHeaders = (headers?: JSONValue): void => {
@@ -2733,7 +4592,7 @@ export class PersistentStream extends EventEmitter {
       });
       seqs = seqs0;
     }
-    this.emit("change", { op: "delete", seqs });
+    this.emitChange({ op: "delete", seqs });
     this.throttledBackup();
     return { seqs };
   };
@@ -3224,15 +5083,12 @@ export class PersistentStream extends EventEmitter {
     this.config();
     // metadata first: open copies of the document close on the new epoch
     // rather than react to their history disappearing
-    this.emit("change", { op: "metadata", metadata });
-    this.emit("change", { op: "delete", seqs, through });
-    this.emit("change", {
-      op: "checkpoints",
-      checkpoints: this.getCheckpoints(),
-    });
-    if (seedChange != null) {
-      this.emit("change", seedChange);
-    }
+    this.emitChange(
+      { op: "metadata", metadata },
+      { op: "delete", seqs, through },
+      { op: "checkpoints", checkpoints: this.getCheckpoints() },
+      ...(seedChange != null ? [seedChange] : []),
+    );
     this.throttledBackup();
     return result!;
   };
@@ -4199,6 +6055,34 @@ export class PersistentStream extends EventEmitter {
   };
 
   config = (config?: Partial<Configuration>): Configuration => {
+    const next = this.readConfig(config);
+    const changes: ChangefeedOperation[] = [];
+    if (next.writes.length > 0 || limitsCanDelete(next.full)) {
+      // the config writes and the limit deletes: ONE commit (028), and the
+      // deletes' changes are emitted after it.  this.conf is the new config
+      // inside the transaction (enforceLimits reads it), and the committed
+      // one again if it rolls back.
+      const committed = this.conf;
+      try {
+        this.runTransaction(() => this.applyConfig(next, changes), {
+          mutation: config != null,
+        });
+      } catch (err) {
+        this.conf = committed;
+        throw err;
+      }
+    } else {
+      this.conf = next.full;
+    }
+    this.emitChange(...changes);
+    this.throttledBackup();
+    return next.full;
+  };
+
+  // The configuration from the file with config's changes; writes nothing.
+  private readConfig = (
+    config?: Partial<Configuration>,
+  ): { full: Configuration; writes: [string, any][] } => {
     const cur: any = {};
     for (const { field, value } of this.db
       .prepare("SELECT * FROM config")
@@ -4206,6 +6090,7 @@ export class PersistentStream extends EventEmitter {
       cur[field] = value;
     }
     const full: Partial<Configuration> = {};
+    const writes: [string, any][] = [];
     for (const key in CONFIGURATION) {
       const { def, fromDb, toDb } = CONFIGURATION[key];
       full[key] =
@@ -4213,11 +6098,7 @@ export class PersistentStream extends EventEmitter {
       let x = toDb(full[key]);
       if (config?.[key] != null && full[key] != (cur[key] ?? def)) {
         // making a change
-        this.db
-          .prepare(
-            `INSERT INTO config (field, value) VALUES(?, ?) ON CONFLICT(field) DO UPDATE SET value=excluded.value`,
-          )
-          .run(key, x);
+        writes.push([key, x]);
       }
       full[key] = fromDb(x);
       if (
@@ -4231,14 +6112,24 @@ export class PersistentStream extends EventEmitter {
         full[key] = EPHEMERAL_MAX_BYTES;
       }
     }
-    this.conf = full as Configuration;
-    // ensure any new limits are enforced
-    this.enforceLimits(0);
-    if (config != null) {
-      this.markMaintenanceMutation();
+    return { full: full as Configuration, writes };
+  };
+
+  // in a transaction: write the changes, then enforce the (new) limits
+  private applyConfig = (
+    { full, writes }: { full: Configuration; writes: [string, any][] },
+    changes: ChangefeedOperation[],
+  ): void => {
+    for (const [key, x] of writes) {
+      this.db
+        .prepare(
+          `INSERT INTO config (field, value) VALUES(?, ?) ON CONFLICT(field) DO UPDATE SET value=excluded.value`,
+        )
+        .run(key, x);
     }
-    this.throttledBackup();
-    return full as Configuration;
+    this.conf = full;
+    // ensure any new limits are enforced
+    this.enforceLimits(0, changes);
   };
 
   getMetadata = (): JSONValue | undefined => {
@@ -4271,7 +6162,7 @@ export class PersistentStream extends EventEmitter {
           .run(JSON.stringify(metadata));
       }
     });
-    this.emit("change", { op: "metadata", metadata });
+    this.emitChange({ op: "metadata", metadata });
     this.throttledBackup();
     return metadata;
   };
@@ -4347,7 +6238,7 @@ export class PersistentStream extends EventEmitter {
     this.runTransaction(() => {
       this.writeCheckpoint({ name, seq, time, data });
     });
-    this.emit("change", {
+    this.emitChange({
       op: "checkpoints",
       checkpoints: this.getCheckpoints(),
     });
@@ -4356,9 +6247,12 @@ export class PersistentStream extends EventEmitter {
   };
 
   deleteCheckpoint = (name: string): void => {
-    this.db.prepare("DELETE FROM stream_checkpoints WHERE name = ?").run(name);
-    this.markMaintenanceMutation();
-    this.emit("change", {
+    this.runTransaction(() => {
+      this.db
+        .prepare("DELETE FROM stream_checkpoints WHERE name = ?")
+        .run(name);
+    });
+    this.emitChange({
       op: "checkpoints",
       checkpoints: this.getCheckpoints(),
     });
@@ -4447,17 +6341,13 @@ export class PersistentStream extends EventEmitter {
     }
   };
 
-  private emitDelete = (rows, deferredChanges?: ChangefeedOperation[]) => {
+  // in a transaction: the change is emitted after its COMMIT (028)
+  private emitDelete = (rows, deferredChanges: ChangefeedOperation[]) => {
     this.countRemoved(rows);
     if (rows.length > 0) {
       const seqs = rows.map((row: { seq: number }) => row.seq);
       this.deleteCheckpointsInSeqs(seqs);
-      if (deferredChanges != null) {
-        deferredChanges.push({ op: "delete", seqs });
-      } else {
-        this.emit("change", { op: "delete", seqs });
-        this.throttledBackup();
-      }
+      deferredChanges.push({ op: "delete", seqs });
     }
   };
 
@@ -4465,8 +6355,8 @@ export class PersistentStream extends EventEmitter {
   // with the given size; if size=0 assume not actually inserting a new message, and just
   // enforcingt current limits
   private enforceLimits = (
-    size: number = 0,
-    deferredChanges?: ChangefeedOperation[],
+    size: number,
+    deferredChanges: ChangefeedOperation[],
   ) => {
     if (
       size > 0 &&
@@ -4663,9 +6553,76 @@ export const cache = refCacheSync<CreateOptions, PersistentStream>({
   name: "persistent-storage-stream",
   createKey: ({ path }: CreateOptions) => path,
   createObject: (options: CreateOptions) => {
-    return new PersistentStream(options);
+    // a parked connection (§4.8-§4.10) comes back intact, never a second one
+    return adoptParked(options.path) ?? new PersistentStream(options);
   },
+  // a poisoned stream is never handed out again: the next get tries to open
+  // it anew, which its records refuse (028)
+  isValid: (stream: PersistentStream) => !stream.isPoisoned(),
 });
+
+// Shutdown (028, SA F): commits what every open stream has queued, so the
+// process can exit WITHOUT closing anything (a close checkpoints; each WAL is
+// recovered at the next open).
+export function flushAllPersistWrites(): void {
+  for (const stream of openStreams.keys()) {
+    try {
+      stream.drainWriteQueue();
+    } catch (err) {
+      logger.warn("persist: flush at shutdown failed", { err: `${err}` });
+    }
+  }
+}
+
+// Releases one reference of a cached stream, once what it has queued is
+// committed (§4.5).  The final reference then closes it, synchronously.
+export function releaseDurably(stream: PersistentStream): void {
+  stream.atWriteIdle(() => stream.close());
+}
+
+// Closes a stream this caller owns alone (pstream with noCache), once what
+// it has queued is committed (§4.5).
+export function closeDurably(stream: PersistentStream): void {
+  stream.atWriteIdle(() => stream.close());
+}
+
+// Every LIVE disk connection (liveDiskConnections: from its creation until a
+// close returned OK), not only the registered streams: a connection whose
+// close failed or could not be armed, or whose open did not finish, is still
+// open and is read back too.  A poisoned or unreadable one counts as
+// unreadable (a failure for the acceptance gate).
+function pragmaCheck(): {
+  disk_connections: number;
+  synchronous_full: number;
+  wal_autocheckpoint_off: number;
+  unreadable: number;
+  registered_streams: number;
+  unregistered_live: number;
+} {
+  const out = {
+    disk_connections: 0,
+    synchronous_full: 0,
+    wal_autocheckpoint_off: 0,
+    unreadable: 0,
+    registered_streams: 0,
+    unregistered_live: 0,
+  };
+  for (const [, { kind }] of openStreams) {
+    if (kind === "disk") out.registered_streams += 1;
+  }
+  for (const stream of liveDiskConnections) {
+    out.disk_connections += 1;
+    if (openStreams.get(stream)?.kind !== "disk") out.unregistered_live += 1;
+    const r = stream.readDurabilityPragmas();
+    if (r == null) {
+      out.unreadable += 1;
+      continue;
+    }
+    if (r.synchronous === 2) out.synchronous_full += 1;
+    if (r.walAutocheckpoint === 0) out.wal_autocheckpoint_off += 1;
+  }
+  return out;
+}
 
 export function getPersistentStreamDiagnostics() {
   const cacheInfo = cache.info();
@@ -4685,6 +6642,27 @@ export function getPersistentStreamDiagnostics() {
       ephemeral_override_kib: resolveEphemeralSqliteCacheKiB(),
     },
     open_stream_inventory: summarizeOpenStreams(Date.now()),
+    // 028 B-2/B-3a
+    durability: {
+      ...durabilityHealth,
+      poisoned_open_connections: poisonedStreams.size,
+      parked_streams: parked.size,
+      budget_refused_total: budgetStats.refused_total,
+      msgid_conflicts_total: streamLifecycle.msgid_conflicts_total,
+      startup_refused: (() => {
+        const start = startupCheck?.();
+        return start != null && !start.ok ? (start.reason ?? "refused") : null;
+      })(),
+      startup_overrides: startupCheck?.()?.overrides ?? [],
+      host_healthy:
+        durabilityHealth.device_poisons_total == 0 &&
+        !(startupCheck?.()?.ok === false),
+    },
+    // 028 B-3a: the runtime PRAGMA verification of every open disk
+    // connection (read back now): all must be FULL with auto-checkpoint 0
+    pragma_check: pragmaCheck(),
+    // null: this process counts no commits (no write counter in the context)
+    write_stats: writeCounter?.stats() ?? null,
   };
 }
 
@@ -4747,6 +6725,7 @@ export function getPersistentStreamSqliteDiagnostics() {
 // Of disk-backed streams whose database failed to close: it may still be
 // open until this process exits.
 const unclosedDiskPaths = new Set<string>();
+const unclosedStreams = new Set<PersistentStream>();
 
 // The local paths (without .db) of the disk-backed streams open in this
 // process.
@@ -4765,6 +6744,16 @@ export function pstream(
   options: StorageOptions & { noCache?: boolean },
 ): PersistentStream {
   return cache(options);
+}
+
+// whether enforcing conf's limits (enforceLimits(0)) can delete anything
+function limitsCanDelete(conf: Configuration): boolean {
+  return (
+    conf.max_msgs > -1 ||
+    conf.max_age > 0 ||
+    conf.max_bytes > -1 ||
+    !!conf.allow_msg_ttl
+  );
 }
 
 function age(path: string) {

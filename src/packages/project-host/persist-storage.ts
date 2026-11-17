@@ -20,13 +20,23 @@ The volume is host-only, so its users can't do that themselves.
   then compacts the database.
 */
 
-import { DatabaseSync } from "node:sqlite";
 import { lstat, open, opendir, rmdir, unlink } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 // (initialized with node:sqlite, as in the persist server)
-import { pstream } from "@cocalc/backend/conat/persist";
+import {
+  pstream,
+  closeDurably,
+  prepareDurableOpen,
+  clearOpenBarrierPass,
+} from "@cocalc/backend/conat/persist";
 import { projectPersistTemplates } from "@cocalc/backend/conat/persist-volume-template";
+import {
+  assertPersistMaintenanceOpenAllowed,
+  fsyncMaintenanceOutput,
+  runArmedMaintenanceWrite,
+  withMaintenanceConnection,
+} from "@cocalc/backend/conat/persist-durability";
 import {
   MAX_PERSIST_STORAGE_ACTIONS,
   RETENTION_POLICY_KINDS,
@@ -344,32 +354,45 @@ async function removeEmptyParents(root: string, path: string): Promise<void> {
   }
 }
 
-// Gives back the free pages of a closed database.
-function compact(path: string): void {
-  const db = new DatabaseSync(`${path}.db`);
-  try {
-    db.exec("PRAGMA busy_timeout=5000");
-    db.exec("VACUUM");
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  } finally {
-    db.close();
-  }
+// Gives back the free pages of a closed database.  owner: the project the
+// path was built for (the records' owner, as prepareDurableOpen gets it;
+// 028 B2-M1: a project-level poison refuses).
+function compact(path: string, owner: string): void {
+  assertPersistMaintenanceOpenAllowed(`${path}.db`, undefined, () => owner);
+  // armed: a sync error in the VACUUM, its checkpoints or the close poisons
+  // the stream (SA-B2-1)
+  runArmedMaintenanceWrite(`${path}.db`, owner, "trim:compact", () => {
+    // the explicit checkpoint and the close: withMaintenanceConnection
+    withMaintenanceConnection(`${path}.db`, 5000, (db) => db.exec("VACUUM"));
+    // the rewritten file durable before the trim completes (§4A 10)
+    fsyncMaintenanceOutput(`${path}.db`);
+  });
 }
 
 // The newest seq of an entry written before `before` (ms), if any.  (The
 // storage keeps each entry's time in seconds.)
-function lastSeqBefore(path: string, before: number): number | undefined {
+function lastSeqBefore(
+  path: string,
+  before: number,
+  owner: string,
+): number | undefined {
   // (not read-only: that can't read a database in WAL mode without its -shm)
-  const db = new DatabaseSync(`${path}.db`);
-  try {
-    db.exec("PRAGMA busy_timeout=5000");
-    const row = db
-      .prepare("SELECT MAX(seq) AS seq FROM messages WHERE time < ?")
-      .get(before / 1000) as { seq: number | null } | undefined;
-    return row?.seq == null ? undefined : Number(row.seq);
-  } finally {
-    db.close();
-  }
+  assertPersistMaintenanceOpenAllowed(`${path}.db`, undefined, () => owner);
+  // armed (SA-B2-3): this read-write connection is the last one of a closed
+  // stream, so its close would checkpoint the WAL, unreported
+  return runArmedMaintenanceWrite(`${path}.db`, owner, "trim:last-seq", () => {
+    // the explicit checkpoint and the close: withMaintenanceConnection (a
+    // failure after the open leaves the record armed)
+    const seq = withMaintenanceConnection(`${path}.db`, 5000, (db) => {
+      const row = db
+        .prepare("SELECT MAX(seq) AS seq FROM messages WHERE time < ?")
+        .get(before / 1000) as { seq: number | null } | undefined;
+      return row?.seq == null ? undefined : Number(row.seq);
+    });
+    // what the checkpoint wrote durable before the trim goes on (§4A 10)
+    fsyncMaintenanceOutput(`${path}.db`);
+    return seq;
+  });
 }
 
 // Keeps only what the action's policy keeps of the stream at `path` (closed
@@ -394,7 +417,9 @@ async function trim(
     throw new Error("trim: since must be a time in ms");
   }
   const cutoff =
-    policy.kind == "since" ? lastSeqBefore(path, policy.since) : undefined;
+    policy.kind == "since"
+      ? lastSeqBefore(path, policy.since, ctx.project_id)
+      : undefined;
   const archive = streamCopy(
     "COCALC_SYNC_ARCHIVE",
     ctx.project_id,
@@ -407,13 +432,20 @@ async function trim(
     action.name,
     env,
   );
+  // 028 B-2: the open barrier off the main thread, consumed right below
+  await prepareDurableOpen(path, ctx.project_id);
   // (closing writes the trimmed stream to its copies)
-  const stream = pstream({
-    path,
-    ...(archive ? { archive } : {}),
-    ...(backup ? { backup } : {}),
-    noCache: true,
-  });
+  let stream: ReturnType<typeof pstream>;
+  try {
+    stream = pstream({
+      path,
+      ...(archive ? { archive } : {}),
+      ...(backup ? { backup } : {}),
+      noCache: true,
+    });
+  } finally {
+    clearOpenBarrierPass(path);
+  }
   let removed = 0;
   try {
     if (cutoff != null) {
@@ -427,7 +459,13 @@ async function trim(
       }
     }
   } finally {
-    stream.close();
+    // once the trim's writes are committed (028 §4.5)
+    closeDurably(stream);
+  }
+  if (stream.isPoisoned()) {
+    throw Error(
+      `persist storage action ${action.name}: the stream had a sync error (poisoned); not reporting a result`,
+    );
   }
   return removed;
 }
@@ -476,7 +514,7 @@ async function apply(
       await removeEmptyParents(ctx.root, path);
     } else if (action.op == "trim") {
       result.removed = await trim(ctx, path, action, env);
-      compact(path);
+      compact(path, ctx.project_id);
     } else {
       throw new Error(`unknown operation: ${(action as any)?.op}`);
     }

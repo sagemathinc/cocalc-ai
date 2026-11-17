@@ -51,7 +51,7 @@ import { randomId } from "@cocalc/conat/names";
 import { isValidUUID } from "@cocalc/util/misc";
 import { delay } from "awaiting";
 import { resolve } from "node:path";
-import { openDiskStreamPaths } from "./storage";
+import { openDiskStreamPaths, retryParkedStreams } from "./storage";
 import { releaseQueuedStreams } from "./server";
 import { resolveLocalPath } from "./util";
 import {
@@ -141,6 +141,8 @@ export async function fenceProject({
     const closed_sockets = closeProjectSockets(project_id);
     while (true) {
       await releaseQueuedStreams(under);
+      // parked connections (028 §4.8-§4.10) try to close now
+      retryParkedStreams(under);
       const open = openDiskStreamPaths().filter(under);
       const claimed = [...claimedFiles.keys()].filter(claimedUnder);
       if (open.length == 0 && claimed.length == 0) {

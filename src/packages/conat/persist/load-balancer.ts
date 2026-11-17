@@ -25,7 +25,7 @@ collaborative editing badly.
 
 import { type Client } from "@cocalc/conat/core/client";
 import { getLogger } from "@cocalc/conat/logger";
-import { SERVICE } from "./util";
+import { SERVICE } from "./subject";
 import {
   BOARD_WRITE_CONTROL_RECEIVE_LIMITS,
   BOARD_WRITE_SERVICE,

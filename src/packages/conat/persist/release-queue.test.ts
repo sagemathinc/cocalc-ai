@@ -122,4 +122,19 @@ describe("PersistStreamReleaseQueue", () => {
       resolvePersistStreamReleaseGraceMs({ COCALC_TEST_MODE: "true" }),
     ).toBe(0);
   });
+
+  it("releases a persist stream only once what it has queued is committed (028 releaseDurably)", () => {
+    const order: string[] = [];
+    const stream = {
+      close: () => order.push("close"),
+      atWriteIdle: (fn: () => void) => {
+        order.push("commit queued");
+        fn();
+      },
+    };
+    const queue = new PersistStreamReleaseQueue({ graceMs: 10 });
+    queue.schedule(stream);
+    jest.advanceTimersByTime(10);
+    expect(order).toEqual(["commit queued", "close"]);
+  });
 });

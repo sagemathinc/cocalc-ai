@@ -4,6 +4,7 @@ transaction: fence, new epoch in the metadata, and the old messages deleted or
 kept aside in a table of their own.
 */
 
+import { testDurabilityContext } from "./test-durability";
 import { PersistentStream } from "./storage";
 import { initContext, syncFiles } from "./context";
 import { DatabaseSync } from "node:sqlite";
@@ -13,6 +14,7 @@ let stream: PersistentStream;
 
 beforeAll(() => {
   initContext({
+    ...testDurabilityContext(),
     sqlite: { DatabaseSync },
     compress: (data) => data,
     decompress: (data) => data,

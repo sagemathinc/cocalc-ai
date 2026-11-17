@@ -1,3 +1,4 @@
+import { testDurabilityContext } from "./test-durability";
 import { PersistentStream } from "./storage";
 import { initContext, syncFiles } from "./context";
 import { DatabaseSync } from "node:sqlite";
@@ -5,6 +6,7 @@ import { statSync, copyFileSync } from "node:fs";
 
 test("compare-and-set creates only absent keys and rejects stale writers", () => {
   initContext({
+    ...testDurabilityContext(),
     sqlite: { DatabaseSync },
     compress: (data) => data,
     decompress: (data) => data,
