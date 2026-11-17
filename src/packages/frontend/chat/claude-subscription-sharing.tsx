@@ -59,11 +59,14 @@ export function claudeSubscriptionSharingRisk({
   projectId?: string;
 }): { show: boolean; key: string } {
   // The public site setting, under its site-settings name (the camelCase
-  // name exists only in the server-side customize object).
-  const runtime = redux
-    .getStore?.("customize")
-    ?.get?.("claude_subscription_runtime");
-  if (runtime !== "project") return { show: false, key: "" };
+  // name exists only in the server-side customize object). Once /customize
+  // has loaded, the store always holds it (process_customize fills the site
+  // default, "controller"); before that, fail toward showing, so a very early
+  // first turn on a "project" site is not sent without the warning.
+  const customize = redux.getStore?.("customize");
+  const loaded = !!customize?.get?.("_is_configured");
+  const runtime = customize?.get?.("claude_subscription_runtime");
+  if (loaded && runtime !== "project") return { show: false, key: "" };
   if (!projectId) return { show: true, key: "unknown" };
   const users = projectCollaborators(projectId);
   if (users == null) return { show: true, key: "unknown" };
