@@ -134,17 +134,18 @@ The wrapper is intentionally conservative:
 - it calls `cocalc host upgrade --all-online --wait` for project hosts, and
   fails if the upgrade reports `"ok": false`
 - `--wait` can return before every host reports its new software, so it then
-  re-reads the online hosts' software state until it is unchanged on two
-  further reads in a row (`--host-settle-tries`, `--host-settle-interval`,
-  `--host-settle-confirms`; `--host-settle-tries 0` keeps the old single
-  read). Every read is kept in the report directory
-- pass `--expect-host-version <version>` to also require every online host
-  to report exactly that version; a stable old or partly upgraded fleet then
-  fails. Without it, only stability is checked, and
-  `project-host-target.txt` records `host_target_verified=no`
+  re-reads the hosts the upgrade reported upgrading (their ids, from the
+  upgrade's own JSON output) until every one of them reports exactly the
+  version given with `--expect-host-version`, which is required unless
+  `--skip-host-upgrade`. The state must then be unchanged on two further
+  reads in a row (`--host-settle-tries`, `--host-settle-interval`,
+  `--host-settle-confirms`; `--host-settle-tries 0` makes it a single read).
+  A stable old or partly upgraded fleet fails. Every read is kept in the
+  report directory
 - it runs `ssh`/`scp` non-interactively with a 30 second connect timeout and
-  keepalives, so a stalled connection fails instead of hanging; set
-  `BAY_UPGRADE_SSH_OPTS` to use other options
+  keepalives, so a stalled connection fails instead of hanging.
+  `BAY_UPGRADE_SSH_OPTS` replaces these options entirely; include them again
+  if you only want to add one
 - it writes a report directory under `tmp/bay-upgrade-...`
 - it accepts `--skip-host-upgrade` for control-plane-only upgrades
 - it accepts `--keep-remote-artifacts` when debugging a failed upgrade

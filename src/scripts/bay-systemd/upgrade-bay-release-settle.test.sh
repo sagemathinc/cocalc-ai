@@ -76,25 +76,92 @@ run_case always-failing 1 5 5 2 true "a#1"
 run_case single-read 0 1 0 2 true "a#0"
 run_case single-read-failed 1 1 0 2 true "a#1"
 
-# --- the target version (hosts_at_expected_version) ---
+# --- the target version on the exact upgraded set (hosts_at_expected_version) ---
+A=11111111-1111-1111-1111-111111111111
+B=22222222-2222-2222-2222-222222222222
+C=33333333-3333-3333-3333-333333333333
+HOST_TARGETS_FILE="${TMP}/targets"
+printf '%s\n' "$A" "$B" >"$HOST_TARGETS_FILE"
 HOST_EXPECT_VERSION=v2
 # Every host stays on the OLD version: stable, but never the target.
-run_case old-stable 1 6 6 2 hosts_at_expected_version "h1|v1|s;h2|v1|s#0"
+run_case old-stable 1 6 6 2 hosts_at_expected_version "$A|h1|v1|s;$B|h2|v1|s#0"
 # A partly upgraded fleet that holds still: never passes.
-run_case partial-stable 1 6 6 2 hosts_at_expected_version "h1|v2|s;h2|v1|s#0"
-# Delayed convergence: old, partial, then all at v2 and confirmed.
+run_case partial-stable 1 6 6 2 hosts_at_expected_version "$A|h1|v2|s;$B|h2|v1|s#0"
+# Delayed convergence: old, partial, then both at v2 and confirmed.
 run_case converges 0 6 20 2 hosts_at_expected_version \
-  "h1|v1|s;h2|v1|s#0" "h1|v2|s;h2|v1|s#0" "h1|v2|s;h2|v1|s#0" \
-  "h1|v2|s;h2|v2|s#0" "h1|v2|s;h2|v2|s#0" "h1|v2|s;h2|v2|s#0"
-# No online host at all is not "all at the target".
-run_case no-hosts 1 4 4 2 hosts_at_expected_version "#0"
+  "$A|h1|v1|s;$B|h2|v1|s#0" "$A|h1|v2|s;$B|h2|v1|s#0" "$A|h1|v2|s;$B|h2|v1|s#0" \
+  "$A|h1|v2|s;$B|h2|v2|s#0" "$A|h1|v2|s;$B|h2|v2|s#0" "$A|h1|v2|s;$B|h2|v2|s#0"
+# A targeted host missing from the read (e.g. it went away) never passes.
+run_case target-missing 1 4 4 2 hosts_at_expected_version "$A|h1|v2|s#0"
+# A host that was not targeted does not count.
+run_case extra-host 1 4 4 2 hosts_at_expected_version "$A|h1|v2|s;$B|h2|v2|s;$C|h3|v2|s#0"
+run_case other-host 1 4 4 2 hosts_at_expected_version "$A|h1|v2|s;$C|h3|v2|s#0"
+# The same host twice is not two hosts.
+run_case duplicate-host 1 4 4 2 hosts_at_expected_version "$A|h1|v2|s;$A|h1|v2|s#0"
+# No rows at all.
 run_case no-rows 1 4 4 2 hosts_at_expected_version "@none#0"
-# A version that merely contains the target does not match it.
-run_case prefix-version 1 4 4 2 hosts_at_expected_version "h1|v2-old|s#0"
+run_case blank-row 1 4 4 2 hosts_at_expected_version "#0"
+# A version that merely starts with the target does not match it.
+run_case prefix-version 1 4 4 2 hosts_at_expected_version "$A|h1|v2-old|s;$B|h2|v2|s#0"
 # The single read also has to be at the target.
-run_case single-read-old 1 1 0 2 hosts_at_expected_version "h1|v1|s#0"
+run_case single-read-old 1 1 0 2 hosts_at_expected_version "$A|h1|v1|s;$B|h2|v2|s#0"
+# No target version, or no target set: never passes.
 HOST_EXPECT_VERSION=""
-run_case no-target-passes 0 3 20 2 hosts_at_expected_version "h1|v1|s#0"
+# (rows with an empty version too: "" must not match an empty target)
+run_case no-version 1 3 3 2 hosts_at_expected_version "$A|h1||s;$B|h2||s#0"
+HOST_EXPECT_VERSION=v2
+: >"$HOST_TARGETS_FILE"
+run_case no-targets 1 3 3 2 hosts_at_expected_version "$A|h1|v2|s;$B|h2|v2|s#0"
+
+# --- upgrade_targets: the upgraded set comes from the upgrade's own output ---
+# targets_case <name> <expect rc> <expect ids or -> <json>
+targets_case() {
+  local name="$1" want_rc="$2" want="$3" rc=0 got
+  printf '%s' "$4" >"${TMP}/${name}.json"
+  got="$(upgrade_targets "${TMP}/${name}.json" 2>/dev/null)" || rc=$?
+  if [[ "$want_rc" == 0 ]]; then
+    [[ "$rc" == 0 ]] || fail "targets $name: rc=$rc, expected 0"
+    [[ "$got" == "$want" ]] || fail "targets $name: got '$got', expected '$want'"
+  else
+    [[ "$rc" != 0 ]] || fail "targets $name: rc=0, expected a failure"
+  fi
+  echo "ok: targets $name"
+}
+targets_case many 0 "$A"$'\n'"$B" \
+  '{"ok":true,"data":{"status":"succeeded","count":2,"hosts":[{"host_id":"'"$B"'","status":"succeeded"},{"host_id":"'"$A"'","status":"succeeded"}]}}'
+targets_case one 0 "$A" '{"ok":true,"data":{"host_id":"'"$A"'","status":"succeeded"}}'
+targets_case skipped 1 - '{"ok":true,"data":{"status":"skipped","hosts":[]}}'
+targets_case not-ok 1 - '{"ok":false,"data":{"host_id":"'"$A"'","status":"succeeded"}}'
+targets_case host-failed 1 - \
+  '{"ok":true,"data":{"hosts":[{"host_id":"'"$A"'","status":"succeeded"},{"host_id":"'"$B"'","status":"failed"}]}}'
+targets_case bad-id 1 - '{"ok":true,"data":{"hosts":[{"host_id":"x; DROP","status":"succeeded"}]}}'
+targets_case duplicate 1 - \
+  '{"ok":true,"data":{"hosts":[{"host_id":"'"$A"'","status":"succeeded"},{"host_id":"'"$A"'","status":"succeeded"}]}}'
+targets_case not-json 1 - 'progress line
+{"ok":true}'
+
+# --- read_project_host_software reads exactly the target ids ---
+# remote_psql is replaced by a stub that records the SQL it was given.
+remote_psql() { cat >"${TMP}/sql"; echo called >"${TMP}/psql-called"; }
+printf '%s\n' "$A" "$B" >"$HOST_TARGETS_FILE"
+read_project_host_software >/dev/null || fail "reader: rc for good ids"
+grep -qF "IN ('${A}','${B}')" "${TMP}/sql" || fail "reader: SQL does not name exactly the target ids"
+grep -q 'deleted' "${TMP}/sql" && fail "reader: SQL filters on deleted (a targeted host could drop out)"
+rm -f "${TMP}/psql-called"
+printf '%s\n' "$A" "x') OR true --" >"$HOST_TARGETS_FILE"
+rc=0; read_project_host_software >/dev/null 2>&1 || rc=$?
+[[ "$rc" != 0 && ! -e "${TMP}/psql-called" ]] || fail "reader: a non-uuid target line reached psql"
+: >"$HOST_TARGETS_FILE"
+rc=0; read_project_host_software >/dev/null 2>&1 || rc=$?
+[[ "$rc" != 0 && ! -e "${TMP}/psql-called" ]] || fail "reader: an empty target set reached psql"
+echo "ok: reader target ids"
+
+# --- a host upgrade without --expect-host-version is refused up front ---
+rc=0
+err="$(bash "${SCRIPT_DIR}/upgrade-bay-release.sh" --remote bay.example --api https://bay.example \
+  --bundle-url https://bundles.example/b.tar.xz --admin-email a@b.example 2>&1)" || rc=$?
+[[ "$rc" != 0 && "$err" == *"--expect-host-version"* ]] || fail "missing --expect-host-version was not refused (rc=$rc)"
+echo "ok: version required"
 
 # --- its own evidence must be written (rc 2) ---
 mkdir "${TMP}/ro"

@@ -44,10 +44,11 @@ CLI_PATH="${SRC_ROOT}/packages/cli/dist/bin/cocalc.js"
 HOST_SETTLE_TRIES=20
 HOST_SETTLE_INTERVAL=30
 HOST_SETTLE_CONFIRMS=2
-# With --expect-host-version, every online host must report exactly this
-# version before the state counts as settled.
+# Every host the upgrade targeted must report exactly this version
+# (--expect-host-version, required when hosts are upgraded).
 HOST_EXPECT_VERSION=""
-HOST_ONLINE_MINUTES=10
+# One host id per line: the exact set `host upgrade` reported upgrading.
+HOST_TARGETS_FILE=""
 
 # Non-interactive ssh with a bounded connect and keepalives, so a stalled
 # connection fails instead of hanging the deploy. Override with
@@ -147,11 +148,10 @@ Options:
   --host-settle-interval <s>  seconds between those reads (default: 30)
   --host-settle-confirms <n>  unchanged reads required after the first
                               (default: 2)
-  --expect-host-version <v>   also require every online host (a heartbeat
-                              in the last 10 minutes) to report exactly
-                              version v; without it only stability is
-                              checked and the report says
-                              host_target_verified=no
+  --expect-host-version <v>   required unless --skip-host-upgrade: every
+                              host the upgrade reported upgrading must
+                              report exactly version v before the state
+                              counts as settled
   --keep-remote-artifacts     leave uploaded /tmp artifacts on the VM
   --cleanup-local-bundle      remove the local bundle after upload
   -h, --help                  show help
@@ -354,6 +354,8 @@ validate_args() {
     if [[ -z "$COOKIE_HEADER" && -z "$ADMIN_ACCOUNT_ID" && -z "$ADMIN_EMAIL" ]]; then
       die "host upgrade needs --cookie, --admin-account-id, --admin-email, or --skip-host-upgrade"
     fi
+    [[ -n "$HOST_EXPECT_VERSION" ]] \
+      || die "host upgrade needs --expect-host-version <version> (the version every upgraded host must report), or --skip-host-upgrade"
     if [[ "$BUILD_BUNDLE" -eq 1 && -z "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
       BUILD_HOST_SOFTWARE_BUNDLE=1
     fi
@@ -1067,6 +1069,37 @@ upgrade_project_hosts() {
   if grep -q '"ok"[[:space:]]*:[[:space:]]*false' "${REPORT_DIR}/host-upgrade.json"; then
     die "host upgrade reported ok=false; see ${REPORT_DIR}/host-upgrade.json"
   fi
+  HOST_TARGETS_FILE="${REPORT_DIR}/host-upgrade-targets.txt"
+  upgrade_targets "${REPORT_DIR}/host-upgrade.json" >"$HOST_TARGETS_FILE" \
+    || die "could not read the upgraded host set from ${REPORT_DIR}/host-upgrade.json"
+  log "Upgraded hosts: $(wc -l <"$HOST_TARGETS_FILE")"
+}
+
+# upgrade_targets <host-upgrade.json>: print the ids of the hosts that
+# `host upgrade --wait --output json` reports as upgraded, one per line,
+# sorted. Fails unless the output is ok, every host succeeded, every id is a
+# uuid, and there is at least one host.
+upgrade_targets() {
+  node - "$1" <<'NODE'
+const fs = require("fs");
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const out = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (out?.ok !== true) throw new Error("output is not ok");
+const data = out.data ?? {};
+const hosts = Array.isArray(data.hosts)
+  ? data.hosts
+  : data.host_id
+    ? [{ host_id: data.host_id, status: data.status }]
+    : [];
+if (hosts.length === 0) throw new Error("no host was upgraded");
+const ids = hosts.map((h) => {
+  if (h?.status !== "succeeded") throw new Error(`host ${h?.host_id}: status ${h?.status}`);
+  if (typeof h.host_id !== "string" || !uuid.test(h.host_id)) throw new Error("bad host id");
+  return h.host_id;
+});
+if (new Set(ids).size !== ids.length) throw new Error("duplicate host id");
+process.stdout.write(ids.sort().join("\n") + "\n");
+NODE
 }
 
 # settle_confirm <label> <file prefix> <predicate> <command...>
@@ -1116,30 +1149,35 @@ settle_confirm() {
   return 1
 }
 
-# Online = a heartbeat in the last HOST_ONLINE_MINUTES minutes: the hosts that
-# `host upgrade --all-online` upgrades.
+# Reads exactly the hosts in HOST_TARGETS_FILE (uuids, checked again here),
+# deleted or not, so a targeted host cannot drop out of the check.
 read_project_host_software() {
-  remote_psql "-Atq -v ON_ERROR_STOP=1 -v minutes=${HOST_ONLINE_MINUTES}" <<'SQL'
+  local ids
+  ids="$(awk '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ { printf "%s\x27%s\x27", sep, $0; sep = "," } !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ { exit 1 }' "$HOST_TARGETS_FILE")" \
+    || return 1
+  [[ -n "$ids" ]] || return 1
+  remote_psql "-Atq -v ON_ERROR_STOP=1" <<SQL
 SELECT
+  id::text || '|' ||
   name || '|' ||
   COALESCE(version, '') || '|' ||
   COALESCE((metadata->'software')::text, '')
 FROM project_hosts
-WHERE deleted IS NULL
-  AND last_seen > NOW() - make_interval(mins => :minutes)
-ORDER BY name;
+WHERE id::text IN (${ids})
+ORDER BY id;
 SQL
 }
 
-# hosts_at_expected_version <read file>: exit 0 only if the read has at least
-# one host and every host's version is exactly HOST_EXPECT_VERSION. Without
-# --expect-host-version there is no target to check, and it always passes.
+# hosts_at_expected_version <read file>: exit 0 only if the read holds exactly
+# the hosts in HOST_TARGETS_FILE, each once, each at HOST_EXPECT_VERSION.
 hosts_at_expected_version() {
-  [[ -n "$HOST_EXPECT_VERSION" ]] || return 0
+  [[ -n "$HOST_EXPECT_VERSION" && -s "$HOST_TARGETS_FILE" ]] || return 1
   awk -F'|' -v want="$HOST_EXPECT_VERSION" '
-    NF < 2 || $2 != want { bad = 1 }
-    END { exit (NR == 0 || bad) ? 1 : 0 }
-  ' "$1"
+    NR == FNR { if ($0 != "") { target[$0] = 1; nt++ }; next }
+    { n++ }
+    NF < 4 || !($1 in target) || seen[$1]++ || $3 != want { bad = 1 }
+    END { exit (nt == 0 || n != nt || bad) ? 1 : 0 }
+  ' "$HOST_TARGETS_FILE" "$1"
 }
 
 verify_project_hosts() {
@@ -1147,21 +1185,15 @@ verify_project_hosts() {
     log "Skip project host software verification"
     return 0
   fi
-  if [[ -n "$HOST_EXPECT_VERSION" ]]; then
-    log "Wait until every online host reports ${HOST_EXPECT_VERSION}, then confirm"
-  else
-    log "Wait for the project host software state to settle (no --expect-host-version: the target version is NOT checked)"
-  fi
+  log "Wait until every upgraded host reports ${HOST_EXPECT_VERSION}, then confirm"
   local rc=0
   settle_confirm project-host-software "${REPORT_DIR}/project-host-software-settle" \
     hosts_at_expected_version read_project_host_software || rc=$?
   case "$rc" in
     0) ;;
     2) die "could not write the settle evidence under ${REPORT_DIR}" ;;
-    *) die "project host software did not settle${HOST_EXPECT_VERSION:+ at ${HOST_EXPECT_VERSION}} after ${HOST_SETTLE_TRIES} reads; see ${REPORT_DIR}/project-host-software-settle.*" ;;
+    *) die "the upgraded hosts did not settle at ${HOST_EXPECT_VERSION} after ${HOST_SETTLE_TRIES} reads; see ${REPORT_DIR}/project-host-software-settle.*" ;;
   esac
-  printf 'host_target_verified=%s\n' "$([[ -n "$HOST_EXPECT_VERSION" ]] && echo yes || echo no)" \
-    | tee "${REPORT_DIR}/project-host-target.txt"
   log "Verify project host software state"
   remote_psql "-Atq" <<'SQL' | tee "${REPORT_DIR}/project-host-software.txt"
 SELECT

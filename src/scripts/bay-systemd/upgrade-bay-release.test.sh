@@ -71,6 +71,7 @@ run_case() {
       "$SCRIPT" --remote bay.example --api https://bay.example \
         --bundle-url https://bundles.example/bay-runtime.tar.xz \
         --admin-email admin@bay.example --cli "${TMP_ROOT}/bin/cocalc-cli" \
+        --expect-host-version 20260101T000000Z-test \
         --report-dir "${TMP_ROOT}/report-main" \
         > /dev/null 2> "$ERR" || RC=$?
       ;;
