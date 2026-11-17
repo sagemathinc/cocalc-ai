@@ -1,9 +1,7 @@
 /** @jest-environment jsdom */
-import { render, screen } from "@testing-library/react";
 import { fromJS } from "immutable";
 import { Modal } from "antd";
 import {
-  ClaudeSubscriptionSharingBanner,
   SHARING_TITLE,
   claudeSubscriptionSharingRisk,
   confirmClaudeSubscriptionSharing,
@@ -24,10 +22,13 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
             },
           }
         : name === "customize"
-          ? { get: () => runtime }
+          ? // only the public site-settings name: the one /customize sends
+            {
+              get: (key: string) =>
+                key === "claude_subscription_runtime" ? runtime : undefined,
+            }
           : undefined,
   },
-  useTypedRedux: () => projectMap,
 }));
 
 const ME = "account-a";
@@ -135,14 +136,21 @@ test("not a subscription, or the controller runtime: no warning", async () => {
   expect(confirmSpy).not.toHaveBeenCalled();
 });
 
-test("an unknown or unset runtime, or no project id: shown (fails toward showing)", async () => {
+test("an unknown or unset runtime is the controller, as on the backend: no warning", async () => {
   users(ME, OTHER);
-  for (const value of ["something-else", undefined]) {
+  for (const value of ["something-else", "controller", undefined]) {
     runtime = value;
     expect(
       claudeSubscriptionSharingRisk({ accountId: ME, projectId: PROJECT }).show,
-    ).toBe(true);
+    ).toBe(false);
+    expect(await confirm()).toBe(true);
+    expect(await confirm(subscription, true)).toBe(true);
   }
+  expect(confirmSpy).not.toHaveBeenCalled();
+});
+
+test("the project runtime and no project id: shown, and never remembered", async () => {
+  users(ME, OTHER);
   runtime = "project";
   expect(
     await confirmClaudeSubscriptionSharing({
@@ -151,7 +159,6 @@ test("an unknown or unset runtime, or no project id: shown (fails toward showing
     }),
   ).toBe(true);
   expect(confirmSpy).toHaveBeenCalledTimes(1);
-  // and never remembered without a project
   expect(
     await confirmClaudeSubscriptionSharing({
       accountId: ME,
@@ -171,20 +178,4 @@ test("Auto (a subscription the host picks): warned like a subscription", async (
     }),
   ).toBe(true);
   expect(confirmSpy).toHaveBeenCalledTimes(1);
-});
-
-test("the banner shows only with other collaborators", () => {
-  users(ME);
-  const { rerender } = render(
-    <ClaudeSubscriptionSharingBanner accountId={ME} projectId={PROJECT} />,
-  );
-  expect(screen.queryByText(SHARING_TITLE)).toBeNull();
-  users(ME, OTHER);
-  rerender(
-    <ClaudeSubscriptionSharingBanner accountId={ME} projectId={PROJECT} />,
-  );
-  expect(screen.getByText(SHARING_TITLE)).toBeTruthy();
-  expect(
-    screen.getByText(/CoCalc cannot protect you from a collaborator/),
-  ).toBeTruthy();
 });
