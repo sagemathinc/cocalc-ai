@@ -31,6 +31,9 @@ export const SHARING_TEXT =
 /** The docs page that explains subscriptions in shared projects in full. */
 export const SHARING_DOCS_SLUG = "ai/claude-subscription-in-project";
 
+/** The docs page about what collaborators can see and do (the dialog's link). */
+export const COLLABORATORS_DOCS_SLUG = "projects/collaborator-trust";
+
 const ACK_PREFIX = "cocalc:claude-subscription-sharing-ack";
 
 /** The project's collaborators, or undefined when they cannot be read. */
@@ -105,7 +108,7 @@ function SharingText() {
       {SHARING_TEXT}{" "}
       {/* a new tab: the dialog stays open until the user decides */}
       <a
-        href={joinUrlPath(appBasePath, "docs", SHARING_DOCS_SLUG)}
+        href={joinUrlPath(appBasePath, "docs", COLLABORATORS_DOCS_SLUG)}
         target="_blank"
         rel="noopener noreferrer"
       >

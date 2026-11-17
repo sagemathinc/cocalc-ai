@@ -4,6 +4,7 @@
  */
 
 import { ADMIN_ENTRIES } from "./admin";
+import { FULL_ONLY_ENTRIES } from "./full-only";
 import { NON_ADMIN_ENTRIES } from "./non-admin";
 import { orderDocsEntries } from "./order";
 
@@ -11,5 +12,6 @@ export { isPlusDocsEntryId } from "./order";
 
 export const DOCS_ENTRIES = orderDocsEntries([
   ...NON_ADMIN_ENTRIES,
+  ...FULL_ONLY_ENTRIES,
   ...ADMIN_ENTRIES,
 ]);

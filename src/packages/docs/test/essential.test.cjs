@@ -4,14 +4,18 @@ const test = require("node:test");
 const docs = require("../dist");
 const essential = require("../dist/essential");
 const { ADMIN_ENTRIES } = require("../dist/entries/admin");
+const { FULL_ONLY_ENTRIES } = require("../dist/entries/full-only");
 const { orderDocsEntries } = require("../dist/entries/order");
 
 const essentialAccess = { includeSignedIn: true, siteProfile: "cocalc-ai" };
+const fullOnlyIds = new Set(FULL_ONLY_ENTRIES.map((entry) => entry.id));
+const inEssential = (entry) => !fullOnlyIds.has(entry.id);
 
 // This client uses the canonical objects: metadata and complete article bodies
-// must remain identical, not just the list of titles.
+// must remain identical, not just the list of titles. Only the full-only
+// articles are left out.
 test("Essential preserves every visible article and its registry order", () => {
-  const expected = docs.listDocsEntries(essentialAccess);
+  const expected = docs.listDocsEntries(essentialAccess).filter(inEssential);
   assert.deepEqual(essential.listDocsEntries(essentialAccess), expected);
   for (const entry of expected) {
     assert.strictEqual(
@@ -27,6 +31,11 @@ test("Essential preserves every visible article and its registry order", () => {
     essential.getDocsEntry("unknown-entry", essentialAccess),
     undefined,
   );
+  assert.ok(FULL_ONLY_ENTRIES.length > 0);
+  for (const entry of FULL_ONLY_ENTRIES) {
+    assert.strictEqual(docs.getDocsEntry(entry.id, essentialAccess), entry);
+    assert.equal(essential.getDocsEntry(entry.id, essentialAccess), undefined);
+  }
   assert.ok(ADMIN_ENTRIES.length > 0);
   for (const entry of ADMIN_ENTRIES) {
     assert.equal(entry.visibility, "admin");
@@ -63,13 +72,19 @@ test("Essential retains shared access filtering and search scores", () => {
       for (const product of [undefined, "plus"]) {
         for (const features of [[], ["compute-vms"]]) {
           const access = { includeSignedIn, siteProfile, product, features };
-          const expected = docs.listDocsEntries(access);
+          const all = docs.listDocsEntries(access);
+          const expected = all.filter(inEssential);
           assert.deepEqual(essential.listDocsEntries(access), expected);
           for (const query of queries) {
+            // scores are per article, so leaving articles out only removes
+            // them from the ranking
+            const ranked = docs
+              .searchDocsEntries(query, all.length, access)
+              .filter(inEssential);
             for (const limit of [0, 3, expected.length]) {
               assert.deepEqual(
                 essential.searchDocsEntries(query, limit, access),
-                docs.searchDocsEntries(query, limit, access),
+                ranked.slice(0, limit),
                 JSON.stringify({ query, limit, access }),
               );
             }
@@ -123,4 +138,8 @@ test("loading Essential does not load administrator entries or content", () => {
     !normalized.some((name) => /\/(?:entries|content)\/admin\.js$/.test(name)),
   );
   assert.ok(!normalized.some((name) => name.endsWith("/content/index.js")));
+  assert.ok(!normalized.some((name) => name.endsWith("/entries/full-only.js")));
+  assert.ok(
+    !normalized.some((name) => name.endsWith("/content/collaborator-trust.js")),
+  );
 });

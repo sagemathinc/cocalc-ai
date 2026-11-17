@@ -31,7 +31,8 @@ this, so use your subscription only in projects where you trust every
 collaborator. With the default **controller** runtime, Claude Code does not
 run in your project, and none of this applies. The details are in
 [Sharing a project with collaborators](/docs/ai/claude-subscription-in-project#sharing-a-project-with-collaborators)
-below.
+below; for everything a collaborator can do in a project, see
+[Collaborators and what they can do](/docs/projects/collaborator-trust).
 
 ## Your subscription stays outside the project
 
@@ -148,7 +149,8 @@ collaborator.
 
 Before the first turn paid by your own subscription in a project that has
 other collaborators, CoCalc asks you to confirm, in a short dialog that links
-to this page, and sends nothing until you do. It asks again whenever the
+to [Collaborators and what they can do](/docs/projects/collaborator-trust), and
+sends nothing until you do. It asks again whenever the
 collaborators change, and every time if it cannot read them. The subscription
 details in the agent panel also link to this page.
 
