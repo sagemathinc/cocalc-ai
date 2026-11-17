@@ -331,9 +331,7 @@ const surfaces = [
     // security guide (Trust switch removal) brings it to about 342.4 KiB.
     // "How long a verification lasts" (#1550) brings it to 345.1 KiB, and the
     // guide to Claude subscriptions run in the project (#1590) to 348.0 KiB.
-    // The "Collaborators and what they can do" guide (#1639) brings it to
-    // 349.5 KiB.
-    max: 351 * KiB,
+    max: 349 * KiB,
   },
   {
     label: "minimal project settings",
