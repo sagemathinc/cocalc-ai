@@ -109,7 +109,7 @@ function SharingText() {
         target="_blank"
         rel="noopener noreferrer"
       >
-        Learn more
+        Learn more about shared projects
       </a>
     </p>
   );

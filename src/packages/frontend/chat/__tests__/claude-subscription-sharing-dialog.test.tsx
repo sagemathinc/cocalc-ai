@@ -66,7 +66,9 @@ test("the warning is a named dialog with the short text and a docs link, Escape 
   const dialog = await screen.findByRole("dialog", { name: SHARING_TITLE });
   expect(dialog.textContent).toContain(SHARING_TEXT);
   // the full explanation is in the docs, opened beside the dialog
-  const more = screen.getByRole("link", { name: "Learn more" });
+  const more = screen.getByRole("link", {
+    name: "Learn more about shared projects",
+  });
   expect(more.getAttribute("href")).toMatch(
     new RegExp(`/docs/${SHARING_DOCS_SLUG}$`),
   );
