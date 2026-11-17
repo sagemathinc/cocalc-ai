@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
-// The warning dialog itself, as rendered (not mocked): its name, the full
-// text, keyboard use, and where focus goes.
+// The warning dialog itself, as rendered (not mocked): its name, the short
+// text with its docs link, keyboard use, and where focus goes.
 import {
   act,
   fireEvent,
@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { fromJS } from "immutable";
 import {
+  SHARING_DOCS_SLUG,
   SHARING_TEXT,
   SHARING_TITLE,
   confirmClaudeSubscriptionSharing,
@@ -28,7 +29,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
               }).getIn(path.slice(1)),
           }
         : name === "customize"
-          ? { get: () => "project" }
+          ? {
+              get: (key: string) =>
+                key === "claude_subscription_runtime" ? "project" : undefined,
+            }
           : undefined,
   },
   useTypedRedux: () => undefined,
@@ -51,7 +55,7 @@ function ask() {
 
 beforeEach(() => localStorage.clear());
 
-test("the warning is a named dialog with the full text, Escape cancels, and focus returns", async () => {
+test("the warning is a named dialog with the short text and a docs link, Escape cancels, and focus returns", async () => {
   render(<button type="button">Send</button>);
   const send = screen.getByRole("button", { name: "Send" });
   send.focus();
@@ -60,8 +64,13 @@ test("the warning is a named dialog with the full text, Escape cancels, and focu
     answer = ask();
   });
   const dialog = await screen.findByRole("dialog", { name: SHARING_TITLE });
-  for (const paragraph of SHARING_TEXT)
-    expect(dialog.textContent).toContain(paragraph);
+  expect(dialog.textContent).toContain(SHARING_TEXT);
+  // the full explanation is in the docs, opened beside the dialog
+  const more = screen.getByRole("link", { name: "Learn more" });
+  expect(more.getAttribute("href")).toMatch(
+    new RegExp(`/docs/${SHARING_DOCS_SLUG}$`),
+  );
+  expect(more.getAttribute("target")).toBe("_blank");
   expect(
     screen.getByRole("button", { name: "I understand, start the agent" }),
   ).toBeTruthy();

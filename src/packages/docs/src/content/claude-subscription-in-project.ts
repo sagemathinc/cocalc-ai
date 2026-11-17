@@ -17,6 +17,22 @@ Claude Code runs in your project's own container as the project user, like
 Codex: its processes show in the project, and the project's MCP servers and
 skills work as configured there.
 
+## Using your subscription in a shared project
+
+Everyone who can run code in a project can see what runs in it. So when
+Claude Code runs in a project that has other collaborators, another process in
+that project could, while your agent is working and for a short time
+afterwards, deliberately obtain the temporary access material your agent uses
+and send requests billed to your Claude subscription. This doesn't happen by
+accident: it takes intentional circumvention, which violates Anthropic's terms
+of service. Your Claude subscription credential itself never enters the
+project. CoCalc cannot protect you from a collaborator who sets out to do
+this, so use your subscription only in projects where you trust every
+collaborator. With the default **controller** runtime, Claude Code does not
+run in your project, and none of this applies. The details are in
+[Sharing a project with collaborators](/docs/ai/claude-subscription-in-project#sharing-a-project-with-collaborators)
+below.
+
 ## Your subscription stays outside the project
 
 Your Claude subscription credential never enters the project. Instead:
@@ -130,10 +146,11 @@ CoCalc cannot protect you from a collaborator who sets out to do either of
 these. Use your subscription only in projects where you trust every
 collaborator.
 
-Before any turn paid by your own subscription in a project that has other
-collaborators, CoCalc shows this warning and sends nothing until you accept
-it. It asks again whenever the collaborators change, and every time if it
-cannot read them. A banner stays in the agent panel while it applies.
+Before the first turn paid by your own subscription in a project that has
+other collaborators, CoCalc asks you to confirm, in a short dialog that links
+to this page, and sends nothing until you do. It asks again whenever the
+collaborators change, and every time if it cannot read them. The subscription
+details in the agent panel also link to this page.
 
 ## What is not covered here
 
