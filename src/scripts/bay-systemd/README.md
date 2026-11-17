@@ -131,7 +131,16 @@ The wrapper is intentionally conservative:
 
 - it still uses `bay-bootstrap-release.sh` for the versioned release layout
 - it restarts the same systemd service set used in manual validation
-- it calls `cocalc host upgrade --all-online --wait` for project hosts
+- it calls `cocalc host upgrade --all-online --wait` for project hosts, and
+  fails if the upgrade reports `"ok": false`
+- `--wait` can return before every host reports its new software, so it then
+  re-reads the hosts' software state until it is unchanged on two further
+  reads in a row (`--host-settle-tries`, `--host-settle-interval`,
+  `--host-settle-confirms`; `--host-settle-tries 0` keeps the old single
+  read). Every read is kept in the report directory
+- it runs `ssh`/`scp` non-interactively with a 30 second connect timeout and
+  keepalives, so a stalled connection fails instead of hanging; set
+  `BAY_UPGRADE_SSH_OPTS` to use other options
 - it writes a report directory under `tmp/bay-upgrade-...`
 - it accepts `--skip-host-upgrade` for control-plane-only upgrades
 - it accepts `--keep-remote-artifacts` when debugging a failed upgrade

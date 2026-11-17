@@ -38,6 +38,20 @@ KEEP_REMOTE_ARTIFACTS=0
 CLEANUP_LOCAL_BUNDLE=0
 REPORT_DIR=""
 CLI_PATH="${SRC_ROOT}/packages/cli/dist/bin/cocalc.js"
+# After `host upgrade --wait` returns, hosts may still be reporting their new
+# software. Re-read until the state is unchanged on HOST_SETTLE_CONFIRMS
+# further reads in a row, at most HOST_SETTLE_TRIES reads. 0 tries = one read.
+HOST_SETTLE_TRIES=20
+HOST_SETTLE_INTERVAL=30
+HOST_SETTLE_CONFIRMS=2
+
+# Non-interactive ssh with a bounded connect and keepalives, so a stalled
+# connection fails instead of hanging the deploy. Override with
+# BAY_UPGRADE_SSH_OPTS (split on whitespace).
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
+if [[ -n "${BAY_UPGRADE_SSH_OPTS:-}" ]]; then
+  read -r -a SSH_OPTS <<<"${BAY_UPGRADE_SSH_OPTS}"
+fi
 
 REMOTE_WORK_DIR=""
 REMOTE_BUNDLE=""
@@ -122,6 +136,13 @@ Options:
   --scaffold-only             install/daemon-reload bay scaffold from the
                               bundle without rolling hub workers or restarting
                               application services
+  --host-settle-tries <n>     after the host upgrade, re-read the hosts'
+                              software state up to n times until it is
+                              unchanged on the confirming reads (default: 20;
+                              0 = a single read, no settle check)
+  --host-settle-interval <s>  seconds between those reads (default: 30)
+  --host-settle-confirms <n>  unchanged reads required after the first
+                              (default: 2)
   --keep-remote-artifacts     leave uploaded /tmp artifacts on the VM
   --cleanup-local-bundle      remove the local bundle after upload
   -h, --help                  show help
@@ -146,13 +167,17 @@ q() {
 }
 
 remote_exec() {
-  ssh "$REMOTE" "$@"
+  ssh "${SSH_OPTS[@]}" "$REMOTE" "$@"
+}
+
+remote_copy() {
+  scp "${SSH_OPTS[@]}" "$@"
 }
 
 remote_psql() {
   local flags="$1"
   shift || true
-  ssh "$REMOTE" \
+  ssh "${SSH_OPTS[@]}" "$REMOTE" \
     "sudo runuser -u $(q "$BAY_USER") -- env PGHOST=$(q "$REMOTE_PGHOST") PGPORT=$(q "$REMOTE_PGPORT") PGUSER=$(q "$REMOTE_PGUSER") PGDATABASE=$(q "$REMOTE_PGDATABASE") $(q "$REMOTE_PSQL") ${flags}"
 }
 
@@ -246,6 +271,12 @@ parse_args() {
         REPORT_DIR="$2"; shift 2 ;;
       --skip-host-upgrade)
         SKIP_HOST_UPGRADE=1; shift ;;
+      --host-settle-tries)
+        HOST_SETTLE_TRIES="$2"; shift 2 ;;
+      --host-settle-interval)
+        HOST_SETTLE_INTERVAL="$2"; shift 2 ;;
+      --host-settle-confirms)
+        HOST_SETTLE_CONFIRMS="$2"; shift 2 ;;
       --keep-remote-artifacts)
         KEEP_REMOTE_ARTIFACTS=1; shift ;;
       --cleanup-local-bundle)
@@ -261,6 +292,9 @@ parse_args() {
 validate_args() {
   [[ -n "$REMOTE" ]] || die "--remote is required"
   [[ -n "$API_URL" ]] || die "--api is required"
+  [[ "$HOST_SETTLE_TRIES" =~ ^[0-9]+$ ]] || die "--host-settle-tries must be a whole number"
+  [[ "$HOST_SETTLE_INTERVAL" =~ ^[0-9]+$ ]] || die "--host-settle-interval must be a whole number of seconds"
+  [[ "$HOST_SETTLE_CONFIRMS" =~ ^[1-9][0-9]*$ ]] || die "--host-settle-confirms must be at least 1"
   local bundle_sources=0
   [[ "$BUILD_BUNDLE" -eq 1 ]] && bundle_sources=$((bundle_sources + 1))
   [[ -n "$BUNDLE_PATH" ]] && bundle_sources=$((bundle_sources + 1))
@@ -466,10 +500,10 @@ stage_release() {
   remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_SCRIPT_DIR")"
   if [[ "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ]]; then
     log "Upload bay partial deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
-    scp "$SCRIPT_DIR/bay-bootstrap-release.sh" "$REMOTE:${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh"
+    remote_copy "$SCRIPT_DIR/bay-bootstrap-release.sh" "$REMOTE:${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh"
   else
     log "Upload bay scaffold to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
-    scp -r "$SCRIPT_DIR/." "$REMOTE:${REMOTE_SCRIPT_DIR}/"
+    remote_copy -r "$SCRIPT_DIR/." "$REMOTE:${REMOTE_SCRIPT_DIR}/"
   fi
   if [[ -n "$BUNDLE_URL" ]]; then
     log "Download bay bundle on target VM"
@@ -479,7 +513,7 @@ stage_release() {
     fi
   else
     log "Upload bay bundle to ${REMOTE}:${REMOTE_BUNDLE}"
-    scp "$BUNDLE_PATH" "$REMOTE:${REMOTE_BUNDLE}"
+    remote_copy "$BUNDLE_PATH" "$REMOTE:${REMOTE_BUNDLE}"
   fi
 
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
@@ -545,7 +579,7 @@ EOF
   REMOTE_HOST_SOFTWARE_BUNDLE="${REMOTE_WORK_DIR}/$(basename "$HOST_SOFTWARE_BUNDLE_PATH")"
 
   log "Upload project-host software bundle"
-  scp "$HOST_SOFTWARE_BUNDLE_PATH" "$REMOTE:${REMOTE_HOST_SOFTWARE_BUNDLE}"
+  remote_copy "$HOST_SOFTWARE_BUNDLE_PATH" "$REMOTE:${REMOTE_HOST_SOFTWARE_BUNDLE}"
 
   log "Stage project-host software into current bay release"
   remote_exec "sudo bash -s" <<EOF | tee "${REPORT_DIR}/stage-host-software.log"
@@ -1019,6 +1053,63 @@ upgrade_project_hosts() {
     --wait \
     --output json \
     | tee "${REPORT_DIR}/host-upgrade.json"
+  if grep -q '"ok"[[:space:]]*:[[:space:]]*false' "${REPORT_DIR}/host-upgrade.json"; then
+    die "host upgrade reported ok=false; see ${REPORT_DIR}/host-upgrade.json"
+  fi
+}
+
+# settle_confirm <label> <file prefix> <command...>
+# Runs the command up to HOST_SETTLE_TRIES times, HOST_SETTLE_INTERVAL seconds
+# apart. Every read is kept as <prefix>.read-<n> and logged with its exit code
+# and sha256. A read counts only if the command exited 0. Returns 0 once
+# HOST_SETTLE_CONFIRMS reads in a row are byte-identical to the read before
+# them, with the settled output copied to <prefix>.txt; returns 1 if that never
+# happens. A failed read resets the run, so a flapping state never passes.
+settle_confirm() {
+  local label="$1" prefix="$2"
+  shift 2
+  local tries="$HOST_SETTLE_TRIES" i rc sum prev="" same=0
+  [[ "$tries" -ge 1 ]] || tries=1
+  for ((i = 1; i <= tries; i++)); do
+    rc=0
+    "$@" >"${prefix}.read-${i}" 2>&1 || rc=$?
+    sum="$(sha256sum <"${prefix}.read-${i}")" || die "sha256sum failed on ${prefix}.read-${i}"
+    sum="${sum%% *}"
+    if [[ "$rc" -ne 0 ]]; then
+      prev=""; same=0
+    elif [[ "$sum" == "$prev" ]]; then
+      same=$((same + 1))
+    else
+      prev="$sum"; same=0
+    fi
+    printf '%s read %d/%d rc=%d sha256=%s unchanged=%d/%d\n' \
+      "$label" "$i" "$tries" "$rc" "$sum" "$same" "$HOST_SETTLE_CONFIRMS" \
+      | tee -a "${prefix}.settle.log"
+    if [[ "$HOST_SETTLE_TRIES" -eq 0 && "$rc" -eq 0 ]]; then
+      cp "${prefix}.read-${i}" "${prefix}.txt"
+      return 0
+    fi
+    if [[ "$same" -ge "$HOST_SETTLE_CONFIRMS" ]]; then
+      cp "${prefix}.read-${i}" "${prefix}.txt"
+      return 0
+    fi
+    if [[ "$i" -lt "$tries" ]]; then
+      sleep "$HOST_SETTLE_INTERVAL"
+    fi
+  done
+  return 1
+}
+
+read_project_host_software() {
+  remote_psql "-Atq" <<'SQL'
+SELECT
+  name || '|' ||
+  COALESCE(version, '') || '|' ||
+  COALESCE((metadata->'software')::text, '')
+FROM project_hosts
+WHERE deleted IS NULL
+ORDER BY name;
+SQL
 }
 
 verify_project_hosts() {
@@ -1026,6 +1117,10 @@ verify_project_hosts() {
     log "Skip project host software verification"
     return 0
   fi
+  log "Wait for the project host software state to settle"
+  settle_confirm project-host-software "${REPORT_DIR}/project-host-software-settle" \
+    read_project_host_software \
+    || die "project host software state did not settle after ${HOST_SETTLE_TRIES} reads; see ${REPORT_DIR}/project-host-software-settle.*"
   log "Verify project host software state"
   remote_psql "-Atq" <<'SQL' | tee "${REPORT_DIR}/project-host-software.txt"
 SELECT

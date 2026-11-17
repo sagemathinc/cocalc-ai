@@ -21,6 +21,7 @@ LOCK_PROBE="sudo flock -n -E 75 /etc/cocalc/bay-deploy.lock true"
 mkdir -p "${TMP_ROOT}/bin"
 cat > "${TMP_ROOT}/bin/ssh" <<EOF
 #!/usr/bin/env bash
+while [[ "\$1" == -o ]]; do shift 2; done # the script's ssh options
 shift # the ssh target
 printf '%s\n' "\$*" >> "\$STUB_LOG"
 case "\$*" in
