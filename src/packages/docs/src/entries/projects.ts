@@ -6,6 +6,7 @@
 import type { DocsEntry } from "../types";
 import { docsIcon, projectActionParameters } from "../helpers";
 import { COLLABORATORS_BODY } from "../content/collaboration";
+import { COLLABORATOR_TRUST_BODY } from "../content/collaborator-trust";
 import {
   CREATE_PROJECT_BODY,
   PROJECT_LIST_BODY,
@@ -333,5 +334,21 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     summary:
       "Invite collaborators or read-only reviewers, select visible files, and manage access as the work changes.",
     title: "Add project collaborators",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: COLLABORATOR_TRUST_BODY.trim(),
+    category: "Projects",
+    id: "projects.collaborator-trust",
+    lastReviewed: "2026-11-17",
+    noActionReason:
+      "This explains what sharing a project means before you add someone; nothing to start here.",
+    searchKeywords:
+      "collaborator trust security shared project same user files processes secrets ssh keys agents hooks MCP subscription remove rotate",
+    slug: "projects/collaborator-trust",
+    status: "ready",
+    summary:
+      "What a collaborator can see and do in a shared project, what stays out of it, and simple rules for whom to add.",
+    title: "Collaborators and what they can do",
   },
 ];
