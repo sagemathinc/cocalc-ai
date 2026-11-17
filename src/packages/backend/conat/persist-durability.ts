@@ -523,3 +523,120 @@ export function persistDurabilityRecords(): DurabilityRecords {
   }
   return records;
 }
+
+// ---------------------------------------------------------------------------
+// Start-up preconditions (028 B-3a, DESIGN §3.2.5 start-up rule, §3.2.1 SA
+// T3, vanta R1 / N-3; the TWO host-wide start-up refusals, Q9).  Checked once
+// per process, at the first disk-stream open.  If one fails, DISK-stream
+// service is refused (ephemeral streams still run), with a clear error code
+// and a page.
+// - the records root must be a directory on a per-BOOT tmpfs (a directory on
+//   a persistent disk would survive a reboot, and its dirty records would
+//   then refuse every open), owned by this process's uid, not writable by
+//   group or others, and writable by us;
+// - the NOFILE soft limit must cover SQLite's fds for every stream (db, -wal,
+//   -shm) plus our short-lived barrier fds: >= 3 x MAX_GLOBAL + margin.
+export const TMPFS_MAGIC = 0x01021994;
+export const MIN_NOFILE = 3 * 10_000 + 1024;
+
+export function checkPersistRunDir(
+  dir: string,
+  {
+    allowNonTmpfs = process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS === "1",
+    uid = process.getuid?.(),
+  }: { allowNonTmpfs?: boolean; uid?: number } = {},
+): string | undefined {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(dir);
+  } catch (err) {
+    if ((err as any)?.code !== "ENOENT") return `records root: ${err}`;
+    try {
+      fs.mkdirSync(dir, { mode: 0o700 });
+      st = fs.lstatSync(dir);
+    } catch (err2) {
+      return `records root ${dir} is missing and can't be created: ${err2}`;
+    }
+  }
+  if (!st.isDirectory()) return `records root ${dir} is not a directory`;
+  if (uid != null && st.uid !== uid) {
+    return `records root ${dir} is owned by uid ${st.uid}, not ${uid}`;
+  }
+  if ((st.mode & 0o022) !== 0) {
+    return `records root ${dir} is writable by group or others (mode ${(st.mode & 0o777).toString(8)})`;
+  }
+  if (!allowNonTmpfs) {
+    let type: number | undefined;
+    try {
+      type = Number((fs as any).statfsSync(dir).type);
+    } catch (err) {
+      return `records root ${dir}: statfs failed: ${err}`;
+    }
+    if (type !== TMPFS_MAGIC) {
+      return `records root ${dir} is not on tmpfs (fs type 0x${type.toString(16)}): its records would survive a reboot`;
+    }
+  }
+  const probe = posix.join(dir, `.probe-${process.pid}`);
+  try {
+    fs.writeFileSync(probe, "", { mode: 0o600 });
+    fs.unlinkSync(probe);
+  } catch (err) {
+    return `records root ${dir} is not writable: ${err}`;
+  }
+  return undefined;
+}
+
+export function checkNofile(
+  readLimits: () => string = () => fs.readFileSync("/proc/self/limits", "utf8"),
+  min: number = MIN_NOFILE,
+): string | undefined {
+  let text: string;
+  try {
+    text = readLimits();
+  } catch {
+    return undefined; // no /proc (not Linux): nothing to check
+  }
+  const m = /^Max open files\s+(\S+)\s+(\S+)/m.exec(text);
+  if (m == null) return "NOFILE: can't parse /proc/self/limits";
+  const soft = m[1] === "unlimited" ? Infinity : Number(m[1]);
+  if (!(soft >= min)) {
+    return `NOFILE soft limit ${m[1]} is below ${min} (3 fds per stream x 10,000 streams + margin)`;
+  }
+  return undefined;
+}
+
+let startup: { ok: boolean; reason?: string; overrides?: string[] } | undefined;
+export function persistStartupCheck(): {
+  ok: boolean;
+  reason?: string;
+  overrides?: string[];
+} {
+  if (startup == null) {
+    const reason = checkPersistRunDir(persistRunDir()) ?? checkNofile();
+    // SA 3351 A1: the tmpfs override is for tests; on a host it is visible
+    // (diagnostics) and logged at start
+    const overrides =
+      process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS === "1"
+        ? ["COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS"]
+        : [];
+    if (overrides.length > 0) {
+      logger.warn(
+        "persist: the records root is NOT required to be on tmpfs (an override for tests; finding 028)",
+        { overrides },
+      );
+    }
+    startup = reason == null ? { ok: true, overrides } : { ok: false, reason, overrides };
+    if (reason != null) {
+      logger.error(
+        "PERSIST ALERT (page): disk-backed persist streams are refused on this host until fixed (finding 028)",
+        { reason },
+      );
+    }
+  }
+  return startup;
+}
+
+// tests only
+export function resetPersistStartupCheckForTests(): void {
+  startup = undefined;
+}

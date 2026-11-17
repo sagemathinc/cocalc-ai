@@ -649,7 +649,7 @@ describe("persist write-rate counters", () => {
       expect(
         readFileSync(join(packages, "backend/conat/persist.ts"), "utf8"),
       ).toMatch(
-        /persistContextOptions[^=]*= \{[\s\S]*?\n  writeCounter: persistWriteCounter,\n  durability: persistDurabilityRecords\(\),\n  openBarrier: persistOpenBarrier,\n  verifiedEviction: checkedVerifiedEviction,\n  integrityCheck: integrityCheckClosedDatabase,\n  projectRecovery: \(owner, storeRoot\) => recoverPoisonedProject\(owner, storeRoot\),\n\};\ninitContext\(persistContextOptions\);/,
+        /persistContextOptions[^=]*= \{[\s\S]*?\n  writeCounter: persistWriteCounter,\n  durability: persistDurabilityRecords\(\),\n  openBarrier: persistOpenBarrier,\n  verifiedEviction: checkedVerifiedEviction,\n  integrityCheck: integrityCheckClosedDatabase,\n  projectRecovery: \(owner, storeRoot\) => recoverPoisonedProject\(owner, storeRoot\),\n  startupCheck: persistStartupCheck,\n\};\ninitContext\(persistContextOptions\);/,
       );
     });
 
