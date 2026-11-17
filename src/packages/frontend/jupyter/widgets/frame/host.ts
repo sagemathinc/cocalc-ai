@@ -55,7 +55,27 @@ export function isIsolated(win: Window = window): boolean {
   return win.origin === "null" && win.parent !== win;
 }
 
-function applyTheme(theme: WidgetTheme): void {
+// The widget library's colors (labvariables.css) are JupyterLab's light theme,
+// fixed on :root: black labels and readouts, white inputs and slider handles.
+// Each follows an app color instead, so widgets are readable in dark mode.
+// Set inline on <html>, they override those :root values, and the library's
+// derived variables (e.g. --jp-widgets-readout-color) follow them.
+const JUPYTER_COLORS: [string, string][] = [
+  ["--jp-content-font-color1", "text"],
+  ["--jp-ui-font-color0", "text"],
+  ["--jp-ui-font-color1", "text"],
+  ["--jp-layout-color0", "surface"],
+  ["--jp-layout-color1", "surface"],
+  ["--jp-layout-color2", "inset"],
+  ["--jp-layout-color3", "border"],
+  ["--jp-border-color1", "border"],
+  ["--jp-border-color2", "border"],
+];
+// Secondary text (inactive tabs, closed accordion headers): the app's text,
+// dimmed, as JupyterLab's own font-color2 is.
+const JUPYTER_MUTED_TEXT = ["--jp-ui-font-color2"];
+
+export function applyTheme(theme: WidgetTheme): void {
   if (theme == null || typeof theme !== "object") return;
   const style = document.documentElement.style;
   const props: [string, string][] = [
@@ -67,6 +87,21 @@ function applyTheme(theme: WidgetTheme): void {
     const v = theme[name as keyof typeof theme];
     if (typeof v === "string" && v && CSS.supports(cssProperty, v)) {
       style.setProperty(`--shell-${name}`, v);
+    }
+  }
+  for (const [jupyter, name] of JUPYTER_COLORS) {
+    const v = theme[name as keyof typeof theme];
+    if (typeof v === "string" && v && CSS.supports("color", v)) {
+      style.setProperty(jupyter, v);
+    }
+  }
+  const text = theme.text;
+  if (typeof text === "string" && text && CSS.supports("color", text)) {
+    const muted = `color-mix(in srgb, ${text} 70%, transparent)`;
+    if (CSS.supports("color", muted)) {
+      for (const jupyter of JUPYTER_MUTED_TEXT) {
+        style.setProperty(jupyter, muted);
+      }
     }
   }
   if (theme.colorScheme === "dark" || theme.colorScheme === "light") {
