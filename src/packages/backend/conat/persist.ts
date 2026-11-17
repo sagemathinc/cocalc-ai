@@ -25,10 +25,22 @@ import {
   assertSafePersistDatabasePath,
   projectRootForPersistPath,
 } from "./persist-path-safety";
+import { persistWriteCounter } from "./persist-write-rate";
+import {
+  integrityCheckClosedDatabase,
+  persistDurabilityRecords,
+  persistStartupCheck,
+} from "./persist-durability";
+import { persistOpenBarrier } from "./persist-open-barrier";
+import {
+  checkedVerifiedEviction,
+  recoverPoisonedProject,
+} from "./persist-verified-eviction";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
 
-initContext({
+// exported for the tests' statement guard (028)
+export const persistContextOptions: Parameters<typeof initContext>[0] = {
   sqlite,
   compress: zstdCompressSync,
   // stored data is not trusted: always limit the output
@@ -44,9 +56,25 @@ initContext({
   ensureContainingDirectoryExists,
   statSync,
   copyFileSync,
-});
+  writeCounter: persistWriteCounter,
+  durability: persistDurabilityRecords(),
+  openBarrier: persistOpenBarrier,
+  verifiedEviction: checkedVerifiedEviction,
+  integrityCheck: integrityCheckClosedDatabase,
+  projectRecovery: (owner, storeRoot) => recoverPoisonedProject(owner, storeRoot),
+  startupCheck: persistStartupCheck,
+};
+initContext(persistContextOptions);
 
-export { pstream } from "@cocalc/conat/persist/storage";
+export {
+  pstream,
+  closeDurably,
+  flushAllPersistWrites,
+  installPersistExitGuard,
+  installPersistSignalFlush,
+  prepareDurableOpen,
+  clearOpenBarrierPass,
+} from "@cocalc/conat/persist/storage";
 import { server } from "@cocalc/conat/persist/server";
 export { server };
 import { conat } from "./conat";

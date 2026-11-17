@@ -81,6 +81,7 @@ import {
 } from "./board-policy";
 import { throttle } from "lodash";
 import { type SetOptions } from "./client";
+import { parseWriteOrder, WriteOrderState } from "./write-order";
 import { once } from "@cocalc/util/async-utils";
 import { UsageMonitor } from "@cocalc/conat/monitor/usage";
 import { getLogger } from "@cocalc/conat/logger";
@@ -215,6 +216,21 @@ function instanceToReport(
   return stream.replacedInstance ?? "";
 }
 
+// The history epoch for a reply that is sent outside the request's try (a
+// busy reset) or from its catch (an oversized message): it reads the
+// database, which throws for a poisoned stream (finding 028), and a throw
+// there would escape the handler and end the shared persist process (SA,
+// 065 L1/L2).  Undefined if it can't be read.
+function historyEpochForReply(
+  stream: PersistentStream | undefined,
+): number | undefined {
+  try {
+    return stream?.historyEpochNow?.();
+  } catch {
+    return undefined;
+  }
+}
+
 export function classifyPersistStorageErrorCode(
   err: unknown,
 ): string | undefined {
@@ -326,6 +342,9 @@ export function server({
     // The policy refused this socket's stream: never open it (no retry).
     let policyRefused = false;
     let stream: undefined | PersistentStream = undefined;
+    // 028 B-3a (AS-B3-ORDER-1): this connection's write order, kept here (not
+    // under a client-chosen key) and dropped with the connection
+    const writeOrder = new WriteOrderState();
     let user = "";
     let added = false;
     // in-progress replays on this socket; stopped when it closes
@@ -511,11 +530,12 @@ export function server({
         }
         const key = `path:${storage.path}`;
         if (resetSlots.has(key)) {
-          if (stream != null) {
+          const history_epoch = historyEpochForReply(stream);
+          if (history_epoch != null) {
             mesg.respondSync({
               reset: false,
               refused: "busy",
-              history_epoch: stream.historyEpochNow(),
+              history_epoch,
               count: 0,
             });
           } else {
@@ -564,15 +584,23 @@ export function server({
           );
         };
         assertBoardCommandAllowed(boardAccess, request);
+        // the client's write order: absent, or strictly valid (else refused)
+        const order = isWriteCommand(request)
+          ? parseWriteOrder(request, writeOrder)
+          : undefined;
         if (isWriteCommand(request)) {
           assertCurrentInstance({
             replacedInstance: stream.replacedInstance,
             claimed: request.persist_instance,
           });
         }
+        // a write that is not a set/setMany runs in that order too
+        const ordered = <T>(fn: () => T): T =>
+          order == null ? fn() : stream!.runOrdered(order, fn);
         if (request.cmd == "set") {
+          // acked once the batch it commits in is durable (028 group commit)
           respondSync(
-            stream.set({
+            await stream.setQueued({
               key: request.key,
               previousSeq: request.previousSeq,
               raw: mesg.raw,
@@ -581,11 +609,11 @@ export function server({
               headers: request.headers,
               msgID: request.msgID,
               checkpoint: request.checkpoint,
-            }),
+            }, order),
           );
         } else if (request.cmd == "setMany") {
           respondSync(
-            stream.setMany(
+            await stream.setManyQueued(
               (mesg.data as SetOptions[]).map(
                 ({
                   key,
@@ -605,32 +633,33 @@ export function server({
                   encoding: messageData.encoding,
                 }),
               ),
+              order,
             ),
           );
         } else if (request.cmd == "delete") {
-          respondSync(stream.delete(request));
+          respondSync(ordered(() => stream!.delete(request)));
         } else if (request.cmd == "config") {
-          respondSync(stream.config(request.config));
+          respondSync(isWriteCommand(request) ? ordered(() => stream!.config(request.config)) : stream.config(request.config));
         } else if (request.cmd == "metadata") {
           respondSync(stream.getMetadata());
         } else if (request.cmd == "setMetadata") {
-          respondSync(stream.setMetadata(mesg.data));
+          respondSync(ordered(() => stream!.setMetadata(mesg.data)));
         } else if (request.cmd == "patchMetadata") {
-          respondSync(stream.patchMetadata(mesg.data));
+          respondSync(ordered(() => stream!.patchMetadata(mesg.data)));
         } else if (request.cmd == "resetHistory") {
-          respondSync(stream.resetHistory(mesg.data ?? {}));
+          respondSync(ordered(() => stream!.resetHistory(mesg.data ?? {})));
         } else if (request.cmd == "historyInclusion") {
           respondSync(stream.historyInclusion(mesg.data ?? {}));
         } else if (request.cmd == "historyArchives") {
           respondSync(stream.historyArchives());
         } else if (request.cmd == "purgeArchivedHistory") {
-          respondSync(stream.purgeArchivedHistory());
+          respondSync(ordered(() => stream!.purgeArchivedHistory()));
         } else if (request.cmd == "checkpoints") {
           respondSync(stream.getCheckpoints());
         } else if (request.cmd == "setCheckpoint") {
-          respondSync(stream.setCheckpoint(mesg.data));
+          respondSync(ordered(() => stream!.setCheckpoint(mesg.data)));
         } else if (request.cmd == "deleteCheckpoint") {
-          stream.deleteCheckpoint(request.name);
+          ordered(() => stream!.deleteCheckpoint(request.name));
           respondSync(null);
         } else if (request.cmd == "inventory") {
           respondSync(stream.inventory());
@@ -654,7 +683,7 @@ export function server({
           if (!ENABLE_SQLITE_GENERAL_QUERIES) {
             throw Error("sqlite command not currently supported");
           }
-          const resp = stream.sqlite(request.statement, request.params);
+          const resp = ordered(() => stream!.sqlite(request.statement, request.params));
           respondSync(resp);
         } else if (request.cmd == "serverId") {
           respondSync(server.id);
@@ -713,7 +742,7 @@ export function server({
         const oversizedEpoch =
           typeof oversizedSeq != "number"
             ? undefined
-            : ((err as any)?.oversizedEpoch ?? stream?.historyEpochNow?.());
+            : ((err as any)?.oversizedEpoch ?? historyEpochForReply(stream));
         mesg.respondSync(null, {
           headers: {
             error: `${err}`,

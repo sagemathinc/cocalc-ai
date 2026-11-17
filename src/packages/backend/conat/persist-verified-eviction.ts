@@ -1,0 +1,479 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+/*
+Verified page-cache eviction of a persist file (finding 028, DESIGN v1.21
+§3.2.6 H-b, §3.2.11).
+
+A dirty record left by another, dead, process generation means the outcome
+of its last write is UNKNOWN: it may have consumed a sync error on its own fd
+(errseq), leaving pages in the page cache that are not on disk, which a new
+fd in this boot can neither see nor flush.  The page cache is made equal to
+the disk instead: for each of the -wal and the .db,
+  1. fsync (pages still dirty are written; this proves nothing about the
+     phantoms, errseq);
+  2. POSIX_FADV_DONTNEED, and
+  3. mincore = 0 resident pages, VERIFIED (DONTNEED is best effort),
+then 4. the -shm is removed, and the normal open's WAL recovery reads the
+on-disk truth and drops an invalid tail.
+
+Node exposes neither posix_fadvise nor mincore, so steps 2-3 run in a fixed
+helper (persist-pagecache-helper.py) on a file descriptor this process opened
+and checked; the helper never sees a path.  The helper's bytes are checked
+against a pinned sha256 before every run and are written to the
+interpreter's stdin (`/usr/bin/python3 -I -S -`), so nothing is re-read by
+path between the check and the run.  Anything unexpected is NOT VERIFIED:
+the stream stays refused and is retried later.  A failed verification is
+never a poison and never has a host effect (§3.2.0).
+*/
+
+import * as fs from "node:fs";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+import getLogger from "@cocalc/backend/logger";
+import { createFairLimiter, OPEN_BARRIER_CONCURRENCY } from "./persist-open-barrier";
+import { integrityCheckClosedDatabase } from "./persist-durability";
+
+const logger = getLogger("persist:verified-eviction");
+
+// The helper program.  It ships inside this module (not as a separate file
+// read by path): the bytes the parent checks are the bytes it runs, and no
+// file can be swapped in between.  persist-pagecache-helper.py is the
+// readable source; a test pins that this constant equals it byte for byte.
+export const PAGECACHE_HELPER_PROGRAM = "# This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.\n# License: MS-RSL - see LICENSE.md for details\n#\n# The persist server's page-cache helper (finding 028, DESIGN v1.21 \u00a73.2.11).\n# It acts ONLY on file descriptor 3, which the persist server opened itself\n# (with its hostile-path checks) and passed in.  It reads no path, no argv and\n# no environment.  It drops the file's pages from the page cache\n# (POSIX_FADV_DONTNEED), then counts the pages still resident (mmap + mincore,\n# through libc) and prints exactly one line:\n#   {\"v\":1,\"page_size\":4096,\"pages\":<int>,\"resident_after\":<int>}\n# Run as `/usr/bin/python3 -I -S -`, with these exact bytes on stdin (the\n# server checks their sha256 first).  Stdlib only.\nimport ctypes\nimport os\nimport sys\n\nFD = 3\nPAGE = 4096\nPROT_READ = 1\nMAP_SHARED = 1\nMAP_FAILED = ctypes.c_void_p(-1).value\n\n\ndef main():\n    size = os.fstat(FD).st_size\n    os.posix_fadvise(FD, 0, 0, os.POSIX_FADV_DONTNEED)\n    pages = (size + PAGE - 1) // PAGE\n    resident = 0\n    if size > 0:\n        libc = ctypes.CDLL(None, use_errno=True)\n        libc.mmap.argtypes = [\n            ctypes.c_void_p,\n            ctypes.c_size_t,\n            ctypes.c_int,\n            ctypes.c_int,\n            ctypes.c_int,\n            ctypes.c_long,\n        ]\n        libc.mmap.restype = ctypes.c_void_p\n        libc.mincore.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_char_p]\n        libc.mincore.restype = ctypes.c_int\n        libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]\n        libc.munmap.restype = ctypes.c_int\n        addr = libc.mmap(None, size, PROT_READ, MAP_SHARED, FD, 0)\n        if addr is None or addr == MAP_FAILED:\n            raise OSError(ctypes.get_errno(), \"mmap\")\n        try:\n            vec = ctypes.create_string_buffer(pages)\n            if libc.mincore(ctypes.c_void_p(addr), ctypes.c_size_t(size), vec) != 0:\n                raise OSError(ctypes.get_errno(), \"mincore\")\n            resident = sum(1 for b in vec.raw[:pages] if b & 1)\n        finally:\n            libc.munmap(ctypes.c_void_p(addr), ctypes.c_size_t(size))\n    sys.stdout.write(\n        '{\"v\":1,\"page_size\":%d,\"pages\":%d,\"resident_after\":%d}\\n'\n        % (PAGE, pages, resident)\n    )\n\n\nmain()\n";
+// sha256 of the program, checked before every run
+export const PAGECACHE_HELPER_SHA256 =
+  "f07753be70074b82fb4e4ad465d1a9083ac23f487be581f3b2c6b2fd1bc015d3";
+export const PYTHON = "/usr/bin/python3";
+export const PYTHON_ARGS = ["-I", "-S", "-"];
+export const HELPER_TIMEOUT_MS = 30_000;
+const PAGE_SIZE = 4096;
+// bounded output: one short JSON line
+const MAX_OUTPUT = 4096;
+
+const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
+
+export type EvictionResult =
+  | { verified: true; files: string[] }
+  | { verified: false; path: string; why: string };
+
+function notVerified(path: string, why: string): EvictionResult {
+  return { verified: false, path, why };
+}
+
+// The helper's bytes, checked against the pinned sha256 (undefined: refuse).
+export function readCheckedHelper(
+  program: string = PAGECACHE_HELPER_PROGRAM,
+  sha256: string = PAGECACHE_HELPER_SHA256,
+): Buffer | undefined {
+  const bytes = Buffer.from(program, "utf8");
+  const actual = createHash("sha256").update(bytes).digest("hex");
+  return actual === sha256 ? bytes : undefined;
+}
+
+// Strict: exactly the one expected line, with pages as the parent computed.
+export function parseHelperOutput(
+  stdout: string,
+  expectedPages: number,
+): { resident: number } | undefined {
+  const m =
+    /^\{"v":1,"page_size":(\d+),"pages":(\d+),"resident_after":(\d+)\}\n$/.exec(
+      stdout,
+    );
+  if (m == null) return;
+  const pageSize = Number(m[1]);
+  const pages = Number(m[2]);
+  const resident = Number(m[3]);
+  if (pageSize !== PAGE_SIZE) return;
+  if (pages !== expectedPages) return;
+  if (!(resident >= 0 && resident <= pages)) return;
+  return { resident };
+}
+
+export interface HelperRun {
+  code: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  delivered: boolean;
+  timedOut: boolean;
+}
+
+// Spawns the helper with fd as its fd 3 and the program on stdin.
+export function runHelper(
+  fd: number,
+  program: Buffer,
+  timeoutMs: number = HELPER_TIMEOUT_MS,
+  spawnFn: typeof spawn = spawn,
+): Promise<HelperRun> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let delivered = false;
+    let timedOut = false;
+    let settled = false;
+    const child = spawnFn(PYTHON, PYTHON_ARGS, {
+      shell: false,
+      env: {},
+      cwd: "/",
+      stdio: ["pipe", "pipe", "pipe", fd],
+    });
+    const finish = (code: number | null, signal: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, signal, stdout, stderr, delivered, timedOut });
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.on("error", () => finish(null, "spawn-error"));
+    child.stdout?.on("data", (d) => {
+      if (stdout.length < MAX_OUTPUT) stdout += d.toString();
+    });
+    child.stderr?.on("data", (d) => {
+      if (stderr.length < MAX_OUTPUT) stderr += d.toString();
+    });
+    child.on("close", (code, signal) => finish(code, signal));
+    child.stdin?.on("error", () => {
+      delivered = false;
+    });
+    // exactly the checked bytes, then end
+    child.stdin?.write(program, (err) => {
+      if (err == null) delivered = true;
+    });
+    child.stdin?.end();
+  });
+}
+
+async function evictOne(
+  path: string,
+  dev: number,
+  program: Buffer,
+  spawnFn: typeof spawn,
+): Promise<EvictionResult | "absent" | "ok"> {
+  let before: fs.Stats;
+  try {
+    before = await fs.promises.lstat(path);
+  } catch (err) {
+    if ((err as any)?.code === "ENOENT") return "absent";
+    return notVerified(path, `lstat ${(err as any)?.code}`);
+  }
+  if (!before.isFile() || before.dev !== dev) {
+    return notVerified(path, "not a regular file on the store's device");
+  }
+  let handle: fs.promises.FileHandle;
+  try {
+    handle = await fs.promises.open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+  } catch (err) {
+    return notVerified(path, `open ${(err as any)?.code}`);
+  }
+  try {
+    const opened = await handle.stat();
+    if (opened.ino !== before.ino || opened.dev !== before.dev) {
+      return notVerified(path, "replaced between lstat and open");
+    }
+    try {
+      await handle.sync();
+    } catch (err) {
+      // a sync error here is a device signal, but verification only refuses
+      // (§3.2.6): the file stays unverified and the stream refused
+      return notVerified(path, `fsync ${(err as any)?.code}`);
+    }
+    const pages = Math.ceil(opened.size / PAGE_SIZE);
+    const run = await runHelper(handle.fd, program, HELPER_TIMEOUT_MS, spawnFn);
+    if (run.timedOut) return notVerified(path, "helper timed out");
+    if (!run.delivered) return notVerified(path, "helper program not delivered");
+    if (run.code !== 0 || run.signal != null) {
+      return notVerified(path, `helper exit ${run.code} ${run.signal}`);
+    }
+    if (run.stderr.length > 0) return notVerified(path, "helper wrote stderr");
+    const parsed = parseHelperOutput(run.stdout, pages);
+    if (parsed == null) return notVerified(path, "helper output not valid");
+    if (parsed.resident !== 0) {
+      return notVerified(path, `${parsed.resident} pages still resident`);
+    }
+    return "ok";
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+// Steps 1-4 for one stream's files (dbPath = <path>.db).
+export async function verifiedEviction(
+  dbPath: string,
+  opts: { program?: Buffer; spawnFn?: typeof spawn } = {},
+): Promise<EvictionResult> {
+  // an explicit program: undefined (a failed check) must not fall back
+  const program = "program" in opts ? opts.program : readCheckedHelper();
+  const spawnFn = opts.spawnFn ?? spawn;
+  if (program == null) {
+    return notVerified(dbPath, "helper missing or its sha256 differs");
+  }
+  let dirStats: fs.Stats;
+  try {
+    dirStats = await fs.promises.lstat(dirname(dbPath));
+  } catch (err) {
+    return notVerified(dbPath, `lstat dir ${(err as any)?.code}`);
+  }
+  if (!dirStats.isDirectory()) return notVerified(dbPath, "dir not a directory");
+  const files: string[] = [];
+  for (const path of [`${dbPath}-wal`, dbPath]) {
+    const r = await evictOne(path, dirStats.dev, program, spawnFn);
+    if (r === "absent") continue;
+    if (r !== "ok") return r;
+    files.push(path);
+  }
+  // 4. the -shm (a wal-index, rebuilt from the WAL at the next open)
+  try {
+    const shm = `${dbPath}-shm`;
+    const st = await fs.promises.lstat(shm);
+    if (!st.isFile()) return notVerified(shm, "not a regular file");
+    await fs.promises.unlink(shm);
+  } catch (err) {
+    if ((err as any)?.code !== "ENOENT") {
+      return notVerified(`${dbPath}-shm`, `remove ${(err as any)?.code}`);
+    }
+  }
+  return { verified: true, files };
+}
+
+// Start-up presence check (§3.2.11): the helper on a scratch file in dir.
+// false = verification is refused (fail closed) until fixed: an image defect.
+export async function pagecacheHelperSelfTest(
+  dir: string,
+  opts: { program?: Buffer; spawnFn?: typeof spawn } = {},
+): Promise<boolean> {
+  const scratch = join(dir, `.pagecache-selftest-${process.pid}.db`);
+  try {
+    await fs.promises.writeFile(scratch, Buffer.alloc(64 * 1024, 1));
+    const h = await fs.promises.open(scratch, "r+");
+    try {
+      await h.sync();
+      await h.read(Buffer.alloc(64 * 1024), 0, 64 * 1024, 0);
+    } finally {
+      await h.close();
+    }
+    const r = await verifiedEviction(scratch, opts);
+    if (!r.verified) {
+      logger.error("persist: page-cache helper self-test failed (finding 028)", r);
+    }
+    return r.verified;
+  } catch (err) {
+    logger.error("persist: page-cache helper self-test failed (finding 028)", {
+      err: `${err}`,
+    });
+    return false;
+  } finally {
+    await fs.promises.unlink(scratch).catch(() => {});
+  }
+}
+
+// What the persist server uses: the self-test (at the first verification on
+// a filesystem, on that file's directory), then each verification under the
+// same cap as the open barrier's fsyncs.  If the self-test failed, every
+// verification on that filesystem is refused (fail closed) and it pages; the
+// self-test is tried again after a backoff (60 s, doubling to 30 min; SA 3350
+// A1), so a transient failure does not refuse every leftover until a restart.
+// A pass is kept.  The result is per filesystem (st_dev of the directory;
+// 028 B' v8, SA 3575): a pass on one does not vouch for another, and a
+// failure on one mount does not refuse verification on the others.
+// On btrfs st_dev is the SUBVOLUME's (anonymous) device, so on a project-host
+// each project subvolume gets its own self-test (a 64 KiB scratch write +
+// fsync + one helper run in that directory) at its first leftover, and one
+// entry here for the life of the process: rare (crash leftovers only) and
+// fail closed (SA 3580 N1).
+const limiter = createFairLimiter(OPEN_BARRIER_CONCURRENCY);
+const SELF_TEST_RETRY_MIN_MS = 60_000;
+const SELF_TEST_RETRY_MAX_MS = 30 * 60_000;
+interface SelfTestState {
+  result?: Promise<boolean>;
+  retryAt: number;
+  backoff: number;
+}
+const selfTests = new Map<number, SelfTestState>();
+let selfTestImpl = pagecacheHelperSelfTest;
+// sync: concurrent callers must see one shared state (SA 3367 advisory)
+const lstatDev = (dir: string): number => fs.lstatSync(dir).dev;
+let devOf = lstatDev;
+// tests only
+export function setPagecacheSelfTestForTests(
+  impl: typeof pagecacheHelperSelfTest | undefined,
+  devOfImpl?: (dir: string) => number,
+): void {
+  selfTestImpl = impl ?? pagecacheHelperSelfTest;
+  devOf = devOfImpl ?? lstatDev;
+  selfTests.clear();
+  startupHealth = { state: "pending" };
+}
+// The self-test result for dir's filesystem (shared by concurrent callers),
+// or undefined if dir can't be examined.
+function selfTestFor(dir: string): Promise<boolean> | undefined {
+  let dev: number;
+  try {
+    dev = devOf(dir);
+  } catch {
+    return;
+  }
+  let s = selfTests.get(dev);
+  if (s == null) {
+    s = { retryAt: 0, backoff: SELF_TEST_RETRY_MIN_MS };
+    selfTests.set(dev, s);
+  }
+  if (s.result != null && s.retryAt > 0 && Date.now() >= s.retryAt) {
+    s.result = undefined; // a failed self-test: try it again
+    // (SA 3367 advisory) once: concurrent callers share the retry in flight
+    s.retryAt = 0;
+  }
+  const state = s;
+  // on the filesystem of the files it will verify (a tmpfs scratch file
+  // can't be evicted: its pages ARE the file)
+  state.result ??= selfTestImpl(dir).then((ok) => {
+    if (ok) {
+      state.retryAt = 0;
+      state.backoff = SELF_TEST_RETRY_MIN_MS;
+    } else {
+      state.retryAt = Date.now() + state.backoff;
+      state.backoff = Math.min(SELF_TEST_RETRY_MAX_MS, state.backoff * 2);
+    }
+    return ok;
+  });
+  return state.result;
+}
+
+// The startup check (028 B' v8 finding: the helper needs /usr/bin/python3).
+// The persist daemon runs it once at start on its store's filesystem, so a
+// missing or broken interpreter is a loud health error at start, not a
+// surprise at the first stream left mid-write.  It seeds the same
+// per-filesystem result the verifications use.  It never refuses anything by
+// itself; streams are refused only by the verification, as before.
+export type PagecacheHelperHealth =
+  | { state: "pending" }
+  | { state: "ok" | "failed"; at: number };
+let startupHealth: PagecacheHelperHealth = { state: "pending" };
+export function pagecacheHelperHealth(): PagecacheHelperHealth {
+  return startupHealth;
+}
+export async function startupPagecacheHelperCheck(dir: string): Promise<boolean> {
+  const ok = (await selfTestFor(dir)) === true;
+  startupHealth = { state: ok ? "ok" : "failed", at: Date.now() };
+  if (ok) {
+    logger.info("persist: page-cache helper self-test passed at startup (finding 028)");
+  } else {
+    logger.error(
+      `PERSIST HEALTH (page): the page-cache helper self-test FAILED at startup; streams left mid-write will stay refused until it is fixed (it needs ${PYTHON}) (finding 028)`,
+    );
+  }
+  return ok;
+}
+
+export async function checkedVerifiedEviction(
+  dbPath: string,
+): Promise<EvictionResult> {
+  const selfTest = selfTestFor(dirname(dbPath));
+  if (selfTest == null) {
+    return notVerified(dbPath, "lstat dir failed");
+  }
+  if (!(await selfTest)) {
+    logger.error(
+      "PERSIST ALERT (page): the page-cache helper self-test failed, so streams left mid-write stay refused (finding 028)",
+    );
+    return notVerified(dbPath, "page-cache helper self-test failed");
+  }
+  return await limiter.run(dirname(dbPath), () => verifiedEviction(dbPath));
+}
+
+// S-q's INVENTORY (§3.2.6, review R5): the project's persist files, from its
+// store root, without following any symlink: only regular files named *.db
+// or *.db-wal on the root's device.  Anything ambiguous (a symlink, a
+// non-regular file other than a directory, another device) or more than max
+// files: undefined, and the project stays poisoned.
+export async function persistInventory(
+  root: string,
+  max = 10_000,
+): Promise<string[] | undefined> {
+  let rootStats: fs.Stats;
+  try {
+    rootStats = await fs.promises.lstat(root);
+  } catch {
+    return undefined;
+  }
+  if (!rootStats.isDirectory()) return undefined;
+  const dbs = new Set<string>();
+  let files = 0;
+  const walk = async (dir: string): Promise<boolean> => {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      let st: fs.Stats;
+      try {
+        st = await fs.promises.lstat(path);
+      } catch {
+        return false; // removed or replaced during the walk
+      }
+      if (st.dev !== rootStats.dev) return false;
+      if (st.isSymbolicLink()) return false;
+      if (st.isDirectory()) {
+        if (!(await walk(path))) return false;
+        continue;
+      }
+      if (!st.isFile()) return false;
+      if (entry.name.endsWith(".db")) {
+        dbs.add(path);
+      } else if (entry.name.endsWith(".db-wal")) {
+        dbs.add(path.slice(0, -"-wal".length));
+      } else {
+        continue; // -shm and anything else: not persist data
+      }
+      if (++files > max) return false;
+    }
+    return true;
+  };
+  if (!(await walk(root))) return undefined;
+  return [...dbs].sort();
+}
+
+// S-q (§3.2.6): steps 1-4 (verified eviction) for every database of the
+// inventory, then 5, a full integrity_check of each, off the main thread.
+export async function recoverPoisonedProject(
+  owner: string,
+  storeRoot: string,
+  {
+    evict = checkedVerifiedEviction,
+    check,
+  }: {
+    evict?: (dbPath: string) => Promise<EvictionResult>;
+    check?: (dbPath: string) => Promise<{ ok: boolean; why?: string }>;
+  } = {},
+): Promise<{ ok: boolean; files?: string[]; why?: string }> {
+  const inventory = await persistInventory(storeRoot);
+  if (inventory == null) {
+    return { ok: false, why: "inventory ambiguous or over its bound" };
+  }
+  const integrity = check ?? integrityCheckClosedDatabase;
+  for (const db of inventory) {
+    const evicted = await evict(db);
+    if (!evicted.verified) {
+      return { ok: false, why: `${evicted.path}: ${evicted.why}` };
+    }
+  }
+  for (const db of inventory) {
+    if (!fs.existsSync(db)) continue; // a -wal without its db: nothing to check
+    const r = await integrity(db);
+    if (!r.ok) return { ok: false, why: `${db}: integrity_check ${r.why}` };
+  }
+  logger.info("persist: S-q inventory verified (finding 028)", {
+    owner,
+    files: inventory.length,
+  });
+  return { ok: true, files: inventory };
+}

@@ -11,6 +11,14 @@ import { before, after, client } from "@cocalc/backend/conat/test/setup";
 
 beforeAll(before);
 
+// the autosave's write is acked (an explicit save() would send it again)
+async function waitUntilSaved(dkv) {
+  for (let i = 0; i < 200 && dkv.hasUnsavedChanges(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(dkv.hasUnsavedChanges()).toBe(false);
+}
+
 describe("test the (partial) inventory method on dkv", () => {
   let dkv;
   const name = `inventory-dkv`;
@@ -30,6 +38,9 @@ describe("test the (partial) inventory method on dkv", () => {
 
   it("set an element and see that updated in the inventory data", async () => {
     dkv.a = 5;
+    // a read sees a write once it is acked: the persist server commits it
+    // with the next batch (028 group commit), not as the request arrives
+    await waitUntilSaved(dkv);
     const i = await dkv.kv.inventory();
     expect(i).toEqual({
       bytes: 2,
@@ -43,6 +54,7 @@ describe("test the (partial) inventory method on dkv", () => {
 
   it("delete an element and see that count does NOT change, because of the tombstone; bytes are larger though since it has to contain the tombstone (in a header)", async () => {
     delete dkv.a;
+    await waitUntilSaved(dkv);
     const { bytes, count, seq } = await dkv.kv.inventory();
     expect({ bytes, count, seq }).toEqual({
       bytes: 23,

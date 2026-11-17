@@ -12,6 +12,7 @@ SBIN_DIR="/usr/local/sbin"
 LIBEXEC_DIR="/usr/local/libexec/cocalc-bay"
 SUDOERS_DIR="/etc/sudoers.d"
 NEEDRESTART_DIR="/etc/needrestart/conf.d"
+TMPFILES_DIR="/etc/tmpfiles.d"
 OVERLAY_MODE="none"
 DAEMON_RELOAD=0
 BIN_USER=""
@@ -115,6 +116,7 @@ TARGET_SBIN_DIR="$(prefix_path "$SBIN_DIR")"
 TARGET_LIBEXEC_DIR="$(prefix_path "$LIBEXEC_DIR")"
 TARGET_SUDOERS_DIR="$(prefix_path "$SUDOERS_DIR")"
 TARGET_NEEDRESTART_DIR="$(prefix_path "$NEEDRESTART_DIR")"
+TARGET_TMPFILES_DIR="$(prefix_path "$TMPFILES_DIR")"
 
 mkdir -p "$TARGET_ENV_DIR" "$TARGET_SYSTEMD_DIR" \
   "$TARGET_SBIN_DIR" "$TARGET_SUDOERS_DIR" "$TARGET_NEEDRESTART_DIR"
@@ -138,6 +140,13 @@ done
 "${SCRIPT_DIR}/install-restore-tools.sh" --root "$ROOT_DIR" \
   --systemd-dir "$SYSTEMD_DIR" --libexec-dir "$LIBEXEC_DIR" --no-daemon-reload
 install -m 0440 "${SCRIPT_DIR}/sudoers/"* "$TARGET_SUDOERS_DIR/"
+# the persist servers' durability records directory (finding 028)
+install -d -m 0755 "$TARGET_TMPFILES_DIR"
+install -m 0644 "${SCRIPT_DIR}/tmpfiles/cocalc-bay-persist.conf" \
+  "${TARGET_TMPFILES_DIR}/cocalc-bay-persist.conf"
+if [[ "$ROOT_DIR" == "/" ]] && command -v systemd-tmpfiles >/dev/null 2>&1; then
+  systemd-tmpfiles --create "${TARGET_TMPFILES_DIR}/cocalc-bay-persist.conf" || true
+fi
 install -m 0644 "${SCRIPT_DIR}/needrestart/cocalc-bay.conf" \
   "${TARGET_NEEDRESTART_DIR}/cocalc-bay.conf"
 

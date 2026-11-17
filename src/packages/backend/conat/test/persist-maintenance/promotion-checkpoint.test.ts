@@ -8,9 +8,9 @@ barrier is the case that blocks the checkpoint.
 */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { syncFiles } from "@cocalc/backend/data";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -24,13 +24,21 @@ import {
 } from "@cocalc/backend/conat/test/persist-maintenance/helpers";
 
 const MARKERS = 50;
+// (028 B-2: the compaction worker's own checkpoint waits out its 5 s
+// busy_timeout behind the blocking reader before it refuses, so the two
+// blocked cases need more than jest's 5 s default)
+const BLOCKED_TIMEOUT_MS = 20_000;
 
 describe("promotion barrier checkpoint (finding 088)", () => {
   let root: string;
   let sourcePath: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "persist-maintenance-088-"));
+    // (028 B-2, B2-M1: a maintained file's owner must be derivable, so the
+    // root lives under the persist root, as in coordinator.test.ts; this and
+    // BLOCKED_TIMEOUT_MS are the only changes to #195's test in the merged tree)
+    mkdirSync(syncFiles.local, { recursive: true });
+    root = await mkdtemp(join(syncFiles.local, "persist-maintenance-088-"));
     sourcePath = join(root, "source.db");
     createBloatedDatabase(sourcePath);
   });
@@ -171,7 +179,7 @@ setInterval(() => {}, 1000);`,
     await killReader();
     coordinator.close();
     expect(markerCount()).toBe(MARKERS);
-  });
+  }, BLOCKED_TIMEOUT_MS);
 
   it("keeps every committed row when a promotion would roll back after a blocked checkpoint", async () => {
     // promotionBarrierMs -1 forces the rollback path: before the fix, the WAL
@@ -185,7 +193,7 @@ setInterval(() => {}, 1000);`,
     await killReader();
     coordinator.close();
     expect(markerCount()).toBe(MARKERS);
-  });
+  }, BLOCKED_TIMEOUT_MS);
 
   it("aborts the promotion while an idle connection in another process has the file open", async () => {
     // the checkpoint itself completes (nothing blocks it), so only the

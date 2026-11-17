@@ -5,8 +5,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { syncFiles } from "@cocalc/backend/data";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runPersistMaintenanceWorker } from "@cocalc/backend/conat/persist-maintenance/compact-worker";
@@ -20,12 +20,19 @@ import {
 
 const os: typeof import("node:os") = jest.requireActual("node:os");
 
+// under the persist root, so a maintenance open can derive the stream's
+// owner (finding 028 B2-M1); a host-owned stream
+function persistTestRoot(): string {
+  mkdirSync(syncFiles.local, { recursive: true });
+  return syncFiles.local;
+}
+
 describe("persist maintenance coordinator", () => {
   let root: string;
   let sourcePath: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "persist-maintenance-coordinator-"));
+    root = await mkdtemp(join(persistTestRoot(), "persist-maintenance-coordinator-"));
     sourcePath = join(root, "source.db");
     createBloatedDatabase(sourcePath);
   });

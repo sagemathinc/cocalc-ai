@@ -4,6 +4,7 @@ loadable segments, the messages no load can reach, and the bounds on archived
 history.
 */
 
+import { testDurabilityContext } from "./test-durability";
 import {
   ARCHIVE_RECORD_OVERHEAD_BYTES as R,
   ARCHIVE_TABLE_OVERHEAD_BYTES as T,
@@ -89,6 +90,7 @@ function rowsRead(fn: () => void): { max: number; total: number } {
 
 beforeAll(() => {
   initContext({
+    ...testDurabilityContext(),
     sqlite: { DatabaseSync },
     compress: (data) => data,
     decompress: (data) => data,

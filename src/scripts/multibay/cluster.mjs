@@ -150,6 +150,9 @@ export class MultibayCluster {
       HUB_CLUSTER_BAY_IDS: ids,
       COCALC_CLUSTER_SEED_BAY_ID: bay.seedBayId,
       COCALC_CLUSTER_SHARED_SECRET: this.sharedSecret,
+      // the persist durability records (finding 028): per bay, never the
+      // host's /run/cocalc-persist (a CI runner can't write it)
+      COCALC_PERSIST_RUN_DIR: path.join(bay.dataDir, "persist-run"),
     };
     if (bay.role === "seed") {
       env.COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE =

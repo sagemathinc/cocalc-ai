@@ -4,6 +4,7 @@
  */
 
 import { once } from "node:events";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
   createServer as createHttpServer,
@@ -14,6 +15,11 @@ import type { Application } from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import {
+  pagecacheHelperHealth,
+  startupPagecacheHelperCheck,
+} from "@cocalc/backend/conat/persist-verified-eviction";
+import { syncFiles } from "@cocalc/backend/data";
 import { installProjectPersistVolumes } from "./persist-volume";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { getPersistStreamReleaseQueueDiagnostics } from "@cocalc/conat/persist/server";
@@ -262,6 +268,18 @@ export async function startStandaloneProjectHostConatPersist({
     maintenance: maintenanceHooks,
   });
   maintenance?.start();
+  // (finding 028) B's page-cache helper needs /usr/bin/python3: check it once
+  // at start on the store's filesystem, so a broken runtime is a loud health
+  // error now (and in /healthz), not a surprise at the first stream left
+  // mid-write.  It refuses nothing by itself.
+  void (async () => {
+    await mkdir(syncFiles.local, { recursive: true }).catch(() => {});
+    await startupPagecacheHelperCheck(syncFiles.local);
+  })().catch((err) =>
+    logger.error("persist: the page-cache helper startup check threw", {
+      err: `${err}`,
+    }),
+  );
 
   let persistReady = false;
   const app = express();
@@ -275,7 +293,13 @@ export async function startStandaloneProjectHostConatPersist({
       res.status(503).json({ ok: false, ready: false });
       return;
     }
-    res.json({ ok: true, ready: true, id });
+    res.json({
+      ok: true,
+      ready: true,
+      id,
+      // (finding 028) "failed" = streams left mid-write stay refused: page
+      pagecache_helper: pagecacheHelperHealth().state,
+    });
   });
   app.get("/maintenancez", (_req, res) => {
     if (!maintenance) {
