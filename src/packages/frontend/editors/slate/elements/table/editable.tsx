@@ -103,21 +103,35 @@ export const Element = ({ attributes, children, element }) => {
     case "tr":
       return <tr {...attributes}>{children}</tr>;
     case "th":
-      backgroundColor = focused && selected ? "#e8f2ff" : undefined;
+      backgroundColor =
+        focused && selected ? "var(--cocalc-ui-selected, #e8f2ff)" : undefined;
       return (
         <th
           {...attributes}
-          style={{ backgroundColor, textAlign: element.align ?? "left" } as CSS}
+          style={
+            {
+              ...getStyles().cellStyle,
+              backgroundColor,
+              textAlign: element.align ?? "left",
+            } as CSS
+          }
         >
           {children}
         </th>
       );
     case "td":
-      backgroundColor = focused && selected ? "#e8f2ff" : undefined;
+      backgroundColor =
+        focused && selected ? "var(--cocalc-ui-selected, #e8f2ff)" : undefined;
       return (
         <td
           {...attributes}
-          style={{ backgroundColor, textAlign: element.align ?? "left" } as CSS}
+          style={
+            {
+              ...getStyles().cellStyle,
+              backgroundColor,
+              textAlign: element.align ?? "left",
+            } as CSS
+          }
         >
           {children}
         </td>
