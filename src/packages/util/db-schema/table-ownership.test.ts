@@ -330,3 +330,43 @@ describe("table ownership manifest", () => {
     expect(checkReferenceFieldConsistency(adHocPostgresFields())).toEqual([]);
   });
 });
+
+// Mirrors DROP_SAFE_CLASSES in server/bay-drain/preflight.ts (not exported):
+// the drain preflight reports "ok" for these ownership classes and for
+// portable or rebuildable state.
+const DROP_SAFE_OWNERSHIP = ["cache", "ephemeral", "projection"];
+
+describe("project_copy_snapshot_claims (copy-cleanup tombstones)", () => {
+  const TABLE = "project_copy_snapshot_claims";
+  const WHY =
+    "copy-cleanup tombstones: project rehome must copy these rows before this table may be drop-safe, portable or rebuildable";
+
+  it("is an ad hoc Postgres table pinned project-owning, project_id, unsupported", () => {
+    const adHoc = AD_HOC_POSTGRES_TABLE_OWNERSHIP as Record<
+      string,
+      TableOwnershipEntry
+    >;
+    const schemaTables = TABLE_OWNERSHIP as Record<string, TableOwnershipEntry>;
+    const entry = adHoc[TABLE];
+    const violations: string[] = [];
+    if (entry == null) violations.push(`${TABLE} is not an ad hoc entry`);
+    if (schemaTables[TABLE] != null)
+      violations.push(`${TABLE} must not be a TABLE_OWNERSHIP entry`);
+    if (SCHEMA[TABLE] != null)
+      violations.push(`${TABLE} must not be a db-schema table`);
+    if (entry?.ownership !== "project-owning")
+      violations.push(`ownership is ${entry?.ownership}, not project-owning`);
+    if (entry?.authority !== "project_id")
+      violations.push(`authority is ${entry?.authority}, not project_id`);
+    if (entry?.portability !== "unsupported")
+      violations.push(`portability is ${entry?.portability}, not unsupported`);
+    if (entry != null && DROP_SAFE_OWNERSHIP.includes(entry.ownership))
+      violations.push(`ownership ${entry.ownership} is drop-safe`);
+    if (
+      entry?.portability === "portable" ||
+      entry?.portability === "rebuildable"
+    )
+      violations.push(`portability ${entry.portability} lets a drain proceed`);
+    expect(violations.map((v) => `${v} (${WHY})`)).toEqual([]);
+  });
+});

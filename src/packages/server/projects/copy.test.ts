@@ -6,6 +6,7 @@ let getBackupFilesMock: jest.Mock;
 let deleteBackupMock: jest.Mock;
 let upsertMock: jest.Mock;
 let insertMock: jest.Mock;
+let releaseMock: jest.Mock;
 let createBackupMock: jest.Mock;
 let waitLroMock: jest.Mock;
 let getLroMock: jest.Mock;
@@ -72,10 +73,17 @@ jest.mock("@cocalc/server/lro/lro-db", () => ({
   getLro: (...args: any[]) => getLroMock(...args),
 }));
 
+jest.mock("@cocalc/server/bay-config", () => ({
+  ...jest.requireActual("@cocalc/server/bay-config"),
+  getConfiguredBayId: () => "bay-0",
+}));
+
 jest.mock("./copy-db", () => ({
   __esModule: true,
+  CopySnapshotUnavailableError: class CopySnapshotUnavailableError extends Error {},
   upsertCopyRow: (...args: any[]) => upsertMock(...args),
   insertCopyRowIfMissing: (...args: any[]) => insertMock(...args),
+  releaseCreatedCopySnapshot: (...args: any[]) => releaseMock(...args),
 }));
 
 function makeProjectQuery(projects: Record<string, ProjectMeta | string>) {
@@ -139,6 +147,7 @@ describe("projects.copyProjectFiles", () => {
     }));
     upsertMock = jest.fn(async () => true);
     insertMock = jest.fn(async () => true);
+    releaseMock = jest.fn(async () => undefined);
     createBackupMock = jest.fn(async () => ({
       op_id: "op",
       scope_type: "project",
@@ -1058,5 +1067,289 @@ describe("projects.copyProjectFiles", () => {
         snapshot_id: "snap-new",
       }),
     );
+  });
+
+  describe("ownership of the copy's backup", () => {
+    // A cross-host copy whose source changed since its latest backup, so the
+    // copy asks for a new backup.
+    async function copyWithNewBackup(lro: any) {
+      queryMock = makeProjectQuery({
+        src: { host_id: "h1", last_backup: null, last_edited: null },
+        dest: "h2",
+      });
+      getProjectFileServerClientMock = jest.fn(async () => ({
+        cp: (...args: any[]) => cpMock(...args),
+        getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+        deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+        getBackups: jest.fn(async () => []),
+      }));
+      getBackupFilesMock.mockResolvedValue([{ name: "a.txt" }]);
+      waitLroMock = jest.fn(async () => ({
+        status: "succeeded",
+        result: { id: "snap-new" },
+      }));
+      getLroMock = jest.fn(async () => lro);
+      const { copyProjectFiles } = await import("./copy");
+      await copyProjectFiles({
+        account_id: "acct",
+        timeout_ms: 0,
+        op_id: "copy-op-1",
+        src: { project_id: "src", path: "/root/a.txt" },
+        dests: [{ project_id: "dest", path: "/root/b.txt" }],
+      });
+      return upsertMock.mock.calls[0][0];
+    }
+    const OWN_KEY = "project-backup:copy:src:copy-op-1";
+
+    it("asks for the backup under its own key, not the project's shared one", async () => {
+      const { backupLroDedupeKey } = await import("./backup-lro");
+      await copyWithNewBackup(undefined);
+      const opts = createBackupMock.mock.calls[0][1];
+      expect(opts.dedupe_key).toBe(OWN_KEY);
+      expect(opts.dedupe_key).not.toBe(backupLroDedupeKey("src"));
+    });
+
+    it("owns a backup that ran as its own operation on this bay", async () => {
+      const row = await copyWithNewBackup({
+        dedupe_key: OWN_KEY,
+        input: { owning_bay_id: "bay-0" },
+      });
+      expect(row.snapshot_id).toBe("snap-new");
+      expect(row.snapshot_created).toBe(true);
+    });
+
+    it("does not own a backup it joined (another operation's key)", async () => {
+      const row = await copyWithNewBackup({
+        dedupe_key: "project-backup:src",
+        input: { owning_bay_id: "bay-0" },
+      });
+      expect(row.snapshot_created).toBe(false);
+    });
+
+    it("does not own a backup another bay ran, even under its own key", async () => {
+      const row = await copyWithNewBackup({
+        dedupe_key: OWN_KEY,
+        input: { owning_bay_id: "bay-1" },
+      });
+      expect(row.snapshot_created).toBe(false);
+    });
+
+    it("does not own a backup whose operation it cannot read or place", async () => {
+      expect((await copyWithNewBackup(undefined)).snapshot_created).toBe(false);
+      jest.resetModules();
+      upsertMock = jest.fn(async () => true);
+      const row = await copyWithNewBackup({ dedupe_key: OWN_KEY, input: {} });
+      expect(row.snapshot_created).toBe(false);
+    });
+
+    it("keeps one key per copy operation, so a retry joins its own backup", async () => {
+      const { copyBackupDedupeKey } = await import("./copy");
+      const key = copyBackupDedupeKey({
+        project_id: "src",
+        op_id: "copy-op-1",
+      });
+      expect(
+        copyBackupDedupeKey({ project_id: "src", op_id: "copy-op-1" }),
+      ).toBe(key);
+      // Without an operation every call gets a key of its own.
+      expect(copyBackupDedupeKey({ project_id: "src" })).not.toBe(
+        copyBackupDedupeKey({ project_id: "src" }),
+      );
+    });
+
+    it("never owns a reused backup", async () => {
+      queryMock = makeProjectQuery({
+        src: {
+          host_id: "h1",
+          last_backup: new Date("2026-03-31T19:59:55.000Z"),
+          last_edited: new Date("2026-03-31T20:01:53.000Z"),
+        },
+        dest: "h2",
+      });
+      getProjectFileServerClientMock = jest.fn(async () => ({
+        cp: (...args: any[]) => cpMock(...args),
+        getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+        deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+        getBackups: jest.fn(async () => [
+          {
+            id: "snap-reuse",
+            time: new Date("2026-03-31T19:59:56.000Z"),
+            summary: {},
+          },
+        ]),
+      }));
+      getBackupFilesMock.mockResolvedValue([
+        {
+          name: "a.txt",
+          isDir: false,
+          size: 12,
+          mtime: Date.parse("2026-03-31T19:59:56.000Z"),
+        },
+      ]);
+      const { copyProjectFiles } = await import("./copy");
+      await copyProjectFiles({
+        account_id: "acct",
+        timeout_ms: 0,
+        op_id: "copy-op-1",
+        src: { project_id: "src", path: "/root/a.txt" },
+        dests: [{ project_id: "dest", path: "/root/b.txt" }],
+      });
+      expect(createBackupMock).not.toHaveBeenCalled();
+      expect(upsertMock.mock.calls[0][0]).toEqual(
+        expect.objectContaining({
+          snapshot_id: "snap-reuse",
+          snapshot_created: false,
+        }),
+      );
+    });
+
+    it("owns the new backup it makes when a reused one lacks the path", async () => {
+      queryMock = makeProjectQuery({
+        src: {
+          host_id: "h1",
+          last_backup: new Date("2026-03-31T19:59:55.000Z"),
+          last_edited: new Date("2026-03-31T19:59:53.000Z"),
+        },
+        dest: "h2",
+      });
+      getProjectFileServerClientMock = jest.fn(async () => ({
+        cp: (...args: any[]) => cpMock(...args),
+        getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+        deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+        getBackups: jest.fn(async () => [
+          {
+            id: "snap-reuse",
+            time: new Date("2026-03-31T19:59:56.000Z"),
+            summary: {},
+          },
+        ]),
+      }));
+      getBackupFilesMock
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ name: "a.txt" }]);
+      waitLroMock = jest.fn(async () => ({
+        status: "succeeded",
+        result: { id: "snap-new" },
+      }));
+      getLroMock = jest.fn(async () => ({
+        dedupe_key: OWN_KEY,
+        input: { owning_bay_id: "bay-0" },
+      }));
+      const { copyProjectFiles } = await import("./copy");
+      await copyProjectFiles({
+        account_id: "acct",
+        timeout_ms: 0,
+        op_id: "copy-op-1",
+        src: { project_id: "src", path: "/root/a.txt" },
+        dests: [{ project_id: "dest", path: "/root/b.txt" }],
+      });
+      expect(upsertMock.mock.calls[0][0]).toEqual(
+        expect.objectContaining({
+          snapshot_id: "snap-new",
+          snapshot_created: true,
+        }),
+      );
+    });
+  });
+
+  describe("a backup that cleanup claimed or a copy that fails", () => {
+    const OWN_KEY = "project-backup:copy:src:copy-op-1";
+    function setup({ reusable }: { reusable: boolean }) {
+      queryMock = makeProjectQuery({
+        src: reusable
+          ? {
+              host_id: "h1",
+              last_backup: new Date("2026-03-31T19:59:55.000Z"),
+              last_edited: new Date("2026-03-31T19:59:53.000Z"),
+            }
+          : { host_id: "h1", last_backup: null, last_edited: null },
+        dest: "h2",
+      });
+      getProjectFileServerClientMock = jest.fn(async () => ({
+        cp: (...args: any[]) => cpMock(...args),
+        getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+        deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+        getBackups: jest.fn(async () =>
+          reusable
+            ? [
+                {
+                  id: "snap-reuse",
+                  time: new Date("2026-03-31T19:59:56.000Z"),
+                  summary: {},
+                },
+              ]
+            : [],
+        ),
+      }));
+      getBackupFilesMock.mockResolvedValue([
+        {
+          name: "a.txt",
+          isDir: false,
+          size: 12,
+          mtime: Date.parse("2026-03-31T19:59:56.000Z"),
+        },
+      ]);
+      waitLroMock = jest.fn(async () => ({
+        status: "succeeded",
+        result: { id: "snap-new" },
+      }));
+      getLroMock = jest.fn(async () => ({
+        dedupe_key: OWN_KEY,
+        input: { owning_bay_id: "bay-0" },
+      }));
+    }
+    async function copy() {
+      const { copyProjectFiles } = await import("./copy");
+      return await copyProjectFiles({
+        account_id: "acct",
+        timeout_ms: 0,
+        op_id: "copy-op-1",
+        src: { project_id: "src", path: "/root/a.txt" },
+        dests: [{ project_id: "dest", path: "/root/b.txt" }],
+      });
+    }
+
+    it("makes its own backup when the reused one was claimed for deletion", async () => {
+      setup({ reusable: true });
+      const { CopySnapshotUnavailableError } = await import("./copy-db");
+      upsertMock.mockRejectedValueOnce(
+        new (CopySnapshotUnavailableError as any)("snap-reuse"),
+      );
+      await copy();
+      expect(createBackupMock).toHaveBeenCalledTimes(1);
+      expect(upsertMock.mock.calls.map(([row]) => row.snapshot_id)).toEqual([
+        "snap-reuse",
+        "snap-new",
+      ]);
+      expect(upsertMock.mock.calls[1][0].snapshot_created).toBe(true);
+    });
+
+    it("(control) other queueing errors are not retried with a new backup", async () => {
+      setup({ reusable: true });
+      upsertMock.mockRejectedValueOnce(new Error("database down"));
+      await expect(copy()).rejects.toThrow("database down");
+      expect(createBackupMock).not.toHaveBeenCalled();
+      expect(releaseMock).not.toHaveBeenCalled();
+    });
+
+    it("hands a failed copy's own backup to the checked cleanup, never deleting it directly", async () => {
+      setup({ reusable: false });
+      upsertMock.mockRejectedValueOnce(new Error("database down"));
+      await expect(copy()).rejects.toThrow("database down");
+      expect(deleteBackupMock).not.toHaveBeenCalled();
+      expect(releaseMock).toHaveBeenCalledWith({
+        src_project_id: "src",
+        snapshot_id: "snap-new",
+      });
+    });
+
+    it("leaves a reused backup alone when the copy fails", async () => {
+      setup({ reusable: true });
+      upsertMock.mockRejectedValueOnce(new Error("database down"));
+      await expect(copy()).rejects.toThrow("database down");
+      expect(deleteBackupMock).not.toHaveBeenCalled();
+      expect(releaseMock).not.toHaveBeenCalled();
+    });
   });
 });

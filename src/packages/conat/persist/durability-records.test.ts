@@ -44,6 +44,27 @@ describe("durability records (finding 028)", () => {
     expect(r.check("/d")).toBe("poisoned");
   });
 
+  it("a DEAD writer's readable record is a leftover; an UNREADABLE record counts as alive (fail closed: unverified) (SA-B2-2 d)", () => {
+    const fs = require("node:fs");
+    const { createHash } = require("node:crypto");
+    const make = (root: string, generation: string) =>
+      createDurabilityRecords({
+        root,
+        generation,
+        fs,
+        sha256: (d: string) => createHash("sha256").update(d).digest("hex"),
+        pid: process.pid,
+        isWriterAlive: () => false, // every other writer is reported dead
+      });
+    const crashed = testDurabilityRecords();
+    crashed.arm("/dead");
+    const now = make(crashed.root, "now-gen");
+    expect(now.check("/dead")).toBe("leftover");
+    // the same record, unreadable (garbage): never treated as dead
+    writeFileSync(crashed.dirtyPath("/dead"), "{not json");
+    expect(now.check("/dead")).toBe("unverified");
+  });
+
   it("a dirty-record directory that can't be read fails closed (unverified)", () => {
     const r = testDurabilityRecords();
     r.arm("/e");

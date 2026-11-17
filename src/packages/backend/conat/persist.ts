@@ -26,7 +26,16 @@ import {
   projectRootForPersistPath,
 } from "./persist-path-safety";
 import { persistWriteCounter } from "./persist-write-rate";
-import { persistDurabilityRecords } from "./persist-durability";
+import {
+  integrityCheckClosedDatabase,
+  persistDurabilityRecords,
+  persistStartupCheck,
+} from "./persist-durability";
+import { persistOpenBarrier } from "./persist-open-barrier";
+import {
+  checkedVerifiedEviction,
+  recoverPoisonedProject,
+} from "./persist-verified-eviction";
 
 const zstdDecompressAsync = promisify(zstdDecompress);
 
@@ -49,6 +58,11 @@ export const persistContextOptions: Parameters<typeof initContext>[0] = {
   copyFileSync,
   writeCounter: persistWriteCounter,
   durability: persistDurabilityRecords(),
+  openBarrier: persistOpenBarrier,
+  verifiedEviction: checkedVerifiedEviction,
+  integrityCheck: integrityCheckClosedDatabase,
+  projectRecovery: (owner, storeRoot) => recoverPoisonedProject(owner, storeRoot),
+  startupCheck: persistStartupCheck,
 };
 initContext(persistContextOptions);
 
@@ -57,6 +71,9 @@ export {
   closeDurably,
   flushAllPersistWrites,
   installPersistExitGuard,
+  installPersistSignalFlush,
+  prepareDurableOpen,
+  clearOpenBarrierPass,
 } from "@cocalc/conat/persist/storage";
 import { server } from "@cocalc/conat/persist/server";
 export { server };

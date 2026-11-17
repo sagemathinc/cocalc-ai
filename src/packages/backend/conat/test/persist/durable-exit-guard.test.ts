@@ -21,6 +21,9 @@ const BACKEND_DIST = join(__dirname, "..", "..", "..", "dist");
 const CHILD = `
 const [dist, mode, state, path] = process.argv.slice(2);
 const persist = require(dist + "/conat/persist.js");
+// 028 AS-B2-SYNC-OWNER: a direct open needs an owner (no persist server here)
+require(require.resolve("@cocalc/conat/persist/context", { paths: [dist] }))
+  .setUnregisteredStreamOwnerForTests(() => "host");
 if (mode === "guard") persist.installPersistExitGuard();
 const msg = () => ({ encoding: 1, raw: Buffer.from("x".repeat(1000)) });
 const stream = persist.pstream({ path, noCache: true });

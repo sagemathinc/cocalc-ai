@@ -27,7 +27,9 @@ import {
 } from "./durability-records";
 import type {
   Database,
+  OpenBarrierResult,
   PersistDurabilityRecords,
+  PersistOpenBarrier,
   PersistWriteCounter,
 } from "./context";
 
@@ -178,14 +180,53 @@ export function guardedWriteCounter(
   };
 }
 
-// for initContext in tests: records plus the guard
+// An open barrier for tests in this package (which can't use the backend's):
+// it fsyncs whichever of the -wal, the .db and their directory exist, with no
+// hostile-path checks.  The backend's real barrier has its own tests
+// (backend/conat/test/persist/durable-open-barrier.test.ts).
+export function testOpenBarrier(): PersistOpenBarrier {
+  const runSync = (dbPath: string): OpenBarrierResult => {
+    const synced: string[] = [];
+    for (const path of [`${dbPath}-wal`, dbPath, posix.dirname(dbPath)]) {
+      let fd: number;
+      try {
+        fd = fs.openSync(path, "r");
+      } catch (err) {
+        if ((err as any)?.code === "ENOENT") continue;
+        return { kind: "discovery", path, why: `${err}` };
+      }
+      try {
+        fs.fsyncSync(fd);
+        synced.push(path);
+      } catch (err) {
+        return {
+          kind: "sync-error",
+          path,
+          errno: `${(err as any)?.code}`,
+          synced,
+        };
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+    return { kind: "ok", synced };
+  };
+  return { runSync, run: async (dbPath) => runSync(dbPath) };
+}
+
+// for initContext in tests: records, the guard and the open barrier
 export function testDurabilityContext(): {
   durability: PersistDurabilityRecords;
   writeCounter: PersistWriteCounter;
+  openBarrier: PersistOpenBarrier;
+  unregisteredStreamOwner: (id: string) => string | undefined;
 } {
   const records = testDurabilityRecords();
   return {
     durability: records,
     writeCounter: guardedWriteCounter(undefined, records),
+    openBarrier: testOpenBarrier(),
+    // streams these tests construct directly (no persist server) are "host"
+    unregisteredStreamOwner: () => "host",
   };
 }

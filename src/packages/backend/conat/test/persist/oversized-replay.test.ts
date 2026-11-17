@@ -24,6 +24,7 @@ import { dstream } from "@cocalc/backend/conat/sync";
 import { messageData, DataEncoding } from "@cocalc/conat/core/client";
 import { pstream } from "@cocalc/backend/conat/persist";
 import { persistDurabilityRecords } from "@cocalc/backend/conat/persist-durability";
+import { persistOpenBarrier } from "@cocalc/backend/conat/persist-open-barrier";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,6 +47,7 @@ function useDecompressAsync(fn: (buf: Buffer) => Promise<Buffer>) {
     statSync,
     copyFileSync,
     durability: persistDurabilityRecords(),
+    openBarrier: persistOpenBarrier,
   });
 }
 

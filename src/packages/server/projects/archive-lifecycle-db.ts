@@ -352,6 +352,209 @@ export async function failStuckManualArchiveJobs(
   return rows.map(({ id }) => id);
 }
 
+// A manual archive's final backup freezes the project volume. Until that
+// freeze is known to be released, or the host data checked-deleted and the
+// project archived, the job stays recoverable: the next manual archive of the
+// project resumes it (same job, same backup dedupe key) and maintenance
+// recovers it. These failure categories mark such a job.
+export const MANUAL_ARCHIVE_FREEZE_UNCERTAIN =
+  "manual-archive-freeze-uncertain";
+export const MANUAL_ARCHIVE_FINALIZE_PENDING =
+  "manual-archive-finalize-pending";
+export const MANUAL_ARCHIVE_FREEZE_QUARANTINED =
+  "manual-archive-freeze-quarantined";
+const MANUAL_ARCHIVE_RECOVERABLE_CATEGORIES = [
+  "stuck-manual-archive",
+  MANUAL_ARCHIVE_FREEZE_UNCERTAIN,
+  MANUAL_ARCHIVE_FINALIZE_PENDING,
+];
+
+export type ManualArchiveJob = {
+  id: string;
+  project_id: string;
+  host_id: string | null;
+  status: ProjectArchiveLifecycleJobStatus;
+  failure_category: string | null;
+  final_backup_id: string | null;
+  backup_generation: number | string | null;
+  attempts: number;
+  recovery_errors: number;
+  stale: boolean;
+};
+
+const MANUAL_JOB_COLUMNS = `id::text AS id, project_id::text AS project_id,
+       host_id::text AS host_id, status, failure_category, final_backup_id,
+       backup_generation, COALESCE(attempts, 0)::int AS attempts,
+       COALESCE((evidence ->> 'manual_recovery_errors')::int, 0) AS recovery_errors`;
+
+/** The project's newest manual archive job whose freeze may still be held:
+ * running, or failed with a recorded final backup or an unresolved (or
+ * quarantined) freeze. */
+export async function findUnresolvedManualArchiveJob(
+  project_id: string,
+  staleMs = STUCK_MANUAL_ARCHIVE_MS,
+): Promise<ManualArchiveJob | undefined> {
+  await ensureProjectArchiveLifecycleSchema();
+  const { rows } = await getPool().query<ManualArchiveJob>(
+    `SELECT ${MANUAL_JOB_COLUMNS},
+            updated_at < NOW() - make_interval(secs => $3::double precision) AS stale
+       FROM ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
+      WHERE project_id = $1
+        AND reason = 'manual'
+        AND (
+          status = 'running'
+          OR (status = 'failed'
+              AND (final_backup_id IS NOT NULL
+                   OR failure_category = ANY($2::text[])))
+        )
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [
+      project_id,
+      [
+        ...MANUAL_ARCHIVE_RECOVERABLE_CATEGORIES,
+        MANUAL_ARCHIVE_FREEZE_QUARANTINED,
+      ],
+      staleMs / 1000,
+    ],
+  );
+  return rows[0];
+}
+
+/** Take over a manual archive job left failed or stale, keeping its id (and
+ * so its final-backup dedupe key) and any recorded final backup. */
+export async function resumeManualArchiveJob(
+  job_id: string,
+  staleMs = STUCK_MANUAL_ARCHIVE_MS,
+): Promise<boolean> {
+  await ensureProjectArchiveLifecycleSchema();
+  const result = await getPool().query(
+    `UPDATE ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
+        SET status = 'running',
+            completed_at = NULL,
+            next_attempt_at = NULL,
+            failure_category = NULL,
+            error = NULL,
+            attempts = COALESCE(attempts, 0) + 1,
+            updated_at = NOW()
+      WHERE id = $1
+        AND reason = 'manual'
+        AND COALESCE(failure_category, '') <> $3
+        AND (status = 'failed'
+             OR (status = 'running'
+                 AND updated_at < NOW() - make_interval(secs => $2::double precision)))`,
+    [job_id, staleMs / 1000, MANUAL_ARCHIVE_FREEZE_QUARANTINED],
+  );
+  return (result.rowCount ?? 0) === 1;
+}
+
+/** Failed manual archive jobs whose freeze maintenance should recover. */
+export async function listManualArchiveJobsToRecover(
+  limit = 20,
+): Promise<ManualArchiveJob[]> {
+  await ensureProjectArchiveLifecycleSchema();
+  const { rows } = await getPool().query<ManualArchiveJob>(
+    `SELECT ${MANUAL_JOB_COLUMNS}, FALSE AS stale
+       FROM ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
+      WHERE reason = 'manual'
+        AND status = 'failed'
+        AND (final_backup_id IS NOT NULL
+             OR failure_category = ANY($1::text[]))
+        AND COALESCE(failure_category, '') <> $2
+      ORDER BY updated_at ASC
+      LIMIT $3`,
+    [
+      MANUAL_ARCHIVE_RECOVERABLE_CATEGORIES,
+      MANUAL_ARCHIVE_FREEZE_QUARANTINED,
+      limit,
+    ],
+  );
+  return rows;
+}
+
+/** Maintenance claims a failed manual job before recovering it: while it is
+ * claimed (running) a user's manual archive refuses instead of resuming it.
+ * Returns the claim's attempts value, which fences every settle. */
+export async function claimManualArchiveJobForRecovery({
+  job_id,
+  attempts,
+}: {
+  job_id: string;
+  attempts: number;
+}): Promise<number | undefined> {
+  await ensureProjectArchiveLifecycleSchema();
+  const { rows } = await getPool().query<{ attempts: number }>(
+    `UPDATE ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
+        SET status = 'running',
+            attempts = COALESCE(attempts, 0) + 1,
+            updated_at = NOW()
+      WHERE id = $1
+        AND reason = 'manual'
+        AND status = 'failed'
+        AND COALESCE(attempts, 0) = $2
+      RETURNING attempts::int AS attempts`,
+    [job_id, attempts],
+  );
+  return rows[0]?.attempts;
+}
+
+/** Record the outcome of recovering a manual archive job. With
+ * claimed_attempts the update applies only to the job maintenance still
+ * holds (running, with that attempts value). */
+export async function settleManualArchiveJob({
+  job_id,
+  status,
+  failure_category,
+  clear_final_backup,
+  error,
+  claimed_attempts,
+  recovery_error,
+}: {
+  job_id: string;
+  status: "completed" | "failed";
+  failure_category: string | null;
+  clear_final_backup: boolean;
+  error?: unknown;
+  claimed_attempts?: number;
+  // count one more consecutive recovery error (else reset the count)
+  recovery_error?: boolean;
+}): Promise<boolean> {
+  await ensureProjectArchiveLifecycleSchema();
+  const result = await getPool().query(
+    `UPDATE ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
+        SET status = $2::VARCHAR(32),
+            failure_category = $3,
+            error = $5,
+            final_backup_id = CASE WHEN $4::boolean THEN NULL ELSE final_backup_id END,
+            backup_generation = CASE WHEN $4::boolean THEN NULL ELSE backup_generation END,
+            evidence = COALESCE(evidence, '{}'::jsonb) || jsonb_build_object(
+              'manual_recovery_errors',
+              CASE WHEN $7::boolean
+                THEN COALESCE((evidence ->> 'manual_recovery_errors')::int, 0) + 1
+                ELSE 0 END
+            ),
+            completed_at = NOW(),
+            next_attempt_at = NULL,
+            updated_at = NOW()
+      WHERE id = $1
+        AND reason = 'manual'
+        AND (CASE WHEN $6::int IS NULL
+               THEN status IN ('failed', 'running')
+               ELSE status = 'running' AND COALESCE(attempts, 0) = $6::int
+             END)`,
+    [
+      job_id,
+      status,
+      failure_category,
+      clear_final_backup,
+      error == null ? null : boundedError(error),
+      claimed_attempts ?? null,
+      recovery_error === true,
+    ],
+  );
+  return (result.rowCount ?? 0) === 1;
+}
+
 export async function countRecentAutomaticArchives(): Promise<number> {
   await ensureProjectArchiveLifecycleSchema();
   const { rows } = await getPool().query<{ count: string }>(

@@ -91,6 +91,41 @@ type PersistClientInitReporter = (
 
 const logger = getLogger("persist:client");
 
+// 028 B-3a (ops0 3568): resending a request the server refused with
+// `rate_limited` (see PersistStreamClient.request); DStream's backoff
+export const RATE_LIMITED_RETRY = { start: 150, decay: 1.3, max: 10_000 };
+export let RATE_LIMITED_RETRY_MS = 60_000;
+export const rateLimitedRetryStats = { refused: 0, retried: 0, gaveUp: 0 };
+// the jitter of a retry's pause, in [0, 1) (tests make it deterministic)
+let rateLimitedJitter: () => number = Math.random;
+export function setRateLimitedJitterForTests(fn: (() => number) | undefined): void {
+  rateLimitedJitter = fn ?? Math.random;
+}
+// the commands that change a stream (as server.ts isWriteCommand): they wait
+// behind this client's refused writes, so their order holds (SA-B3a-1)
+const WRITE_CMDS = new Set([
+  "set",
+  "setMany",
+  "delete",
+  "setMetadata",
+  "patchMetadata",
+  "setCheckpoint",
+  "deleteCheckpoint",
+  "resetHistory",
+  "purgeArchivedHistory",
+  // (disabled on the server today, but a write when enabled: review advisory)
+  "sqlite",
+]);
+function isWriteCmd(cmd: unknown, opts: any): boolean {
+  if (WRITE_CMDS.has(`${cmd}`)) return true;
+  const config = opts?.headers?.config;
+  return cmd === "config" && config != null && typeof config === "object" && Object.keys(config).length > 0;
+}
+// tests only
+export function setRateLimitedRetryMsForTests(ms: number): void {
+  RATE_LIMITED_RETRY_MS = ms;
+}
+
 export type ChangefeedEvent = ChangefeedOperation[];
 export type Changefeed = EventIterator<ChangefeedEvent>;
 export type PersistRecoveryState =
@@ -1516,7 +1551,153 @@ class PersistStreamClient extends EventEmitter {
   // Every request says which instance this client last saw, and its answer
   // which one the stream is (persist_instance, see server.ts
   // assertCurrentInstance).  A refusal may come back as a thrown error.
+  //
+  // 028 B-3a (ops0 3568): a request the server refused with `rate_limited`
+  // (the owner's write budget) was NOT applied -- the budget is checked
+  // before the transaction or the request's savepoint -- so sending it again
+  // cannot apply it twice.  Every request is resent with DStream's backoff
+  // (150 ms, x1.3, at most 10 s; plus jitter, so refused clients don't come
+  // back together) until RATE_LIMITED_RETRY_MS have passed; only then does
+  // the caller get the error.
+  //
+  // ORDER (SA-B3a-1, AS-B3-ORDER-1): this client's writes commit in the order
+  // they were issued.  Each write gets its number (wseq) when it is ISSUED,
+  // before its first send, and every send carries wfloor: the smallest wseq
+  // not yet resolved (answered, failed or given up; it never goes down).  The
+  // server refuses any write while an earlier one of this connection is
+  // still refused, and drops a stale copy of a resolved one (write-order.ts).
+  // Here: a refused write is resent only once every write with a smaller
+  // wseq is resolved, so the resends go in wseq order whatever order the
+  // refusals arrived in; and a write issued while an earlier write is refused
+  // waits before its first send.
+  private writeSeq = 0;
+  // the unresolved wseqs, ascending (new ones are always the largest)
+  private unresolvedWrites: number[] = [];
+  private resolvedWrites = new Set<number>();
+  // the refused wseqs waiting to be resent
+  private refusedWrites = new Set<number>();
+  private writeWaiters: (() => void)[] = [];
+
+  private wakeWriteWaiters = () => {
+    const waiters = this.writeWaiters;
+    this.writeWaiters = [];
+    for (const wake of waiters) wake();
+  };
+
+  private untilWrites = async (ready: () => boolean) => {
+    while (!ready()) {
+      await new Promise<void>((resolve) => this.writeWaiters.push(resolve));
+    }
+  };
+
+  private refusedBefore = (wseq: number): boolean => {
+    for (const r of this.refusedWrites) if (r < wseq) return true;
+    return false;
+  };
+
+  private lowestUnresolved = (): number => {
+    while (
+      this.unresolvedWrites.length > 0 &&
+      this.resolvedWrites.has(this.unresolvedWrites[0])
+    ) {
+      this.resolvedWrites.delete(this.unresolvedWrites.shift()!);
+    }
+    return this.unresolvedWrites[0];
+  };
+
   private request = async (
+    data: any,
+    opts: Parameters<ConatSocketClient["request"]>[1] = {},
+  ) => {
+    if (!isWriteCmd((opts?.headers as any)?.cmd, opts)) {
+      return await this.sendRetryingRateLimited(data, opts);
+    }
+    const wseq = ++this.writeSeq;
+    this.unresolvedWrites.push(wseq);
+    try {
+      // (only earlier refused writes: a later one waits for this one).  No
+      // await at all otherwise: the send stays in the same tick, so a write
+      // and a request issued right after it go out in that order (DEV r12:
+      // limits.test.ts)
+      if (this.refusedBefore(wseq)) {
+        await this.untilWrites(() => !this.refusedBefore(wseq));
+      }
+      return await this.sendRetryingRateLimited(data, opts, wseq);
+    } finally {
+      this.resolvedWrites.add(wseq);
+      this.wakeWriteWaiters();
+    }
+  };
+
+  private withWriteOrder = (
+    opts: Parameters<ConatSocketClient["request"]>[1],
+    wseq: number,
+  ) => ({
+    ...opts,
+    headers: { ...opts?.headers, wseq, wfloor: this.lowestUnresolved() },
+  });
+
+  private sendRetryingRateLimited = async (
+    data: any,
+    opts: Parameters<ConatSocketClient["request"]>[1],
+    wseq?: number,
+  ) => {
+    const send = () =>
+      this.attemptOnce(data, wseq == null ? opts : this.withWriteOrder(opts, wseq));
+    const start = Date.now();
+    const first = await send();
+    if (!("refused" in first)) return first.resp;
+    if (wseq != null) this.refusedWrites.add(wseq);
+    try {
+      let wait = RATE_LIMITED_RETRY.start;
+      let refused = first.refused;
+      while (true) {
+        rateLimitedRetryStats.refused += 1;
+        const pause = wait * (0.5 + rateLimitedJitter() / 2);
+        if (this.isClosed() || Date.now() - start + pause > RATE_LIMITED_RETRY_MS) {
+          rateLimitedRetryStats.gaveUp += 1;
+          throw refused;
+        }
+        await new Promise((resolve) => setTimeout(resolve, pause));
+        wait = Math.min(RATE_LIMITED_RETRY.max, wait * RATE_LIMITED_RETRY.decay);
+        if (wseq != null) {
+          // in issue order: only once every earlier write is resolved
+          await this.untilWrites(() => this.lowestUnresolved() === wseq);
+        }
+        rateLimitedRetryStats.retried += 1;
+        const next = await send();
+        if (!("refused" in next)) return next.resp;
+        refused = next.refused;
+      }
+    } finally {
+      if (wseq != null) {
+        this.refusedWrites.delete(wseq);
+        this.wakeWriteWaiters();
+      }
+    }
+  };
+
+  // one send: the response, or the rate_limited refusal; any other error is
+  // thrown
+  private attemptOnce = async (
+    data: any,
+    opts: Parameters<ConatSocketClient["request"]>[1],
+  ): Promise<{ resp: any } | { refused: unknown }> => {
+    try {
+      const resp = await this.requestOnce(data, opts);
+      if ((resp?.headers as any)?.code !== "rate_limited") {
+        return { resp };
+      }
+      return { refused: errorFromHeaders(resp.headers) };
+    } catch (err) {
+      if ((err as any)?.code !== "rate_limited") {
+        throw err;
+      }
+      return { refused: err };
+    }
+  };
+
+  private requestOnce = async (
     data: any,
     opts: Parameters<ConatSocketClient["request"]>[1] = {},
   ) => {

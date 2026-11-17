@@ -42,7 +42,8 @@
     "conat-inventory": "node ./bin/conat-inventory.cjs",
     "conat-benchmark": "node ./dist/conat/benchmark.js",
     "conat-persist": "DEBUG=cocalc:*  node ./bin/conat-persist.cjs",
-    "conat-test-server": "node ./bin/conat-test-server.cjs"
+    "conat-test-server": "node ./bin/conat-test-server.cjs",
+    "build:fault-test": "pnpm exec tsc -p fault-test/tsconfig.json"
   },
   "files": [
     "dist/**",

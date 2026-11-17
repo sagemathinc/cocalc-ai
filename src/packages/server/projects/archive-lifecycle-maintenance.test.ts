@@ -16,6 +16,7 @@ const mockCountRunningArchivesByHost = jest.fn();
 const mockClaimAutomaticJob = jest.fn();
 const mockListQueuedProjectArchiveLifecycleJobs = jest.fn();
 const mockFailStuckManualArchiveJobs = jest.fn(async () => [] as string[]);
+const mockRecoverManualArchiveFreezes = jest.fn(async () => [] as any[]);
 
 const clientQuery = jest.fn();
 const mockReleaseArchiveFreeze = jest.fn();
@@ -58,6 +59,8 @@ jest.mock("./archive", () => ({
   archiveProjectStorage: mockArchiveProjectStorage,
   ProjectArchiveStorageError: class extends Error {},
   FinalArchiveBackupPendingError: class extends Error {},
+  recoverManualArchiveFreezes: (...args: any[]) =>
+    mockRecoverManualArchiveFreezes(...args),
 }));
 jest.mock("./archive-lifecycle-accounts", () => ({
   resolveArchiveLifecycleAccountStatuses: jest.fn(),
@@ -246,6 +249,25 @@ describe("project archive lifecycle recovery", () => {
       mockListRecoverableProjectArchiveLifecycleJobs.mock
         .invocationCallOrder[0],
     );
+  });
+
+  it("recovers manual archive freezes right after failing stuck manual jobs", async () => {
+    mockFailStuckManualArchiveJobs.mockClear();
+    mockRecoverManualArchiveFreezes.mockClear();
+    mockGetServerSettings.mockResolvedValue({
+      automatic_project_archiving_enabled: false,
+    });
+    mockListRecoverableProjectArchiveLifecycleJobs.mockResolvedValue([]);
+
+    await runProjectArchiveLifecycleOnce();
+
+    expect(mockRecoverManualArchiveFreezes).toHaveBeenCalledTimes(1);
+    expect(
+      mockFailStuckManualArchiveJobs.mock.invocationCallOrder[0],
+    ).toBeLessThan(mockRecoverManualArchiveFreezes.mock.invocationCallOrder[0]);
+    // a failing recovery does not stop the run
+    mockRecoverManualArchiveFreezes.mockRejectedValueOnce(new Error("db down"));
+    await expect(runProjectArchiveLifecycleOnce()).resolves.toBeDefined();
   });
 });
 

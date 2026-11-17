@@ -12,6 +12,16 @@
 //                               removed at its next write idle
 //   <root>/poisoned-file/<key>  that process's dirty record, renamed when a
 //                               sync error was returned
+//   <root>/poisoned-project/<owner>  a quota error returned by an fsync of
+//                               ours on a project path (Q-F, §3.2.3): every
+//                               stream of that project is refused (B-2)
+//
+// Plus the SECONDARY, post-reboot record (B-2, §3.2.5 (b)), on a persistent
+// state directory (never the stream's own directory), written durably:
+//   <state>/poisoned/<key>      after a reboot (the tmpfs records are gone,
+//                               and with them the page cache) the stream is
+//                               opened only after a full integrity_check.
+// Failing to write it is not fatal: it is retried, with an alert.
 //
 // key = sha256 of the stream's logical id (its normalized path, never a
 // resolved one: a user who can swap a symlink must not wash a record off).
@@ -43,7 +53,14 @@ export interface DurabilityFs {
 interface DirtyRecord {
   kind: "dirty";
   generation: string;
+  // the stream's logical id and owner (B-2: a project's leftovers are
+  // verified together)
+  id?: string;
+  owner?: string;
   pid: number;
+  // the process's start time (Linux: /proc/<pid>/stat field 22), so a reused
+  // pid is not mistaken for the writer (B-2)
+  procStart?: string;
   created: number;
 }
 
@@ -52,7 +69,23 @@ export type DurabilityRecords = PersistDurabilityRecords & {
   root: string;
   dirtyPath: (id: string) => string;
   poisonedPath: (id: string) => string;
+  // (b) records not written yet (retried by the caller's timer)
+  retryPostReboot: () => number;
+  postRebootPending: () => number;
 };
+
+// The secondary, durable, post-reboot record store (§3.2.5 (b)), by key.
+// write/remove are durable (fsync of the file and its directory) and throw on
+// failure; exists fails closed (anything but "absent" is present).
+export interface PostRebootRecords {
+  write: (key: string, data: string) => void;
+  exists: (key: string) => boolean;
+  remove: (key: string) => void;
+}
+
+// Whether the process that wrote a dirty record still runs.  Anything but a
+// definite "no" counts as alive (fail closed: its record keeps refusing).
+export type IsWriterAlive = (pid: number, procStart?: string) => boolean;
 
 export function createDurabilityRecords({
   root,
@@ -60,6 +93,9 @@ export function createDurabilityRecords({
   fs,
   sha256,
   pid = 0,
+  procStart,
+  isWriterAlive = () => true,
+  postReboot,
   warn = () => {},
 }: {
   root: string;
@@ -67,10 +103,34 @@ export function createDurabilityRecords({
   fs: DurabilityFs;
   sha256: (data: string) => string;
   pid?: number;
+  procStart?: string;
+  isWriterAlive?: IsWriterAlive;
+  postReboot?: PostRebootRecords;
   warn?: (message: string, err: unknown) => void;
 }): DurabilityRecords {
+  // (b) records whose write failed: key -> data, retried
+  const pendingPostReboot = new Map<string, string>();
+  const writePostReboot = (key: string, data: string): boolean => {
+    if (postReboot == null) return true;
+    try {
+      postReboot.write(key, data);
+      pendingPostReboot.delete(key);
+      return true;
+    } catch (err) {
+      pendingPostReboot.set(key, data);
+      warn(
+        "persist alert (non-paging): could not write a post-reboot poison record; retrying (finding 028)",
+        err,
+      );
+      return false;
+    }
+  };
   const dirtyDir = posix.join(root, "dirty");
   const poisonedDir = posix.join(root, "poisoned-file");
+  const poisonedProjectDir = posix.join(root, "poisoned-project");
+  // owners are project ids (or "host"): never a path component otherwise
+  const safeOwner = (owner: string): string | undefined =>
+    /^[0-9a-zA-Z-]{1,64}$/.test(owner) && owner !== "host" ? owner : undefined;
   let ready = false;
   const ensureDirs = () => {
     if (ready) return;
@@ -98,18 +158,40 @@ export function createDurabilityRecords({
     }
   };
 
+  // whether the writer of another generation's dirty record still runs
+  const otherAlive = (id: string, name: string): boolean => {
+    let record: Partial<DirtyRecord>;
+    try {
+      record = JSON.parse(
+        fs.readFileSync(posix.join(dirtyKeyDir(id), name), "utf8"),
+      );
+    } catch {
+      return true; // unreadable: fail closed
+    }
+    const recordPid = Number(record?.pid);
+    if (!Number.isInteger(recordPid) || recordPid <= 0) return true;
+    try {
+      return isWriterAlive(recordPid, record?.procStart);
+    } catch {
+      return true;
+    }
+  };
+
   return {
     generation,
     root,
     dirtyPath,
     poisonedPath,
 
-    arm: (id: string): void => {
+    arm: (id: string, owner?: string): void => {
       ensureDirs();
       const record: DirtyRecord = {
         kind: "dirty",
         generation,
+        id,
+        owner,
         pid,
+        procStart,
         created: Date.now(),
       };
       const write = () => {
@@ -156,6 +238,7 @@ export function createDurabilityRecords({
           target,
           JSON.stringify({
             kind: "poisoned-file",
+            id,
             generation,
             pid,
             poisoned: Date.now(),
@@ -167,10 +250,111 @@ export function createDurabilityRecords({
         // a restart, and this process keeps the file poisoned in memory
         warn("could not write a poisoned-file record", err);
       }
+      // (b): survives a reboot; never fatal (§3.2.5 (b))
+      writePostReboot(
+        sha256(id),
+        JSON.stringify({ kind: "poisoned", id, poisoned: Date.now(), ...info }),
+      );
     },
 
-    check: (id: string): PersistDurabilityCheck => {
+    poisonProject: (owner: string, info: Record<string, string | number>) => {
+      const name = safeOwner(owner);
+      if (name == null) return;
+      try {
+        fs.mkdirSync(poisonedProjectDir, { recursive: true, mode: 0o700 });
+        writeAtomically(
+          posix.join(poisonedProjectDir, name),
+          JSON.stringify({
+            kind: "poisoned-project",
+            owner: name,
+            generation,
+            pid,
+            poisoned: Date.now(),
+            ...info,
+          }),
+        );
+      } catch (err) {
+        warn("could not write a poisoned-project record", err);
+      }
+    },
+
+    // The generation of the process that wrote owner's project poison, if any.
+    projectPoisonGeneration: (owner: string): string | undefined => {
+      const name = safeOwner(owner);
+      if (name == null) return;
+      try {
+        const record = JSON.parse(
+          fs.readFileSync(posix.join(poisonedProjectDir, name), "utf8"),
+        );
+        return `${record?.generation ?? ""}`;
+      } catch (err) {
+        return (err as any)?.code === "ENOENT" ? undefined : "unknown";
+      }
+    },
+
+    // After S-q verified the project (§3.2.6): its project record goes, and
+    // the poisoned-file records of its streams that were poisoned BECAUSE of
+    // the project (scope "project"), with their post-reboot records.  A file
+    // poisoned by a device error stays.  Returns the ids cleared.
+    clearProjectPoison: (owner: string): string[] => {
+      const name = safeOwner(owner);
+      if (name == null) return [];
+      const cleared: string[] = [];
+      let keys: string[] = [];
+      try {
+        keys = fs.readdirSync(poisonedDir);
+      } catch {}
+      for (const key of keys) {
+        if (key.endsWith(".tmp")) continue;
+        let record: any;
+        try {
+          record = JSON.parse(
+            fs.readFileSync(posix.join(poisonedDir, key), "utf8"),
+          );
+        } catch {
+          continue;
+        }
+        if (record?.scope !== "project" || record?.owner !== name) continue;
+        if (typeof record.id !== "string" || sha256(record.id) !== key) continue;
+        postReboot?.remove(key);
+        fs.unlinkSync(posix.join(poisonedDir, key));
+        cleared.push(record.id);
+      }
+      try {
+        fs.unlinkSync(posix.join(poisonedProjectDir, name));
+      } catch (err) {
+        if ((err as any)?.code !== "ENOENT") throw err;
+      }
+      return cleared;
+    },
+
+    retryPostReboot: (): number => {
+      for (const [key, data] of [...pendingPostReboot]) {
+        writePostReboot(key, data);
+      }
+      return pendingPostReboot.size;
+    },
+
+    postRebootPending: (): number => pendingPostReboot.size,
+
+    clearPostReboot: (id: string): void => {
+      postReboot?.remove(sha256(id));
+    },
+
+    check: (id: string, owner?: string): PersistDurabilityCheck => {
       if (exists(poisonedPath(id))) return "poisoned";
+      const name = owner == null ? undefined : safeOwner(owner);
+      if (name != null && exists(posix.join(poisonedProjectDir, name))) {
+        return "poisoned";
+      }
+      // poisoned in an earlier boot: a full integrity_check first (§3.2.6)
+      if (postReboot != null) {
+        let present = true;
+        try {
+          present = postReboot.exists(sha256(id));
+        } catch {}
+        if (present) return "needs-check";
+      }
       let names: string[];
       try {
         names = fs.readdirSync(dirtyKeyDir(id));
@@ -178,17 +362,97 @@ export function createDurabilityRecords({
         if ((err as any)?.code === "ENOENT") return "ok";
         return "unverified"; // can't tell: fail closed
       }
+      let leftover = false;
       for (const name of names) {
         // a record still being written: its operation had not started
         if (name.endsWith(".tmp")) continue;
         // ours: this process armed it and saw no sync error (or it would be
         // poisoned), e.g., an open that failed after arming
         if (name === generation) continue;
-        // another process's: it crashed mid-write, or is writing the file
-        // now; either way this process can't vouch for the page cache
-        return "unverified";
+        // another process's: if it still runs, it may be writing the file
+        // now and this process can't vouch for the page cache; if it is
+        // gone, it crashed mid-write and the outcome is unknown, which a
+        // verified eviction settles (B-2, §3.2.6 H-b)
+        if (otherAlive(id, name)) return "unverified";
+        leftover = true;
       }
-      return "ok";
+      return leftover ? "leftover" : "ok";
+    },
+
+    // The logical ids with a dead generation's dirty record, of one owner (a
+    // project's leftovers are verified together, §3.2.5 (b)).  undefined if
+    // more than max are found, or a record can't be read: can't bound it,
+    // fail closed.
+    leftoverIdsOf: (owner: string, max = 10_000): string[] | undefined => {
+      let keys: string[];
+      try {
+        keys = fs.readdirSync(dirtyDir);
+      } catch (err) {
+        return (err as any)?.code === "ENOENT" ? [] : undefined;
+      }
+      const ids = new Set<string>();
+      let seen = 0;
+      for (const key of keys) {
+        let names: string[];
+        try {
+          names = fs.readdirSync(posix.join(dirtyDir, key));
+        } catch {
+          continue; // removed meanwhile
+        }
+        for (const name of names) {
+          if (name.endsWith(".tmp") || name === generation) continue;
+          if (++seen > max) return undefined;
+          let record: Partial<DirtyRecord>;
+          try {
+            record = JSON.parse(
+              fs.readFileSync(posix.join(dirtyDir, key, name), "utf8"),
+            );
+          } catch (err) {
+            if ((err as any)?.code === "ENOENT") continue;
+            return undefined;
+          }
+          if (record.owner !== owner || typeof record.id !== "string") continue;
+          if (sha256(record.id) !== key) return undefined; // inconsistent
+          const recordPid = Number(record.pid);
+          let alive = true;
+          try {
+            alive =
+              !Number.isInteger(recordPid) ||
+              recordPid <= 0 ||
+              isWriterAlive(recordPid, record.procStart);
+          } catch {}
+          if (!alive) ids.add(record.id);
+        }
+      }
+      return [...ids];
+    },
+
+    // After a verified eviction: the records of dead generations go (never a
+    // live process's).  Returns how many were removed.
+    clearLeftovers: (id: string): number => {
+      let names: string[];
+      try {
+        names = fs.readdirSync(dirtyKeyDir(id));
+      } catch {
+        return 0;
+      }
+      let removed = 0;
+      for (const name of names) {
+        if (name.endsWith(".tmp") || name === generation) continue;
+        if (otherAlive(id, name)) continue;
+        try {
+          fs.unlinkSync(posix.join(dirtyKeyDir(id), name));
+          removed += 1;
+        } catch (err) {
+          if ((err as any)?.code !== "ENOENT") {
+            warn("could not remove a leftover dirty record", err);
+          }
+        }
+      }
+      try {
+        fs.rmdirSync(dirtyKeyDir(id));
+      } catch {}
+      return removed;
     },
   };
 }

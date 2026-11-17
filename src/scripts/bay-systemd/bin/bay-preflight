@@ -58,4 +58,14 @@ if command -v ss >/dev/null 2>&1; then
   done
 fi
 
+# (finding 028) the persist server's page-cache helper runs as
+# `/usr/bin/python3 -I -S -`: without it, every stream left mid-write by a
+# crash stays refused.  Refuse to start instead.
+if [[ "$service" == "persist" ]]; then
+  if ! /usr/bin/python3 -I -S -c 1 >/dev/null 2>&1; then
+    bay_log "/usr/bin/python3 -I -S -c 1 failed: install python3"
+    exit 1
+  fi
+fi
+
 bay_log "preflight ok"
