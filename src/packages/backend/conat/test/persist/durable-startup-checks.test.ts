@@ -132,6 +132,91 @@ describe("028 B-3a: start-up preconditions", () => {
     expect(fs.readdirSync(base)).toEqual([]);
   });
 
+  it("[NOFILE-prod] with nothing injected, the persist's start-up check enforces MIN_NOFILE: 8192 refuses, 65536 passes", () => {
+    const limits = (soft: string) =>
+      `Limit                     Soft Limit           Hard Limit           Units\nMax open files            ${soft}                 ${soft}              files\n`;
+    for (const [soft, ok] of [
+      ["8192", false],
+      ["31023", false],
+      ["31024", true],
+      ["65536", true],
+    ] as const) {
+      isolated({}, () => {
+        const nodeFs = require("node:fs");
+        const real = nodeFs.readFileSync;
+        const spy = jest.spyOn(nodeFs, "readFileSync").mockImplementation(((p: any, ...rest: any[]) =>
+          p === "/proc/self/limits" ? limits(soft) : real.call(nodeFs, p, ...rest)) as any);
+        try {
+          // a fresh registry: the test setup's setter was not applied here
+          const pd = require("@cocalc/backend/conat/persist-durability");
+          expect(pd.MIN_NOFILE).toBe(31024);
+          const start = pd.persistStartupCheck();
+          expect(start.ok).toBe(ok);
+          if (!ok) expect(start.reason).toMatch(`NOFILE soft limit ${soft} is below 31024`);
+        } finally {
+          spy.mockRestore();
+        }
+      });
+    }
+  });
+
+  it("[NOFILE-prod] the production wiring (persist.ts) uses MIN_NOFILE with nothing injected: 8192 refuses, 65536 passes", () => {
+    const limits = (soft: string) =>
+      `Limit                     Soft Limit           Hard Limit           Units\nMax open files            ${soft}                 ${soft}              files\n`;
+    for (const [soft, ok] of [
+      ["8192", false],
+      ["31023", false],
+      ["31024", true],
+      ["65536", true],
+    ] as const) {
+      isolated({}, () => {
+        const nodeFs = require("node:fs");
+        const real = nodeFs.readFileSync;
+        const spy = jest
+          .spyOn(nodeFs, "readFileSync")
+          .mockImplementation(((p: any, ...rest: any[]) =>
+            p === "/proc/self/limits" ? limits(soft) : real.call(nodeFs, p, ...rest)) as any);
+        try {
+          // a fresh registry: the module init of persist.ts, as in production
+          const { persistContextOptions } = require("@cocalc/backend/conat/persist");
+          const pd = require("@cocalc/backend/conat/persist-durability");
+          expect(pd.MIN_NOFILE).toBe(31024);
+          expect(persistContextOptions.startupCheck).toBe(pd.persistStartupCheck);
+          const start = persistContextOptions.startupCheck();
+          expect(start.ok).toBe(ok);
+          if (!ok) expect(start.reason).toMatch(`NOFILE soft limit ${soft} is below 31024`);
+        } finally {
+          spy.mockRestore();
+        }
+      });
+    }
+  });
+
+  it("[NOFILE-leak] an injected lower minimum is its own instance: the production check is unaffected", () => {
+    const nodeFs = require("node:fs");
+    const real = nodeFs.readFileSync;
+    const spy = jest
+      .spyOn(nodeFs, "readFileSync")
+      .mockImplementation(((p: any, ...rest: any[]) =>
+        p === "/proc/self/limits"
+          ? "Max open files            8192                 8192              files\n"
+          : real.call(nodeFs, p, ...rest)) as any);
+    try {
+      const pd = require("@cocalc/backend/conat/persist-durability");
+      const injected = pd.makePersistStartupCheck(1024);
+      expect(injected().ok).toBe(true);
+      pd.resetPersistStartupCheckForTests();
+      expect(pd.persistStartupCheck().ok).toBe(false);
+      expect(pd.persistStartupCheck().reason).toMatch("below 31024");
+      // the context of this suite got the injected instance, not the
+      // production one
+      expect((context as any).startupCheck).not.toBe(pd.persistStartupCheck);
+    } finally {
+      spy.mockRestore();
+      require("@cocalc/backend/conat/persist-durability").resetPersistStartupCheckForTests();
+    }
+  });
+
   it("NOFILE: below the minimum is refused; enough or unlimited passes; no /proc is not checked", () => {
     const limits = (soft: string) =>
       `Limit                     Soft Limit           Hard Limit           Units\nMax open files            ${soft}                 1048576              files\n`;

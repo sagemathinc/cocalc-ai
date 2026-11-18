@@ -6,12 +6,29 @@ require("@cocalc/conat/persist/context").setUnregisteredStreamOwnerForTests(
   () => "host",
 );
 
+// the NOFILE minimum of the test suites' start-up check (see below)
+const TEST_NOFILE_MINIMUM = 1024;
+
 // finding 028: in the persist, sync and core suites, every disk-stream
 // connection runs under the statement guard (conat/persist/test-durability):
 // a write outside a transaction throws, so the whole suite passing shows there
 // is no unarmed autocommit
 {
   const testPath = expect.getState().testPath ?? "";
+  // finding 028 (ops0's NOFILE ruling, 11-18): these suites open disk
+  // streams; this project's hard NOFILE limit (8192) is below the persist's
+  // MIN_NOFILE, so their context gets a start-up check built with a lower
+  // minimum, passed explicitly here (the production wiring and its
+  // MIN_NOFILE are tested in durable-startup-checks, [NOFILE-prod])
+  if (/\/conat\/(test\/(persist|sync|sync-doc|core)\/|persist-)/.test(testPath)) {
+    const { persistContextOptions } = require("../conat/persist");
+    const { initContext } = require("@cocalc/conat/persist/context");
+    const { makePersistStartupCheck } = require("../conat/persist-durability");
+    initContext({
+      ...persistContextOptions,
+      startupCheck: makePersistStartupCheck(TEST_NOFILE_MINIMUM),
+    });
+  }
   if (
     /\/conat\/(test\/(persist|sync|sync-doc|core)\/|persist-)/.test(testPath) &&
     // the write counter's own tests run raw autocommits on purpose, to test
@@ -23,8 +40,10 @@ require("@cocalc/conat/persist/context").setUnregisteredStreamOwnerForTests(
     const {
       guardedWriteCounter,
     } = require("@cocalc/conat/persist/test-durability");
+    const { makePersistStartupCheck } = require("../conat/persist-durability");
     initContext({
       ...persistContextOptions,
+      startupCheck: makePersistStartupCheck(TEST_NOFILE_MINIMUM),
       writeCounter: guardedWriteCounter(
         persistContextOptions.writeCounter,
         persistContextOptions.durability,

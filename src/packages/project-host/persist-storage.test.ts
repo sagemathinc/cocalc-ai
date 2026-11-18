@@ -5,8 +5,12 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { DataEncoding } from "@cocalc/conat/core/codec";
-import { pstream } from "@cocalc/backend/conat/persist";
-import { setUnregisteredStreamOwnerForTests } from "@cocalc/conat/persist/context";
+import { persistContextOptions, pstream } from "@cocalc/backend/conat/persist";
+import {
+  initContext,
+  setUnregisteredStreamOwnerForTests,
+} from "@cocalc/conat/persist/context";
+import { makePersistStartupCheck } from "@cocalc/backend/conat/persist-durability";
 import {
   applyPersistStorage,
   listPersistStorage,
@@ -36,6 +40,14 @@ const DAY = 24 * 60 * 60 * 1000;
 // 028 (AS-B2-SYNC-OWNER): the streams this test constructs directly belong to
 // PROJECT (production opens register their owner through the persist server)
 beforeAll(() => setUnregisteredStreamOwnerForTests(() => PROJECT));
+// 028 (ops0's NOFILE ruling, 11-18): a start-up check with a lower NOFILE
+// minimum, passed explicitly (this project's hard limit is below MIN_NOFILE)
+beforeAll(() =>
+  initContext({
+    ...persistContextOptions,
+    startupCheck: makePersistStartupCheck(1024),
+  }),
+);
 afterAll(() => setUnregisteredStreamOwnerForTests(undefined));
 
 let mount: string;

@@ -674,44 +674,61 @@ type StartupResult = {
   overrides?: string[];
   records?: ReturnType<typeof recordsDiagnostics>;
 };
-let startup: StartupResult | undefined;
-export function persistStartupCheck(): StartupResult {
-  if (startup == null) {
-    const g = persistRecordsGate();
-    // the records this process actually uses: refusing ones refuse here too
-    const refusing = persistDurabilityRecords().generation === "refused";
-    const reason = !g.ok
-      ? `durability records root refused (${g.code}): ${g.reason}`
-      : refusing
-        ? "durability records can't be set up"
-        : checkNofile();
-    const overrides = [...g.overrides];
-    startup = {
-      ok: reason == null,
-      ...(reason == null ? {} : { reason }),
-      overrides,
-      records: recordsDiagnostics(g),
-    };
-    if (reason != null) {
-      logger.error(
-        "PERSIST ALERT (page): disk-backed persist streams are refused on this host until fixed (finding 028)",
-        { reason },
-      );
+// A start-up check with its NOFILE minimum, cached once per instance.  The
+// production wiring (persist.ts) uses persistStartupCheck, the instance
+// with MIN_NOFILE.  Only the test setup builds another instance (ops0's
+// NOFILE ruling, 11-18: this project's hard limit is 8192), and passes it
+// to the context explicitly; no env var, config or global lowers it.
+export function makePersistStartupCheck(
+  nofileMinimum: number,
+): (() => StartupResult) & { reset: () => void } {
+  let cached: StartupResult | undefined;
+  const check = () => {
+    if (cached == null) {
+      const g = persistRecordsGate();
+      // the records this process actually uses: refusing ones refuse here too
+      const refusing = persistDurabilityRecords().generation === "refused";
+      const reason = !g.ok
+        ? `durability records root refused (${g.code}): ${g.reason}`
+        : refusing
+          ? "durability records can't be set up"
+          : checkNofile(undefined, nofileMinimum);
+      cached = {
+        ok: reason == null,
+        ...(reason == null ? {} : { reason }),
+        overrides: [...g.overrides],
+        records: recordsDiagnostics(g),
+      };
+      if (reason != null) {
+        logger.error(
+          "PERSIST ALERT (page): disk-backed persist streams are refused on this host until fixed (finding 028)",
+          { reason },
+        );
+      }
     }
-  }
-  return startup;
+    return cached;
+  };
+  check.reset = () => {
+    cached = undefined;
+  };
+  return check;
+}
+
+const productionStartupCheck = makePersistStartupCheck(MIN_NOFILE);
+export function persistStartupCheck(): StartupResult {
+  return productionStartupCheck();
 }
 
 // tests only: the start-up result is evaluated again (the gate and the
 // records are kept: the context holds them)
 export function resetPersistStartupCheckForTests(): void {
-  startup = undefined;
+  productionStartupCheck.reset();
 }
 
 // tests only: a new gate and new records at the next use (the caller
 // re-installs the records in the context if it needs them there)
 export function resetPersistRecordsGateForTests(): void {
-  startup = undefined;
+  productionStartupCheck.reset();
   gate = undefined;
   records = undefined;
 }
