@@ -932,14 +932,14 @@ describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-rec
     expect(gate()).toMatchObject({ ok: false, code: "marker_copies_differ" });
     // 1. dry run: the exact plan, nothing removed
     const dry = recover(false);
-    expect(dry).toMatchObject({ ok: true, applied: false, bootId: BOOT2, base, stateDir: state });
+    expect(dry).toMatchObject({ ok: true, applied: [], bootId: BOOT2, base, stateDir: state });
     expect([...dry.plan].sort()).toEqual(
       [sentinel(BOOT2), `${bootDir(BOOT2)}/`, markerA(), markerB(), join(state, MIGRATION_FLAG_NAME)].sort(),
     );
     expect(dry.plan.indexOf(sentinel(BOOT2))).toBeLessThan(dry.plan.indexOf(`${bootDir(BOOT2)}/`));
     expect(fs.existsSync(markerA())).toBe(true);
     // 2. apply
-    expect(recover(true)).toMatchObject({ ok: true, applied: true });
+    expect(recover(true)).toMatchObject({ ok: true, applied: dry.plan });
     for (const p of dry.plan) expect(fs.existsSync(p.replace(/\/$/, ""))).toBe(false);
     // 3. the restart: the gate recreates everything itself, 0700, as us
     const g = gate();
@@ -963,7 +963,7 @@ describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-rec
       [markerB(), join(state, MIGRATION_FLAG_NAME), sentinel(), r.dirtyPath("/s")].map((p) => fs.existsSync(p));
     const before = snapshot();
     let res = recover(true);
-    expect(res).toMatchObject({ ok: false, applied: false });
+    expect(res).toMatchObject({ ok: false, applied: [] });
     expect(res.stop).toMatch(/records of this boot are present/);
     expect(snapshot()).toEqual(before);
     // without records, but an unlisted entry in the base
@@ -995,7 +995,9 @@ describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-rec
     expect(snapshot()).toEqual([true, true, true, false]);
     // and with the legacy root clean, it proceeds
     fs.rmSync(legacy, { recursive: true });
-    expect(recover(true)).toMatchObject({ ok: true, applied: true });
+    const last = recover(true);
+    expect(last.ok).toBe(true);
+    expect(last.applied).toEqual(last.plan);
     expect(gate()).toMatchObject({ ok: true, migrated: true, t1: "pass" });
   });
 
@@ -1088,13 +1090,69 @@ describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-rec
     });
     const res = recover(true, { fs: faulty });
     expect(res.ok).toBe(false);
-    expect(res.stop).toMatch(/^partial apply: 2 of 8 removed, then .*; re-run this tool$/);
+    expect(res.stop).toMatch(/^partial apply: 2 of 8 removed, then remove .* failed \(EIO\); now: .*; re-run this tool, or escalate$/);
     expect(res.applied).toEqual([sentinel(BOOT2), `${bootDir(BOOT2)}/`]);
     expect(fs.existsSync(flag)).toBe(true);
     expect(gate().ok).toBe(false);
     // re-run: done
     expect(recover(true)).toMatchObject({ ok: true });
     expect(gate()).toMatchObject({ ok: true, migrated: true, t1: "pass" });
+  });
+
+  it("[RECOVERY-FSYNC] a failed directory fsync after the removals reports applied[], the state now and re-run, never ok; the flag goes only after the dirs are durable; the gate's actual result (review B7)", () => {
+    const failedSetup = () => {
+      rmSync(base, { recursive: true, force: true });
+      rmSync(state, { recursive: true, force: true });
+      setBoot(BOOT1);
+      expect(gate().ok).toBe(true);
+      setBoot(BOOT2);
+      expect(gate({ fs: faultFs([{ op: "renameSync", path: isA, code: "EIO" }]) }).ok).toBe(false);
+    };
+    const flag = join(state, MIGRATION_FLAG_NAME);
+    // before the flag: records/, the base, the state dir
+    for (const dir of [() => join(base, "records"), () => base, () => state]) {
+      failedSetup();
+      const plan = recover(false).plan;
+      expect(plan[plan.length - 1]).toBe(flag);
+      const res = recover(true, { fs: faultFs([{ op: "fsyncSync", path: (p) => p === dir(), code: "EIO" }]) });
+      expect(res.ok).toBe(false);
+      expect(res.stop).toBe(
+        `partial apply: ${plan.length - 1} of ${plan.length} removed, then fsync ${dir()} failed (EIO); now: boot dir absent; sentinel absent; marker A absent; marker B absent; migration flag present; re-run this tool, or escalate`,
+      );
+      expect(res.applied).toEqual(plan.slice(0, -1));
+      expect(fs.existsSync(flag)).toBe(true);
+      // the actual gate result: still refused (the flag is there)
+      expect(gate()).toMatchObject({ ok: false, code: "marker_missing" });
+      // re-run: done
+      expect(recover(true).ok).toBe(true);
+      expect(gate()).toMatchObject({ ok: true, migrated: true });
+    }
+    // after the flag: the state dir's second fsync fails
+    failedSetup();
+    const plan = recover(false).plan;
+    const fds = new Map<number, string>();
+    let n = 0;
+    const late = faultFs([], {
+      openSync: (real: any, p: string, ...rest: any[]) => {
+        const fd = real.openSync(p, ...rest);
+        fds.set(fd, p);
+        return fd;
+      },
+      fsyncSync: (real: any, fd: number) => {
+        if (fds.get(fd) === state && ++n === 2) {
+          throw Object.assign(new Error("EIO: injected"), { code: "EIO" });
+        }
+        return real.fsyncSync(fd);
+      },
+    });
+    const res = recover(true, { fs: late });
+    expect(res.ok).toBe(false);
+    expect(res.stop).toBe(
+      `partial apply: ${plan.length} of ${plan.length} removed, then fsync ${state} failed (EIO); now: boot dir absent; sentinel absent; marker A absent; marker B absent; migration flag absent; re-run this tool, or escalate`,
+    );
+    expect(res.applied).toEqual(plan);
+    // the actual gate result: the root is created again (a migration)
+    expect(gate()).toMatchObject({ ok: true, migrated: true });
   });
 });
 

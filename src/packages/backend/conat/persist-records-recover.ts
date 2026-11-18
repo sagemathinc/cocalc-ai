@@ -34,10 +34,12 @@
 //
 // Removal order (review B6), independent of directory order: this boot's
 // sentinel and its temp files, its (empty) class dirs, the boot dir, every
-// other temp file, marker A, marker B, the migration flag LAST.  Every
-// prefix of that order leaves a state the gate refuses (the flag goes last:
-// only its removal reopens the migration).  A failure midway reports the
-// removals done and "re-run this tool", never ok.
+// other temp file, marker A, marker B; then the directories are fsync'd;
+// then the migration flag (if any) and its directory (review B7).  A
+// failure anywhere reports the removals done, the state found now and "re-run
+// this tool", never ok.  Which state the gate then sees depends on the shape
+// and the point of failure (e.g. without a flag, or once it is removed, the
+// next start may create the root again): the report says what is there.
 
 import * as nodeFs from "node:fs";
 import { posix } from "node:path";
@@ -290,19 +292,39 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
     ];
     out.plan = plan;
     if (opts.apply) {
-      for (const p of plan) {
-        try {
+      // everything but the flag, made durable (the directories fsync'd)
+      // BEFORE the flag goes, then the flag and its directory (review B7).
+      // Any failure: the removals done so far, the state found now, and
+      // "re-run this tool" -- never ok, and no claim about what the gate
+      // does next (it may already create the root again).
+      const beforeFlag = plan.filter((p) => p !== flag);
+      let step = "";
+      try {
+        for (const p of beforeFlag) {
+          step = `remove ${p}`;
           if (p.endsWith("/")) fs.rmdirSync(p.slice(0, -1));
           else fs.unlinkSync(p);
-        } catch (err) {
-          throw new Stop(
-            `partial apply: ${out.applied.length} of ${plan.length} removed, then ${p}: ${errCode(err) ?? err}; re-run this tool`,
-          );
+          out.applied.push(p);
         }
-        out.applied.push(p);
-      }
-      for (const d of [records, base, state]) {
-        if (lstatOrUndefined(fs, d) != null) fsyncDir(fs, d);
+        for (const d of [records, base, state]) {
+          step = `fsync ${d}`;
+          if (lstatOrUndefined(fs, d) != null) fsyncDir(fs, d);
+        }
+        if (flag != null) {
+          step = `remove ${flag}`;
+          fs.unlinkSync(flag);
+          out.applied.push(flag);
+          step = `fsync ${state}`;
+          fsyncDir(fs, state);
+        }
+      } catch (err) {
+        let now = "unknown";
+        try {
+          now = describeSetup(fs, base, state, bootId, uid).shape;
+        } catch {}
+        throw new Stop(
+          `partial apply: ${out.applied.length} of ${plan.length} removed, then ${step} failed (${errCode(err) ?? (err as Error)?.message ?? err}); now: ${now}; re-run this tool, or escalate`,
+        );
       }
     }
     out.ok = true;
@@ -311,6 +333,19 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
     out.stop = err instanceof Stop ? err.message : `unexpected: ${err}`;
   }
   return out;
+}
+
+// Writes the report and ends the process with code once the write is done:
+// stdout to a pipe is asynchronous on POSIX, and process.exit() right
+// after a write can drop what is still pending (review B8, SA 4315).
+export function writeReportAndExit(
+  out: string,
+  code: number,
+  stream: { write: (s: string, cb: (err?: unknown) => void) => unknown } = process.stdout,
+  exit: (code: number) => void = (c) => process.exit(c),
+): void {
+  process.exitCode = code;
+  stream.write(out, () => exit(code));
 }
 
 // The command (project-host main.ts: `persist-records-recover [--apply]`):

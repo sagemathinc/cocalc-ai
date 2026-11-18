@@ -150,8 +150,12 @@ export class MultibayCluster {
       HUB_CLUSTER_BAY_IDS: ids,
       COCALC_CLUSTER_SEED_BAY_ID: bay.seedBayId,
       COCALC_CLUSTER_SHARED_SECRET: this.sharedSecret,
-      // the persist durability records (finding 028): per bay, never the
-      // host's /run/cocalc-persist (a CI runner can't write it)
+      // the persist durability records (finding 028, ALT-D2): per bay, on
+      // the bay's own disk (the cluster dir must not be under /tmp or
+      // tmpdir(): the records gate refuses those); the legacy tmpfs root
+      // is only checked, at the first start: per bay, absent
+      COCALC_PERSIST_RECORDS_BASE: path.join(bay.dataDir, "persist-durability"),
+      COCALC_PERSIST_STATE_DIR: path.join(bay.dataDir, "persist-state"),
       COCALC_PERSIST_RUN_DIR: path.join(bay.dataDir, "persist-run"),
     };
     if (bay.role === "seed") {

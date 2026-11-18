@@ -66,8 +66,12 @@ Finding 028, ALT-D2, ops0's S4 ruling.
      - anything else (`unlisted entry`, `not a regular file`, `not a real directory`, `owned by uid`, `run this as the persist user`, `legacy records check`): escalate. Do not delete anything by hand.
 6. **Check again that nothing runs** (step 4).
 7. **Apply:** the same command with `--apply`.
+   - It removes everything but the migration flag, makes that durable (fsync of the directories), then removes the flag.
    - `"ok": true` lists every removal in `applied`.
-   - `"ok": false` with `partial apply …; re-run this tool` lists what was removed. The persist still refuses, because the flag goes last. Fix the cause and run step 7 again.
+   - `"ok": false` with `partial apply: N of M removed, then <step> failed (<error>); now: <shape>; re-run this tool, or escalate`:
+     - `applied` lists what was removed, and `now:` is the state found after the failure.
+     - Do not start anything yet. Depending on the shape and the point of failure, the persist could already create the root again at its next start, without the removals being durable.
+     - Fix the cause and run step 7 again. If it fails again, escalate.
 8. **Start every unit you stopped:**
    - project host: `sudo systemctl start cocalc-project-host-start.service cocalc-project-host-watchdog.timer`;
    - bay: `sudo systemctl start cocalc-bay-conat-persist.service`.
@@ -83,4 +87,7 @@ Finding 028, ALT-D2, ops0's S4 ruling.
   - `[RECOVERY-S5]`;
   - `[RECOVERY-B5]`;
   - `[RECOVERY-ORDER]`;
+  - `[RECOVERY-FSYNC]`;
+- in `records-recover-report.test.ts`: `[RECOVERY-REPORT]`, the report complete through a slow pipe;
 - in `project-host/persist-records-recover-cli.test.ts`: `[RECOVERY-CLI]`, the command with an env file as the daemon reads it, and `[RECOVERY-CLI-main]`.
+- The built artifact (bay and project host) is checked at build time and on staging2 (ops0's ruling).

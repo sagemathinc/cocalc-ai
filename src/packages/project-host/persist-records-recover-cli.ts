@@ -15,7 +15,10 @@
 
 import { baseDaemonEnv } from "./daemon";
 import { persistStateDirFor } from "@cocalc/backend/conat/persist-durability";
-import { runPersistRecordsRecoverCli } from "@cocalc/backend/conat/persist-records-recover";
+import {
+  runPersistRecordsRecoverCli,
+  writeReportAndExit,
+} from "@cocalc/backend/conat/persist-records-recover";
 
 export const PERSIST_RECORDS_RECOVER_COMMAND = "persist-records-recover";
 
@@ -33,4 +36,11 @@ export function runPersistRecordsRecoverCommand(
   const { code, output } = runPersistRecordsRecoverCli(argv, env, persistStateDirFor(env));
   write(output);
   return code;
+}
+
+// main.ts: the whole command; the process ends when the report is written
+export function mainPersistRecordsRecover(argv: string[]): void {
+  let out = "";
+  const code = runPersistRecordsRecoverCommand(argv, (s) => (out += s));
+  writeReportAndExit(out, code);
 }

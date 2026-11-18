@@ -107,12 +107,18 @@ describe("[RECOVERY-CLI] persist-records-recover, the project-host command", () 
     expect(JSON.parse(out).stop).toMatch(/^not a failed creation/);
   });
 
-  it("[RECOVERY-CLI-main] main.ts dispatches the command first, before any process title, cgroup or daemon branch", () => {
+  it("[RECOVERY-CLI-main] main.ts dispatches the command first, in its own branch: nothing else of main runs, and the process ends when the report is written", () => {
     const src = fs.readFileSync(join(__dirname, "main.ts"), "utf8");
-    const m = /if \(require\.main === module\) \{\n([^]*?)\n  applyProjectHostProcessTitle\(\);/.exec(src);
-    expect(m).not.toBeNull();
-    expect(m![1]).toContain("if (process.argv[2] === PERSIST_RECORDS_RECOVER_COMMAND) {");
-    expect(m![1]).toContain("process.exit(runPersistRecordsRecoverCommand(process.argv.slice(3)));");
-    expect(src).toMatch(/^import \{\n  PERSIST_RECORDS_RECOVER_COMMAND,\n  runPersistRecordsRecoverCommand,\n\} from "\.\/persist-records-recover-cli";$/m);
+    expect(src).toContain(
+      "if (require.main === module && process.argv[2] === PERSIST_RECORDS_RECOVER_COMMAND) {\n" +
+        "  // an operator command (028 ALT-D2): nothing else starts; the process ends\n" +
+        "  // once its report is written\n" +
+        "  mainPersistRecordsRecover(process.argv.slice(3));\n" +
+        "} else if (require.main === module) {\n" +
+        "  applyProjectHostProcessTitle();",
+    );
+    // the only `require.main === module` dispatch in main.ts
+    expect(src.match(/require\.main === module/g)).toHaveLength(2);
+    expect(src).not.toMatch(/process\.exit\(runPersistRecordsRecoverCommand/);
   });
 });

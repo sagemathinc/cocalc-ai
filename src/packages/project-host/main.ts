@@ -8,7 +8,7 @@
 import { createServer as createHttpServer } from "http";
 import {
   PERSIST_RECORDS_RECOVER_COMMAND,
-  runPersistRecordsRecoverCommand,
+  mainPersistRecordsRecover,
 } from "./persist-records-recover-cli";
 import { initAcpProjectMembership } from "./acp/project-membership";
 import type { IncomingMessage, ServerResponse } from "http";
@@ -1807,11 +1807,11 @@ export async function main(
 }
 
 // Allow running directly via `node dist/main.js`.
-if (require.main === module) {
-  if (process.argv[2] === PERSIST_RECORDS_RECOVER_COMMAND) {
-    // an operator command (028 ALT-D2): before anything starts
-    process.exit(runPersistRecordsRecoverCommand(process.argv.slice(3)));
-  }
+if (require.main === module && process.argv[2] === PERSIST_RECORDS_RECOVER_COMMAND) {
+  // an operator command (028 ALT-D2): nothing else starts; the process ends
+  // once its report is written
+  mainPersistRecordsRecover(process.argv.slice(3));
+} else if (require.main === module) {
   applyProjectHostProcessTitle();
   process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT = __filename;
   if (`${process.env.COCALC_CONAT_CLUSTER_NODE ?? ""}`.trim() === "1") {

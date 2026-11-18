@@ -387,7 +387,9 @@ jobs:
 
       - name: Two-bay cluster tests
         env:
-          MULTIBAY_DIR: /tmp/multibay
+          # not under /tmp: the persist's records gate (028 ALT-D2) refuses
+          # a sticky world-writable ancestor and a base under tmpdir()
+          MULTIBAY_DIR: ${{ runner.temp }}/multibay
           MULTIBAY_KEEP: "1"
         run: |
           mkdir -p "$MULTIBAY_DIR"
