@@ -19,7 +19,11 @@ Finding 028, ALT-D2, ops0's S4 ruling.
 
 **Who uses the records, per role** (lazily: only a process that opens a disk stream, reads the persist diagnostics or runs persist maintenance evaluates the gate; SA 4318):
 - **project host:** the project-host daemon (the file server's maintenance, its persist diagnostics) and its conat-persist child. Every one runs the entry under `/opt/cocalc/project-host/`.
-- **bay:** `cocalc-bay-conat-persist` (`$COCALC_BAY_PROJECT_HOST_MAIN` as the persist daemon), AND every hub worker `cocalc-bay-hub@*` (`$COCALC_BAY_HUB_MAIN --conat-server`, which starts an in-process persist server via `initConatPersist`). The router runs the same project-host entry and is stopped too.
+- **bay:**
+  - `cocalc-bay-conat-persist` (`$COCALC_BAY_PROJECT_HOST_MAIN` as the persist daemon);
+  - every hub worker `cocalc-bay-hub@*` (`$COCALC_BAY_HUB_MAIN --conat-server`). `hub.ts` starts an in-process persist server (`initConatPersist`) only with `--conat-server` or `--conat-persist`, so any hub process started with one of these flags uses the records too.
+  - The router runs the same project-host entry and is stopped too.
+  - **Not stopped:** the billing worker (`cocalc-bay-billing`, `$COCALC_BAY_HUB_MAIN --billing-worker`) and the billing health check (`--billing-health-check`). They run the hub's entry without either flag, start no persist server and never use these records, so they keep running.
 
 **The rules:**
 - Only the unit commands (`systemctl …`, step 3 and step 8) run with sudo. The recovery command, and any look at these files, run as the persist user, never as root.
@@ -61,9 +65,9 @@ Finding 028, ALT-D2, ops0's S4 ruling.
    - project host: `pgrep -af '/opt/cocalc/project-host/'` and `systemctl is-active cocalc-project-host-watchdog.timer` (must be `inactive`);
    - bay, BOTH checks (an inactive unit alone does not prove that no orphaned or hand-started process remains):
      - `systemctl is-active cocalc-bay-hub-watchdog.timer 'cocalc-bay-hub@*.service' cocalc-bay-conat-persist.service cocalc-bay-conat-router.service` prints only `inactive` lines;
-     - no process of `cocalc-bay` runs the persist's entry or the hub's entry. With the bay env loaded as in step 5:
+     - no process of `cocalc-bay` runs the persist's entry, and none runs the hub's entry with `--conat-server` or `--conat-persist` (the billing worker, which runs the hub's entry with `--billing-worker`, is not matched and keeps running). With the bay env loaded as in step 5:
        ```
-       sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-workers bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; pgrep -u cocalc-bay -af -- "$COCALC_BAY_PROJECT_HOST_MAIN"; pgrep -u cocalc-bay -af -- "$COCALC_BAY_HUB_MAIN"'
+       sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-workers bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; pgrep -u cocalc-bay -af -- "$COCALC_BAY_PROJECT_HOST_MAIN"; pgrep -u cocalc-bay -af -- "$COCALC_BAY_HUB_MAIN .*--conat-(server|persist)"'
        ```
        It must print nothing. Any line means STOP: escalate.
 5. **Dry run, as the persist user.**

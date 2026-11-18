@@ -1209,6 +1209,7 @@ describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-rec
       ["--state-dir", state],
       ["--base", base, "--state-dir"],
       ["--base", base, "--state-dir", state, "--state-dir", state],
+      ["--base", base, "--base", base, "--state-dir", state],
       ["--base", base, "--state-dir", state, "--bogus"],
     ]) {
       const r = runPersistRecordsRecoverCli(argv, env(), state);
