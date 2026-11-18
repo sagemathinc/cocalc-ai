@@ -36,6 +36,32 @@ function run(): Promise<{ code: number | null; text: string }> {
   });
 }
 
+describe("[RECOVERY-REPORT-unit] the process ends only from the write's callback", () => {
+  it("[RECOVERY-REPORT-unit] exit is not called before the stream reports the write done, then exactly once with the code", async () => {
+    const { writeReportAndExit } = require("@cocalc/backend/conat/persist-records-recover");
+    const calls: string[] = [];
+    let done: (() => void) | undefined;
+    const stream = {
+      write: (s: string, cb: () => void) => {
+        calls.push(`write ${s.length}`);
+        done = cb; // completes later, like a pipe
+        return false;
+      },
+    };
+    const saved = process.exitCode;
+    try {
+      writeReportAndExit("x".repeat(100_000), 4, stream, (c: number) => calls.push(`exit ${c}`));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(calls).toEqual(["write 100000"]);
+      expect(process.exitCode).toBe(4);
+      done!();
+      expect(calls).toEqual(["write 100000", "exit 4"]);
+    } finally {
+      process.exitCode = saved;
+    }
+  });
+});
+
 describe("[RECOVERY-REPORT] the recovery report is never truncated", () => {
   beforeAll(() => {
     if (!existsSync(join(BACKEND_DIST, "conat", "persist-records-recover.js"))) {

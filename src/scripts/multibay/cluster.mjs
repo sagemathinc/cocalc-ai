@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -20,7 +21,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -30,6 +31,34 @@ export const SRC = path.resolve(
 );
 const require = createRequire(import.meta.url);
 const { normalizeHubCluster } = require("../dev/hub-cluster.js");
+
+// The root of the bays' persist durability records (finding 028, ALT-D2):
+// MULTIBAY_RECORDS_DIR, else ~/.cache/cocalc-multibay-records of the user
+// running the cluster -- the same rule in CI and locally.  Not the cluster
+// dir: that stays short under /tmp (Postgres sockets live below it), and the
+// records gate refuses a base below tmpdir() or under a sticky
+// world-writable /tmp.  init() checks each bay's base with the gate itself.
+export function multibayRecordsRoot(env = process.env, home = homedir()) {
+  return path.resolve(
+    env.MULTIBAY_RECORDS_DIR || path.join(home, ".cache", "cocalc-multibay-records"),
+  );
+}
+
+// Every ancestor of path, with its owner and mode (the CI record of T1).
+export function describeAncestors(p) {
+  const parts = path.resolve(p).split("/").filter((x) => x);
+  const out = [];
+  for (let i = 0; i <= parts.length; i++) {
+    const a = "/" + parts.slice(0, i).join("/");
+    try {
+      const st = lstatSync(a);
+      out.push(`${a} uid=${st.uid} mode=${(st.mode & 0o7777).toString(8)}${st.isSymbolicLink() ? " symlink" : ""}`);
+    } catch (err) {
+      out.push(`${a} ${err?.code ?? err}`);
+    }
+  }
+  return out;
+}
 
 // Each hub also listens on a few ports just above its own.
 const PORT_SPAN = 20;
@@ -62,6 +91,7 @@ export class MultibayCluster {
       dir ??
       mkdtempSync(path.join(process.env.MULTIBAY_DIR ?? tmpdir(), "mb-"));
     this.home = path.join(this.dir, "home");
+    this.recordsDir = path.join(multibayRecordsRoot(), path.basename(this.dir));
     this.procs = new Map();
     // Called with a bay's id when it stops (e.g. runInBay's worker for it).
     this.stopHooks = new Set();
@@ -94,7 +124,44 @@ export class MultibayCluster {
       },
       { root: SRC },
     );
+    this.preflightRecords();
     return this;
+  }
+
+  /** Each bay's records base and state dir (finding 028, ALT-D2). */
+  recordsPaths(id) {
+    return {
+      base: path.join(this.recordsDir, id, "persist-durability"),
+      stateDir: path.join(this.recordsDir, id, "persist-state"),
+    };
+  }
+
+  // The bays' persist runs the records gate at its first disk-stream open;
+  // a refusal there fails every disk stream.  Run the same gate (the built
+  // backend) on each bay's paths and environment now, and fail early with
+  // its reason and every ancestor's owner and mode.
+  preflightRecords() {
+    mkdirSync(this.recordsDir, { recursive: true, mode: 0o700 });
+    const { evaluateRecordsGate } = require(
+      path.join(SRC, "packages/backend/dist/conat/persist-records-root.js"),
+    );
+    for (const id of this.bayIds) {
+      const { base, stateDir } = this.recordsPaths(id);
+      const g = evaluateRecordsGate({
+        env: this.env(id),
+        stateDir,
+        dataDir: this.bay(id).dataDir,
+      });
+      const ancestors = describeAncestors(base).join("\n  ");
+      process.stdout.write(
+        `multibay ${id} records: ok=${g.ok} code=${g.code ?? "-"} t1=${g.t1} base=${base}\n  ${ancestors}\n`,
+      );
+      if (!g.ok) {
+        throw new Error(
+          `${id}: the persist records gate refuses ${base} (${g.code}: ${g.reason}); set MULTIBAY_RECORDS_DIR to a directory outside tmpdir() whose ancestors are not group/other-writable\n  ${ancestors}`,
+        );
+      }
+    }
   }
 
   bay(id) {
@@ -150,12 +217,11 @@ export class MultibayCluster {
       HUB_CLUSTER_BAY_IDS: ids,
       COCALC_CLUSTER_SEED_BAY_ID: bay.seedBayId,
       COCALC_CLUSTER_SHARED_SECRET: this.sharedSecret,
-      // the persist durability records (finding 028, ALT-D2): per bay, on
-      // the bay's own disk (the cluster dir must not be under /tmp or
-      // tmpdir(): the records gate refuses those); the legacy tmpfs root
+      // the persist durability records (finding 028, ALT-D2): per bay,
+      // under the records root (multibayRecordsRoot); the legacy tmpfs root
       // is only checked, at the first start: per bay, absent
-      COCALC_PERSIST_RECORDS_BASE: path.join(bay.dataDir, "persist-durability"),
-      COCALC_PERSIST_STATE_DIR: path.join(bay.dataDir, "persist-state"),
+      COCALC_PERSIST_RECORDS_BASE: this.recordsPaths(bay.id).base,
+      COCALC_PERSIST_STATE_DIR: this.recordsPaths(bay.id).stateDir,
       COCALC_PERSIST_RUN_DIR: path.join(bay.dataDir, "persist-run"),
     };
     if (bay.role === "seed") {
@@ -286,6 +352,9 @@ export class MultibayCluster {
   async stop({ keep = !!process.env.MULTIBAY_KEEP } = {}) {
     // Tearing the whole cluster down: no bay needs another to exit first.
     await Promise.all(this.bayIds.map((id) => this.stopBay(id)));
-    if (!keep) rmSync(this.dir, { recursive: true, force: true });
+    if (!keep) {
+      rmSync(this.dir, { recursive: true, force: true });
+      rmSync(this.recordsDir, { recursive: true, force: true });
+    }
   }
 }

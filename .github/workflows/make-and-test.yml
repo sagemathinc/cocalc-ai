@@ -387,13 +387,11 @@ jobs:
 
       - name: Two-bay cluster tests
         env:
-          # not under /tmp: the persist's records gate (028 ALT-D2) refuses
-          # a sticky world-writable ancestor and a base under tmpdir()
-          MULTIBAY_DIR: ${{ runner.temp }}/multibay
+          MULTIBAY_DIR: /tmp/multibay
           MULTIBAY_KEEP: "1"
         run: |
           mkdir -p "$MULTIBAY_DIR"
-          node --test --test-reporter=spec src/scripts/multibay/fuzz/model.test.mjs src/scripts/multibay/multibay.test.mjs
+          node --test --test-reporter=spec src/scripts/multibay/fuzz/model.test.mjs src/scripts/multibay/records-root.test.mjs src/scripts/multibay/multibay.test.mjs
 
       - name: Upload cluster logs
         if: failure()

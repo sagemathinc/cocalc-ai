@@ -12,7 +12,10 @@ node --test --test-reporter=spec src/scripts/multibay/multibay.test.mjs
 
 PostgreSQL server binaries (`initdb`, `postgres`) must be on `PATH` or found
 through `pg_config`. Each run uses a fresh temporary directory and free ports,
-so it does not touch a running dev hub. Set `MULTIBAY_KEEP=1` to keep the
+so it does not touch a running dev hub. Each bay's persist durability records (finding 028) live under
+`MULTIBAY_RECORDS_DIR` (default `~/.cache/cocalc-multibay-records`), outside
+`tmpdir()`; the cluster checks them with the persist's own gate when it starts
+and prints each ancestor's owner and mode. Set `MULTIBAY_KEEP=1` to keep the
 directory (hub logs, `debug.log`, databases) and `MULTIBAY_DIR` to choose its
 parent.
 
