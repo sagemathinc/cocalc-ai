@@ -424,11 +424,17 @@ describe("rule 5: the R-b marker, the TOTAL table", () => {
     expect(gate()).toMatchObject({ ok: true, new_boot: true });
   });
 
-  it("[R8] both copies absent, the current boot dir present: refused", () => {
+  it("[R8] both copies absent, the current boot dir present: refused (with or without the migration flag), nothing written", () => {
     expect(gate().ok).toBe(true);
     fs.rmSync(markerA());
     fs.rmSync(markerB());
     expect(gate()).toMatchObject({ ok: false, code: "marker_missing" });
+    // the row on its own: without the flag it must not take the migration
+    // path (no flag written, no legacy read)
+    const flag = join(state, MIGRATION_FLAG_NAME);
+    fs.rmSync(flag);
+    expect(gate()).toMatchObject({ ok: false, code: "marker_missing" });
+    expect(fs.existsSync(flag)).toBe(false);
   });
 
   it("[R9] both absent, no boot dir: ok only at the first start (migration flag), else refused", () => {

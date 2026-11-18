@@ -127,7 +127,10 @@ describe("028 B-3a: start-up preconditions", () => {
       records.poison("/x", { where: "t" });
       records.poisonProject("p", { where: "t" });
       records.disarm("/x");
-      expect(pd.persistStartupCheck().ok).toBe(false);
+      // refused BY the gate's result (its code), not only by the records
+      const start = pd.persistStartupCheck();
+      expect(start.ok).toBe(false);
+      expect(start.reason).toMatch(/^durability records root refused \(t1_failed\)/);
     });
     expect(fs.readdirSync(base)).toEqual([]);
   });
