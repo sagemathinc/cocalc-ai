@@ -44,6 +44,14 @@ export function multibayRecordsRoot(env = process.env, home = homedir()) {
   );
 }
 
+// A bay's records base and state dir below a cluster's records dir.
+export function bayRecordsPaths(recordsDir, id) {
+  return {
+    base: path.join(recordsDir, id, "persist-durability"),
+    stateDir: path.join(recordsDir, id, "persist-state"),
+  };
+}
+
 // Every ancestor of path, with its owner and mode (the CI record of T1).
 export function describeAncestors(p) {
   const parts = path.resolve(p).split("/").filter((x) => x);
@@ -130,10 +138,7 @@ export class MultibayCluster {
 
   /** Each bay's records base and state dir (finding 028, ALT-D2). */
   recordsPaths(id) {
-    return {
-      base: path.join(this.recordsDir, id, "persist-durability"),
-      stateDir: path.join(this.recordsDir, id, "persist-state"),
-    };
+    return bayRecordsPaths(this.recordsDir, id);
   }
 
   // The bays' persist runs the records gate at its first disk-stream open;
@@ -355,6 +360,12 @@ export class MultibayCluster {
     if (!keep) {
       rmSync(this.dir, { recursive: true, force: true });
       rmSync(this.recordsDir, { recursive: true, force: true });
+    } else {
+      // kept: say where the bays' records gate state is (not under the
+      // cluster dir)
+      process.stdout.write(
+        `multibay kept: cluster ${this.dir}, persist records ${this.recordsDir}\n`,
+      );
     }
   }
 }
