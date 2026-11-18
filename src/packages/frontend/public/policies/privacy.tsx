@@ -457,7 +457,7 @@ export const privacyPolicy: PublicPolicy = {
                 With your consent, we may use an optional CoCalc analytics
                 cookie, <code>CC_ANA</code>, to understand how the site is
                 used. It is set and read only by CoCalc. We do not use Google
-                Analytics or other third-party analytics services.
+                Analytics.
               </p>
               <p>
                 {" "}
@@ -1231,6 +1231,10 @@ export const privacyPolicy: PublicPolicy = {
             <tr>
               <td>Update: records of project access changes</td>
               <td> 2026-10-27 </td>
+            </tr>
+            <tr>
+              <td>Update: remove obsolete Google Analytics reference</td>
+              <td> 2026-11-18 </td>
             </tr>
           </tbody>
         </table>
