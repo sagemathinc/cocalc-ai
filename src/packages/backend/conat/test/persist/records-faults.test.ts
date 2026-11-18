@@ -191,6 +191,82 @@ describe("[B2-clear] a verified project clears the renamed dirty record of a poi
   });
 });
 
+describe("[B3-retry] a cleared poison's pending post-reboot write is cancelled, only after the durable remove (review B3)", () => {
+  // an in-memory post-reboot store whose writes and removes can fail
+  function store() {
+    const saved = new Map<string, string>();
+    const s = {
+      failWrite: false,
+      failRemove: false,
+      saved,
+      write: (key: string, data: string) => {
+        if (s.failWrite) throw Object.assign(new Error("EIO: injected"), { code: "EIO" });
+        saved.set(key, data);
+      },
+      exists: (key: string) => saved.has(key),
+      remove: (key: string) => {
+        if (s.failRemove) throw Object.assign(new Error("EIO: injected"), { code: "EIO" });
+        saved.delete(key);
+      },
+    };
+    return s;
+  }
+  function withStore(post: any, rules: Rule[] = []) {
+    return createDurabilityRecords({
+      root,
+      generation: "g1",
+      fs: faultFs(rules),
+      sha256: sha256Hex,
+      pid: 999999,
+      isWriterAlive: () => false,
+      postReboot: post,
+    });
+  }
+
+  it("[B3-retry] clearProjectPoison (on-disk and in-memory poisons) and clearPostReboot: the retry recreates nothing; a failed remove keeps it pending and throws", () => {
+    // 1. an on-disk project poison whose post-reboot write failed
+    let post = store();
+    let r = withStore(post);
+    post.failWrite = true;
+    r.poison("/p/a", { where: "t", scope: "project", owner: "q" });
+    expect(r.postRebootPending()).toBe(1);
+    expect(r.clearProjectPoison("q")).toEqual(["/p/a"]);
+    expect(r.postRebootPending()).toBe(0);
+    post.failWrite = false;
+    expect(r.retryPostReboot()).toBe(0);
+    expect(post.saved.size).toBe(0);
+    expect(r.check("/p/a", "q")).toBe("ok");
+    // 2. an in-memory project poison (its poisoned-file write failed too)
+    post = store();
+    r = withStore(post, [{ op: "writeFileSync", path: (p) => p.includes("/poisoned-file/"), code: "EIO" }]);
+    post.failWrite = true;
+    r.poison("/p/b", { where: "t", scope: "project", owner: "q" });
+    expect(r.postRebootPending()).toBe(1);
+    expect(r.clearProjectPoison("q")).toEqual(["/p/b"]);
+    expect(r.postRebootPending()).toBe(0);
+    post.failWrite = false;
+    r.retryPostReboot();
+    expect(post.saved.size).toBe(0);
+    expect(r.check("/p/b", "q")).toBe("ok");
+    // 3. clearPostReboot (after a passed integrity_check)
+    post = store();
+    r = withStore(post);
+    post.failWrite = true;
+    r.poison("/p/c", { where: "t" });
+    expect(r.postRebootPending()).toBe(1);
+    // a failed durable remove throws and keeps the pending write
+    post.failRemove = true;
+    expect(() => r.clearPostReboot("/p/c")).toThrow("EIO");
+    expect(r.postRebootPending()).toBe(1);
+    post.failRemove = false;
+    r.clearPostReboot("/p/c");
+    expect(r.postRebootPending()).toBe(0);
+    post.failWrite = false;
+    r.retryPostReboot();
+    expect(post.saved.size).toBe(0);
+  });
+});
+
 describe("[F-check] the scan: unreadable is present", () => {
   it("[F-check-readFileSync] an unreadable poisoned-file or poisoned-project record refuses", () => {
     for (const code of ERRNOS) {

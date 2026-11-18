@@ -331,6 +331,9 @@ export function createDurabilityRecords({
         if (record?.scope !== "project" || record?.owner !== name) continue;
         if (typeof record.id !== "string" || sha256(record.id) !== key) continue;
         postReboot?.remove(key);
+        // (B3) a write still pending would re-create it at the next retry:
+        // cancelled only after the durable remove succeeded
+        pendingPostReboot.delete(key);
         fs.unlinkSync(posix.join(poisonedDir, key));
         cleared.push(record.id);
       }
@@ -375,6 +378,7 @@ export function createDurabilityRecords({
           if (!provenOurs(key, record)) continue;
         }
         postReboot?.remove(key);
+        pendingPostReboot.delete(key); // (B3)
         if (text != null) fs.unlinkSync(target);
         memPoisonedFiles.delete(key);
         if (!cleared.includes(m.id)) cleared.push(m.id);
@@ -394,6 +398,9 @@ export function createDurabilityRecords({
 
     clearPostReboot: (id: string): void => {
       postReboot?.remove(sha256(id));
+      // (B3) after the durable remove only: a failed remove throws above
+      // and the pending write stays
+      pendingPostReboot.delete(sha256(id));
     },
 
     check: (id: string, owner?: string): PersistDurabilityCheck => {

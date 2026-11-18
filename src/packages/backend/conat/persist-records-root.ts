@@ -555,7 +555,7 @@ function writeDurable(fs: GateFs, dir: string, name: string, data: string): void
 // positively empty: a real directory whose record class dirs are each absent
 // or a real directory with no entries.  Anything else refuses (records of
 // this boot, a link, a non-directory, an enumeration error).
-function legacyGate(fs: GateFs, legacy: string): void {
+export function legacyGate(fs: GateFs, legacy: string): void {
   let st: nodeFs.BigIntStats;
   try {
     st = fs.lstatSync(legacy, { bigint: true });

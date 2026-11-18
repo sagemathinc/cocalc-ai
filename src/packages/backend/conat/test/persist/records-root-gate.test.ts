@@ -22,6 +22,7 @@ import {
   type GateFs,
   type GateOptions,
 } from "@cocalc/backend/conat/persist-records-root";
+import { recoverFailedRecordsCreation } from "@cocalc/backend/conat/persist-records-recover";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { sha256Hex } from "@cocalc/backend/conat/persist-durability";
 
@@ -596,6 +597,27 @@ describe("rule 5: the R-b marker, the TOTAL table", () => {
       });
       expect(gate({ fs: zero })).toMatchObject({ ok: false, code: "records_write_failed" });
     }
+    // an invalid count (not an integer, negative, more than the rest):
+    // refused, and the target is never renamed into place (review, dev5)
+    for (const bad of [NaN, 1.5, -1, "over"] as const) {
+      rmSync(base, { recursive: true, force: true });
+      rmSync(state, { recursive: true, force: true });
+      const fds = new Map<number, string>();
+      const invalid = faultFs([], {
+        openSync: (real: any, p: string, ...rest: any[]) => {
+          const fd = real.openSync(p, ...rest);
+          fds.set(fd, p);
+          return fd;
+        },
+        writeSync: (real: any, fd: number, buf: Buffer, off: number, len: number) => {
+          if (!(fds.get(fd) ?? "").includes(MIGRATION_FLAG_NAME)) return real.writeSync(fd, buf, off, len);
+          if (bad === "over") return real.writeSync(fd, buf, off, len) + 1;
+          return bad;
+        },
+      });
+      expect(gate({ fs: invalid })).toMatchObject({ ok: false, code: "records_write_failed" });
+      expect(fs.existsSync(join(state, MIGRATION_FLAG_NAME))).toBe(false);
+    }
   });
 
   describe("[D3] marker A, marker B and the sentinel are strict files", () => {
@@ -888,5 +910,92 @@ describe("rule 6: faults at the gate's operations fail closed", () => {
     expect(g).toMatchObject({ ok: false, code: "records_write_failed" });
     // B was written, A was not: the copies differ
     expect(gate()).toMatchObject({ ok: false, code: "marker_copies_differ" });
+  });
+});
+
+describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-records-recovery.md)", () => {
+  // the documented tool, run as the test uid with the fixture's env (the
+  // role's configuration), exactly as the runbook runs it
+  const recover = (apply: boolean, extra: Partial<Parameters<typeof recoverFailedRecordsCreation>[0]> = {}) =>
+    recoverFailedRecordsCreation({ env: env(), stateDir: state, bootIdPath: bootFile, apply, ...extra });
+
+  it("[RECOVERY] a failed new-boot set-up: dry run, apply, restart -> the gate recreates the paths itself; durable ok; the post-reboot records are kept", () => {
+    expect(gate().ok).toBe(true);
+    fs.mkdirSync(join(state, "poisoned"), { mode: 0o700 });
+    fs.writeFileSync(join(state, "poisoned", "k"), "{}");
+    setBoot(BOOT2);
+    // the disk fails while this boot's set-up runs (A is never renamed)
+    expect(gate({ fs: faultFs([{ op: "renameSync", path: isA, code: "ENOSPC" }]) })).toMatchObject({
+      ok: false,
+      code: "records_write_failed",
+    });
+    expect(gate()).toMatchObject({ ok: false, code: "marker_copies_differ" });
+    // 1. dry run: the exact plan, nothing removed
+    const dry = recover(false);
+    expect(dry).toMatchObject({ ok: true, applied: false, bootId: BOOT2, base, stateDir: state });
+    expect([...dry.plan].sort()).toEqual(
+      [sentinel(BOOT2), `${bootDir(BOOT2)}/`, markerA(), markerB(), join(state, MIGRATION_FLAG_NAME)].sort(),
+    );
+    expect(dry.plan.indexOf(sentinel(BOOT2))).toBeLessThan(dry.plan.indexOf(`${bootDir(BOOT2)}/`));
+    expect(fs.existsSync(markerA())).toBe(true);
+    // 2. apply
+    expect(recover(true)).toMatchObject({ ok: true, applied: true });
+    for (const p of dry.plan) expect(fs.existsSync(p.replace(/\/$/, ""))).toBe(false);
+    // 3. the restart: the gate recreates everything itself, 0700, as us
+    const g = gate();
+    expect(g).toMatchObject({ ok: true, migrated: true, new_boot: true, t1: "pass", root: bootDir(BOOT2) });
+    expect(fs.lstatSync(bootDir(BOOT2)).mode & 0o7777).toBe(0o700);
+    expect(fs.lstatSync(bootDir(BOOT2)).uid).toBe(UID);
+    expect(fs.readFileSync(join(state, "poisoned", "k"), "utf8")).toBe("{}");
+    // a real record works and is seen by another process
+    recordsAt(g.root!, "gen-1").arm("/s", "p");
+    expect(recordsAt(g.root!, "gen-2", () => true).check("/s", "p")).toBe("unverified");
+    expect(gate()).toMatchObject({ ok: true, root: bootDir(BOOT2) });
+  });
+
+  it("[RECOVERY-stop] it STOPS and removes nothing: records of this boot, an unlisted entry, another uid, a symlink, legacy records", () => {
+    expect(gate().ok).toBe(true);
+    const r = recordsAt(bootDir(), "gen-1");
+    r.arm("/s", "p");
+    fs.rmSync(markerA()); // a refused state
+    expect(gate().ok).toBe(false);
+    const snapshot = () =>
+      [markerB(), join(state, MIGRATION_FLAG_NAME), sentinel(), r.dirtyPath("/s")].map((p) => fs.existsSync(p));
+    const before = snapshot();
+    let res = recover(true);
+    expect(res).toMatchObject({ ok: false, applied: false });
+    expect(res.stop).toMatch(/records of this boot are present/);
+    expect(snapshot()).toEqual(before);
+    // without records, but an unlisted entry in the base
+    r.disarm("/s");
+    fs.writeFileSync(join(base, "notes.txt"), "x");
+    res = recover(true);
+    expect(res.stop).toMatch(/unlisted entry in the base/);
+    expect(snapshot()).toEqual([true, true, true, false]);
+    fs.rmSync(join(base, "notes.txt"));
+    // an unlisted entry in this boot's dir
+    fs.writeFileSync(join(bootDir(), "x"), "x");
+    expect(recover(true).stop).toMatch(/unlisted entry in this boot's records dir/);
+    fs.rmSync(join(bootDir(), "x"));
+    // run as another uid (e.g. root): stops
+    expect(recover(true, { uid: UID + 1 }).stop).toMatch(/run this as the persist user/);
+    // a symlinked marker copy
+    const saved = fs.readFileSync(markerB(), "utf8");
+    fs.writeFileSync(join(root, "b-copy"), saved, { mode: 0o600 });
+    fs.rmSync(markerB());
+    fs.symlinkSync(join(root, "b-copy"), markerB());
+    expect(recover(true).stop).toMatch(/not a regular file/);
+    fs.rmSync(markerB());
+    fs.writeFileSync(markerB(), saved, { mode: 0o600 });
+    // legacy records (M1): checked, never touched
+    fs.mkdirSync(join(legacy, "dirty"), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(join(legacy, "dirty", "k"), "{}");
+    expect(recover(true).stop).toMatch(/legacy records check/);
+    expect(fs.existsSync(join(legacy, "dirty", "k"))).toBe(true);
+    expect(snapshot()).toEqual([true, true, true, false]);
+    // and with the legacy root clean, it proceeds
+    fs.rmSync(legacy, { recursive: true });
+    expect(recover(true)).toMatchObject({ ok: true, applied: true });
+    expect(gate()).toMatchObject({ ok: true, migrated: true, t1: "pass" });
   });
 });

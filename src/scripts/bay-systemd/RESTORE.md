@@ -380,6 +380,10 @@ directory, one in `<sync>/.cocalc-persist-state/records-marker.json`.
   `/run/cocalc-persist` holds no records, writes a fresh marker and
   re-creates the directory.
 
+A failed set-up of the records (a full or failing disk while the persist
+creates them) has its own runbook, for the bay and for project hosts:
+`src/packages/backend/conat/persist-records-recovery.md`.
+
 ## Testing this procedure
 
 - The weekly disposable drill runs the engine against the real backups (see

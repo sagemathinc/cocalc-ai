@@ -115,11 +115,28 @@ describe("028 B-3a: start-up preconditions", () => {
     });
   });
 
-  it("[LAZY] importing the persist module evaluates nothing and touches no file; the first record operation runs the gate (SA 4306 S3)", () => {
-    const base = join(dir, "lazy-base", "persist-durability");
-    fs.mkdirSync(join(dir, "lazy-base"), { mode: 0o700 });
-    for (const envPatch of [{ COCALC_PERSIST_RECORDS_BASE: base }, NO_BASE]) {
+  it("[LAZY] importing the persist module evaluates nothing, touches no file and pages nothing; the first record operation runs the gate (SA 4306 S3)", () => {
+    const cases = [
+      { name: "with-base", base: join(dir, "lazy-base-1", "persist-durability") },
+      { name: "no-base", base: undefined },
+    ];
+    fs.mkdirSync(join(dir, "lazy-base-1"), { mode: 0o700 });
+    for (const c of cases) {
+      const envPatch = c.base == null ? NO_BASE : { COCALC_PERSIST_RECORDS_BASE: c.base };
       isolated(envPatch, () => {
+        // every error log line of every logger of this registry
+        const loggerModule = require("@cocalc/backend/logger");
+        const realGetLogger = loggerModule.default;
+        const errors: string[] = [];
+        const loggerSpy = jest.spyOn(loggerModule, "default").mockImplementation(((name: string) => {
+          const l = realGetLogger(name);
+          const realError = l.error.bind(l);
+          l.error = (...a: any[]) => {
+            errors.push(String(a[0]));
+            return realError(...a);
+          };
+          return l;
+        }) as any);
         const gateModule = require("@cocalc/backend/conat/persist-records-root");
         const spy = jest.spyOn(gateModule, "evaluateRecordsGate");
         const nodeFs = require("node:fs");
@@ -127,7 +144,10 @@ describe("028 B-3a: start-up preconditions", () => {
         const spies = ["lstatSync", "mkdirSync", "openSync", "readFileSync", "readdirSync", "renameSync"].map((op) => {
           const real = nodeFs[op];
           return jest.spyOn(nodeFs, op).mockImplementation(((p: any, ...rest: any[]) => {
-            if (typeof p === "string" && (p.startsWith(base) || p.includes("boot_id") || p.includes("cocalc-persist"))) {
+            if (
+              typeof p === "string" &&
+              ((c.base != null && p.startsWith(c.base)) || p.includes("boot_id") || p.includes("cocalc-persist"))
+            ) {
               touched.push(`${op} ${p}`);
             }
             return real.call(nodeFs, p, ...rest);
@@ -140,16 +160,23 @@ describe("028 B-3a: start-up preconditions", () => {
           expect(persist.persistContextOptions.durability).toBeDefined();
           expect(spy).toHaveBeenCalledTimes(0);
           expect(touched).toEqual([]);
-          expect(fs.existsSync(base)).toBe(false);
-          // the first operation
+          expect(errors.filter((e) => /PERSIST ALERT/.test(e))).toEqual([]);
+          if (c.base != null) expect(fs.existsSync(c.base)).toBe(false);
+          // the first operation runs the gate (and, without a base, pages:
+          // the positive control of the page spy)
           pd.persistDurabilityRecords().check("/x", "p");
           expect(spy).toHaveBeenCalledTimes(1);
+          if (c.base != null) {
+            expect(fs.existsSync(join(c.base, "records"))).toBe(true);
+          } else {
+            expect(errors.filter((e) => /PERSIST ALERT/.test(e)).length).toBe(1);
+          }
         } finally {
           for (const s of spies) s.mockRestore();
+          loggerSpy.mockRestore();
         }
       });
     }
-    expect(fs.existsSync(join(base, "records"))).toBe(true);
   });
 
   it("[SETUP-FAIL] records that can't be set up after a passed gate refuse in the start-up check (SA 4306 A2)", () => {
