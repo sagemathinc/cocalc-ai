@@ -252,6 +252,16 @@ function t1Walk(
     prefixes.push("/" + parts.slice(0, i).join("/"));
   }
   const walked = ancestors ? prefixes.filter((p) => isWithin(p, walkFrom)) : [path];
+  if (!ancestors) {
+    // (the test override: missing ancestors are still created, unchecked)
+    for (const p of prefixes.slice(0, -1)) {
+      try {
+        ensureDir(fs, p);
+      } catch (err) {
+        throw new Refuse("t1_failed", `fail: ${p}: missing and can't be created (${errCode(err) ?? err})`);
+      }
+    }
+  }
   for (const p of walked) {
     try {
       ensureDir(fs, p);

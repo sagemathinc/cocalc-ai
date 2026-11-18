@@ -135,7 +135,7 @@ describe("rule 1: the boot id", () => {
     for (const bad of [
       "",
       "not-a-uuid\n",
-      `${BOOT1.toUpperCase()}\n`,
+      `${BOOT2.toUpperCase()}\n`,
       ` ${BOOT1}\n`,
       `${BOOT1}\n\n`,
       `${BOOT1}x\n`,
