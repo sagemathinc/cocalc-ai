@@ -6,48 +6,34 @@ require("@cocalc/conat/persist/context").setUnregisteredStreamOwnerForTests(
   () => "host",
 );
 
-// the NOFILE minimum of the test suites' start-up check (see below)
-const TEST_NOFILE_MINIMUM = 1024;
-
 // finding 028: in the persist, sync and core suites, every disk-stream
 // connection runs under the statement guard (conat/persist/test-durability):
 // a write outside a transaction throws, so the whole suite passing shows there
-// is no unarmed autocommit
+// is no unarmed autocommit.  Their start-up check is the test-only one with
+// a lower NOFILE minimum (ops0's NOFILE ruling, 11-18: test/persist-nofile-hook).
 {
   const testPath = expect.getState().testPath ?? "";
-  // finding 028 (ops0's NOFILE ruling, 11-18): these suites open disk
-  // streams; this project's hard NOFILE limit (8192) is below the persist's
-  // MIN_NOFILE, so their context gets a start-up check built with a lower
-  // minimum, passed explicitly here (the production wiring and its
-  // MIN_NOFILE are tested in durable-startup-checks, [NOFILE-prod])
   if (/\/conat\/(test\/(persist|sync|sync-doc|core)\/|persist-)/.test(testPath)) {
-    const { persistContextOptions } = require("../conat/persist");
-    const { initContext } = require("@cocalc/conat/persist/context");
-    const { makePersistStartupCheck } = require("../conat/persist-durability");
-    initContext({
-      ...persistContextOptions,
-      startupCheck: makePersistStartupCheck(TEST_NOFILE_MINIMUM),
-    });
-  }
-  if (
-    /\/conat\/(test\/(persist|sync|sync-doc|core)\/|persist-)/.test(testPath) &&
+    const persist = require("../conat/persist");
+    const { persistContextOptions } = persist;
     // the write counter's own tests run raw autocommits on purpose, to test
     // the counter
-    !testPath.endsWith("/write-rate.test.ts")
-  ) {
-    const { persistContextOptions } = require("../conat/persist");
-    const { initContext } = require("@cocalc/conat/persist/context");
+    const guarded = !testPath.endsWith("/write-rate.test.ts");
     const {
       guardedWriteCounter,
     } = require("@cocalc/conat/persist/test-durability");
-    const { makePersistStartupCheck } = require("../conat/persist-durability");
-    initContext({
-      ...persistContextOptions,
-      startupCheck: makePersistStartupCheck(TEST_NOFILE_MINIMUM),
-      writeCounter: guardedWriteCounter(
-        persistContextOptions.writeCounter,
-        persistContextOptions.durability,
-      ),
+    require("./persist-nofile-hook").installTestPersistStartupCheck({
+      persist,
+      durability: require("../conat/persist-durability"),
+      context: require("@cocalc/conat/persist/context"),
+      extra: guarded
+        ? {
+            writeCounter: guardedWriteCounter(
+              persistContextOptions.writeCounter,
+              persistContextOptions.durability,
+            ),
+          }
+        : {},
     });
   }
 }

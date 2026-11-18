@@ -21,6 +21,12 @@ const BACKEND_DIST = join(__dirname, "..", "..", "..", "dist");
 const CHILD = `
 const [dist, mode, state, path] = process.argv.slice(2);
 const persist = require(dist + "/conat/persist.js");
+// 028 (ops0's NOFILE ruling): the test-only NOFILE minimum (test/persist-nofile-hook.js)
+require(dist + "/../test/persist-nofile-hook.js").installTestPersistStartupCheck({
+  persist,
+  durability: require(dist + "/conat/persist-durability.js"),
+  context: require(require.resolve("@cocalc/conat/persist/context", { paths: [dist] })),
+});
 // 028 AS-B2-SYNC-OWNER: a direct open needs an owner (no persist server here)
 require(require.resolve("@cocalc/conat/persist/context", { paths: [dist] }))
   .setUnregisteredStreamOwnerForTests(() => "host");
