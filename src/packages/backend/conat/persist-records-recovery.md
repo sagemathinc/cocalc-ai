@@ -18,7 +18,8 @@ Finding 028, ALT-D2, ops0's S4 ruling.
 - The command resolves every path from the role's environment, exactly as the persist does, and prints them: never type them by hand.
 
 **The rules:**
-- Never run any step as root, and never create any of these paths by hand. The persist creates them itself, 0700, as its user; a root-created path makes it refuse again (T1).
+- Only the unit commands (`systemctl …`, step 3 and step 8) run with sudo. The recovery command, and any look at these files, run as the persist user, never as root.
+- Never create any of these paths by hand. The persist creates them itself, 0700, as its user; a root-created path makes it refuse again (T1).
 - The command only removes these, by name:
   - this boot's `records/<boot id>/sentinel.json`;
   - its empty `dirty/`, `poisoned-file/` and `poisoned-project/` directories, then the boot dir itself;
@@ -51,7 +52,13 @@ Finding 028, ALT-D2, ops0's S4 ruling.
      ```
 4. **Check nothing runs:**
    - project host: `pgrep -af '/opt/cocalc/project-host/'` and `systemctl is-active cocalc-project-host-watchdog.timer` (must be `inactive`);
-   - bay: `systemctl is-active cocalc-bay-conat-persist.service` (must be `inactive`).
+   - bay, BOTH checks (an inactive unit alone does not prove that no orphaned or hand-started persist remains):
+     - `systemctl is-active cocalc-bay-conat-persist.service` must be `inactive`;
+     - no process of `cocalc-bay` runs the persist's entry. With the bay env loaded as in step 5:
+       ```
+       sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-workers bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; pgrep -u cocalc-bay -af -- "$COCALC_BAY_PROJECT_HOST_MAIN"'
+       ```
+       It must print nothing (exit 1). Any line means STOP: escalate.
 5. **Dry run, as the persist user.**
    - project host:
      ```
@@ -67,7 +74,7 @@ Finding 028, ALT-D2, ops0's S4 ruling.
      - `not a failed creation`: marker A (written last) names this boot, so this boot's set-up completed. If it was changed afterwards, reboot first, as above. If it is intact, nothing here is broken: escalate.
      - `the resolved paths … are not the persist's own`: the command resolved other paths than the persist's diagnostics (step 1) show. Escalate.
      - anything else (`unlisted entry`, `not a regular file`, `not a real directory`, `owned by uid`, `run this as the persist user`, `legacy records check`): escalate. Do not delete anything by hand.
-6. **Check again that nothing runs** (step 4).
+6. **Check again that nothing runs** (step 4, both roles, both checks), after the dry run has exited.
 7. **Apply:** the same command (with `--base` and `--state-dir`) plus `--apply`.
    - It removes everything but the migration flag, makes that durable (fsync of the directories), then removes the flag.
    - `"ok": true` lists every removal in `applied`.
