@@ -37,7 +37,7 @@ pulling metadata from remote buckets or forking rustic.
 2. The sqlite index is uploaded as a separate rustic snapshot under a
    dedicated host identity: `project-<project_id>-index`.
 3. On each project host, we keep a local index cache at
-   `/btrfs/data/backup-index/<project_id>`.
+   `/mnt/cocalc/data/backup-index/<project_id>`.
 4. UI listing and search read only from the local sqlite cache.
 5. When backups are deleted, their index snapshots are pruned and local
    cache entries removed.
@@ -53,7 +53,7 @@ flowchart TD
   B --> C[Rustic backup]
   B --> D[Build sqlite index]
   D --> E[Upload index snapshot<br/>host=project-<id>-index]
-  E --> F[Local index cache<br/>/btrfs/data/backup-index/<id>]
+  E --> F[Local index cache<br/>/mnt/cocalc/data/backup-index/<id>]
   F --> G[UI browse/search]
 ```
 

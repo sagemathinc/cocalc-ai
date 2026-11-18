@@ -1,5 +1,7 @@
 # Codex Auth for Launchpad / Project-Runner
 
+> Note (2026-11-17): the project-host data mount is now `/mnt/cocalc` (data dir `/mnt/cocalc/data`). `/btrfs` paths below predate that rename and are kept as history.
+
 ## Goal
 
 Make `codex exec` work reliably in project-runner environments with **three auth sources** and clear precedence:

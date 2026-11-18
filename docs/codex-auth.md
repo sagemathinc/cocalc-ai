@@ -164,7 +164,7 @@ Managed in account settings UI and stored as external credentials:
 Subscription auth cache directory:
 
 - default root: `codexSubscriptionsPath` from [src/packages/backend/data.ts](../src/packages/backend/data.ts)
-- default location on hosts: `/btrfs/data/secrets/codex-subscriptions/<account_id>/`
+- default location on hosts: `/mnt/cocalc/data/secrets/codex-subscriptions/<account_id>/`
 
 Typical files:
 
@@ -177,7 +177,7 @@ Typical files:
 In project-host mode, CoCalc intentionally separates auth material from session history.
 
 - Auth source-of-truth:
-  - subscription auth comes from host secrets (`/btrfs/data/secrets/codex-subscriptions/...`)
+  - subscription auth comes from host secrets (`/mnt/cocalc/data/secrets/codex-subscriptions/...`)
   - API-key auth comes from credential resolution and env injection
 - Session history source-of-truth:
   - Codex session JSONL files live under workspace storage (`/home/user/.codex/sessions` in the runtime container, i.e. project volume)

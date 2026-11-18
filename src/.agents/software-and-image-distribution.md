@@ -1,5 +1,7 @@
 # Software and RootFS Image Distribution Plan
 
+> Note (2026-11-17): the project-host data mount is now `/mnt/cocalc` (data dir `/mnt/cocalc/data`). `/btrfs` paths below predate that rename and are kept as history.
+
 This plan covers:
 
 - Software artifacts (project-host + project SEA bundles).

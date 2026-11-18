@@ -1,5 +1,7 @@
 # (done) Project-Host Bootstrap Rewrite Plan (Python-First)
 
+> Note (2026-11-17): the project-host data mount is now `/mnt/cocalc` (data dir `/mnt/cocalc/data`). `/btrfs` paths below predate that rename and are kept as history.
+
 Goal: replace the brittle shell-heavy bootstrap in [src/packages/server/cloud/bootstrap-host.ts](./src/packages/server/cloud/bootstrap-host.ts) with a **Python-driven bootstrapper** (invoked by a tiny shell stub). Keep the Golang connector as the entrypoint. Emphasize clarity, observability, parallelism, robustness, and maintainability.
 
 ---

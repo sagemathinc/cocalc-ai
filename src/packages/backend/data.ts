@@ -249,7 +249,7 @@ export const syncFiles = {
   local: process.env.COCALC_SYNC ?? join(data, "sync"),
   // OPTIONAL: Override local storage base for specific subjects.
   // Use [project_id], [account_id], or [host_id] as placeholders.
-  // Example: /btrfs/project-[project_id]/.local/share/cocalc/persist
+  // Example: /mnt/cocalc/project-[project_id]/.local/share/cocalc/persist
   // A project-host keeps them in a volume next to the project's home instead
   // of in the home (see conat/persist-volume-template.ts).
   localProjects: projectPersistTemplates().template,
