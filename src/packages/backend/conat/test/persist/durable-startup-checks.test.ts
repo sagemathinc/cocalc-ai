@@ -203,9 +203,10 @@ describe("028 B-3a: start-up preconditions", () => {
           : real.call(nodeFs, p, ...rest)) as any);
     try {
       const pd = require("@cocalc/backend/conat/persist-durability");
+      pd.resetPersistStartupCheckForTests();
       const injected = pd.makePersistStartupCheck(1024);
       expect(injected().ok).toBe(true);
-      pd.resetPersistStartupCheckForTests();
+      // evaluated after the injected one, with nothing reset in between
       expect(pd.persistStartupCheck().ok).toBe(false);
       expect(pd.persistStartupCheck().reason).toMatch("below 31024");
       // the context of this suite got the injected instance, not the
