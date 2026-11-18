@@ -1,5 +1,7 @@
 # Buckets
 
+> Note (2026-11-17): the project-host data mount is now `/mnt/cocalc` (data dir `/mnt/cocalc/data`). `/btrfs` paths below predate that rename and are kept as history.
+
 ## TODO
 
 - [ ] Show the backup region clearly in project settings.
