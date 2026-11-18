@@ -17,7 +17,6 @@ import { pstream } from "@cocalc/backend/conat/persist";
 import {
   nodeDurabilityRecords,
   persistDurabilityRecords,
-  persistRunDir,
 } from "@cocalc/backend/conat/persist-durability";
 import { DataEncoding } from "@cocalc/conat/core/client";
 import {
@@ -240,7 +239,7 @@ describe("028 B-1: aborts, poison and the open check", () => {
       // no later open in this process, nor in another process of this boot
       expect(() => pstream({ path })).toThrow(/sync error/);
       expect(
-        nodeDurabilityRecords(persistRunDir(), "another-process").check(id),
+        nodeDurabilityRecords(persistDurabilityRecords().root, "another-process").check(id),
       ).toBe("poisoned");
     });
 
@@ -319,7 +318,7 @@ describe("028 B-1: aborts, poison and the open check", () => {
   describe("the open check (§3.2.5-6)", () => {
     it("refuses a stream another process left mid-write (its dirty record): not verified", () => {
       const path = join(dir, "left-dirty");
-      const other = nodeDurabilityRecords(persistRunDir(), "crashed-process");
+      const other = nodeDurabilityRecords(persistDurabilityRecords().root, "crashed-process");
       other.arm(path);
       expect(() => pstream({ path })).toThrow(/not verified/);
       // and no file was created or read

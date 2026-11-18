@@ -6654,6 +6654,9 @@ export function getPersistentStreamDiagnostics() {
         return start != null && !start.ok ? (start.reason ?? "refused") : null;
       })(),
       startup_overrides: startupCheck?.()?.overrides ?? [],
+      // ALT-D2: the records root's path, dev/ino and T1 result (never the
+      // sentinel token)
+      startup_records: startupCheck?.()?.records ?? null,
       host_healthy:
         durabilityHealth.device_poisons_total == 0 &&
         !(startupCheck?.()?.ok === false),

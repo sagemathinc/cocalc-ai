@@ -18,7 +18,6 @@ import { join } from "node:path";
 import { pstream } from "@cocalc/backend/conat/persist";
 import {
   persistDurabilityRecords,
-  persistRunDir,
   sha256Hex,
 } from "@cocalc/backend/conat/persist-durability";
 import { persistInventory } from "@cocalc/backend/conat/persist-verified-eviction";
@@ -43,7 +42,7 @@ const msg = (s: string) => ({
 // the records an EARLIER persist process left after a Q-F poison
 function earlierProcessPoisonedProject(owner: string, ids: string[]) {
   const earlier = createDurabilityRecords({
-    root: persistRunDir(),
+    root: persistDurabilityRecords().root,
     generation: `earlier-${Math.random()}`,
     fs: fs as any,
     sha256: sha256Hex,
@@ -136,7 +135,7 @@ describe("028 B-2: S-q recovery of a poisoned project", () => {
       const [a, b] = makeStreams(["dev-a", "dev-b"]);
       earlierProcessPoisonedProject(owner, [a]);
       const earlier = createDurabilityRecords({
-        root: persistRunDir(),
+        root: persistDurabilityRecords().root,
         generation: `earlier-dev-${Math.random()}`,
         fs: fs as any,
         sha256: sha256Hex,

@@ -16,7 +16,6 @@ import { pstream } from "@cocalc/backend/conat/persist";
 import {
   isWriterAlive,
   persistDurabilityRecords,
-  persistRunDir,
   procStartTime,
   sha256Hex,
 } from "@cocalc/backend/conat/persist-durability";
@@ -78,7 +77,7 @@ function plantDirtyRecord(
   owner?: string,
 ) {
   createDurabilityRecords({
-    root: persistRunDir(),
+    root: persistDurabilityRecords().root,
     generation: `planted-${pid}-${Math.random()}`,
     fs: fs as any,
     sha256: sha256Hex,

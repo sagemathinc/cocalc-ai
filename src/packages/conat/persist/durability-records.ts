@@ -4,8 +4,10 @@
  */
 
 // The durability records of disk-backed persist streams (finding 028, DESIGN
-// §3.2.5-§3.2.6), on tmpfs, so they survive a persist restart and vanish at
-// reboot, together with the page cache they are about.
+// §3.2.5-§3.2.6), in a directory of the current BOOT (the backend's gate,
+// persist-records-root: <base>/records/<boot id>), so they survive a persist
+// restart and are ignored after a reboot, together with the page cache they
+// are about.
 //
 //   <root>/dirty/<key>/<generation>  created by a process before an
 //                               operation that can consume a sync error,
@@ -125,6 +127,13 @@ export function createDurabilityRecords({
       return false;
     }
   };
+  // ALT-D2 (records on the persist's disk, so ENOSPC/EDQUOT/EROFS/EIO are
+  // real): a poison whose record could not be written is kept in memory,
+  // and check refuses it in this process just the same (fail closed); a
+  // restart then sees the dirty record left behind (leftover/unverified).
+  // key -> the poison's scope and owner (clearProjectPoison)
+  const memPoisonedFiles = new Map<string, { id: string; scope?: unknown; owner?: unknown }>();
+  const memPoisonedProjects = new Set<string>();
   const dirtyDir = posix.join(root, "dirty");
   const poisonedDir = posix.join(root, "poisoned-file");
   const poisonedProjectDir = posix.join(root, "poisoned-project");
@@ -248,6 +257,7 @@ export function createDurabilityRecords({
       } catch (err) {
         // the dirty record (if the rename failed) refuses just the same after
         // a restart, and this process keeps the file poisoned in memory
+        memPoisonedFiles.set(sha256(id), { id, scope: info.scope, owner: info.owner });
         warn("could not write a poisoned-file record", err);
       }
       // (b): survives a reboot; never fatal (§3.2.5 (b))
@@ -274,6 +284,9 @@ export function createDurabilityRecords({
           }),
         );
       } catch (err) {
+        // refused in this process from memory (check); and every open
+        // stream of the project is poisoned by the caller
+        memPoisonedProjects.add(name);
         warn("could not write a poisoned-project record", err);
       }
     },
@@ -282,6 +295,7 @@ export function createDurabilityRecords({
     projectPoisonGeneration: (owner: string): string | undefined => {
       const name = safeOwner(owner);
       if (name == null) return;
+      if (memPoisonedProjects.has(name)) return generation;
       try {
         const record = JSON.parse(
           fs.readFileSync(posix.join(poisonedProjectDir, name), "utf8"),
@@ -325,6 +339,15 @@ export function createDurabilityRecords({
       } catch (err) {
         if ((err as any)?.code !== "ENOENT") throw err;
       }
+      // the in-memory ones (their record could not be written), last: a
+      // failure above keeps them
+      for (const [key, m] of [...memPoisonedFiles]) {
+        if (m.scope !== "project" || m.owner !== name) continue;
+        postReboot?.remove(key);
+        memPoisonedFiles.delete(key);
+        cleared.push(m.id);
+      }
+      memPoisonedProjects.delete(name);
       return cleared;
     },
 
@@ -342,8 +365,10 @@ export function createDurabilityRecords({
     },
 
     check: (id: string, owner?: string): PersistDurabilityCheck => {
+      if (memPoisonedFiles.has(sha256(id))) return "poisoned";
       if (exists(poisonedPath(id))) return "poisoned";
       const name = owner == null ? undefined : safeOwner(owner);
+      if (name != null && memPoisonedProjects.has(name)) return "poisoned";
       if (name != null && exists(posix.join(poisonedProjectDir, name))) {
         return "poisoned";
       }

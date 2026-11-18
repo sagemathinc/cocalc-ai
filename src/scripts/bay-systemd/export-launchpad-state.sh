@@ -166,7 +166,12 @@ main() {
       "${PGDATABASE_VALUE}"
 
   if [[ -d "$SYNC_DIR" ]]; then
-    run tar -C "$(dirname "$SYNC_DIR")" -czf "${OUTPUT_DIR}/sync.tar.gz" "$(basename "$SYNC_DIR")"
+    # never the persist's records marker (copy B) or its migration flag (028
+    # ALT-D2, design note v8 rule 7): an import starts without them
+    run tar -C "$(dirname "$SYNC_DIR")" \
+      --exclude=.cocalc-persist-state/records-marker.json \
+      --exclude=.cocalc-persist-state/records-migrated.json \
+      -czf "${OUTPUT_DIR}/sync.tar.gz" "$(basename "$SYNC_DIR")"
   fi
 
   if [[ -d "$SECRETS_DIR" ]]; then

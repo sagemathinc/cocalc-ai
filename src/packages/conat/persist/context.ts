@@ -190,12 +190,18 @@ export let projectRecovery:
   | undefined = undefined;
 
 // The start-up preconditions of disk-stream service (028 B-3a: the records
-// root on a per-boot tmpfs with safe ownership/mode, the NOFILE limit).  If
+// root's gate (ALT-D2: boot id, T1, marker), the NOFILE limit).  If
 // they fail, disk-backed streams are refused with code
 // "persist_unavailable"; ephemeral streams still run.  Without it, nothing
 // is checked (in-browser and test contexts that set nothing else).
 export let startupCheck:
-  | (() => { ok: boolean; reason?: string; overrides?: string[] })
+  | (() => {
+      ok: boolean;
+      reason?: string;
+      overrides?: string[];
+      // non-secret diagnostics of the records root (ALT-D2)
+      records?: Record<string, unknown>;
+    })
   | undefined =
   undefined;
 
@@ -254,7 +260,12 @@ export function initContext(opts: {
   unregisteredStreamOwner?: (id: string) => string | undefined;
   verifiedEviction?: (dbPath: string) => Promise<VerifiedEvictionResult>;
   integrityCheck?: (dbPath: string) => Promise<{ ok: boolean; why?: string }>;
-  startupCheck?: () => { ok: boolean; reason?: string; overrides?: string[] };
+  startupCheck?: () => {
+    ok: boolean;
+    reason?: string;
+    overrides?: string[];
+    records?: Record<string, unknown>;
+  };
   projectRecovery?: (
     owner: string,
     storeRoot: string,

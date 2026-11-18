@@ -3,7 +3,25 @@
 // checked for in some code to behave differently while running unit tests.
 process.env.COCALC_TEST_MODE = true;
 
-// the durability records of disk-backed persist streams (finding 028): a
+// the durability records of disk-backed persist streams (finding 028,
+// ALT-D2): this test process's own records base, never a host's.  The
+// gate's T1 walk would refuse a base under /tmp (sticky, world-writable)
+// and R-c a base under tmpdir(), so the test-paths override (honoured only
+// with COCALC_TEST_MODE, and visible in the diagnostics) checks only the
+// base itself and skips R-c.
+if (!process.env.COCALC_PERSIST_RECORDS_BASE) {
+  const { mkdtempSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  process.env.COCALC_PERSIST_RECORDS_BASE = join(
+    mkdtempSync(join(tmpdir(), "cocalc-persist-records-")),
+    "persist-durability",
+  );
+}
+if (!process.env.COCALC_PERSIST_RECORDS_ALLOW_TEST_PATHS) {
+  process.env.COCALC_PERSIST_RECORDS_ALLOW_TEST_PATHS = "1";
+}
+// the legacy (FINAL4) tmpfs records root the migration gate reads: an empty
 // directory of this test process, never the host's /run/cocalc-persist
 if (!process.env.COCALC_PERSIST_RUN_DIR) {
   const { mkdtempSync } = require("node:fs");
@@ -12,11 +30,6 @@ if (!process.env.COCALC_PERSIST_RUN_DIR) {
   process.env.COCALC_PERSIST_RUN_DIR = mkdtempSync(
     join(tmpdir(), "cocalc-persist-run-"),
   );
-}
-// a test process's records root is in /tmp, not on tmpfs (028 B-3a's
-// start-up check would refuse it on a host)
-if (!process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS) {
-  process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS = "1";
 }
 // and its durable post-reboot records (028 B-2): also this test process's
 if (!process.env.COCALC_PERSIST_STATE_DIR) {

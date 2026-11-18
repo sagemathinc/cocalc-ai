@@ -3,11 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// The durability records of disk-backed persist streams (finding 028), on
-// tmpfs: see conat/persist/durability-records.
+// The durability records of disk-backed persist streams (finding 028): see
+// conat/persist/durability-records.
 //
-// root: COCALC_PERSIST_RUN_DIR, else /run/cocalc-persist.  It must be on
-// tmpfs and writable only by the persist user (the host provisions it).
+// root: <the role's base>/records/<boot id>, on the persist's own disk,
+// checked by the gate in persist-records-root (ALT-D2, design note v8) once
+// per process, before any record operation.
 
 import * as fs from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -18,18 +19,17 @@ import {
   type DurabilityRecords,
   type PostRebootRecords,
 } from "@cocalc/conat/persist/durability-records";
-import { syncFiles } from "@cocalc/backend/data";
+import { data, syncFiles } from "@cocalc/backend/data";
 import { ownerOfLocalPath } from "@cocalc/conat/persist/util";
 import { isSqliteSyncError } from "@cocalc/conat/persist/storage";
 import { spawn } from "node:child_process";
+import {
+  evaluateRecordsGate,
+  type GateOptions,
+  type RecordsGate,
+} from "./persist-records-root";
 
 const logger = getLogger("persist:durability");
-
-export const DEFAULT_PERSIST_RUN_DIR = "/run/cocalc-persist";
-
-export function persistRunDir(env: NodeJS.ProcessEnv = process.env): string {
-  return env.COCALC_PERSIST_RUN_DIR || DEFAULT_PERSIST_RUN_DIR;
-}
 
 export function sha256Hex(data: string): string {
   return createHash("sha256").update(data).digest("hex");
@@ -515,11 +515,125 @@ function settleMaintenanceWriteError(
   records.disarm(id);
 }
 
-// the records of this process (one generation per process)
+// The records gate of this process (persist-records-root): evaluated ONCE,
+// at the first use (the persist's module init, or a maintenance call), and
+// shared by the records and persistStartupCheck.  It never throws: a
+// failure is a refusal (and a page), and the process stays up.
+let gate: RecordsGate | undefined;
+export function persistRecordsGate(
+  options: GateOptions = {},
+): RecordsGate {
+  if (gate == null) {
+    let g: RecordsGate;
+    try {
+      g = evaluateRecordsGate({
+        stateDir: persistStateDir(),
+        dataDir: data,
+        ...options,
+      });
+    } catch (err) {
+      // (evaluateRecordsGate does not throw; belt and braces)
+      g = { ok: false, code: "records_gate_error", reason: `${err}`, t1: "not-run", overrides: [] };
+    }
+    gate = g;
+    try {
+      if (!g.ok) {
+        logger.error(
+          "PERSIST ALERT (page): the durability records root is refused, so disk-backed persist streams are refused on this host until fixed (finding 028)",
+          { code: g.code, reason: g.reason, base: g.base, t1: g.t1 },
+        );
+      } else {
+        logger.info("persist: durability records root", recordsDiagnostics(g));
+        if ((g.prune_errors ?? 0) > 0) {
+          logger.warn("persist: other boots' records could not all be pruned", {
+            prune_errors: g.prune_errors,
+            detail: g.prune_error_detail,
+          });
+        }
+        if (g.overrides.length > 0) {
+          logger.warn("persist: durability records root overrides (tests only; finding 028)", {
+            overrides: g.overrides,
+          });
+        }
+      }
+    } catch {}
+  }
+  return gate;
+}
+
+// Non-secret diagnostics of the gate (design v8 runtime proof (a)): the
+// resolved path, dev/ino and the T1 result.  The token is never in the gate.
+export function recordsDiagnostics(g: RecordsGate = persistRecordsGate()) {
+  return {
+    records_ok: g.ok,
+    records_code: g.code ?? null,
+    records_role: g.role ?? null,
+    records_base: g.base ?? null,
+    records_root: g.root ?? null,
+    records_root_dev: g.root_dev ?? null,
+    records_root_ino: g.root_ino ?? null,
+    records_t1: g.t1,
+    records_new_boot: g.new_boot ?? false,
+    records_migrated: g.migrated ?? false,
+    records_pruned: g.pruned ?? 0,
+    records_prune_errors: g.prune_errors ?? 0,
+  };
+}
+
+// The records of a process whose gate refused: no record operation touches
+// the disk.  Every write refuses (arm throws, so the data write never
+// starts), every check is "unverified", nothing is cleared.
+export function refusingDurabilityRecords(g: RecordsGate): DurabilityRecords {
+  const refused = () =>
+    new Error(
+      `persist durability records refused (${g.code ?? "refused"}): disk-backed streams are unavailable on this host`,
+    );
+  return {
+    generation: "refused",
+    root: "",
+    dirtyPath: () => "",
+    poisonedPath: () => "",
+    arm: () => {
+      throw refused();
+    },
+    disarm: () => {},
+    poison: () => {},
+    poisonProject: () => {},
+    projectPoisonGeneration: () => "unknown",
+    clearProjectPoison: () => {
+      throw refused();
+    },
+    clearLeftovers: () => 0,
+    leftoverIdsOf: () => undefined,
+    clearPostReboot: () => {
+      throw refused();
+    },
+    check: () => "unverified",
+    retryPostReboot: () => 0,
+    postRebootPending: () => 0,
+  };
+}
+
+// the records of this process (one generation per process); never throws
 export function persistDurabilityRecords(): DurabilityRecords {
   if (records == null) {
-    records = nodeDurabilityRecords(persistRunDir());
-    startPostRebootRetry(records);
+    const g = persistRecordsGate();
+    let real: DurabilityRecords | undefined;
+    if (g.ok && g.root != null) {
+      try {
+        real = nodeDurabilityRecords(g.root);
+      } catch (err) {
+        logger.error("PERSIST ALERT (page): the durability records can't be set up (finding 028)", {
+          err: `${err}`,
+        });
+      }
+    }
+    if (real != null) {
+      records = real;
+      startPostRebootRetry(records);
+    } else {
+      records = refusingDurabilityRecords(g);
+    }
   }
   return records;
 }
@@ -527,64 +641,13 @@ export function persistDurabilityRecords(): DurabilityRecords {
 // ---------------------------------------------------------------------------
 // Start-up preconditions (028 B-3a, DESIGN §3.2.5 start-up rule, §3.2.1 SA
 // T3, vanta R1 / N-3; the TWO host-wide start-up refusals, Q9).  Checked once
-// per process, at the first disk-stream open.  If one fails, DISK-stream
-// service is refused (ephemeral streams still run), with a clear error code
-// and a page.
-// - the records root must be a directory on a per-BOOT tmpfs (a directory on
-//   a persistent disk would survive a reboot, and its dirty records would
-//   then refuse every open), owned by this process's uid, not writable by
-//   group or others, and writable by us;
+// per process.  If one fails, DISK-stream service is refused (ephemeral
+// streams still run), with a clear error code and a page.
+// - the records root: the gate (persist-records-root, ALT-D2), the SAME
+//   cached result the records were built from (persistRecordsGate);
 // - the NOFILE soft limit must cover SQLite's fds for every stream (db, -wal,
 //   -shm) plus our short-lived barrier fds: >= 3 x MAX_GLOBAL + margin.
-export const TMPFS_MAGIC = 0x01021994;
 export const MIN_NOFILE = 3 * 10_000 + 1024;
-
-export function checkPersistRunDir(
-  dir: string,
-  {
-    allowNonTmpfs = process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS === "1",
-    uid = process.getuid?.(),
-  }: { allowNonTmpfs?: boolean; uid?: number } = {},
-): string | undefined {
-  let st: fs.Stats;
-  try {
-    st = fs.lstatSync(dir);
-  } catch (err) {
-    if ((err as any)?.code !== "ENOENT") return `records root: ${err}`;
-    try {
-      fs.mkdirSync(dir, { mode: 0o700 });
-      st = fs.lstatSync(dir);
-    } catch (err2) {
-      return `records root ${dir} is missing and can't be created: ${err2}`;
-    }
-  }
-  if (!st.isDirectory()) return `records root ${dir} is not a directory`;
-  if (uid != null && st.uid !== uid) {
-    return `records root ${dir} is owned by uid ${st.uid}, not ${uid}`;
-  }
-  if ((st.mode & 0o022) !== 0) {
-    return `records root ${dir} is writable by group or others (mode ${(st.mode & 0o777).toString(8)})`;
-  }
-  if (!allowNonTmpfs) {
-    let type: number | undefined;
-    try {
-      type = Number((fs as any).statfsSync(dir).type);
-    } catch (err) {
-      return `records root ${dir}: statfs failed: ${err}`;
-    }
-    if (type !== TMPFS_MAGIC) {
-      return `records root ${dir} is not on tmpfs (fs type 0x${type.toString(16)}): its records would survive a reboot`;
-    }
-  }
-  const probe = posix.join(dir, `.probe-${process.pid}`);
-  try {
-    fs.writeFileSync(probe, "", { mode: 0o600 });
-    fs.unlinkSync(probe);
-  } catch (err) {
-    return `records root ${dir} is not writable: ${err}`;
-  }
-  return undefined;
-}
 
 export function checkNofile(
   readLimits: () => string = () => fs.readFileSync("/proc/self/limits", "utf8"),
@@ -605,27 +668,30 @@ export function checkNofile(
   return undefined;
 }
 
-let startup: { ok: boolean; reason?: string; overrides?: string[] } | undefined;
-export function persistStartupCheck(): {
+type StartupResult = {
   ok: boolean;
   reason?: string;
   overrides?: string[];
-} {
+  records?: ReturnType<typeof recordsDiagnostics>;
+};
+let startup: StartupResult | undefined;
+export function persistStartupCheck(): StartupResult {
   if (startup == null) {
-    const reason = checkPersistRunDir(persistRunDir()) ?? checkNofile();
-    // SA 3351 A1: the tmpfs override is for tests; on a host it is visible
-    // (diagnostics) and logged at start
-    const overrides =
-      process.env.COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS === "1"
-        ? ["COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS"]
-        : [];
-    if (overrides.length > 0) {
-      logger.warn(
-        "persist: the records root is NOT required to be on tmpfs (an override for tests; finding 028)",
-        { overrides },
-      );
-    }
-    startup = reason == null ? { ok: true, overrides } : { ok: false, reason, overrides };
+    const g = persistRecordsGate();
+    // the records this process actually uses: refusing ones refuse here too
+    const refusing = persistDurabilityRecords().generation === "refused";
+    const reason = !g.ok
+      ? `durability records root refused (${g.code}): ${g.reason}`
+      : refusing
+        ? "durability records can't be set up"
+        : checkNofile();
+    const overrides = [...g.overrides];
+    startup = {
+      ok: reason == null,
+      ...(reason == null ? {} : { reason }),
+      overrides,
+      records: recordsDiagnostics(g),
+    };
     if (reason != null) {
       logger.error(
         "PERSIST ALERT (page): disk-backed persist streams are refused on this host until fixed (finding 028)",
@@ -636,7 +702,16 @@ export function persistStartupCheck(): {
   return startup;
 }
 
-// tests only
+// tests only: the start-up result is evaluated again (the gate and the
+// records are kept: the context holds them)
 export function resetPersistStartupCheckForTests(): void {
   startup = undefined;
+}
+
+// tests only: a new gate and new records at the next use (the caller
+// re-installs the records in the context if it needs them there)
+export function resetPersistRecordsGateForTests(): void {
+  startup = undefined;
+  gate = undefined;
+  records = undefined;
 }

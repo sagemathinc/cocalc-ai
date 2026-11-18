@@ -40,8 +40,24 @@ describe("028 B-3a: durability health", () => {
       host_healthy: true,
     });
     expect(typeof h.budget_refused_total).toBe("number");
-    // SA 3351 A1: the test setup's tmpfs override is visible
-    expect(h.startup_overrides).toEqual(["COCALC_PERSIST_RUN_DIR_ALLOW_NON_TMPFS"]);
+    // SA 3351 A1: the test setup's overrides are visible
+    expect(h.startup_overrides).toEqual([
+      "COCALC_PERSIST_RECORDS_ALLOW_TEST_PATHS",
+      "COCALC_PERSIST_RECORDS_BASE",
+    ]);
+    // ALT-D2 runtime proof (a): the records root's path, dev/ino and the T1
+    // result are published; the sentinel token never is
+    const r = h.startup_records;
+    expect(r).toMatchObject({ records_ok: true, records_t1: "pass" });
+    expect(r.records_root).toBe(
+      join(process.env.COCALC_PERSIST_RECORDS_BASE!, "records", r.records_root.split("/").pop()),
+    );
+    expect(r.records_root_dev).toMatch(/^\d+$/);
+    expect(r.records_root_ino).toMatch(/^\d+$/);
+    const sentinel = JSON.parse(
+      require("node:fs").readFileSync(join(r.records_root, "sentinel.json"), "utf8"),
+    );
+    expect(JSON.stringify(getPersistentStreamDiagnostics())).not.toContain(sentinel.token);
     expect(typeof h.msgid_conflicts_total).toBe("number");
   });
 

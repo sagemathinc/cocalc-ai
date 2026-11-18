@@ -1,11 +1,14 @@
 /*
 Finding 028 B-3a: the start-up preconditions of disk-stream service (DESIGN
-v1.21 §3.2.5 start-up rule, §3.2.1 SA T3, vanta R1 / N-3, Q9).
+v1.21 §3.2.5 start-up rule, §3.2.1 SA T3, vanta R1 / N-3, Q9), with the
+records root's gate of ALT-D2 (design note v8; the gate's own matrix is in
+records-root-gate.test.ts).
 
-If the records root is not a per-boot tmpfs directory owned by us and not
-group/other-writable, or the NOFILE limit is too low, DISK-stream service is
-refused with code persist_unavailable (and a page); ephemeral streams still
-run.
+If the records root's gate refuses, or the NOFILE limit is too low,
+DISK-stream service is refused with code persist_unavailable (and a page);
+ephemeral streams still run.  The gate runs ONCE per process: the records
+and the start-up check share its result, the persist's module init never
+throws, and no record operation runs unless the gate passed.
 */
 
 import * as fs from "node:fs";
@@ -17,10 +20,39 @@ import { pstream } from "@cocalc/backend/conat/persist";
 import {
   MIN_NOFILE,
   checkNofile,
-  checkPersistRunDir,
 } from "@cocalc/backend/conat/persist-durability";
 import * as context from "@cocalc/conat/persist/context";
 import { DataEncoding } from "@cocalc/conat/core/client";
+
+// a fresh module registry, with env changed while the modules load (the
+// persist's module init evaluates the gate)
+function isolated<T>(envPatch: Record<string, string | undefined>, fn: () => T): T {
+  const saved: Record<string, string | undefined> = {};
+  for (const k of Object.keys(envPatch)) {
+    saved[k] = process.env[k];
+    if (envPatch[k] == null) delete process.env[k];
+    else process.env[k] = envPatch[k];
+  }
+  try {
+    let out: T;
+    jest.isolateModules(() => {
+      out = fn();
+    });
+    return out!;
+  } finally {
+    for (const k of Object.keys(saved)) {
+      if (saved[k] == null) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+}
+
+// no records base for any role
+const NO_BASE = {
+  COCALC_PERSIST_RECORDS_BASE: undefined,
+  COCALC_BAY_STATE_DIR: undefined,
+  COCALC_DATA: undefined,
+};
 
 describe("028 B-3a: start-up preconditions", () => {
   let dir: string;
@@ -31,49 +63,73 @@ describe("028 B-3a: start-up preconditions", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("a private directory we own passes (tmpfs not required in this test)", () => {
-    expect(checkPersistRunDir(dir, { allowNonTmpfs: true })).toBeUndefined();
+  it("[CTOR] a refused gate never throws out of the persist's module init: disk streams refuse, ephemeral streams run, the records refuse every operation", () => {
+    isolated(NO_BASE, () => {
+      let persist: any;
+      expect(() => {
+        persist = require("@cocalc/backend/conat/persist");
+      }).not.toThrow();
+      const pd = require("@cocalc/backend/conat/persist-durability");
+      const start = pd.persistStartupCheck();
+      expect(start.ok).toBe(false);
+      expect(start.reason).toMatch(/records_base_unknown/);
+      expect(start.records).toMatchObject({ records_ok: false, records_code: "records_base_unknown", records_root: null });
+      const records = pd.persistDurabilityRecords();
+      expect(records.generation).toBe("refused");
+      expect(() => records.arm("/x", "p")).toThrow(/refused/);
+      expect(records.check("/x", "p")).toBe("unverified");
+      expect(records.leftoverIdsOf("p")).toBeUndefined();
+      expect(() => records.clearProjectPoison("p")).toThrow(/refused/);
+      expect(() => records.clearPostReboot("/x")).toThrow(/refused/);
+      expect(() => persist.pstream({ path: join(dir, "disk") })).toThrow(
+        "disk-backed streams are unavailable",
+      );
+      const eph = persist.pstream({ path: join(dir, "eph"), ephemeral: true });
+      eph.set({ encoding: DataEncoding.JsonCodec, raw: Buffer.from("x") });
+      eph.close();
+      // a maintenance write is refused before it starts
+      expect(() =>
+        pd.runArmedMaintenanceWrite(join(dir, "m.db"), "p", "test", () => {
+          throw Error("must not run");
+        }),
+      ).toThrow(/dirty record can't be created/);
+    });
   });
 
-  it("a records root on a non-tmpfs filesystem is refused when tmpfs is required", () => {
-    // the test dir's filesystem: refused unless it really is tmpfs
-    const type = Number((fs as any).statfsSync(dir).type);
-    const r = checkPersistRunDir(dir, { allowNonTmpfs: false });
-    if (type === 0x01021994) expect(r).toBeUndefined();
-    else expect(r).toMatch(/not on tmpfs/);
+  it("[CACHE] ONE gate evaluation per process, shared by the records and the start-up check", () => {
+    isolated({}, () => {
+      const gateModule = require("@cocalc/backend/conat/persist-records-root");
+      const spy = jest.spyOn(gateModule, "evaluateRecordsGate");
+      require("@cocalc/backend/conat/persist"); // module init: the records
+      const pd = require("@cocalc/backend/conat/persist-durability");
+      const a = pd.persistStartupCheck();
+      pd.resetPersistStartupCheckForTests();
+      const b = pd.persistStartupCheck();
+      pd.persistDurabilityRecords();
+      expect(spy).toHaveBeenCalledTimes(1);
+      const g = pd.persistRecordsGate();
+      expect(g.ok).toBe(true);
+      expect(a.records).toEqual(pd.recordsDiagnostics(g));
+      expect(b.records).toEqual(a.records);
+      expect(pd.persistDurabilityRecords().root).toBe(g.root);
+    });
   });
 
-  it("group- or other-writable is refused", () => {
-    fs.chmodSync(dir, 0o770);
-    expect(checkPersistRunDir(dir, { allowNonTmpfs: true })).toMatch(
-      /writable by group or others/,
-    );
-    fs.chmodSync(dir, 0o707);
-    expect(checkPersistRunDir(dir, { allowNonTmpfs: true })).toMatch(
-      /writable by group or others/,
-    );
-  });
-
-  it("another owner is refused", () => {
-    expect(
-      checkPersistRunDir(dir, { allowNonTmpfs: true, uid: (process.getuid?.() ?? 0) + 1 }),
-    ).toMatch(/owned by uid/);
-  });
-
-  it("a symlink or a file is refused; a missing root is created 0700", () => {
-    const file = join(dir, "f");
-    fs.writeFileSync(file, "");
-    expect(checkPersistRunDir(file, { allowNonTmpfs: true })).toMatch(
-      /not a directory/,
-    );
-    const link = join(dir, "l");
-    fs.symlinkSync(dir, link);
-    expect(checkPersistRunDir(link, { allowNonTmpfs: true })).toMatch(
-      /not a directory/,
-    );
-    const missing = join(dir, "new");
-    expect(checkPersistRunDir(missing, { allowNonTmpfs: true })).toBeUndefined();
-    expect(fs.statSync(missing).mode & 0o777).toBe(0o700);
+  it("[NOOP] no record operation before a successful gate: a refused gate leaves the base without records", () => {
+    const base = join(dir, "persist-durability");
+    fs.mkdirSync(base, { mode: 0o700 });
+    fs.chmodSync(base, 0o770); // T1 refuses the base itself
+    isolated({ COCALC_PERSIST_RECORDS_BASE: base }, () => {
+      const pd = require("@cocalc/backend/conat/persist-durability");
+      const records = pd.persistDurabilityRecords();
+      expect(pd.persistRecordsGate()).toMatchObject({ ok: false, code: "t1_failed" });
+      expect(() => records.arm("/x", "p")).toThrow(/refused/);
+      records.poison("/x", { where: "t" });
+      records.poisonProject("p", { where: "t" });
+      records.disarm("/x");
+      expect(pd.persistStartupCheck().ok).toBe(false);
+    });
+    expect(fs.readdirSync(base)).toEqual([]);
   });
 
   it("NOFILE: below the minimum is refused; enough or unlimited passes; no /proc is not checked", () => {

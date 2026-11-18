@@ -17,7 +17,6 @@ import {
   MaintenanceFsyncError,
   runArmedMaintenanceWrite,
   persistDurabilityRecords,
-  persistRunDir,
   sha256Hex,
   runArmedMaintenanceWriteAsync,
   MaintenanceCompletionUnprovenError,
@@ -64,7 +63,7 @@ describe("028 B-2: maintenance opens check the durability records first", () => 
   it("a file another process holds (or left) mid-write is refused", () => {
     const id = join(dir, "other");
     createDurabilityRecords({
-      root: persistRunDir(),
+      root: persistDurabilityRecords().root,
       generation: "another-process",
       fs: fs as any,
       sha256: sha256Hex,
