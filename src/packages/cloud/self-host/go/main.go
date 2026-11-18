@@ -1298,7 +1298,7 @@ func resolveProjectHostDataDir() string {
 	if value := env["DATA"]; value != "" {
 		return value
 	}
-	return "/btrfs/data"
+	return "/mnt/cocalc/data"
 }
 
 func projectHostPidPath() string {

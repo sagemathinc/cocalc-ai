@@ -2355,8 +2355,8 @@ Notes:
 ACP worker (Codex turn runner):
   - Project-host ACP turns run in a separate worker process.
   - The main project-host process is responsible for starting and supervising it.
-  - Worker pid file: /btrfs/data/acp-worker.pid
-  - Worker log: /btrfs/data/logs/acp-worker.log
+  - Worker pid file: /mnt/cocalc/data/acp-worker.pid
+  - Worker log: /mnt/cocalc/data/logs/acp-worker.log
   - Active turns usually create podman containers named codex-<project>-...
   - If the host looks healthy but the browser is stuck on "Codex is starting",
     also inspect the central hub/browser control plane.
