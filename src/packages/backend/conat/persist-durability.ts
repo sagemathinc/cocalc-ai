@@ -592,6 +592,9 @@ export function recordsDiagnostics(g: RecordsGate = persistRecordsGate()) {
     records_code: g.code ?? null,
     records_role: g.role ?? null,
     records_base: g.base ?? null,
+    // the state dir of marker copy B (SA 4317 R2: the recovery command must
+    // be given exactly this and records_base)
+    records_state_dir: g.state_dir ?? null,
     records_root: g.root ?? null,
     records_root_dev: g.root_dev ?? null,
     records_root_ino: g.root_ino ?? null,

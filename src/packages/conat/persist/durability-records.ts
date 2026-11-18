@@ -355,7 +355,10 @@ export function createDurabilityRecords({
         record != null &&
         typeof record.id == "string" &&
         sha256(record.id) === key &&
-        (record.kind === "dirty" ||
+        // a dirty record: only THIS process's (its generation), the one its
+        // own poison renamed here (SA 4317 R3: on a project host the persist
+        // and the file server's maintenance share one boot dir)
+        ((record.kind === "dirty" && record.generation === generation) ||
           (record.kind === "poisoned-file" &&
             record.scope === "project" &&
             record.owner === name));

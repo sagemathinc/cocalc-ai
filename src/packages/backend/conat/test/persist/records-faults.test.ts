@@ -180,6 +180,19 @@ describe("[B2-clear] a verified project clears the renamed dirty record of a poi
     fs.writeFileSync(r.poisonedPath(other), JSON.stringify({ kind: "poisoned-file", id: other }));
     expect(r.clearProjectPoison("q")).toEqual([]);
     expect(r.check(other, "q")).toBe("poisoned");
+    // a dirty record of ANOTHER generation (another process, e.g. the file
+    // server's maintenance) at the target stays, not reported (SA 4317 R3)
+    const foreign = "/project/foreign";
+    records("g1").arm(foreign, "q");
+    r.poison(foreign, { where: "t", scope: "project", owner: "q" });
+    const foreignTarget = r.poisonedPath(foreign);
+    fs.writeFileSync(
+      foreignTarget,
+      JSON.stringify({ kind: "dirty", generation: "maintenance-gen", id: foreign, pid: 1 }),
+    );
+    expect(r.clearProjectPoison("q")).toEqual([]);
+    expect(fs.existsSync(foreignTarget)).toBe(true);
+    expect(r.check(foreign, "q")).toBe("poisoned");
     // a target naming ANOTHER id stays, not reported (SA 4308)
     const named = "/project/named";
     records("g1").arm(named, "q");

@@ -108,6 +108,8 @@ export interface RecordsGate {
   reason?: string;
   role?: "bay" | "project-host" | "explicit";
   base?: string;
+  // the post-reboot state dir (marker copy B) this process uses
+  state_dir?: string;
   // the current boot's records root, only when ok
   root?: string;
   root_dev?: string;
@@ -802,6 +804,7 @@ function evaluateOnce(opts: Required<Omit<GateOptions, "stateDir">> & { stateDir
       `the post-reboot state dir (marker copy B) is ${stateDir == null ? "unknown" : `not absolute: ${stateDir}`}`,
     );
   }
+  out.state_dir = stateDir;
 
   // 2. T1: the base, then copy B's dir
   try {
@@ -1035,10 +1038,10 @@ export function describeSetup(
       complete = s?.token === a.marker.token && s?.boot_id === bootId;
     } catch {}
   }
-  // marker A is written LAST: both copies equal and of this boot mean this
-  // boot's creation finished (whatever changed afterwards)
-  const createdThisBoot =
-    a.marker != null && b.marker != null && sameMarker(a.marker, b.marker) && a.marker.boot_id === bootId;
+  // marker A is written LAST (createBootDir: B, then A): a valid A naming
+  // this boot alone proves this boot's creation finished, whatever B is now
+  // (SA 4317 R1); B of this boot with A absent is a failed creation
+  const createdThisBoot = a.marker != null && a.marker.boot_id === bootId;
   return {
     complete,
     createdThisBoot,

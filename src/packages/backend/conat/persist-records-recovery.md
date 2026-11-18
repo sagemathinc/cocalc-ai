@@ -8,8 +8,8 @@ Finding 028, ALT-D2, ops0's S4 ruling.
 
 | Role | Command (dry run; add `--apply` to remove) | Runs as | Units to stop and start |
 |---|---|---|---|
-| Project host | `/opt/cocalc/project-host/bin/project-host persist-records-recover` | the project-host runtime user (`stat -c %U /mnt/cocalc/data`) | `cocalc-project-host-watchdog.timer`, `cocalc-project-host-watchdog.service`, `cocalc-project-host-start.service` (its stop runs `ctl stop`, which stops the daemon, its conat-persist child and its file server) |
-| Bay | `"$COCALC_BAY_NODE_BIN" "$COCALC_BAY_PROJECT_HOST_MAIN" persist-records-recover`, with the bay env loaded (below) | `cocalc-bay` | `cocalc-bay-conat-persist.service` |
+| Project host | `/opt/cocalc/project-host/bin/project-host persist-records-recover --base <records_base> --state-dir <records_state_dir>` | the project-host runtime user (`stat -c %U /mnt/cocalc/data`) | `cocalc-project-host-watchdog.timer`, `cocalc-project-host-watchdog.service`, `cocalc-project-host-start.service` (its stop runs `ctl stop`, which stops the daemon, its conat-persist child and its file server) |
+| Bay | `"$COCALC_BAY_NODE_BIN" "$COCALC_BAY_PROJECT_HOST_MAIN" persist-records-recover --base <records_base> --state-dir <records_state_dir>`, with the bay env loaded (below) | `cocalc-bay` | `cocalc-bay-conat-persist.service` |
 
 **Notes on the command:**
 - On a project host, `bin/project-host` is the wrapper the bootstrap writes. It runs the installed node on the current bundle's entry, whatever the bundle layout.
@@ -36,6 +36,8 @@ Finding 028, ALT-D2, ops0's S4 ruling.
    - `boot_dir_unexpected`.
 
    Anything else stops here and is escalated. That includes `records_root_replaced`: this boot's records dir was changed after its set-up completed, and records may be lost.
+
+   **Write down** `startup_records.records_base` and `startup_records.records_state_dir` from the same diagnostics, exactly. The command must be given both, and it stops unless the paths it resolves are byte-equal to them.
 2. **The disk is healthy.** Free space, or repair the fault, until writes in the base and the state dir succeed.
 3. **Stop every user of the records:**
    - project host:
@@ -53,19 +55,20 @@ Finding 028, ALT-D2, ops0's S4 ruling.
 5. **Dry run, as the persist user.**
    - project host:
      ```
-     sudo -u "$(stat -c %U /mnt/cocalc/data)" /opt/cocalc/project-host/bin/project-host persist-records-recover
+     sudo -u "$(stat -c %U /mnt/cocalc/data)" /opt/cocalc/project-host/bin/project-host persist-records-recover --base '<records_base>' --state-dir '<records_state_dir>'
      ```
    - bay:
      ```
-     sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-workers bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; exec "$COCALC_BAY_NODE_BIN" "$COCALC_BAY_PROJECT_HOST_MAIN" persist-records-recover'
+     sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-workers bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; exec "$COCALC_BAY_NODE_BIN" "$COCALC_BAY_PROJECT_HOST_MAIN" persist-records-recover --base "$0" --state-dir "$1"' '<records_base>' '<records_state_dir>'
      ```
    - It prints JSON with `base`, `stateDir`, `bootId`, `shape` (the partial set-up it found, e.g. `boot dir present; sentinel present; marker A another boot; marker B this boot (copies differ); migration flag present`) and `plan`. Check that `base` and `stateDir` are the role's paths.
    - `"ok": false` means it removed nothing. Read `stop`:
      - `records of this boot are present`: do **not** remove them. Reboot the host; after a reboot they belong to another boot and the persist ignores them, together with the page cache they describe. Start again at step 1.
-     - `not a failed creation`: this boot's set-up completed. If it was changed afterwards, reboot first, as above. If it is intact, nothing here is broken: escalate.
+     - `not a failed creation`: marker A (written last) names this boot, so this boot's set-up completed. If it was changed afterwards, reboot first, as above. If it is intact, nothing here is broken: escalate.
+     - `the resolved paths … are not the persist's own`: the command resolved other paths than the persist's diagnostics (step 1) show. Escalate.
      - anything else (`unlisted entry`, `not a regular file`, `not a real directory`, `owned by uid`, `run this as the persist user`, `legacy records check`): escalate. Do not delete anything by hand.
 6. **Check again that nothing runs** (step 4).
-7. **Apply:** the same command with `--apply`.
+7. **Apply:** the same command (with `--base` and `--state-dir`) plus `--apply`.
    - It removes everything but the migration flag, makes that durable (fsync of the directories), then removes the flag.
    - `"ok": true` lists every removal in `applied`.
    - `"ok": false` with `partial apply: N of M removed, then <step> failed (<error>); now: <shape>; re-run this tool, or escalate`:
@@ -88,6 +91,8 @@ Finding 028, ALT-D2, ops0's S4 ruling.
   - `[RECOVERY-B5]`;
   - `[RECOVERY-ORDER]`;
   - `[RECOVERY-FSYNC]`;
+  - `[RECOVERY-R1]`;
+  - `[RECOVERY-EXPECT]`;
 - in `records-recover-report.test.ts`: `[RECOVERY-REPORT]`, the report complete through a slow pipe;
 - in `project-host/persist-records-recover-cli.test.ts`: `[RECOVERY-CLI]`, the command with an env file as the daemon reads it, and `[RECOVERY-CLI-main]`.
 - The built artifact (bay and project host) is checked at build time and on staging2 (ops0's ruling).

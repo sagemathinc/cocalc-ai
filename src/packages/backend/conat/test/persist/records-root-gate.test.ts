@@ -1021,8 +1021,48 @@ describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-rec
     }
     fs.writeFileSync(sentinel(), saved, { mode: 0o600 });
     res = recover(true);
-    expect(res.stop).toMatch(/^not a failed creation: both marker copies name this boot/);
+    expect(res.stop).toMatch(/^not a failed creation: marker A \(written last\) names this boot/);
     expect(snap()).toEqual([true, true, true, true]);
+  });
+
+  it("[RECOVERY-R1] marker A naming this boot alone proves a finished creation: with B absent, or B of another boot, it STOPS and nothing is removed (SA 4317 R1)", () => {
+    expect(gate().ok).toBe(true);
+    const snap = () => [markerA(), join(state, MIGRATION_FLAG_NAME), sentinel(), bootDir()].map((p) => fs.existsSync(p));
+    // B absent
+    const savedB = fs.readFileSync(markerB(), "utf8");
+    fs.rmSync(markerB());
+    let res = recover(true);
+    expect(res).toMatchObject({ ok: false, applied: [] });
+    expect(res.stop).toMatch(/^not a failed creation: marker A \(written last\) names this boot/);
+    expect(res.shape).toBe("boot dir present; sentinel present; marker A this boot; marker B absent; migration flag present");
+    expect(snap()).toEqual([true, true, true, true]);
+    // B of another boot
+    fs.writeFileSync(markerB(), JSON.stringify({ ...JSON.parse(savedB), boot_id: BOOT2 }), { mode: 0o600 });
+    res = recover(true);
+    expect(res.stop).toMatch(/^not a failed creation: marker A \(written last\) names this boot/);
+    expect(snap()).toEqual([true, true, true, true]);
+    expect(fs.existsSync(markerB())).toBe(true);
+    // and B of this boot with A absent IS a failed creation (A's write failed)
+    fs.writeFileSync(markerB(), savedB, { mode: 0o600 });
+    fs.rmSync(markerA());
+    expect(recover(false)).toMatchObject({ ok: true });
+  });
+
+  it("[RECOVERY-EXPECT] the resolved paths must be exactly the persist's diag values (records_base, records_state_dir), else it stops (SA 4317 R2)", () => {
+    expect(gate().ok).toBe(true);
+    fs.rmSync(markerA()); // a refused, partial state
+    const g = gate();
+    expect(g.ok).toBe(false);
+    expect(g.state_dir).toBe(state);
+    expect(g.base).toBe(base);
+    let res = recover(true, { expect: { base, stateDir: join(root, "other-state") } });
+    expect(res).toMatchObject({ ok: false, applied: [] });
+    expect(res.stop).toMatch(/^the resolved paths \(base .*, state dir .*\) are not the persist's own/);
+    res = recover(true, { expect: { base: join(root, "other-base"), stateDir: state } });
+    expect(res.stop).toMatch(/are not the persist's own/);
+    expect(fs.existsSync(markerB())).toBe(true);
+    res = recover(true, { expect: { base: g.base!, stateDir: g.state_dir! } });
+    expect(res).toMatchObject({ ok: true });
   });
 
   it("[RECOVERY-B5] boot-id entries in records/ and <state>/poisoned must be real dirs of ours; an unlisted state entry stops (review B5)", () => {

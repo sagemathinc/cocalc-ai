@@ -3,7 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// `persist-records-recover [--apply]` (028 ALT-D2, ops0's S4 ruling): the
+// `persist-records-recover --base B --state-dir S [--apply]` (028 ALT-D2,
+// ops0's S4 ruling; B and S the persist's diag records_base and
+// records_state_dir, compared exactly): the
 // operator recovery after a failed set-up of the persist's records root
 // (backend/conat/persist-records-recovery.md).  It is a command of this
 // entry (main.ts), so it ships in every project-host artifact, and the bay

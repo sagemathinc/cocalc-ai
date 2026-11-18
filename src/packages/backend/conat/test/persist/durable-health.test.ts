@@ -53,6 +53,8 @@ describe("028 B-3a: durability health", () => {
       join(process.env.COCALC_PERSIST_RECORDS_BASE!, "records", r.records_root.split("/").pop()),
     );
     expect(r.records_root_dev).toMatch(/^\d+$/);
+    // SA 4317 R2: the state dir of marker copy B is published too
+    expect(r.records_state_dir).toBe(process.env.COCALC_PERSIST_STATE_DIR);
     expect(r.records_root_ino).toMatch(/^\d+$/);
     const sentinel = JSON.parse(
       require("node:fs").readFileSync(join(r.records_root, "sentinel.json"), "utf8"),

@@ -82,19 +82,29 @@ describe("[RECOVERY-CLI] persist-records-recover, the project-host command", () 
       code: "marker_copy_missing",
     });
     // the dry run, as printed by the runbook
+    // the persist's own diag values, as the runbook passes them
+    const diag = ["--base", base, "--state-dir", state];
     let out = "";
-    expect(runPersistRecordsRecoverCommand([], (s) => (out += s))).toBe(0);
+    // without them: usage, nothing done
+    expect(runPersistRecordsRecoverCommand([], (s) => (out += s))).toBe(2);
+    expect(out).toMatch(/^usage: persist-records-recover --base <records_base> --state-dir <records_state_dir> \[--apply\]  \(--base and --state-dir are required\)/);
+    // a state dir that is not the persist's: it stops, nothing done
+    out = "";
+    expect(runPersistRecordsRecoverCommand(["--base", base, "--state-dir", join(root, "x")], (s) => (out += s))).toBe(2);
+    expect(JSON.parse(out).stop).toMatch(/are not the persist's own/);
+    out = "";
+    expect(runPersistRecordsRecoverCommand(diag, (s) => (out += s))).toBe(0);
     const dry = JSON.parse(out);
     expect(dry).toMatchObject({ ok: true, base, stateDir: state, applied: [] });
     expect(dry.plan[dry.plan.length - 1]).toBe(join(state, "records-migrated.json"));
     expect(fs.existsSync(join(state, "records-marker.json"))).toBe(true);
     // a wrong argument changes nothing
     out = "";
-    expect(runPersistRecordsRecoverCommand(["--aply"], (s) => (out += s))).toBe(2);
-    expect(out).toMatch(/^usage: persist-records-recover \[--apply\]/);
+    expect(runPersistRecordsRecoverCommand([...diag, "--aply"], (s) => (out += s))).toBe(2);
+    expect(out).toMatch(/^usage: persist-records-recover --base/);
     // --apply
     out = "";
-    expect(runPersistRecordsRecoverCommand(["--apply"], (s) => (out += s))).toBe(0);
+    expect(runPersistRecordsRecoverCommand([...diag, "--apply"], (s) => (out += s))).toBe(0);
     expect(JSON.parse(out).applied).toEqual(dry.plan);
     expect(evaluateRecordsGate({ env: gateEnv, stateDir: state, retries: 0 })).toMatchObject({
       ok: true,
@@ -103,7 +113,7 @@ describe("[RECOVERY-CLI] persist-records-recover, the project-host command", () 
     });
     // and on the now complete set-up it refuses to act
     out = "";
-    expect(runPersistRecordsRecoverCommand(["--apply"], (s) => (out += s))).toBe(2);
+    expect(runPersistRecordsRecoverCommand([...diag, "--apply"], (s) => (out += s))).toBe(2);
     expect(JSON.parse(out).stop).toMatch(/^not a failed creation/);
   });
 

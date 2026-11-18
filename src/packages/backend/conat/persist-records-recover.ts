@@ -12,7 +12,8 @@
 // exactly the partial set-up, and the next start creates it again (as a
 // migration: the legacy gate is checked again).  The runbook is
 // persist-records-recovery.md; it runs as
-//   <project-host entry> persist-records-recover [--apply]
+//   <project-host entry> persist-records-recover --base <records_base>
+//     --state-dir <records_state_dir> [--apply]
 // (project-host main.ts: on a project host its bin/project-host wrapper, on
 // a bay $COCALC_BAY_PROJECT_HOST_MAIN).
 //
@@ -66,6 +67,10 @@ export interface RecoveryOptions {
   bootIdPath?: string;
   // the post-reboot state dir (persistStateDirFor(env)), marker copy B's dir
   stateDir: string | undefined;
+  // the base and state dir the persist itself reports (its diag's
+  // records_base and records_state_dir): the resolved paths must be exactly
+  // these, else it stops (SA 4317 R2)
+  expect?: { base: string; stateDir: string };
   apply?: boolean;
 }
 
@@ -160,6 +165,11 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
     const state = stateDir!;
     out.base = base;
     out.stateDir = state;
+    if (opts.expect != null && (opts.expect.base !== base || opts.expect.stateDir !== state)) {
+      throw new Stop(
+        `the resolved paths (base ${base}, state dir ${state}) are not the persist's own (records_base ${opts.expect.base}, records_state_dir ${opts.expect.stateDir})`,
+      );
+    }
     let bootId: string;
     try {
       const text = fs.readFileSync(opts.bootIdPath ?? BOOT_ID_PATH, "utf8");
@@ -273,7 +283,7 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
       // boot dir replaced, records_root_replaced) may have lost records of
       // this boot -- not this tool's case
       throw new Stop(
-        `not a failed creation: both marker copies name this boot, so its set-up completed and changed afterwards (${setup.shape}); reboot the host first, then run this again`,
+        `not a failed creation: marker A (written last) names this boot, so its set-up completed and changed afterwards (${setup.shape}); reboot the host first, then run this again`,
       );
     }
     // M1: the legacy tmpfs root is checked, never touched
@@ -348,7 +358,8 @@ export function writeReportAndExit(
   stream.write(out, () => exit(code));
 }
 
-// The command (project-host main.ts: `persist-records-recover [--apply]`):
+// The command (project-host main.ts: `persist-records-recover --base B
+// --state-dir S [--apply]`, B and S the persist's diag values):
 // prints the result as JSON; exit 0 only when ok.  env: the role's resolved
 // environment; stateDir: persistStateDirFor(env).
 export function runPersistRecordsRecoverCli(
@@ -356,13 +367,28 @@ export function runPersistRecordsRecoverCli(
   env: NodeJS.ProcessEnv,
   stateDir: string | undefined,
 ): { code: number; output: string } {
-  const unknown = argv.filter((a) => a !== "--apply");
-  if (unknown.length > 0) {
-    return {
-      code: 2,
-      output: `usage: persist-records-recover [--apply]  (unknown: ${unknown.join(" ")})\n`,
-    };
+  // --base and --state-dir are REQUIRED: the persist's diag values
+  // (records_base, records_state_dir), compared exactly (SA 4317 R2)
+  const usage = (why: string) => ({
+    code: 2,
+    output: `usage: persist-records-recover --base <records_base> --state-dir <records_state_dir> [--apply]  (${why})\n`,
+  });
+  let apply = false;
+  let expectBase: string | undefined;
+  let expectState: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--apply") apply = true;
+    else if (a === "--base" && i + 1 < argv.length && expectBase == null) expectBase = argv[++i];
+    else if (a === "--state-dir" && i + 1 < argv.length && expectState == null) expectState = argv[++i];
+    else return usage(`unknown or repeated: ${a}`);
   }
-  const r = recoverFailedRecordsCreation({ env, stateDir, apply: argv.includes("--apply") });
+  if (expectBase == null || expectState == null) return usage("--base and --state-dir are required");
+  const r = recoverFailedRecordsCreation({
+    env,
+    stateDir,
+    apply,
+    expect: { base: expectBase, stateDir: expectState },
+  });
   return { code: r.ok ? 0 : 2, output: JSON.stringify(r, null, 2) + "\n" };
 }
