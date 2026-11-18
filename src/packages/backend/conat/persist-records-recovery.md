@@ -1,54 +1,86 @@
 # Recovering the persist's durability records after a failed set-up
 
-Finding 028, ALT-D2. This runbook is for a bay or a project host whose persist refuses disk-backed streams because the records root could not be set up. It does not cover other refusals. The tool it uses is `persist-records-recover.js`, built from `persist-records-recover.ts` next to this file. The tests run exactly these steps in `records-root-gate.test.ts`: `[RECOVERY]` and `[RECOVERY-stop]`.
+Finding 028, ALT-D2, ops0's S4 ruling.
 
-**What happened.** The persist keeps its records in `<base>/records/<boot id>/`. It creates that directory, a sentinel and a marker in two copies:
-- copy A: `<base>/marker.json`;
-- copy B: `<state>/records-marker.json`.
+**Scope.** A bay or a project host whose persist refuses disk-backed streams because this boot's records root could not be set up. Documents on that host cannot be saved until this is done; ephemeral streams still run. There is no automated repair.
 
-On a first start with this code it also writes `<state>/records-migrated.json`. If the disk fails or is full while it writes these, the state is partial. The persist then refuses disk streams for the rest of the boot: documents on that host cannot be saved, while ephemeral streams still run. It does not repair this by itself. An operator does, with the steps below.
+**The command.** `persist-records-recover` is a command of the project-host entry (`project-host/persist-records-recover-cli.ts`, dispatched first in `main.ts`). It therefore ships in every artifact that runs a persist:
 
-**Where things are:**
+| Role | Command (dry run; add `--apply` to remove) | Runs as | Units to stop and start |
+|---|---|---|---|
+| Project host | `/opt/cocalc/project-host/bin/project-host persist-records-recover` | the project-host runtime user (`stat -c %U /mnt/cocalc/data`) | `cocalc-project-host-watchdog.timer`, `cocalc-project-host-watchdog.service`, `cocalc-project-host-start.service` (its stop runs `ctl stop`, which stops the daemon, its conat-persist child and its file server) |
+| Bay | `"$COCALC_BAY_NODE_BIN" "$COCALC_BAY_PROJECT_HOST_MAIN" persist-records-recover`, with the bay env loaded (below) | `cocalc-bay` | `cocalc-bay-conat-persist.service` |
 
-| Role | Base | State dir (copy B) | Runs as | Every process that uses the records |
-|---|---|---|---|---|
-| Bay | `${COCALC_BAY_STATE_DIR}/persist-durability` | `${COCALC_SYNC:-$BAY_ROOT/sync}/.cocalc-persist-state` (or `COCALC_PERSIST_STATE_DIR`) | the bay account (`cocalc-bay`) | `cocalc-bay-conat-persist.service` |
-| Project host | `${COCALC_DATA}/persist-durability` | `${COCALC_DATA}/sync/.cocalc-persist-state` (or `COCALC_SYNC` / `COCALC_PERSIST_STATE_DIR`) | the owner of `${COCALC_DATA}` (`stat -c %U "$COCALC_DATA"`) | the project-host daemon: its conat-persist child AND its file server (persist-storage maintenance). Stop the whole daemon, not only the persist child. |
+**Notes on the command:**
+- On a project host, `bin/project-host` is the wrapper the bootstrap writes. It runs the installed node on the current bundle's entry, whatever the bundle layout.
+- The command loads the daemon's env files (`/etc/cocalc/project-host.env`, `project-host.local.env`) itself.
+- On a bay, `COCALC_BAY_PROJECT_HOST_MAIN` is the persist's own entry (`/opt/cocalc/bay/current/runtime/project-host/index.js` in a rocket bundle). In a source-overlay bay it is set in `bay-current-cocalc-overlay.env`.
+- The command resolves every path from the role's environment, exactly as the persist does, and prints them: never type them by hand.
 
-Do not type these paths by hand. The tool resolves them from the role's environment, exactly as the persist does, and prints them.
+**The rules:**
+- Never run any step as root, and never create any of these paths by hand. The persist creates them itself, 0700, as its user; a root-created path makes it refuse again (T1).
+- The command only removes these, by name:
+  - this boot's `records/<boot id>/sentinel.json`;
+  - its empty `dirty/`, `poisoned-file/` and `poisoned-project/` directories, then the boot dir itself;
+  - the set-up's temp files;
+  - `<base>/marker.json`, `<state>/records-marker.json`, and `<state>/records-migrated.json` LAST.
+- It never touches the post-reboot records (`<state>/poisoned/`) or the legacy `/run/cocalc-persist` (both only checked).
 
 ## Steps
 
-1. **Confirm this is the case.**
-   - The persist logged `PERSIST ALERT (page): the durability records root is refused`.
-   - Its diagnostics show `durability.startup_records.records_code` as one of: `records_write_failed`, `marker_copies_differ`, `marker_copy_missing`, `marker_missing`, `boot_dir_unexpected`, `records_root_replaced`.
-   - Any other code (`t1_failed`, `records_root_project_visible`, `legacy_records_present`, `boot_id_invalid`, …) is a different problem: stop and escalate.
-2. **Fix the disk first.** Free space or repair the fault, until writes in the base and the state dir succeed.
-3. **Stop every process that uses the records** (table above).
-   - Bay: `systemctl stop cocalc-bay-conat-persist`.
-   - Project host: stop the project-host daemon (its service), which stops the persist child and the file server.
-   - Confirm none is left: `pgrep -u <persist user> -af 'conat-persist|project-host'` prints nothing for that role.
-   - Each of these processes caches its refusal, so restarting only one of them is not enough.
-4. **Dry run, as the persist user, with the persist's environment.**
-   - Never run it as root.
-   - Never create any of these paths by hand: the persist creates them itself, 0700, as its own user. A directory created by root makes the persist refuse again (T1).
-   - Bay:
+1. **The refusal is this case.** The persist logged `PERSIST ALERT (page): the durability records root is refused`, and its diagnostics (`durability.startup_records.records_code`) show one of:
+   - `records_write_failed`;
+   - `marker_copies_differ`;
+   - `marker_copy_missing`;
+   - `marker_missing`;
+   - `boot_dir_unexpected`.
+
+   Anything else stops here and is escalated. That includes `records_root_replaced`: this boot's records dir was changed after its set-up completed, and records may be lost.
+2. **The disk is healthy.** Free space, or repair the fault, until writes in the base and the state dir succeed.
+3. **Stop every user of the records:**
+   - project host:
      ```
-     sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; exec "$COCALC_BAY_NODE_BIN" /opt/cocalc/bay/current/<backend dist>/conat/persist-records-recover.js'
+     sudo systemctl stop cocalc-project-host-watchdog.timer cocalc-project-host-watchdog.service cocalc-project-host-start.service
      ```
-   - Project host: the same, as the owner of `${COCALC_DATA}`, with `/etc/cocalc/project-host.env` (and `project-host.local.env` if present) and the host's node.
-   - It prints JSON: `base`, `stateDir`, `bootId` and the `plan` (the exact paths it would remove).
-   - With `"ok": false` it removed nothing; read `stop`:
-     - `records of this boot are present`: **do not remove them**. Reboot the host: after a reboot they belong to another boot and the persist ignores them, together with the page cache they describe. Then run step 4 again.
-     - `unlisted entry …`, `not a regular file`, `owned by uid …`, `run this as the persist user`, `legacy records check …`: stop and escalate. Do not delete anything by hand.
-5. **Check the plan.** It may contain only:
-   - this boot's `records/<boot id>/sentinel.json` (and its `.sentinel.json.*.tmp`);
-   - its empty `dirty/`, `poisoned-file/` and `poisoned-project/` directories, then the boot dir itself;
-   - `<base>/marker.json`, `<state>/records-marker.json`, `<state>/records-migrated.json` and their `.*.tmp` files.
-   
-   It never contains `<state>/poisoned/*` (the post-reboot records, always kept), other boots' directories (the persist prunes those itself), or the legacy `/run/cocalc-persist` (only checked).
-6. **Apply.** Run the same command with `--apply`. It prints `"applied": true`.
-7. **Start every process you stopped**, then check:
-   - the diagnostics show `startup_records.records_ok: true`, `records_t1: "pass"`, `records_migrated: true`, and `records_root` = `<base>/records/<the current boot id>`;
-   - opening a document on that host saves (a disk stream opens).
-   - If the persist refuses again, do not repeat the steps blindly: read the new code (step 1) and escalate.
+     Stop the timer first, or it starts the daemon again within a minute.
+   - bay:
+     ```
+     sudo systemctl stop cocalc-bay-conat-persist.service
+     ```
+4. **Check nothing runs:**
+   - project host: `pgrep -af '/opt/cocalc/project-host/'` and `systemctl is-active cocalc-project-host-watchdog.timer` (must be `inactive`);
+   - bay: `systemctl is-active cocalc-bay-conat-persist.service` (must be `inactive`).
+5. **Dry run, as the persist user.**
+   - project host:
+     ```
+     sudo -u "$(stat -c %U /mnt/cocalc/data)" /opt/cocalc/project-host/bin/project-host persist-records-recover
+     ```
+   - bay:
+     ```
+     sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-workers bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; exec "$COCALC_BAY_NODE_BIN" "$COCALC_BAY_PROJECT_HOST_MAIN" persist-records-recover'
+     ```
+   - It prints JSON with `base`, `stateDir`, `bootId`, `shape` (the partial set-up it found, e.g. `boot dir present; sentinel present; marker A another boot; marker B this boot (copies differ); migration flag present`) and `plan`. Check that `base` and `stateDir` are the role's paths.
+   - `"ok": false` means it removed nothing. Read `stop`:
+     - `records of this boot are present`: do **not** remove them. Reboot the host; after a reboot they belong to another boot and the persist ignores them, together with the page cache they describe. Start again at step 1.
+     - `not a failed creation`: this boot's set-up completed. If it was changed afterwards, reboot first, as above. If it is intact, nothing here is broken: escalate.
+     - anything else (`unlisted entry`, `not a regular file`, `not a real directory`, `owned by uid`, `run this as the persist user`, `legacy records check`): escalate. Do not delete anything by hand.
+6. **Check again that nothing runs** (step 4).
+7. **Apply:** the same command with `--apply`.
+   - `"ok": true` lists every removal in `applied`.
+   - `"ok": false` with `partial apply …; re-run this tool` lists what was removed. The persist still refuses, because the flag goes last. Fix the cause and run step 7 again.
+8. **Start every unit you stopped:**
+   - project host: `sudo systemctl start cocalc-project-host-start.service cocalc-project-host-watchdog.timer`;
+   - bay: `sudo systemctl start cocalc-bay-conat-persist.service`.
+9. **Check durable mode.**
+   - The diagnostics show `startup_records.records_ok: true`, `records_t1: "pass"`, `records_migrated: true`, and `records_root` = `<base>/records/<the current boot id>`.
+   - A document on that host saves.
+   - If the persist refuses again, read the new code (step 1) and escalate. Never repeat blindly.
+
+**Tests:**
+- in `backend/conat/test/persist/records-root-gate.test.ts`:
+  - `[RECOVERY]`;
+  - `[RECOVERY-stop]`;
+  - `[RECOVERY-S5]`;
+  - `[RECOVERY-B5]`;
+  - `[RECOVERY-ORDER]`;
+- in `project-host/persist-records-recover-cli.test.ts`: `[RECOVERY-CLI]`, the command with an env file as the daemon reads it, and `[RECOVERY-CLI-main]`.

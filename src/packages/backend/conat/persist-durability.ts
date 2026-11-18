@@ -92,6 +92,18 @@ export function persistStateDir(
   return undefined;
 }
 
+// The same state dir for a given environment, without this process's
+// module-load state: COCALC_PERSIST_STATE_DIR, else <sync>/.cocalc-persist-state
+// with sync = COCALC_SYNC ?? <COCALC_DATA_DIR ?? DATA>/sync, the rule of
+// @cocalc/backend/data.  For tools that act for a persist whose env they
+// load (persist-records-recover); undefined if it can't be known.
+export function persistStateDirFor(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.COCALC_PERSIST_STATE_DIR) return env.COCALC_PERSIST_STATE_DIR;
+  const dataDir = env.COCALC_DATA_DIR ?? env.DATA;
+  const sync = env.COCALC_SYNC ?? (dataDir ? posix.join(dataDir, "sync") : undefined);
+  return sync ? posix.join(sync, ".cocalc-persist-state") : undefined;
+}
+
 function fsyncPath(path: string, flags = "r"): void {
   const fd = fs.openSync(path, flags);
   try {

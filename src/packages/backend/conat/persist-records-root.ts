@@ -978,6 +978,76 @@ function evaluateOnce(opts: Required<Omit<GateOptions, "stateDir">> & { stateDir
   prune(fs, recordsDir, bootId, out);
 }
 
+// The shape of this boot's set-up, for the operator recovery
+// (persist-records-recover; SA 4312 S5): which parts exist, and whether it
+// is COMPLETE -- both marker copies strict, equal, of this boot, naming the
+// boot dir's dev/ino, and the sentinel's token and boot id matching.  The
+// token is compared here and never returned.
+export function describeSetup(
+  fs: GateFs,
+  base: string,
+  stateDir: string,
+  bootId: string,
+  uid: number,
+): { complete: boolean; createdThisBoot: boolean; shape: string } {
+  const bootDir = posix.join(base, RECORDS_DIR_NAME, bootId);
+  const markerState = (path: string): { label: string; marker?: Marker } => {
+    const r = readStrict(fs, path, uid);
+    if (r.state === "absent") return { label: "absent" };
+    if (r.state === "bad") return { label: "invalid" };
+    const m = parseMarker(r.text);
+    if (m == null) return { label: "invalid" };
+    return { label: m.boot_id === bootId ? "this boot" : "another boot", marker: m };
+  };
+  const a = markerState(posix.join(base, MARKER_A_NAME));
+  const b = markerState(posix.join(stateDir, MARKER_B_NAME));
+  let bootSt: nodeFs.BigIntStats | undefined;
+  let bootLabel = "absent";
+  try {
+    bootSt = fs.lstatSync(bootDir, { bigint: true });
+    bootLabel = bootSt.isDirectory() && !bootSt.isSymbolicLink() ? "present" : "not a directory";
+  } catch (err) {
+    if (errCode(err) !== "ENOENT") bootLabel = "unreadable";
+  }
+  const sentinel = bootSt != null ? readStrict(fs, posix.join(bootDir, SENTINEL_NAME), uid) : undefined;
+  const sentinelLabel =
+    sentinel == null ? "absent" : sentinel.state === "ok" ? "present" : sentinel.state === "absent" ? "absent" : "invalid";
+  let flagLabel = "absent";
+  try {
+    fs.lstatSync(posix.join(stateDir, MIGRATION_FLAG_NAME), { bigint: true });
+    flagLabel = "present";
+  } catch (err) {
+    if (errCode(err) !== "ENOENT") flagLabel = "unreadable";
+  }
+  let complete = false;
+  if (
+    a.marker != null &&
+    b.marker != null &&
+    sameMarker(a.marker, b.marker) &&
+    a.marker.boot_id === bootId &&
+    bootSt != null &&
+    `${bootSt.dev}` === a.marker.dev &&
+    `${bootSt.ino}` === a.marker.ino &&
+    sentinel?.state === "ok"
+  ) {
+    try {
+      const s = JSON.parse(sentinel.text);
+      complete = s?.token === a.marker.token && s?.boot_id === bootId;
+    } catch {}
+  }
+  // marker A is written LAST: both copies equal and of this boot mean this
+  // boot's creation finished (whatever changed afterwards)
+  const createdThisBoot =
+    a.marker != null && b.marker != null && sameMarker(a.marker, b.marker) && a.marker.boot_id === bootId;
+  return {
+    complete,
+    createdThisBoot,
+    shape: `boot dir ${bootLabel}; sentinel ${sentinelLabel}; marker A ${a.label}; marker B ${b.label}${
+      a.marker != null && b.marker != null && !sameMarker(a.marker, b.marker) ? " (copies differ)" : ""
+    }; migration flag ${flagLabel}`,
+  };
+}
+
 // The gate.  Never throws: any failure is a refusal.
 export function evaluateRecordsGate(options: GateOptions = {}): RecordsGate {
   const opts = {

@@ -11,20 +11,33 @@
 // and EVERY process that could use the records is stopped, this removes
 // exactly the partial set-up, and the next start creates it again (as a
 // migration: the legacy gate is checked again).  The runbook is
-// persist-records-recovery.md.
+// persist-records-recovery.md; it runs as
+//   <project-host entry> persist-records-recover [--apply]
+// (project-host main.ts: on a project host its bin/project-host wrapper, on
+// a bay $COCALC_BAY_PROJECT_HOST_MAIN).
 //
-// It STOPS, removing nothing, if anything is not exactly a partial set-up:
-// a record of this boot (dirty, poisoned-file, poisoned-project), an
-// unreadable or unlisted entry, a symlink, a path not owned by the user it
-// runs as (it must run as the persist user, never as root: a root-created
-// path makes the gate's T1 refuse), legacy records (M1).  It never touches
-// the legacy tmpfs root (checked only) or the post-reboot records
-// (<state>/poisoned).  Paths come from the role's configuration, exactly as
-// the gate resolves them.
+// It STOPS, removing nothing, unless the state is exactly a partial set-up:
+// - a set-up of this boot that COMPLETED (both marker copies equal and of
+//   this boot: marker A is written last), whether still intact or changed
+//   since, stops: "not a failed creation" (SA 4312 S5; a boot dir replaced
+//   after its creation may have lost records: reboot first);
+// - a record of this boot (dirty, poisoned-file, poisoned-project);
+// - an unreadable or unlisted entry, a symlink or non-directory where a
+//   directory belongs (records/<boot id>, <state>/poisoned too), a path not
+//   owned by the user it runs as (it runs as the persist user, never as
+//   root: a root-created path makes the gate's T1 refuse);
+// - legacy records (M1).
+// It never touches the legacy tmpfs root (checked only) or the post-reboot
+// records (<state>/poisoned: checked to be a real directory of ours, never
+// listed or changed).  Paths come from the role's configuration, exactly as
+// the persist resolves them.
 //
-// usage, as the persist user with the persist's environment loaded:
-//   node <backend dist>/conat/persist-records-recover.js            (dry run)
-//   node <backend dist>/conat/persist-records-recover.js --apply
+// Removal order (review B6), independent of directory order: this boot's
+// sentinel and its temp files, its (empty) class dirs, the boot dir, every
+// other temp file, marker A, marker B, the migration flag LAST.  Every
+// prefix of that order leaves a state the gate refuses (the flag goes last:
+// only its removal reopens the migration).  A failure midway reports the
+// removals done and "re-run this tool", never ok.
 
 import * as nodeFs from "node:fs";
 import { posix } from "node:path";
@@ -36,6 +49,7 @@ import {
   MIGRATION_FLAG_NAME,
   RECORDS_DIR_NAME,
   SENTINEL_NAME,
+  describeSetup,
   isBootId,
   legacyGate,
   legacyRunDir,
@@ -48,21 +62,24 @@ export interface RecoveryOptions {
   fs?: GateFs;
   uid?: number;
   bootIdPath?: string;
-  // the post-reboot state dir (persistStateDir()), marker copy B's dir
+  // the post-reboot state dir (persistStateDirFor(env)), marker copy B's dir
   stateDir: string | undefined;
   apply?: boolean;
 }
 
 export interface RecoveryResult {
   ok: boolean;
-  // why it stopped (nothing was removed)
+  // why it stopped (nothing was removed, unless `applied` lists removals)
   stop?: string;
   base?: string;
   stateDir?: string;
   bootId?: string;
-  // what is (dry run) or was (apply) removed, in order
+  // the partial set-up found (no token)
+  shape?: string;
+  // what is (dry run) or was to be (apply) removed, in order
   plan: string[];
-  applied: boolean;
+  // what was removed
+  applied: string[];
 }
 
 class Stop extends Error {}
@@ -127,7 +144,7 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
   const env = opts.env ?? process.env;
   const fs = opts.fs ?? (nodeFs as unknown as GateFs);
   const uid = opts.uid ?? process.getuid?.() ?? -1;
-  const out: RecoveryResult = { ok: false, plan: [], applied: false };
+  const out: RecoveryResult = { ok: false, plan: [], applied: [] };
   try {
     const resolved = resolveRecordsBase(env);
     if (resolved == null) throw new Stop("no records base for this role (COCALC_BAY_STATE_DIR or COCALC_DATA)");
@@ -138,8 +155,9 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
         throw new Stop(`not an absolute normalized path: ${p}`);
       }
     }
+    const state = stateDir!;
     out.base = base;
-    out.stateDir = stateDir;
+    out.stateDir = state;
     let bootId: string;
     try {
       const text = fs.readFileSync(opts.bootIdPath ?? BOOT_ID_PATH, "utf8");
@@ -150,8 +168,14 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
     if (!isBootId(bootId)) throw new Stop("the boot id is not a canonical UUID");
     out.bootId = bootId;
 
-    const plan: string[] = [];
-    // the base: only marker A, its temp files and records/
+    // the plan, by class (B6)
+    const bootContents: string[] = [];
+    let bootDirEntry: string | undefined;
+    const temps: string[] = [];
+    let markerA: string | undefined;
+    let markerB: string | undefined;
+    let flag: string | undefined;
+
     const records = posix.join(base, RECORDS_DIR_NAME);
     const bootDir = posix.join(records, bootId);
     if (lstatOrUndefined(fs, base) != null) {
@@ -159,9 +183,14 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
       for (const name of list(fs, base)) {
         const path = posix.join(base, name);
         if (name === RECORDS_DIR_NAME) continue;
-        if (name === MARKER_A_NAME || TMP_OF(MARKER_A_NAME).test(name)) {
+        if (name === MARKER_A_NAME) {
           ownFile(fs, path, uid);
-          plan.push(path);
+          markerA = path;
+          continue;
+        }
+        if (TMP_OF(MARKER_A_NAME).test(name)) {
+          ownFile(fs, path, uid);
+          temps.push(path);
           continue;
         }
         throw new Stop(`unlisted entry in the base: ${path}`);
@@ -169,17 +198,19 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
       if (lstatOrUndefined(fs, records) != null) {
         ownDir(fs, records, uid, true);
         for (const name of list(fs, records)) {
-          // other boots' dirs are the gate's to prune; anything else stops
+          // other boots' dirs are the gate's to prune: each a real dir of
+          // ours (B5); anything else stops
           if (!isBootId(name)) throw new Stop(`unlisted entry in ${records}: ${name}`);
+          ownDir(fs, posix.join(records, name), uid, false);
         }
         if (lstatOrUndefined(fs, bootDir) != null) {
           ownDir(fs, bootDir, uid, true);
-          const inBoot: string[] = [];
+          const classDirs: string[] = [];
           for (const name of list(fs, bootDir)) {
             const path = posix.join(bootDir, name);
             if (name === SENTINEL_NAME || TMP_OF(SENTINEL_NAME).test(name)) {
               ownFile(fs, path, uid);
-              inBoot.push(path);
+              bootContents.push(path);
               continue;
             }
             if ((LEGACY_RECORD_CLASSES as readonly string[]).includes(name)) {
@@ -190,34 +221,58 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
                   `records of this boot are present in ${path}: do NOT remove them; reboot the host first (they then belong to another boot), then run this again`,
                 );
               }
-              inBoot.push(`${path}/`);
+              classDirs.push(`${path}/`);
               continue;
             }
             throw new Stop(`unlisted entry in this boot's records dir: ${path}`);
           }
-          plan.unshift(...inBoot, `${bootDir}/`);
+          bootContents.push(...classDirs);
+          bootDirEntry = `${bootDir}/`;
         }
       }
     }
     // the state dir: only marker B, the migration flag, their temp files and
-    // poisoned/ (the post-reboot records: kept, never touched)
-    if (lstatOrUndefined(fs, stateDir!) != null) {
-      ownDir(fs, stateDir!, uid, false);
-      for (const name of list(fs, stateDir!)) {
-        const path = posix.join(stateDir!, name);
-        if (name === "poisoned") continue;
-        if (
-          name === MARKER_B_NAME ||
-          name === MIGRATION_FLAG_NAME ||
-          TMP_OF(MARKER_B_NAME).test(name) ||
-          TMP_OF(MIGRATION_FLAG_NAME).test(name)
-        ) {
+    // poisoned/ (the post-reboot records: a real dir of ours, never listed
+    // or changed (B5))
+    if (lstatOrUndefined(fs, state) != null) {
+      ownDir(fs, state, uid, false);
+      for (const name of list(fs, state)) {
+        const path = posix.join(state, name);
+        if (name === "poisoned") {
+          ownDir(fs, path, uid, false);
+          continue;
+        }
+        if (name === MARKER_B_NAME) {
           ownFile(fs, path, uid);
-          plan.push(path);
+          markerB = path;
+          continue;
+        }
+        if (name === MIGRATION_FLAG_NAME) {
+          ownFile(fs, path, uid);
+          flag = path;
+          continue;
+        }
+        if (TMP_OF(MARKER_B_NAME).test(name) || TMP_OF(MIGRATION_FLAG_NAME).test(name)) {
+          ownFile(fs, path, uid);
+          temps.push(path);
           continue;
         }
         throw new Stop(`unlisted entry in the state dir: ${path}`);
       }
+    }
+    // S5: only a FAILED creation; a complete set-up stops
+    const setup = describeSetup(fs, base, state, bootId, uid);
+    out.shape = setup.shape;
+    if (setup.complete) {
+      throw new Stop(`not a failed creation: this boot's set-up is complete (${setup.shape})`);
+    }
+    if (setup.createdThisBoot) {
+      // the creation finished (A is written last): a later change (e.g. the
+      // boot dir replaced, records_root_replaced) may have lost records of
+      // this boot -- not this tool's case
+      throw new Stop(
+        `not a failed creation: both marker copies name this boot, so its set-up completed and changed afterwards (${setup.shape}); reboot the host first, then run this again`,
+      );
     }
     // M1: the legacy tmpfs root is checked, never touched
     try {
@@ -225,37 +280,54 @@ export function recoverFailedRecordsCreation(opts: RecoveryOptions): RecoveryRes
     } catch (err) {
       throw new Stop(`legacy records check: ${(err as Error).message}`);
     }
+    const plan = [
+      ...bootContents,
+      ...(bootDirEntry != null ? [bootDirEntry] : []),
+      ...temps.sort(),
+      ...(markerA != null ? [markerA] : []),
+      ...(markerB != null ? [markerB] : []),
+      ...(flag != null ? [flag] : []),
+    ];
     out.plan = plan;
     if (opts.apply) {
-      // this boot's dir first (its sentinel, the empty class dirs, the dir),
-      // then the copies and the flag; a crash midway leaves a state the gate
-      // refuses and this can run again
       for (const p of plan) {
-        if (p.endsWith("/")) fs.rmdirSync(p.slice(0, -1));
-        else fs.unlinkSync(p);
+        try {
+          if (p.endsWith("/")) fs.rmdirSync(p.slice(0, -1));
+          else fs.unlinkSync(p);
+        } catch (err) {
+          throw new Stop(
+            `partial apply: ${out.applied.length} of ${plan.length} removed, then ${p}: ${errCode(err) ?? err}; re-run this tool`,
+          );
+        }
+        out.applied.push(p);
       }
-      for (const d of [records, base, stateDir!]) {
+      for (const d of [records, base, state]) {
         if (lstatOrUndefined(fs, d) != null) fsyncDir(fs, d);
       }
-      out.applied = true;
     }
     out.ok = true;
   } catch (err) {
     out.ok = false;
     out.stop = err instanceof Stop ? err.message : `unexpected: ${err}`;
-    // nothing was removed unless apply ran: a failure in apply is reported
-    // with the plan, and the gate refuses until this runs again
   }
   return out;
 }
 
-if (require.main === module) {
-  // the post-reboot state dir as the persist resolves it
-  const { persistStateDir } = require("./persist-durability");
-  const r = recoverFailedRecordsCreation({
-    stateDir: persistStateDir(),
-    apply: process.argv.includes("--apply"),
-  });
-  process.stdout.write(JSON.stringify(r, null, 2) + "\n");
-  process.exit(r.ok ? 0 : 2);
+// The command (project-host main.ts: `persist-records-recover [--apply]`):
+// prints the result as JSON; exit 0 only when ok.  env: the role's resolved
+// environment; stateDir: persistStateDirFor(env).
+export function runPersistRecordsRecoverCli(
+  argv: string[],
+  env: NodeJS.ProcessEnv,
+  stateDir: string | undefined,
+): { code: number; output: string } {
+  const unknown = argv.filter((a) => a !== "--apply");
+  if (unknown.length > 0) {
+    return {
+      code: 2,
+      output: `usage: persist-records-recover [--apply]  (unknown: ${unknown.join(" ")})\n`,
+    };
+  }
+  const r = recoverFailedRecordsCreation({ env, stateDir, apply: argv.includes("--apply") });
+  return { code: r.ok ? 0 : 2, output: JSON.stringify(r, null, 2) + "\n" };
 }

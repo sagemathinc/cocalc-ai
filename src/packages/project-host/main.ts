@@ -6,6 +6,10 @@
  * Security: intentionally insecure for now. No auth, no TLS.
  */
 import { createServer as createHttpServer } from "http";
+import {
+  PERSIST_RECORDS_RECOVER_COMMAND,
+  runPersistRecordsRecoverCommand,
+} from "./persist-records-recover-cli";
 import { initAcpProjectMembership } from "./acp/project-membership";
 import type { IncomingMessage, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
@@ -1804,6 +1808,10 @@ export async function main(
 
 // Allow running directly via `node dist/main.js`.
 if (require.main === module) {
+  if (process.argv[2] === PERSIST_RECORDS_RECOVER_COMMAND) {
+    // an operator command (028 ALT-D2): before anything starts
+    process.exit(runPersistRecordsRecoverCommand(process.argv.slice(3)));
+  }
   applyProjectHostProcessTitle();
   process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT = __filename;
   if (`${process.env.COCALC_CONAT_CLUSTER_NODE ?? ""}`.trim() === "1") {

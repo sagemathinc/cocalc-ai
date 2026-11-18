@@ -248,6 +248,26 @@ describe("[B3-retry] a cleared poison's pending post-reboot write is cancelled, 
     r.retryPostReboot();
     expect(post.saved.size).toBe(0);
     expect(r.check("/p/b", "q")).toBe("ok");
+    // 1b/2b. a failed durable remove in clearProjectPoison (on-disk and
+    // in-memory poisons): it throws, and the pending write stays
+    for (const inMemory of [false, true]) {
+      post = store();
+      r = withStore(
+        post,
+        inMemory ? [{ op: "writeFileSync", path: (p) => p.includes("/poisoned-file/"), code: "EIO" }] : [],
+      );
+      post.failWrite = true;
+      const id = inMemory ? "/p/rm-mem" : "/p/rm-disk";
+      r.poison(id, { where: "t", scope: "project", owner: "q2" });
+      expect(r.postRebootPending()).toBe(1);
+      post.failRemove = true;
+      expect(() => r.clearProjectPoison("q2")).toThrow("EIO");
+      expect(r.postRebootPending()).toBe(1);
+      expect(r.check(id, "q2")).toBe("poisoned");
+      post.failRemove = false;
+      expect(r.clearProjectPoison("q2")).toEqual([id]);
+      expect(r.postRebootPending()).toBe(0);
+    }
     // 3. clearPostReboot (after a passed integrity_check)
     post = store();
     r = withStore(post);

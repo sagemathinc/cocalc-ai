@@ -998,4 +998,103 @@ describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-rec
     expect(recover(true)).toMatchObject({ ok: true, applied: true });
     expect(gate()).toMatchObject({ ok: true, migrated: true, t1: "pass" });
   });
+
+  it("[RECOVERY-S5] not a failed creation: a complete set-up, or one changed after it completed, STOPS and nothing is removed (SA 4312 S5)", () => {
+    expect(gate().ok).toBe(true);
+    const snap = () => [markerA(), markerB(), join(state, MIGRATION_FLAG_NAME), sentinel()].map((p) => fs.existsSync(p));
+    let res = recover(true);
+    expect(res).toMatchObject({ ok: false, applied: [] });
+    expect(res.stop).toMatch(/^not a failed creation: this boot's set-up is complete/);
+    expect(res.shape).toBe("boot dir present; sentinel present; marker A this boot; marker B this boot; migration flag present");
+    expect(JSON.stringify(res)).not.toContain(JSON.parse(fs.readFileSync(sentinel(), "utf8")).token);
+    expect(snap()).toEqual([true, true, true, true]);
+    // the boot dir replaced after its creation (records_root_replaced)
+    const saved = fs.readFileSync(sentinel(), "utf8");
+    const oldIno = fs.lstatSync(bootDir()).ino;
+    fs.rmSync(bootDir(), { recursive: true });
+    for (let i = 0; ; i++) {
+      fs.mkdirSync(bootDir(), { mode: 0o700 });
+      if (fs.lstatSync(bootDir()).ino !== oldIno) break;
+      fs.renameSync(bootDir(), join(root, `parked-s5-${i}`));
+    }
+    fs.writeFileSync(sentinel(), saved, { mode: 0o600 });
+    res = recover(true);
+    expect(res.stop).toMatch(/^not a failed creation: both marker copies name this boot/);
+    expect(snap()).toEqual([true, true, true, true]);
+  });
+
+  it("[RECOVERY-B5] boot-id entries in records/ and <state>/poisoned must be real dirs of ours; an unlisted state entry stops (review B5)", () => {
+    expect(gate().ok).toBe(true);
+    fs.rmSync(markerA()); // a refused, partial state
+    const target = join(root, "elsewhere");
+    fs.mkdirSync(target, { mode: 0o700 });
+    // a symlink named like another boot
+    fs.symlinkSync(target, join(base, "records", BOOT2));
+    expect(recover(true).stop).toMatch(/is not a real directory/);
+    fs.rmSync(join(base, "records", BOOT2));
+    // a file named like another boot
+    fs.writeFileSync(join(base, "records", BOOT2), "x");
+    expect(recover(true).stop).toMatch(/is not a real directory/);
+    fs.rmSync(join(base, "records", BOOT2));
+    // poisoned/ as a symlink, a file, foreign-owned
+    const poisoned = join(state, "poisoned");
+    fs.symlinkSync(target, poisoned);
+    expect(recover(true).stop).toMatch(/poisoned is not a real directory/);
+    fs.rmSync(poisoned);
+    fs.writeFileSync(poisoned, "x");
+    expect(recover(true).stop).toMatch(/poisoned is not a real directory/);
+    fs.rmSync(poisoned);
+    fs.mkdirSync(poisoned, { mode: 0o700 });
+    fs.writeFileSync(join(poisoned, "k"), "{}");
+    expect(recover(true, { fs: otherOwnerFs(poisoned) }).stop).toMatch(/poisoned is owned by uid/);
+    // an unlisted entry in the state dir
+    fs.writeFileSync(join(state, "notes.txt"), "x");
+    expect(recover(true).stop).toMatch(/unlisted entry in the state dir/);
+    fs.rmSync(join(state, "notes.txt"));
+    // everything still there; then it proceeds, and poisoned/k is kept
+    expect(fs.existsSync(markerB())).toBe(true);
+    expect(recover(true)).toMatchObject({ ok: true });
+    expect(fs.readFileSync(join(poisoned, "k"), "utf8")).toBe("{}");
+  });
+
+  it("[RECOVERY-ORDER] the removal order is by class, flag last, whatever the directory order; a fault midway reports applied[] and re-run, and the gate still refuses (review B6)", () => {
+    expect(gate().ok).toBe(true);
+    setBoot(BOOT2);
+    expect(gate({ fs: faultFs([{ op: "renameSync", path: isA, code: "EIO" }]) }).ok).toBe(false);
+    // leftover temp files of every kind
+    const tA = join(base, ".marker.json.1.ab.tmp");
+    const tB = join(state, ".records-marker.json.2.cd.tmp");
+    const tF = join(state, ".records-migrated.json.3.ef.tmp");
+    for (const t of [tA, tB, tF]) fs.writeFileSync(t, "x", { mode: 0o600 });
+    // adversarial (reversed) directory order
+    const reversed = faultFs([], {
+      readdirSync: (real: any, p: string) => [...real.readdirSync(p)].reverse(),
+    });
+    const flag = join(state, MIGRATION_FLAG_NAME);
+    const dry = recover(false, { fs: reversed });
+    expect(dry.ok).toBe(true);
+    expect(dry.plan).toEqual([
+      sentinel(BOOT2),
+      `${bootDir(BOOT2)}/`,
+      ...[tA, tB, tF].sort(),
+      markerA(),
+      markerB(),
+      flag,
+    ]);
+    expect(dry.shape).toBe("boot dir present; sentinel present; marker A another boot; marker B this boot (copies differ); migration flag present");
+    // a fault at the first temp file's unlink
+    const faulty = faultFs([{ op: "unlinkSync", path: (p) => p === [tA, tB, tF].sort()[0], code: "EIO" }], {
+      readdirSync: (real: any, p: string) => [...real.readdirSync(p)].reverse(),
+    });
+    const res = recover(true, { fs: faulty });
+    expect(res.ok).toBe(false);
+    expect(res.stop).toMatch(/^partial apply: 2 of 8 removed, then .*; re-run this tool$/);
+    expect(res.applied).toEqual([sentinel(BOOT2), `${bootDir(BOOT2)}/`]);
+    expect(fs.existsSync(flag)).toBe(true);
+    expect(gate().ok).toBe(false);
+    // re-run: done
+    expect(recover(true)).toMatchObject({ ok: true });
+    expect(gate()).toMatchObject({ ok: true, migrated: true, t1: "pass" });
+  });
 });
+
