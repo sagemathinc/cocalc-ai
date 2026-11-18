@@ -256,6 +256,58 @@ describe("rule 2: T1, the ancestor walk", () => {
   });
 });
 
+describe("rule 2: the PRODUCTION walk starts at / (SA 4306 S1)", () => {
+  // every strict ancestor of the test root is reported as root-owned 0755
+  // (the machine's real ancestors are not the test's to choose), except
+  // `bad`, reported group-writable; visited records every lstat
+  function ancestorsFs(bad: string | undefined, visited: Set<string>): GateFs {
+    return faultFs([], {
+      lstatSync: (real: any, p: string, o: any) => {
+        visited.add(p);
+        const isAncestor = p !== root && (p === "/" || root.startsWith(p + "/"));
+        if (!isAncestor) return real.lstatSync(p, o);
+        const st = real.lstatSync(root, o);
+        const mode = p === bad ? 0o40775 : 0o40755;
+        return new Proxy(st, {
+          get: (s: any, k) =>
+            k === "uid" ? 0n : k === "mode" ? BigInt(mode) : typeof s[k] == "function" ? s[k].bind(s) : s[k],
+        });
+      },
+    });
+  }
+
+  it("[S1-WALK] with walkFrom unset, every ancestor from / is checked; a bad /, or a bad ancestor, refuses", () => {
+    const visited = new Set<string>();
+    expect(gate({ walkFrom: undefined, fs: ancestorsFs(undefined, visited) })).toMatchObject({ ok: true, t1: "pass" });
+    const parts = root.split("/").filter((x) => x);
+    for (let i = 0; i <= parts.length; i++) {
+      const p = i === 0 ? "/" : "/" + parts.slice(0, i).join("/");
+      expect(visited.has(p)).toBe(true);
+    }
+    for (const bad of ["/", join(root, "..")]) {
+      const g = gate({ walkFrom: undefined, fs: ancestorsFs(bad, new Set()) });
+      expect(g).toMatchObject({ ok: false, code: "t1_failed" });
+      expect(g.t1).toBe(`fail: ${bad}: group/other-writable (mode 775)`);
+    }
+  });
+});
+
+describe("the records base must be absolute and normalized (SA 4306 S2)", () => {
+  it("[S2-BASE] a relative, non-normalized or trailing-slash base refuses before anything is touched", () => {
+    for (const b of [
+      "rel/persist-durability",
+      "./persist-durability",
+      `${dataDir}/../data/persist-durability`,
+      `${dataDir}//persist-durability`,
+      `${dataDir}/persist-durability/`,
+    ]) {
+      base = b;
+      expect(gate()).toMatchObject({ ok: false, code: "records_base_invalid" });
+    }
+    expect(fs.readdirSync(dataDir)).toEqual([]);
+  });
+});
+
 describe("rule 3: anything unreadable in the current boot dir is present", () => {
   it("[P1] an unreadable record refuses (present), never absent", () => {
     const g = gate();
@@ -375,6 +427,36 @@ describe("rule 5: the R-b marker, the TOTAL table", () => {
     expect(gate()).toMatchObject({ ok: false, code: "records_root_replaced" });
   });
 
+  it("[R4d] a sentinel with the right token but another boot id: records_root_replaced (SA 4306 A5)", () => {
+    expect(gate().ok).toBe(true);
+    const s = JSON.parse(fs.readFileSync(sentinel(), "utf8"));
+    fs.writeFileSync(sentinel(), JSON.stringify({ ...s, boot_id: BOOT2 }), { mode: 0o600 });
+    expect(gate()).toMatchObject({ ok: false, code: "records_root_replaced" });
+  });
+
+  it("[D3-race] a marker swapped between its lstat and its open (another dev/ino at fstat) refuses (SA 4306 A1)", () => {
+    expect(gate().ok).toBe(true);
+    for (const target of [markerA(), markerB()]) {
+      const fds = new Map<number, string>();
+      const swapped = faultFs([], {
+        openSync: (real: any, p: string, ...rest: any[]) => {
+          const fd = real.openSync(p, ...rest);
+          fds.set(fd, p);
+          return fd;
+        },
+        fstatSync: (real: any, fd: number, o: any) => {
+          const st = real.fstatSync(fd, o);
+          if (fds.get(fd) !== target) return st;
+          return new Proxy(st, {
+            get: (s: any, k) => (k === "ino" ? s.ino + 1n : typeof s[k] == "function" ? s[k].bind(s) : s[k]),
+          });
+        },
+      });
+      expect(gate({ fs: swapped })).toMatchObject({ ok: false, code: "marker_invalid" });
+    }
+    expect(gate().ok).toBe(true);
+  });
+
   it("[R5] marker of this boot, the boot dir missing: records_root_replaced", () => {
     expect(gate().ok).toBe(true);
     fs.rmSync(bootDir(), { recursive: true });
@@ -478,6 +560,42 @@ describe("rule 5: the R-b marker, the TOTAL table", () => {
     expect(ops.indexOf(`mkdirSync ${bootDir()}`)).toBeGreaterThan(iRename);
     // B is written before A
     expect(ops.indexOf(`renameSync ${markerB()}`)).toBeLessThan(ops.indexOf(`renameSync ${markerA()}`));
+  });
+
+  it("[SHORT] short writes are continued until every byte is written; a write without progress refuses (review B1)", () => {
+    // every write of the gate's writer returns after at most 7 bytes
+    const short = faultFs([], {
+      writeSync: (real: any, fd: number, buf: Buffer, off: number, len: number) =>
+        real.writeSync(fd, buf, off, Math.min(len, 7)),
+    });
+    const g = gate({ fs: short });
+    expect(g).toMatchObject({ ok: true, migrated: true });
+    const a = JSON.parse(fs.readFileSync(markerA(), "utf8"));
+    expect(JSON.parse(fs.readFileSync(markerB(), "utf8"))).toEqual(a);
+    expect(a).toMatchObject({ v: 1, boot_id: BOOT1, dev: g.root_dev, ino: g.root_ino });
+    expect(JSON.parse(fs.readFileSync(sentinel(), "utf8"))).toEqual({ v: 1, boot_id: BOOT1, token: a.token });
+    expect(JSON.parse(fs.readFileSync(join(state, MIGRATION_FLAG_NAME), "utf8"))).toMatchObject({ v: 1, boot_id: BOOT1 });
+    expect(gate().ok).toBe(true);
+    // a write that makes no progress (0 bytes) at each of the four files
+    for (const name of [MIGRATION_FLAG_NAME, SENTINEL_NAME, MARKER_B_NAME, MARKER_A_NAME]) {
+      rmSync(base, { recursive: true, force: true });
+      rmSync(state, { recursive: true, force: true });
+      const fds = new Map<number, string>();
+      const zero = faultFs([], {
+        openSync: (real: any, p: string, ...rest: any[]) => {
+          const fd = real.openSync(p, ...rest);
+          fds.set(fd, p);
+          return fd;
+        },
+        writeSync: (real: any, fd: number, buf: Buffer, off: number, len: number) => {
+          const p = fds.get(fd) ?? "";
+          const isTarget =
+            name === MARKER_A_NAME ? isA(p) : p.includes(name);
+          return isTarget ? 0 : real.writeSync(fd, buf, off, len);
+        },
+      });
+      expect(gate({ fs: zero })).toMatchObject({ ok: false, code: "records_write_failed" });
+    }
   });
 
   describe("[D3] marker A, marker B and the sentinel are strict files", () => {
@@ -611,6 +729,14 @@ describe("R-c: not reachable from a project", () => {
       expect(gate({}, e)).toMatchObject({ ok: false, code: "records_root_project_visible" });
     });
   }
+
+  it("[RC-state] the state dir (copy B, with the token) is checked too (SA 4306 A3)", () => {
+    state = join(root, "tmp", "sync", ".cocalc-persist-state");
+    fs.mkdirSync(join(root, "tmp", "sync"), { recursive: true, mode: 0o700 });
+    const g = gate();
+    expect(g).toMatchObject({ ok: false, code: "records_root_project_visible" });
+    expect(g.reason).toMatch(/^the state dir /);
+  });
 
   it("[RC-opt] a base whose realpath is below /opt/cocalc is refused", () => {
     const fake = faultFs([], {

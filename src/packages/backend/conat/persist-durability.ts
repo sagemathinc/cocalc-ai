@@ -25,6 +25,7 @@ import { isSqliteSyncError } from "@cocalc/conat/persist/storage";
 import { spawn } from "node:child_process";
 import {
   evaluateRecordsGate,
+  writeAllSync,
   type GateOptions,
   type RecordsGate,
 } from "./persist-records-root";
@@ -114,12 +115,20 @@ export function nodePostRebootRecords(dir: string): PostRebootRecords {
       const tmp = `${target}.${process.pid}.tmp`;
       const fd = fs.openSync(tmp, "w", 0o600);
       try {
-        fs.writeSync(fd, data);
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
+        try {
+          // every byte, or a throw: never a truncated record (review B1)
+          writeAllSync(fs, fd, data);
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
+        fs.renameSync(tmp, target);
+      } catch (err) {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {}
+        throw err;
       }
-      fs.renameSync(tmp, target);
       fsyncPath(recordsDir);
     },
     exists: (key) => {
@@ -516,9 +525,11 @@ function settleMaintenanceWriteError(
 }
 
 // The records gate of this process (persist-records-root): evaluated ONCE,
-// at the first use (the persist's module init, or a maintenance call), and
-// shared by the records and persistStartupCheck.  It never throws: a
-// failure is a refusal (and a page), and the process stays up.
+// at the first USE -- the first record operation (a disk-stream open, a
+// maintenance call) or the start-up check -- never at module import (SA
+// 4306 S3: many processes import the persist module and never serve disk
+// streams), and shared by the records and persistStartupCheck.  It never
+// throws: a failure is a refusal (and a page), and the process stays up.
 let gate: RecordsGate | undefined;
 export function persistRecordsGate(
   options: GateOptions = {},
@@ -614,8 +625,9 @@ export function refusingDurabilityRecords(g: RecordsGate): DurabilityRecords {
   };
 }
 
-// the records of this process (one generation per process); never throws
-export function persistDurabilityRecords(): DurabilityRecords {
+// the records of this process (one generation per process), once the gate
+// ran; never throws
+function resolvedDurabilityRecords(): DurabilityRecords {
   if (records == null) {
     const g = persistRecordsGate();
     let real: DurabilityRecords | undefined;
@@ -636,6 +648,39 @@ export function persistDurabilityRecords(): DurabilityRecords {
     }
   }
   return records;
+}
+
+// The records of this process, LAZY (SA 4306 S3, ops0): getting them (the
+// persist module's init does) touches nothing; the gate runs at the first
+// operation or property read.
+let lazyRecords: DurabilityRecords | undefined;
+export function persistDurabilityRecords(): DurabilityRecords {
+  if (lazyRecords == null) {
+    const r = resolvedDurabilityRecords;
+    lazyRecords = {
+      get generation() {
+        return r().generation;
+      },
+      get root() {
+        return r().root;
+      },
+      dirtyPath: (id) => r().dirtyPath(id),
+      poisonedPath: (id) => r().poisonedPath(id),
+      arm: (id, owner) => r().arm(id, owner),
+      disarm: (id) => r().disarm(id),
+      poison: (id, info) => r().poison(id, info),
+      check: (id, owner) => r().check(id, owner),
+      poisonProject: (owner, info) => r().poisonProject(owner, info),
+      projectPoisonGeneration: (owner) => r().projectPoisonGeneration(owner),
+      clearProjectPoison: (owner) => r().clearProjectPoison(owner),
+      clearLeftovers: (id) => r().clearLeftovers(id),
+      leftoverIdsOf: (owner, max) => r().leftoverIdsOf(owner, max),
+      clearPostReboot: (id) => r().clearPostReboot(id),
+      retryPostReboot: () => r().retryPostReboot(),
+      postRebootPending: () => r().postRebootPending(),
+    };
+  }
+  return lazyRecords;
 }
 
 // ---------------------------------------------------------------------------

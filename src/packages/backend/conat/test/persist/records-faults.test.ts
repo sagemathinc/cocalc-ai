@@ -17,7 +17,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
-import { sha256Hex } from "@cocalc/backend/conat/persist-durability";
+import {
+  nodePostRebootRecords,
+  sha256Hex,
+} from "@cocalc/backend/conat/persist-durability";
 
 const ERRNOS = ["ENOSPC", "EDQUOT", "EROFS", "EIO"];
 
@@ -147,6 +150,47 @@ describe("[F-project] project-poison fails closed", () => {
   });
 });
 
+describe("[B2-clear] a verified project clears the renamed dirty record of a poison whose write failed (review B2)", () => {
+  it("[B2-clear] arm -> rename ok -> poison write fails -> clear: the target is gone and the stream is ok; a device poison stays", () => {
+    for (const code of ERRNOS) {
+      const id = `/project/file-${code}`;
+      records("g1").arm(id, "q");
+      const r = records("g1", [{ op: "writeFileSync", path: (p) => p.includes("/poisoned-file/"), code }]);
+      r.poison(id, { where: "t", scope: "project", owner: "q" });
+      const target = r.poisonedPath(id);
+      expect(JSON.parse(fs.readFileSync(target, "utf8")).kind).toBe("dirty");
+      expect(r.check(id, "q")).toBe("poisoned");
+      expect(r.clearProjectPoison("q")).toEqual([id]);
+      expect(fs.existsSync(target)).toBe(false);
+      expect(r.check(id, "q")).toBe("ok");
+      expect(records("g2").check(id, "q")).toBe("ok");
+    }
+    // a device poison (no project scope) of the same kind of failure stays
+    const dev = "/project/device";
+    records("g1").arm(dev, "q");
+    const r = records("g1", [{ op: "writeFileSync", path: (p) => p.includes("/poisoned-file/"), code: "EIO" }]);
+    r.poison(dev, { where: "t" });
+    expect(r.clearProjectPoison("q")).toEqual([]);
+    expect(r.check(dev, "q")).toBe("poisoned");
+    // a target of another kind (a device poison) is never removed and not
+    // reported cleared
+    const other = "/project/other";
+    records("g1").arm(other, "q");
+    r.poison(other, { where: "t", scope: "project", owner: "q" });
+    fs.writeFileSync(r.poisonedPath(other), JSON.stringify({ kind: "poisoned-file", id: other }));
+    expect(r.clearProjectPoison("q")).toEqual([]);
+    expect(r.check(other, "q")).toBe("poisoned");
+    // a target naming ANOTHER id stays, not reported (SA 4308)
+    const named = "/project/named";
+    records("g1").arm(named, "q");
+    r.poison(named, { where: "t", scope: "project", owner: "q" });
+    fs.writeFileSync(r.poisonedPath(named), JSON.stringify({ kind: "dirty", id: "/project/someone-else" }));
+    expect(r.clearProjectPoison("q")).toEqual([]);
+    expect(fs.existsSync(r.poisonedPath(named))).toBe(true);
+    expect(r.check(named, "q")).toBe("poisoned");
+  });
+});
+
 describe("[F-check] the scan: unreadable is present", () => {
   it("[F-check-readFileSync] an unreadable poisoned-file or poisoned-project record refuses", () => {
     for (const code of ERRNOS) {
@@ -169,6 +213,60 @@ describe("[F-check] the scan: unreadable is present", () => {
       expect(r.leftoverIdsOf("p")).toBeUndefined();
       const r2 = records("g2", [{ op: "readdirSync", path: (p) => p.endsWith("/dirty"), code }]);
       expect(r2.leftoverIdsOf("p")).toBeUndefined();
+    }
+  });
+});
+
+describe("[SHORT-postreboot] the post-reboot records: one writer, short writes continued (review B1, ops0's ruling)", () => {
+  it("[SHORT-postreboot] a record written in 3-byte pieces is complete; a write without progress throws, keeps it pending, leaves no temp", () => {
+    const nodeFs = require("node:fs");
+    const real = nodeFs.writeSync;
+    const realOpen = nodeFs.openSync;
+    const state = join(root, "state");
+    let mode: "short" | "zero" = "short";
+    // only the post-reboot store's temp files (fds opened under state/poisoned)
+    const target = new Set<number>();
+    const openSpy = jest.spyOn(nodeFs, "openSync").mockImplementation(((p: any, ...rest: any[]) => {
+      const fd = realOpen.call(nodeFs, p, ...rest);
+      if (typeof p === "string" && p.startsWith(join(state, "poisoned") + "/")) target.add(fd);
+      else target.delete(fd);
+      return fd;
+    }) as any);
+    const spy = jest
+      .spyOn(nodeFs, "writeSync")
+      .mockImplementation(((fd: number, buf: any, off?: any, len?: any, ...rest: any[]) => {
+        if (!target.has(fd) || typeof buf === "string") {
+          return real.call(nodeFs, fd, buf, off, len, ...rest);
+        }
+        const total = len ?? buf.length - (off ?? 0);
+        if (mode === "zero") return 0;
+        return real.call(nodeFs, fd, buf, off ?? 0, Math.min(total, 3));
+      }) as any);
+    try {
+      const post = nodePostRebootRecords(state);
+      const data = JSON.stringify({ kind: "poisoned", id: "/x", pad: "y".repeat(200) });
+      post.write("k1", data);
+      expect(fs.readFileSync(join(state, "poisoned", "k1"), "utf8")).toBe(data);
+      mode = "zero";
+      expect(() => post.write("k2", data)).toThrow(/short write/);
+      expect(fs.existsSync(join(state, "poisoned", "k2"))).toBe(false);
+      expect(fs.readdirSync(join(state, "poisoned")).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+      // through the records: the poison's post-reboot record stays pending (retried)
+      const r = createDurabilityRecords({
+        root: join(root, "records"),
+        generation: "g1",
+        fs: fs as any,
+        sha256: sha256Hex,
+        postReboot: post,
+      });
+      r.poison("/z", { where: "t" });
+      expect(r.postRebootPending()).toBe(1);
+      mode = "short";
+      expect(r.retryPostReboot()).toBe(0);
+      expect(post.exists(sha256Hex("/z"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+      openSpy.mockRestore();
     }
   });
 });

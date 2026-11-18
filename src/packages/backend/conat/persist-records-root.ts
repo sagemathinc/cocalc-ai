@@ -91,7 +91,7 @@ export interface GateFs {
   readFileSync: (path: string, encoding: "utf8") => string;
   openSync: (path: string, flags: number, mode?: number) => number;
   readSync: (fd: number, buf: Buffer, off: number, len: number, pos: number | null) => number;
-  writeSync: (fd: number, data: string) => number;
+  writeSync: (fd: number, buf: Buffer, offset: number, length: number) => number;
   fchmodSync: (fd: number, mode: number) => void;
   fsyncSync: (fd: number) => void;
   closeSync: (fd: number) => void;
@@ -353,6 +353,7 @@ function checkProjectReachability(
   base: string,
   env: NodeJS.ProcessEnv,
   dataDir: string,
+  label: string,
 ): void {
   let real: string;
   try {
@@ -373,7 +374,7 @@ function checkProjectReachability(
     if (isWithin(real, root)) {
       throw new Refuse(
         "records_root_project_visible",
-        `the records base ${real} is equal to or below the ${kind} root ${root}`,
+        `the ${label} ${real} is equal to or below the ${kind} root ${root}`,
       );
     }
   }
@@ -392,7 +393,7 @@ function checkProjectReachability(
     if (first.startsWith("project-")) {
       throw new Refuse(
         "records_root_project_visible",
-        `the records base ${real} is in the project volume ${posix.join(mp, first)}`,
+        `the ${label} ${real} is in the project volume ${posix.join(mp, first)}`,
       );
     }
   }
@@ -495,8 +496,33 @@ function fsyncDir(fs: GateFs, dir: string): void {
   }
 }
 
-// durably: a new temp file (O_EXCL, no link followed), mode 0600, fsync,
-// rename, fsync of the directory.  Throws on any failure.
+// Every byte of data to fd: a short write is continued; a write that
+// reports no progress (0, or not a positive count within the rest) throws,
+// so a truncated file is never fsync'd and renamed (review B1).  The one
+// writer of every durable record: the gate's (flag, sentinel, marker B and
+// A) and the post-reboot records (persist-durability, ops0's ruling).
+export function writeAllSync(
+  fs: Pick<GateFs, "writeSync">,
+  fd: number,
+  data: string,
+): void {
+  const buf = Buffer.from(data, "utf8");
+  let off = 0;
+  while (off < buf.length) {
+    const n = fs.writeSync(fd, buf, off, buf.length - off);
+    if (!Number.isInteger(n) || n <= 0 || n > buf.length - off) {
+      throw Object.assign(
+        new Error(`short write: ${n} of ${buf.length - off} bytes`),
+        { code: "EIO" },
+      );
+    }
+    off += n;
+  }
+}
+
+// durably: a new temp file (O_EXCL, no link followed), mode 0600, every
+// byte written, fsync, rename, fsync of the directory.  Throws on any
+// failure.
 function writeDurable(fs: GateFs, dir: string, name: string, data: string): void {
   const tmp = posix.join(dir, `.${name}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
   const fd = fs.openSync(
@@ -510,7 +536,7 @@ function writeDurable(fs: GateFs, dir: string, name: string, data: string): void
   try {
     try {
       fs.fchmodSync(fd, 0o600);
-      fs.writeSync(fd, data);
+      writeAllSync(fs, fd, data);
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
@@ -789,7 +815,11 @@ function evaluateOnce(opts: Required<Omit<GateOptions, "stateDir">> & { stateDir
   }
 
   // 3. R-c: not reachable from a project
-  if (!testPaths) checkProjectReachability(fs, base, env, opts.dataDir);
+  if (!testPaths) {
+    checkProjectReachability(fs, base, env, opts.dataDir, "records base");
+    // the state dir holds marker copy B, with the token (SA 4306 A3)
+    checkProjectReachability(fs, stateDir, env, opts.dataDir, "state dir");
+  }
 
   const recordsDir = posix.join(base, RECORDS_DIR_NAME);
   try {

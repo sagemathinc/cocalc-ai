@@ -340,12 +340,44 @@ export function createDurabilityRecords({
         if ((err as any)?.code !== "ENOENT") throw err;
       }
       // the in-memory ones (their record could not be written), last: a
-      // failure above keeps them
+      // failure above keeps them.  Their poisoned-file path can still hold
+      // the dirty record the poison renamed there before its write failed
+      // (review B2, SA 4308): it is removed only when it is proven to be
+      // this case -- readable JSON of this id (sha256(id) is the key), a
+      // dirty record or this project's own project-scoped poison; anything
+      // else stays (unreadable, another id, a device poison) and the id is
+      // not reported cleared.  Order: the post-reboot record, the target,
+      // the memory entry last; any failure throws and keeps the entry.
+      const provenOurs = (key: string, record: any): boolean =>
+        record != null &&
+        typeof record.id == "string" &&
+        sha256(record.id) === key &&
+        (record.kind === "dirty" ||
+          (record.kind === "poisoned-file" &&
+            record.scope === "project" &&
+            record.owner === name));
       for (const [key, m] of [...memPoisonedFiles]) {
         if (m.scope !== "project" || m.owner !== name) continue;
+        const target = posix.join(poisonedDir, key);
+        let text: string | undefined;
+        try {
+          text = fs.readFileSync(target, "utf8");
+        } catch (err) {
+          if ((err as any)?.code !== "ENOENT") continue; // unreadable: stays
+        }
+        let record: any;
+        if (text != null) {
+          try {
+            record = JSON.parse(text);
+          } catch {
+            continue; // not JSON: stays
+          }
+          if (!provenOurs(key, record)) continue;
+        }
         postReboot?.remove(key);
+        if (text != null) fs.unlinkSync(target);
         memPoisonedFiles.delete(key);
-        cleared.push(m.id);
+        if (!cleared.includes(m.id)) cleared.push(m.id);
       }
       memPoisonedProjects.delete(name);
       return cleared;

@@ -115,6 +115,61 @@ describe("028 B-3a: start-up preconditions", () => {
     });
   });
 
+  it("[LAZY] importing the persist module evaluates nothing and touches no file; the first record operation runs the gate (SA 4306 S3)", () => {
+    const base = join(dir, "lazy-base", "persist-durability");
+    fs.mkdirSync(join(dir, "lazy-base"), { mode: 0o700 });
+    for (const envPatch of [{ COCALC_PERSIST_RECORDS_BASE: base }, NO_BASE]) {
+      isolated(envPatch, () => {
+        const gateModule = require("@cocalc/backend/conat/persist-records-root");
+        const spy = jest.spyOn(gateModule, "evaluateRecordsGate");
+        const nodeFs = require("node:fs");
+        const touched: string[] = [];
+        const spies = ["lstatSync", "mkdirSync", "openSync", "readFileSync", "readdirSync", "renameSync"].map((op) => {
+          const real = nodeFs[op];
+          return jest.spyOn(nodeFs, op).mockImplementation(((p: any, ...rest: any[]) => {
+            if (typeof p === "string" && (p.startsWith(base) || p.includes("boot_id") || p.includes("cocalc-persist"))) {
+              touched.push(`${op} ${p}`);
+            }
+            return real.call(nodeFs, p, ...rest);
+          }) as any);
+        });
+        try {
+          const persist = require("@cocalc/backend/conat/persist"); // module init
+          const pd = require("@cocalc/backend/conat/persist-durability");
+          pd.persistDurabilityRecords(); // getting the records: still lazy
+          expect(persist.persistContextOptions.durability).toBeDefined();
+          expect(spy).toHaveBeenCalledTimes(0);
+          expect(touched).toEqual([]);
+          expect(fs.existsSync(base)).toBe(false);
+          // the first operation
+          pd.persistDurabilityRecords().check("/x", "p");
+          expect(spy).toHaveBeenCalledTimes(1);
+        } finally {
+          for (const s of spies) s.mockRestore();
+        }
+      });
+    }
+    expect(fs.existsSync(join(base, "records"))).toBe(true);
+  });
+
+  it("[SETUP-FAIL] records that can't be set up after a passed gate refuse in the start-up check (SA 4306 A2)", () => {
+    isolated({}, () => {
+      jest.doMock("@cocalc/conat/persist/durability-records", () => ({
+        ...jest.requireActual("@cocalc/conat/persist/durability-records"),
+        createDurabilityRecords: () => {
+          throw Error("injected set-up failure");
+        },
+      }));
+      const pd = require("@cocalc/backend/conat/persist-durability");
+      expect(pd.persistRecordsGate().ok).toBe(true);
+      const start = pd.persistStartupCheck();
+      expect(start.ok).toBe(false);
+      expect(start.reason).toBe("durability records can't be set up");
+      expect(() => pd.persistDurabilityRecords().arm("/x", "p")).toThrow(/refused/);
+      jest.dontMock("@cocalc/conat/persist/durability-records");
+    });
+  });
+
   it("[NOOP] no record operation before a successful gate: a refused gate leaves the base without records", () => {
     const base = join(dir, "persist-durability");
     fs.mkdirSync(base, { mode: 0o700 });
