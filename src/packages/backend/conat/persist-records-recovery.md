@@ -9,13 +9,17 @@ Finding 028, ALT-D2, ops0's S4 ruling.
 | Role | Command (dry run; add `--apply` to remove) | Runs as | Units to stop and start |
 |---|---|---|---|
 | Project host | `/opt/cocalc/project-host/bin/project-host persist-records-recover --base <records_base> --state-dir <records_state_dir>` | the project-host runtime user (`stat -c %U /mnt/cocalc/data`) | `cocalc-project-host-watchdog.timer`, `cocalc-project-host-watchdog.service`, `cocalc-project-host-start.service` (its stop runs `ctl stop`, which stops the daemon, its conat-persist child and its file server) |
-| Bay | `"$COCALC_BAY_NODE_BIN" "$COCALC_BAY_PROJECT_HOST_MAIN" persist-records-recover --base <records_base> --state-dir <records_state_dir>`, with the bay env loaded (below) | `cocalc-bay` | `cocalc-bay-conat-persist.service` |
+| Bay | `"$COCALC_BAY_NODE_BIN" "$COCALC_BAY_PROJECT_HOST_MAIN" persist-records-recover --base <records_base> --state-dir <records_state_dir>`, with the bay env loaded (below) | `cocalc-bay` | `cocalc-bay-hub-watchdog.timer`, every `cocalc-bay-hub@*.service` (each hub worker runs an in-process persist server: `--conat-server` → `initConatPersist`), `cocalc-bay-conat-persist.service`, `cocalc-bay-conat-router.service`. The bay serves no one meanwhile. |
 
 **Notes on the command:**
 - On a project host, `bin/project-host` is the wrapper the bootstrap writes. It runs the installed node on the current bundle's entry, whatever the bundle layout.
 - The command loads the daemon's env files (`/etc/cocalc/project-host.env`, `project-host.local.env`) itself.
 - On a bay, `COCALC_BAY_PROJECT_HOST_MAIN` is the persist's own entry (`/opt/cocalc/bay/current/runtime/project-host/index.js` in a rocket bundle). In a source-overlay bay it is set in `bay-current-cocalc-overlay.env`.
 - The command resolves every path from the role's environment, exactly as the persist does, and prints them: never type them by hand.
+
+**Who uses the records, per role** (lazily: only a process that opens a disk stream, reads the persist diagnostics or runs persist maintenance evaluates the gate; SA 4318):
+- **project host:** the project-host daemon (the file server's maintenance, its persist diagnostics) and its conat-persist child. Every one runs the entry under `/opt/cocalc/project-host/`.
+- **bay:** `cocalc-bay-conat-persist` (`$COCALC_BAY_PROJECT_HOST_MAIN` as the persist daemon), AND every hub worker `cocalc-bay-hub@*` (`$COCALC_BAY_HUB_MAIN --conat-server`, which starts an in-process persist server via `initConatPersist`). The router runs the same project-host entry and is stopped too.
 
 **The rules:**
 - Only the unit commands (`systemctl …`, step 3 and step 8) run with sudo. The recovery command, and any look at these files, run as the persist user, never as root.
@@ -48,17 +52,20 @@ Finding 028, ALT-D2, ops0's S4 ruling.
      Stop the timer first, or it starts the daemon again within a minute.
    - bay:
      ```
-     sudo systemctl stop cocalc-bay-conat-persist.service
+     sudo systemctl stop cocalc-bay-hub-watchdog.timer cocalc-bay-hub-watchdog.service 'cocalc-bay-hub@*.service' cocalc-bay-conat-persist.service cocalc-bay-conat-router.service
+     ```
+     Stop the watchdog timer first, or it starts the hub workers again.
+     ```
      ```
 4. **Check nothing runs:**
    - project host: `pgrep -af '/opt/cocalc/project-host/'` and `systemctl is-active cocalc-project-host-watchdog.timer` (must be `inactive`);
-   - bay, BOTH checks (an inactive unit alone does not prove that no orphaned or hand-started persist remains):
-     - `systemctl is-active cocalc-bay-conat-persist.service` must be `inactive`;
-     - no process of `cocalc-bay` runs the persist's entry. With the bay env loaded as in step 5:
+   - bay, BOTH checks (an inactive unit alone does not prove that no orphaned or hand-started process remains):
+     - `systemctl is-active cocalc-bay-hub-watchdog.timer 'cocalc-bay-hub@*.service' cocalc-bay-conat-persist.service cocalc-bay-conat-router.service` prints only `inactive` lines;
+     - no process of `cocalc-bay` runs the persist's entry or the hub's entry. With the bay env loaded as in step 5:
        ```
-       sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-workers bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; pgrep -u cocalc-bay -af -- "$COCALC_BAY_PROJECT_HOST_MAIN"'
+       sudo -u cocalc-bay bash -c 'set -a; . /etc/cocalc/bay.env; for f in bay-workers bay-overlay bay-topology bay-local; do [ -r /etc/cocalc/$f.env ] && . /etc/cocalc/$f.env; done; set +a; pgrep -u cocalc-bay -af -- "$COCALC_BAY_PROJECT_HOST_MAIN"; pgrep -u cocalc-bay -af -- "$COCALC_BAY_HUB_MAIN"'
        ```
-       It must print nothing (exit 1). Any line means STOP: escalate.
+       It must print nothing. Any line means STOP: escalate.
 5. **Dry run, as the persist user.**
    - project host:
      ```
@@ -84,7 +91,7 @@ Finding 028, ALT-D2, ops0's S4 ruling.
      - Fix the cause and run step 7 again. If it fails again, escalate.
 8. **Start every unit you stopped:**
    - project host: `sudo systemctl start cocalc-project-host-start.service cocalc-project-host-watchdog.timer`;
-   - bay: `sudo systemctl start cocalc-bay-conat-persist.service`.
+   - bay: `sudo systemctl start cocalc-bay.target cocalc-bay-hub-watchdog.timer` (the target wants the persist, the router and the hub workers).
 9. **Check durable mode.**
    - The diagnostics show `startup_records.records_ok: true`, `records_t1: "pass"`, `records_migrated: true`, and `records_root` = `<base>/records/<the current boot id>`.
    - A document on that host saves.
