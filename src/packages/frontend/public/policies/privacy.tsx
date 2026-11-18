@@ -11,7 +11,7 @@ export const privacyPolicy: PublicPolicy = {
   navLabel: "Privacy",
   slug: "privacy",
   title: "Privacy Policy",
-  updated: "October 27, 2026",
+  updated: "November 18, 2026",
   content: (
     <>
       <p>
@@ -454,11 +454,10 @@ export const privacyPolicy: PublicPolicy = {
               impossible for us to provide the service otherwise.
               <p>
                 {" "}
-                With your consent, we may use optional analytics cookies to
-                understand how the site is used. Examples include Google
-                Analytics cookies such as <code>_ga</code>, <code>_gid</code>,
-                and related <code>_ga*</code> cookies, as well as the CoCalc
-                analytics cookie <code>CC_ANA</code>.
+                With your consent, we may use an optional CoCalc analytics
+                cookie, <code>CC_ANA</code>, to understand how the site is
+                used. It is set and read only by CoCalc. We do not use Google
+                Analytics or other third-party analytics services.
               </p>
               <p>
                 {" "}
