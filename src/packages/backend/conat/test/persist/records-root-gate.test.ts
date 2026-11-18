@@ -22,7 +22,10 @@ import {
   type GateFs,
   type GateOptions,
 } from "@cocalc/backend/conat/persist-records-root";
-import { recoverFailedRecordsCreation } from "@cocalc/backend/conat/persist-records-recover";
+import {
+  recoverFailedRecordsCreation,
+  runPersistRecordsRecoverCli,
+} from "@cocalc/backend/conat/persist-records-recover";
 import { createDurabilityRecords } from "@cocalc/conat/persist/durability-records";
 import { sha256Hex } from "@cocalc/backend/conat/persist-durability";
 
@@ -1194,5 +1197,31 @@ describe("operator recovery after a failed set-up (ops0's S4 ruling; persist-rec
     // the actual gate result: the root is created again (a migration)
     expect(gate()).toMatchObject({ ok: true, migrated: true });
   });
-});
 
+  it("[RECOVERY-ARGS] the command requires --base and --state-dir, once each; wrong values stop before anything (SA 4317 R2)", () => {
+    expect(gate().ok).toBe(true);
+    fs.rmSync(markerA()); // a refused, partial state
+    const usage = /^usage: persist-records-recover --base <records_base> --state-dir <records_state_dir> \[--apply\]/;
+    for (const argv of [
+      [],
+      ["--apply"],
+      ["--base", base],
+      ["--state-dir", state],
+      ["--base", base, "--state-dir"],
+      ["--base", base, "--state-dir", state, "--state-dir", state],
+      ["--base", base, "--state-dir", state, "--bogus"],
+    ]) {
+      const r = runPersistRecordsRecoverCli(argv, env(), state);
+      expect(r.code).toBe(2);
+      expect(r.output).toMatch(usage);
+    }
+    expect(fs.existsSync(markerB())).toBe(true);
+    const wrong = runPersistRecordsRecoverCli(["--base", base, "--state-dir", join(root, "x"), "--apply"], env(), state);
+    expect(wrong.code).toBe(2);
+    expect(JSON.parse(wrong.output).stop).toMatch(/are not the persist's own/);
+    expect(fs.existsSync(markerB())).toBe(true);
+    const ok = runPersistRecordsRecoverCli(["--base", base, "--state-dir", state], env(), state);
+    expect(ok.code).toBe(0);
+    expect(JSON.parse(ok.output)).toMatchObject({ ok: true, applied: [] });
+  });
+});

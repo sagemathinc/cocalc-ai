@@ -197,7 +197,11 @@ describe("[B2-clear] a verified project clears the renamed dirty record of a poi
     const named = "/project/named";
     records("g1").arm(named, "q");
     r.poison(named, { where: "t", scope: "project", owner: "q" });
-    fs.writeFileSync(r.poisonedPath(named), JSON.stringify({ kind: "dirty", id: "/project/someone-else" }));
+    // (this process's generation: only the id proof rejects it)
+    fs.writeFileSync(
+      r.poisonedPath(named),
+      JSON.stringify({ kind: "dirty", generation: "g1", id: "/project/someone-else" }),
+    );
     expect(r.clearProjectPoison("q")).toEqual([]);
     expect(fs.existsSync(r.poisonedPath(named))).toBe(true);
     expect(r.check(named, "q")).toBe("poisoned");
