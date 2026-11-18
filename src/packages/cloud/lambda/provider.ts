@@ -271,6 +271,17 @@ function buildUserData(spec: HostSpec): string | undefined {
   return `#!/bin/bash\nset -e\ncurl -fsSL ${url} | bash`;
 }
 
+// Where an attached Lambda filesystem is mounted when the host spec does not
+// say: the project-host data mount (formerly /btrfs; bootstrap keeps a
+// /btrfs -> /mnt/cocalc symlink for old paths).
+export const DEFAULT_LAMBDA_FILESYSTEM_MOUNT = "/mnt/cocalc";
+
+export function lambdaFilesystemMount(metadata?: {
+  filesystem_mount_point?: string;
+}): string {
+  return metadata?.filesystem_mount_point ?? DEFAULT_LAMBDA_FILESYSTEM_MOUNT;
+}
+
 export class LambdaProvider implements CloudProvider {
   mapStatus(status?: string): string | undefined {
     if (!status) return undefined;
@@ -335,7 +346,7 @@ export class LambdaProvider implements CloudProvider {
     );
 
     const filesystemName = spec.metadata?.filesystem_name;
-    const filesystemMount = spec.metadata?.filesystem_mount_point ?? "/btrfs";
+    const filesystemMount = lambdaFilesystemMount(spec.metadata);
     let file_system_names: string[] | undefined;
     let file_system_mounts:
       | Array<{ name: string; mount_point: string }>

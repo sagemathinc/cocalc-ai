@@ -17422,7 +17422,7 @@ exit 1
 """
     acp_status_script = """#!/usr/bin/env bash
 set -euo pipefail
-data_dir="${DATA:-${COCALC_DATA:-/btrfs/data}}"
+data_dir="${DATA:-${COCALC_DATA:-/mnt/cocalc/data}}"
 pid_file="$data_dir/acp-worker.pid"
 log_file="$data_dir/logs/acp-worker.log"
 
@@ -17467,7 +17467,7 @@ fi
 """
     acp_logs_script = """#!/usr/bin/env bash
 set -euo pipefail
-data_dir="${DATA:-${COCALC_DATA:-/btrfs/data}}"
+data_dir="${DATA:-${COCALC_DATA:-/mnt/cocalc/data}}"
 log_file="$data_dir/logs/acp-worker.log"
 lines="${1:-80}"
 if ! [[ "$lines" =~ ^[0-9]+$ ]]; then
