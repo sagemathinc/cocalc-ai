@@ -21,6 +21,7 @@ LOCK_PROBE="sudo flock -n -E 75 /etc/cocalc/bay-deploy.lock true"
 mkdir -p "${TMP_ROOT}/bin"
 cat > "${TMP_ROOT}/bin/ssh" <<EOF
 #!/usr/bin/env bash
+while [[ "\$1" == -o ]]; do shift 2; done # the script's ssh options
 shift # the ssh target
 printf '%s\n' "\$*" >> "\$STUB_LOG"
 case "\$*" in
@@ -70,6 +71,7 @@ run_case() {
       "$SCRIPT" --remote bay.example --api https://bay.example \
         --bundle-url https://bundles.example/bay-runtime.tar.xz \
         --admin-email admin@bay.example --cli "${TMP_ROOT}/bin/cocalc-cli" \
+        --expect-host-version 20260101T000000Z-test \
         --report-dir "${TMP_ROOT}/report-main" \
         > /dev/null 2> "$ERR" || RC=$?
       ;;
