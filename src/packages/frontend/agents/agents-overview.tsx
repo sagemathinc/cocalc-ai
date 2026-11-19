@@ -8,6 +8,7 @@
 // are the sidebar's pins; "Shared with me" lists agents other people
 // registered in projects you collaborate on.
 
+import { AgentUsageButton } from "./agent-usage";
 import { SetConnectorsModal } from "./cli-connectors-bulk";
 import { useEnabledCliConnectors } from "./cli-connectors-store";
 import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
@@ -436,6 +437,7 @@ export function AgentsOverview(props: Props) {
             label="Agents"
           />
           <PageSearchBox scope="agents" />
+          <AgentUsageButton />
           {props.onNewAgent && (
             <PageCreateButton label="New agent" onClick={props.onNewAgent} />
           )}

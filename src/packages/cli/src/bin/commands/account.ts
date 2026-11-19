@@ -331,6 +331,26 @@ export function registerAccountCommand(
     });
 
   account
+    .command("agent-usage")
+    .description(
+      "show what your agents used, tokens by model per agent, from the turns recorded on this site (the ai-subscriptions:read privilege); not shares of a weekly limit",
+    )
+    .option(
+      "--hours <hours>",
+      "the period, in hours (default 24, at most 2160)",
+    )
+    .action(async (opts: { hours?: string }, command: Command) => {
+      await withContext(command, "account agent-usage", async (ctx) => {
+        const hours = `${opts.hours ?? ""}`.trim()
+          ? Number(opts.hours)
+          : undefined;
+        if (hours !== undefined && !(hours > 0))
+          throw new Error("--hours must be a positive number");
+        return await ctx.hub.agent.agentUsage({ hours });
+      });
+    });
+
+  account
     .command("egress [account]")
     .description(
       "show historical managed outbound network usage for an account",

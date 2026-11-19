@@ -83,6 +83,7 @@ export const getIdentity = forCaller(identities.getIdentity);
 export const resolveIdentity = forCaller(identities.resolveIdentity);
 export const getPaymentSelections = payments.getPaymentSelections;
 export const listPaymentSelections = payments.listPaymentSelections;
+export const agentUsage = payments.agentUsage;
 export const setPaymentSelections = payments.setPaymentSelections;
 export const copyPaymentSelection = payments.copyPaymentSelection;
 export const resolvePaymentSelection = payments.resolvePaymentSelection;

@@ -11,12 +11,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import {
+  AGENT_USAGE_REPORT_MAX_HOURS,
+  AGENT_USAGE_REPORT_MAX_ROWS,
   parseAgentTurnUsage,
   type AgentTurnUsage,
+  type AgentUsageReport,
 } from "@cocalc/util/ai/agent-turn-usage";
 
 const logger = getLogger("server:agents:turn-usage");
-
 
 /**
  * At most this many turns from one host are stored per hour, per home bay:
@@ -173,4 +175,99 @@ async function insertHostTurns(
     }
   }
   return stored;
+}
+
+/** Token sums are reported as JSON numbers, so a sum is capped at the
+ * largest integer a number holds exactly. The stored bounds (per field, per
+ * turn, per host and hour) allow far larger sums than real use reaches; a
+ * capped sum shows as at least this much rather than failing the report or
+ * losing precision. */
+export const AGENT_USAGE_REPORT_MAX_TOKENS = Number.MAX_SAFE_INTEGER;
+
+function capped(field: string): string {
+  return `LEAST(COALESCE(sum((m->>'${field}')::numeric), 0), ${AGENT_USAGE_REPORT_MAX_TOKENS})::bigint`;
+}
+
+/**
+ * Home-bay read: this account's usage by agent conversation and model over
+ * the last `hours`, busiest first, with the account's name for each agent
+ * whose current conversation it is.
+ */
+export async function agentUsageReport({
+  account_id,
+  hours,
+  now = Date.now(),
+  query = (sql: string, values?: unknown[]) =>
+    import("./store").then(({ agentStore }) => agentStore().query(sql, values)),
+}: {
+  account_id: string;
+  hours: number;
+  now?: number;
+  query?: (sql: string, values?: unknown[]) => Promise<{ rows: any[] }>;
+}): Promise<AgentUsageReport> {
+  const period = Math.min(
+    AGENT_USAGE_REPORT_MAX_HOURS,
+    Math.max(1, Math.floor(Number(hours) || 24)),
+  );
+  const since = new Date(now - period * 3600_000);
+  const { rows } = await query(
+    `SELECT u.project_id, u.path_hash, u.thread_id, u.provider,
+            COALESCE(m->>'model', 'unknown') AS model,
+            count(DISTINCT u.id)::int AS turns,
+            ${capped("input_tokens")} AS input_tokens,
+            ${capped("cached_input_tokens")} AS cached_input_tokens,
+            ${capped("cache_write_tokens")} AS cache_write_tokens,
+            ${capped("output_tokens")} AS output_tokens,
+            max(u.ended_at) AS last_at
+       FROM agent_turn_usage u
+       CROSS JOIN LATERAL jsonb_array_elements(u.models) AS m
+      WHERE u.account_id=$1 AND u.ended_at > $2
+      GROUP BY u.project_id, u.path_hash, u.thread_id, u.provider,
+               COALESCE(m->>'model', 'unknown')
+      ORDER BY sum((m->>'output_tokens')::numeric) DESC NULLS LAST
+      LIMIT $3`,
+    [account_id, since, AGENT_USAGE_REPORT_MAX_ROWS + 1],
+  );
+  const names = (
+    await query(
+      `SELECT name, project_id, metadata->>'path' AS path,
+              metadata->>'thread_id' AS thread_id
+         FROM agent_personal_names
+        WHERE account_id=$1 AND retired_at IS NULL`,
+      [account_id],
+    )
+  ).rows;
+  // An agent is its (project, path, thread): a copied chat can keep the
+  // thread id under another path, and that is another agent.
+  const nameOf = new Map(
+    names
+      .filter((n) => n.path && n.thread_id)
+      .map((n) => [
+        `${n.project_id}/${turnUsagePathHash(n.path)}/${n.thread_id}`,
+        n.name as string,
+      ]),
+  );
+  const truncated = rows.length > AGENT_USAGE_REPORT_MAX_ROWS;
+  return {
+    since: since.toISOString(),
+    hours: period,
+    rows: rows.slice(0, AGENT_USAGE_REPORT_MAX_ROWS).map((r) => {
+      const name = nameOf.get(`${r.project_id}/${r.path_hash}/${r.thread_id}`);
+      return {
+        project_id: r.project_id,
+        path_hash: r.path_hash,
+        thread_id: r.thread_id,
+        provider: r.provider,
+        model: r.model,
+        ...(name ? { name } : {}),
+        turns: Number(r.turns),
+        input_tokens: Number(r.input_tokens),
+        cached_input_tokens: Number(r.cached_input_tokens),
+        cache_write_tokens: Number(r.cache_write_tokens),
+        output_tokens: Number(r.output_tokens),
+        last_at: new Date(r.last_at).toISOString(),
+      };
+    }),
+    ...(truncated ? { truncated: true } : {}),
+  };
 }

@@ -204,6 +204,10 @@ and how long the pool lasts at the recent rate, plus the connected Codex
 subscriptions. A week that will reset with room left is unused capacity; one
 that runs out before its reset is a reason to slow down. Use them to plan large work, e.g. to
 wait for a reset instead of starting a long run that will be cut off.
+`cocalc account agent-usage [--hours N]` shows what each agent used, tokens by
+model, from this site's recorded turns (not shares of a weekly limit: cache
+reads cost far less than new input or output, and other sites are not
+included).
 
 ## Shared Browser And Terminal
 
