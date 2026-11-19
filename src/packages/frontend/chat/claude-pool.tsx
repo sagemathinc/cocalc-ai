@@ -7,6 +7,7 @@
 // subscriptions, one picked for each turn (on the server). Here: which
 // subscriptions Auto may use, and how long they last at the recent rate.
 
+import { AgentUsageButton } from "@cocalc/frontend/agents/agent-usage";
 import { Checkbox, Typography } from "antd";
 import { useState } from "react";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
@@ -92,35 +93,41 @@ export function ClaudePoolForecast({
       </Typography.Text>
     );
   return (
-    <div style={{ fontSize: 12 }} role="status">
-      <div>
-        {summary.available} of {summary.members} subscription
-        {summary.members === 1 ? "" : "s"} with room now
-        {summary.nextAvailableAt != null && (
-          <>
-            ; next <TimeAgo date={new Date(summary.nextAvailableAt)} />
-          </>
-        )}
-        . About {summary.remaining.toFixed(1)} of {summary.members} weekly
-        limits left.
+    <>
+      <div style={{ fontSize: 12 }} role="status">
+        <div>
+          {summary.available} of {summary.members} subscription
+          {summary.members === 1 ? "" : "s"} with room now
+          {summary.nextAvailableAt != null && (
+            <>
+              ; next <TimeAgo date={new Date(summary.nextAvailableAt)} />
+            </>
+          )}
+          . About {summary.remaining.toFixed(1)} of {summary.members} weekly
+          limits left.
+        </div>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {summary.runsOutAt != null ? (
+            <>
+              At the recent rate, every weekly limit is reached{" "}
+              <TimeAgo date={new Date(summary.runsOutAt)} /> (
+              {new Date(summary.runsOutAt).toLocaleString(undefined, {
+                weekday: "short",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+              ).
+            </>
+          ) : (
+            "At the recent rate, the weekly limits last until they reset."
+          )}
+        </Typography.Text>
       </div>
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {summary.runsOutAt != null ? (
-          <>
-            At the recent rate, every weekly limit is reached{" "}
-            <TimeAgo date={new Date(summary.runsOutAt)} /> (
-            {new Date(summary.runsOutAt).toLocaleString(undefined, {
-              weekday: "short",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-            ).
-          </>
-        ) : (
-          "At the recent rate, the weekly limits last until they reset."
-        )}
-      </Typography.Text>
-    </div>
+      {/* Which agents use it (this site's turns). */}
+      <div>
+        <AgentUsageButton size="small" />
+      </div>
+    </>
   );
 }
 

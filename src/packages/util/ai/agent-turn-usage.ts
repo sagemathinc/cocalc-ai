@@ -271,3 +271,33 @@ export function mergeTurnModelUsage(
   }
   return [...byModel.values()].slice(0, MAX_TURN_USAGE_MODELS);
 }
+
+/** One agent conversation's use of one model over a period (usage by agent). */
+export interface AgentUsageRow {
+  project_id: string;
+  thread_id: string;
+  provider: AgentTurnUsageProvider;
+  model: string;
+  /** The account's name for the agent, when this is its current conversation. */
+  name?: string;
+  turns: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  cache_write_tokens: number;
+  output_tokens: number;
+  /** When the last of these turns ended (ISO). */
+  last_at: string;
+}
+
+export interface AgentUsageReport {
+  /** The period: turns that ended since then (ISO). */
+  since: string;
+  hours: number;
+  rows: AgentUsageRow[];
+  /** More rows than returned (the busiest are kept). */
+  truncated?: boolean;
+}
+
+/** Periods the report offers (hours): at most the retention. */
+export const AGENT_USAGE_REPORT_MAX_HOURS = AGENT_TURN_USAGE_RETENTION_DAYS * 24;
+export const AGENT_USAGE_REPORT_MAX_ROWS = 500;
