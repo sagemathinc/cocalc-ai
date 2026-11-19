@@ -340,7 +340,7 @@ test("how much more the pool could take, and which subscription goes first", () 
     /Up to about \d+\.\d+ weekly limits a day would last the coming week, counting the resets on the way and what each subscription loses unused when it resets\./,
   );
   expect(status).toMatch(
-    /Next to reset: \S+, with \d+% left, at .* \(Auto spends it first\)\./,
+    /Next to reset: \S+, with \d+% left, at .*: the room it has left then is lost\./,
   );
 });
 
@@ -355,6 +355,13 @@ test("the pace line compares the most that lasts with the recent rate", () => {
   );
   expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 1.0 })).toMatch(
     /That is about the recent rate\.$/,
+  );
+  // A measured rate of zero is not "about" any pace.
+  expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 0 })).toMatch(
+    /Nothing was used lately: there is room to use more\.$/,
+  );
+  expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 0 })).not.toMatch(
+    /about the recent rate|times/,
   );
   // Without a rate to compare with, there is nothing to pace against.
   expect(paceLine({ ...base, maxPerDay: 0.5 })).toBeUndefined();

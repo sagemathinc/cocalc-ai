@@ -153,11 +153,15 @@ export function paceLine(summary: ClaudePoolSummary): string | undefined {
   const max = summary.maxPerDay;
   const used = summary.usedPerDay;
   const compared =
-    used > 0 && max > used * 1.05
-      ? ` That is about ${(max / used).toFixed(1)} times the recent rate: there is room to use more.`
-      : max < used * 0.95
-        ? " That is less than the recent rate."
-        : " That is about the recent rate.";
+    used === 0
+      ? max > 0
+        ? " Nothing was used lately: there is room to use more."
+        : ""
+      : max > used * 1.05
+        ? ` That is about ${(max / used).toFixed(1)} times the recent rate: there is room to use more.`
+        : max < used * 0.95
+          ? " That is less than the recent rate."
+          : " That is about the recent rate.";
   return `Up to about ${perDay(max)} weekly limits a day would last the coming week, counting the resets on the way and what each subscription loses unused when it resets.${compared}`;
 }
 
@@ -214,8 +218,8 @@ export function ClaudePoolForecast({
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           Next to reset: {summary.useFirst.name}, with{" "}
           {Math.round(summary.useFirst.left * 100)}% left,{" "}
-          <TimeAgo date={new Date(summary.useFirst.resetsAt)} /> (Auto spends it
-          first).
+          <TimeAgo date={new Date(summary.useFirst.resetsAt)} />: the room it
+          has left then is lost.
         </Typography.Text>
       )}
     </div>

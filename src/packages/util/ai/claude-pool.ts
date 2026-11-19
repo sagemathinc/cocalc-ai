@@ -380,7 +380,10 @@ export interface ClaudePoolForecast {
    * within a week: what the subscriptions can sustain, counting the room
    * each loses unused at its reset and the resets on the way. */
   maxRatePerHour?: number;
-  /** Spend this one first: of those with room left, the soonest to reset. */
+  /** Of those with weekly room left, the soonest to reset: where unused room
+   * is lost first. About weekly room only; Auto's next pick also weighs
+   * five-hour room, limits and the agent's current subscription
+   * (pickClaudePoolCredential), so it may be another. */
   useFirst?: { credential_id: string; left: number; resetsAt: number };
 }
 

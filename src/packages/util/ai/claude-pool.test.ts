@@ -305,6 +305,21 @@ describe("how much more the pool could take", () => {
     ).toBeCloseTo(1 / 168, 5);
   });
 
+  it("the next to reset is about weekly room, not Auto's next pick", () => {
+    // Out of five-hour room: Auto picks another now, but its week's room is
+    // still the first to be lost.
+    const members = [
+      member("soon", { five: 0.99, week: 0.5, weekResetsIn: 10 * HOUR }),
+      member("later", { week: 0.5, weekResetsIn: 100 * HOUR }),
+    ];
+    expect(claudePoolForecast(members, now).useFirst?.credential_id).toBe(
+      "soon",
+    );
+    expect(pickClaudePoolCredential({ members, cost, now })).toEqual({
+      credential_id: "later",
+    });
+  });
+
   it("names the subscription to spend first: the soonest reset with room", () => {
     const forecast = claudePoolForecast(
       [
