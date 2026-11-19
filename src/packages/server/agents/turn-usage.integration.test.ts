@@ -30,6 +30,7 @@ import {
   recordAgentTurnUsageForAccount,
 } from "./payment-selections";
 import {
+  AGENT_USAGE_REPORT_MAX_TOKENS,
   agentUsageReport,
   MAX_TURNS_PER_HOST_PER_HOUR,
   setTurnUsageTransactionForTests,
@@ -267,9 +268,16 @@ describeDb("agent turn usage (account home bay)", () => {
   test("reports usage by agent and model, busiest first, with names", async () => {
     const account_id = randomUUID();
     const project_id = randomUUID();
-    const turn = (thread_id: string, models: any[], endedAgo = 60_000) =>
+    const path = ".local/share/cocalc/agents/a.chat";
+    const turn = (
+      thread_id: string,
+      models: any[],
+      endedAgo = 60_000,
+      chat = path,
+    ) =>
       usage({
         project_id,
+        path: chat,
         thread_id,
         turn_id: randomUUID(),
         models,
@@ -293,17 +301,22 @@ describeDb("agent turn usage (account home bay)", () => {
         ]),
       },
       { usage: turn("t-other", [opus(500)]) },
+      // A copy of the chat keeps the thread id under another path: another
+      // agent, with its own row and name.
+      { usage: turn("t-reviewer", [opus(30)], 60_000, "copy.chat") },
       // Too old for a 24-hour report.
       { usage: turn("t-old", [opus(9999)], 30 * 3600_000) },
     ]);
     await getPool().query(
       `INSERT INTO agent_personal_names(account_id,name,project_id,agent_id,metadata)
-       VALUES ($1,'reviewer',$2,$3,$4)`,
+       VALUES ($1,'reviewer',$2,$3,$4), ($1,'copycat',$2,$5,$6)`,
       [
         account_id,
         project_id,
         randomUUID(),
-        { thread_id: "t-reviewer", path: "a.chat" },
+        { thread_id: "t-reviewer", path },
+        randomUUID(),
+        { thread_id: "t-reviewer", path: "copy.chat" },
       ],
     );
     const report = await agentUsageReport({
@@ -323,8 +336,11 @@ describeDb("agent turn usage (account home bay)", () => {
     ).toEqual([
       ["t-other", "claude-opus-5-5", undefined, 1, 500],
       ["t-reviewer", "claude-opus-5-5", "reviewer", 2, 120],
+      ["t-reviewer", "claude-opus-5-5", "copycat", 1, 30],
       ["t-reviewer", "claude-haiku-5-5", "reviewer", 1, 1],
     ]);
+    expect(report.rows[2].path_hash).toBe(turnUsagePathHash("copy.chat"));
+    expect(report.rows[1].path_hash).toBe(turnUsagePathHash(path));
     expect(report.rows[1]).toMatchObject({
       input_tokens: 20,
       cached_input_tokens: 200,
@@ -349,5 +365,47 @@ describeDb("agent turn usage (account home bay)", () => {
         })
       ).rows,
     ).toEqual([]);
+  });
+
+  test("sums beyond what a number holds exactly are capped, not failed", async () => {
+    const account_id = randomUUID();
+    const big = {
+      model: "claude-opus-5-5",
+      input_tokens: 1e12,
+      cached_input_tokens: 1e12,
+      cache_write_tokens: 1e12,
+      output_tokens: 1e12,
+      reasoning_output_tokens: 0,
+    };
+    // 8 entries of the per-field maximum per turn, 2000 turns: 1.6e16 per
+    // field, above both Number.MAX_SAFE_INTEGER and (over 30 days) bigint.
+    await getPool().query(
+      `INSERT INTO agent_turn_usage
+         (account_id,id,project_id,path_hash,thread_id,provider,payment,models,
+          outcome,started_at,ended_at)
+       SELECT $1, gen_random_uuid(), $2, 'h', 't', 'claude', 'x', $3::jsonb,
+              'completed', now(), now()
+         FROM generate_series(1, $4::int)`,
+      [
+        account_id,
+        randomUUID(),
+        JSON.stringify(Array(8).fill(big)),
+        MAX_TURNS_PER_HOST_PER_HOUR,
+      ],
+    );
+    const report = await agentUsageReport({
+      account_id,
+      hours: 24,
+      query: (sql, values) => getPool().query(sql, values as any[]),
+    });
+    expect(report.rows).toHaveLength(1);
+    expect(report.rows[0]).toMatchObject({
+      turns: MAX_TURNS_PER_HOST_PER_HOUR,
+      input_tokens: AGENT_USAGE_REPORT_MAX_TOKENS,
+      cached_input_tokens: AGENT_USAGE_REPORT_MAX_TOKENS,
+      cache_write_tokens: AGENT_USAGE_REPORT_MAX_TOKENS,
+      output_tokens: AGENT_USAGE_REPORT_MAX_TOKENS,
+    });
+    expect(Number.isSafeInteger(report.rows[0].output_tokens)).toBe(true);
   });
 });

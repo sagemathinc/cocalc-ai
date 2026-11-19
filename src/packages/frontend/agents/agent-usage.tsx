@@ -9,7 +9,7 @@
 // site or app is not included.
 
 import { Alert, Button, Modal, Segmented, Table, Typography } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   AgentUsageReport,
   AgentUsageRow,
@@ -71,6 +71,8 @@ export function AgentUsageModal({
     let active = true;
     setLoading(true);
     setError("");
+    // Never show the previous period's rows under the new period.
+    setReport(undefined);
     load(hours)
       .then((next) => {
         if (active) setReport(next);
@@ -130,7 +132,9 @@ export function AgentUsageModal({
           size="small"
           loading={loading}
           pagination={rows.length > 50 ? { pageSize: 50 } : false}
-          rowKey={(row) => `${row.project_id}/${row.thread_id}/${row.model}`}
+          rowKey={(row) =>
+            `${row.project_id}/${row.path_hash}/${row.thread_id}/${row.model}`
+          }
           dataSource={rows}
           locale={{
             emptyText: loading
@@ -189,10 +193,18 @@ export function AgentUsageModal({
 /** Opens the usage table. Not in CoCalc Plus, which records no usage yet. */
 export function AgentUsageButton({ size }: { size?: "small" | "middle" }) {
   const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+  // The dialog is mounted only while open, so antd does not restore focus:
+  // return it to this button once the dialog is gone.
+  useEffect(() => {
+    if (wasOpen.current && !open) button.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
   if (lite) return null;
   return (
     <>
-      <Button size={size} onClick={() => setOpen(true)}>
+      <Button ref={button} size={size} onClick={() => setOpen(true)}>
         Usage by agent
       </Button>
       {open && <AgentUsageModal open onClose={() => setOpen(false)} />}
