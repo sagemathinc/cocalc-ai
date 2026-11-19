@@ -132,7 +132,7 @@ test("a failed period change does not leave the previous period's rows", async (
   expect(screen.queryByRole("status")).toBeNull();
 });
 
-test("the same conversation under two chat paths is two rows", async () => {
+test("rows differing only by chat path or provider are distinct rows", async () => {
   const errors = jest.spyOn(console, "error");
   const load = async (hours: number) => ({
     since: "2026-11-18T18:00:00.000Z",
@@ -140,11 +140,16 @@ test("the same conversation under two chat paths is two rows", async () => {
     rows: [
       row({ name: "reviewer" }),
       row({ name: "copycat", path_hash: "b".repeat(64) }),
+      // After a runtime switch, one conversation can have an "unknown" model
+      // under each provider.
+      row({ model: "unknown", output_tokens: 3 }),
+      row({ provider: "codex", model: "unknown", output_tokens: 2 }),
     ],
   });
   render(<AgentUsageModal open onClose={jest.fn()} load={load as any} />);
   await waitFor(() => expect(screen.getByText("@copycat")).toBeTruthy());
   expect(screen.getByText("@reviewer")).toBeTruthy();
+  expect(screen.getAllByText("unknown")).toHaveLength(2);
   // Each row has its own key (React warns about duplicates).
   expect(
     errors.mock.calls.filter((args) => /same key/.test(args.join(" "))),

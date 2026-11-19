@@ -133,7 +133,7 @@ export function AgentUsageModal({
           loading={loading}
           pagination={rows.length > 50 ? { pageSize: 50 } : false}
           rowKey={(row) =>
-            `${row.project_id}/${row.path_hash}/${row.thread_id}/${row.model}`
+            `${row.project_id}/${row.path_hash}/${row.thread_id}/${row.provider}/${row.model}`
           }
           dataSource={rows}
           locale={{
