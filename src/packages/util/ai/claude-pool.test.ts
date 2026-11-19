@@ -272,6 +272,56 @@ describe("forecast", () => {
   });
 });
 
+describe("how much more the pool could take", () => {
+  it("counts the room a subscription loses unused at its reset", () => {
+    // Half a week left, reset in 84 hours, then a full week: the room before
+    // the reset limits a steady rate to 0.5 / 84 an hour; spending faster
+    // runs out before the reset refills it.
+    const forecast = claudePoolForecast(
+      [member("a", { week: 0.5, weekResetsIn: 84 * HOUR })],
+      now,
+    );
+    expect(forecast.maxRatePerHour).toBeCloseTo(0.5 / 84, 5);
+  });
+
+  it("adds the resets on the way, across subscriptions", () => {
+    // 0.1 left resetting in 12 hours, 0.9 left resetting in 100. By 100
+    // hours: 0.1 + 0.9 + the refilled first one = 2 (0.02 an hour); by the
+    // week's end the second one has refilled too: 3 in 168 hours, the
+    // tighter of the two.
+    const forecast = claudePoolForecast(
+      [
+        member("a", { week: 0.9, weekResetsIn: 12 * HOUR }),
+        member("b", { week: 0.1, weekResetsIn: 100 * HOUR }),
+      ],
+      now,
+    );
+    expect(forecast.maxRatePerHour).toBeCloseTo(3 / 168, 5);
+  });
+
+  it("counts a subscription with no known reset as full and not resetting", () => {
+    expect(
+      claudePoolForecast([{ credential_id: "new" }], now).maxRatePerHour,
+    ).toBeCloseTo(1 / 168, 5);
+  });
+
+  it("names the subscription to spend first: the soonest reset with room", () => {
+    const forecast = claudePoolForecast(
+      [
+        member("full", { week: 1, weekResetsIn: 5 * HOUR }),
+        member("soon", { week: 0.85, weekResetsIn: 16 * HOUR }),
+        member("later", { week: 0.2, weekResetsIn: 50 * HOUR }),
+      ],
+      now,
+    );
+    expect(forecast.useFirst).toEqual({
+      credential_id: "soon",
+      left: expect.closeTo(0.15, 5),
+      resetsAt: sec(now + 16 * HOUR) * 1000,
+    });
+  });
+});
+
 describe("usage history", () => {
   const reading = (agoHours: number, week: number, resetsIn = 72 * HOUR) => ({
     at: now - agoHours * HOUR,

@@ -376,6 +376,12 @@ export interface ClaudePoolForecast {
   /** When every subscription would be at its weekly limit at that rate;
    * absent if not within a week. */
   runsOutAt?: number;
+  /** The highest steady rate (weekly limits per hour) that does not run out
+   * within a week: what the subscriptions can sustain, counting the room
+   * each loses unused at its reset and the resets on the way. */
+  maxRatePerHour?: number;
+  /** Spend this one first: of those with room left, the soonest to reset. */
+  useFirst?: { credential_id: string; left: number; resetsAt: number };
 }
 
 // A week's rate means little before this much of it has passed.
@@ -444,40 +450,21 @@ export function claudePoolRecentRate(
   return { ratePerHour: used / (span / HOUR_MS), hours: span / HOUR_MS };
 }
 
+type PoolState = { left: number; resetsAt?: number };
+
 /**
- * When the pool runs out at the recent rate: turns spend the capacity that
- * resets soonest first (as Auto does), and each subscription is full again
- * when its week resets. A linear estimate.
+ * When pooled use at `ratePerHour` (weekly limits per hour) runs out before
+ * `horizon`: turns spend the capacity that resets soonest first (as Auto
+ * does), and each subscription is full again when its week resets.
  */
-export function claudePoolForecast(
-  members: ClaudePoolMember[],
-  now = Date.now(),
-): ClaudePoolForecast {
-  const recent = claudePoolRecentRate(members, now);
-  let ratePerHour = 0;
-  const state = members.map((member) => {
-    const w = claudePoolWindows(member, now);
-    const week = member.usage?.windows.seven_day;
-    if (!recent && w.weekResetsAt && week) {
-      const observed = Date.parse(member.usage!.observed_at);
-      const elapsed = observed - (w.weekResetsAt - WEEK_MS);
-      ratePerHour +=
-        week.utilization / (Math.max(MIN_RATE_ELAPSED_MS, elapsed) / HOUR_MS);
-    }
-    return { left: 1 - w.week, resetsAt: w.weekResetsAt };
-  });
-  const remaining = state.reduce((sum, s) => sum + s.left, 0);
-  if (recent) ratePerHour = recent.ratePerHour;
-  const result: ClaudePoolForecast = {
-    members: members.length,
-    remaining,
-    ratePerHour,
-    ...(members.length ? { rateFrom: recent ? "recent" : "week" } : {}),
-    ...(recent ? { rateHours: recent.hours } : {}),
-  };
-  if (!(ratePerHour > 0) || members.length === 0) return result;
+function poolRunsOutAt(
+  initial: PoolState[],
+  ratePerHour: number,
+  now: number,
+  horizon: number,
+): number | undefined {
+  const state = initial.map((s) => ({ ...s }));
   const rate = ratePerHour / HOUR_MS;
-  const horizon = now + WEEK_MS;
   let t = now;
   while (t < horizon) {
     const open = state
@@ -488,10 +475,7 @@ export function claudePoolForecast(
         .filter((s) => s.resetsAt != null && s.left < 1)
         .map((s) => s.resetsAt!),
     );
-    if (!open) {
-      result.runsOutAt = t;
-      return result;
-    }
+    if (!open) return t;
     const exhaustAt = t + open.left / rate;
     const next = Math.min(exhaustAt, nextReset, horizon);
     open.left = Math.max(0, open.left - (next - t) * rate);
@@ -503,5 +487,75 @@ export function claudePoolForecast(
       }
     }
   }
+  return undefined;
+}
+
+/**
+ * When the pool runs out at the recent rate (see poolRunsOutAt), and the
+ * highest steady rate that lasts a week. A linear estimate.
+ */
+export function claudePoolForecast(
+  members: ClaudePoolMember[],
+  now = Date.now(),
+): ClaudePoolForecast {
+  const recent = claudePoolRecentRate(members, now);
+  let ratePerHour = 0;
+  const state: (PoolState & { credential_id: string })[] = members.map(
+    (member) => {
+      const w = claudePoolWindows(member, now);
+      const week = member.usage?.windows.seven_day;
+      if (!recent && w.weekResetsAt && week) {
+        const observed = Date.parse(member.usage!.observed_at);
+        const elapsed = observed - (w.weekResetsAt - WEEK_MS);
+        ratePerHour +=
+          week.utilization / (Math.max(MIN_RATE_ELAPSED_MS, elapsed) / HOUR_MS);
+      }
+      return {
+        credential_id: member.credential_id,
+        left: 1 - w.week,
+        resetsAt: w.weekResetsAt,
+      };
+    },
+  );
+  const remaining = state.reduce((sum, s) => sum + s.left, 0);
+  if (recent) ratePerHour = recent.ratePerHour;
+  const result: ClaudePoolForecast = {
+    members: members.length,
+    remaining,
+    ratePerHour,
+    ...(members.length ? { rateFrom: recent ? "recent" : "week" } : {}),
+    ...(recent ? { rateHours: recent.hours } : {}),
+  };
+  if (members.length === 0) return result;
+  const horizon = now + WEEK_MS;
+  // A subscription with no known reset (its week has not started, or its
+  // reading is from before the last reset) counts as full and, to stay on
+  // the safe side, as not resetting again within the week.
+  const known = state.filter((s) => s.resetsAt != null);
+  {
+    // Upper bound: everything left plus every reset within the week, spent
+    // at once; the answer is found by bisection between 0 and that.
+    let lo = 0;
+    let hi = (remaining + members.length) / (WEEK_MS / HOUR_MS);
+    if (poolRunsOutAt(state, hi, now, horizon) == null) lo = hi;
+    for (let i = 0; i < 40 && hi - lo > 1e-7; i++) {
+      const mid = (lo + hi) / 2;
+      if (poolRunsOutAt(state, mid, now, horizon) == null) lo = mid;
+      else hi = mid;
+    }
+    result.maxRatePerHour = lo;
+    const first = known
+      .filter((s) => s.left > 0.005)
+      .sort((a, b) => a.resetsAt! - b.resetsAt!)[0];
+    if (first)
+      result.useFirst = {
+        credential_id: first.credential_id,
+        left: first.left,
+        resetsAt: first.resetsAt!,
+      };
+  }
+  if (!(ratePerHour > 0)) return result;
+  const runsOutAt = poolRunsOutAt(state, ratePerHour, now, horizon);
+  if (runsOutAt != null) result.runsOutAt = runsOutAt;
   return result;
 }

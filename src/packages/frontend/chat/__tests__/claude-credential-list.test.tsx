@@ -18,7 +18,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
-  TimeAgo: ({ date }: { date: string }) => <span>at {date}</span>,
+  TimeAgo: ({ date }: { date: string | Date }) => (
+    <span>at {String(date)}</span>
+  ),
 }));
 
 const hour = 3600;
@@ -322,4 +324,39 @@ test("subscriptions needed: each renews one weekly limit a week", () => {
   expect(claudePoolSubscriptionsNeeded(9 / 7)).toBe(9);
   expect(claudePoolSubscriptionsNeeded(0.3)).toBe(3);
   expect(claudePoolSubscriptionsNeeded(0)).toBe(1);
+});
+
+test("how much more the pool could take, and which subscription goes first", () => {
+  render(
+    <ClaudeCredentialList
+      credentials={credentials}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  const status = screen.getByRole("status").textContent ?? "";
+  expect(status).toMatch(
+    /Up to about \d+\.\d+ weekly limits a day would last the coming week, counting the resets on the way and what each subscription loses unused when it resets\./,
+  );
+  expect(status).toMatch(
+    /Next to reset: \S+, with \d+% left, at .* \(Auto spends it first\)\./,
+  );
+});
+
+test("the pace line compares the most that lasts with the recent rate", () => {
+  const { paceLine } = require("../claude-pool");
+  const base = { members: 10, available: 10, remaining: 3.85 };
+  expect(paceLine({ ...base, maxPerDay: 1.98, usedPerDay: 1.02 })).toBe(
+    "Up to about 2.0 weekly limits a day would last the coming week, counting the resets on the way and what each subscription loses unused when it resets. That is about 1.9 times the recent rate: there is room to use more.",
+  );
+  expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 1.6 })).toMatch(
+    /That is less than the recent rate\.$/,
+  );
+  expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 1.0 })).toMatch(
+    /That is about the recent rate\.$/,
+  );
+  // Without a rate to compare with, there is nothing to pace against.
+  expect(paceLine({ ...base, maxPerDay: 0.5 })).toBeUndefined();
+  expect(paceLine(base)).toBeUndefined();
 });

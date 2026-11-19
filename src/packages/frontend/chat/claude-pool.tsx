@@ -51,6 +51,10 @@ export interface ClaudePoolSummary {
   rateFrom?: "recent" | "week";
   rateHours?: number;
   runsOutAt?: number;
+  /** The most weekly limits a day that last a week (see claudePoolForecast). */
+  maxPerDay?: number;
+  /** The subscription to spend first: the soonest reset with room left. */
+  useFirst?: { name: string; left: number; resetsAt: number };
   /** When one has room again, if none has now. */
   nextAvailableAt?: number;
 }
@@ -87,6 +91,21 @@ export function claudePoolSummary(
         }
       : {}),
     ...(forecast.runsOutAt != null ? { runsOutAt: forecast.runsOutAt } : {}),
+    ...(forecast.maxRatePerHour != null
+      ? { maxPerDay: forecast.maxRatePerHour * 24 }
+      : {}),
+    ...(forecast.useFirst
+      ? {
+          useFirst: {
+            name: claudeSubscriptionName(
+              pool.find((row) => row.id === forecast.useFirst!.credential_id)!,
+              true,
+            ),
+            left: forecast.useFirst.left,
+            resetsAt: forecast.useFirst.resetsAt,
+          },
+        }
+      : {}),
     ...(available === 0 && times.length > 0
       ? { nextAvailableAt: Math.min(...times) }
       : {}),
@@ -124,8 +143,26 @@ function rateLine(summary: ClaudePoolSummary, usedPerDay: number): string {
   return `Estimated at about ${perDay(usedPerDay)} weekly limits a day from the current weeks' averages (likely high until there is more recent history); ${renew}. ${needed}`;
 }
 
+// How much more could be used: the room each subscription loses unused at its
+// reset is the reason a pool can run well below its limits and still waste
+// capacity.
+export function paceLine(summary: ClaudePoolSummary): string | undefined {
+  // Only with a rate to compare it with: with no usage readings at all, the
+  // subscriptions' room is not known either.
+  if (summary.maxPerDay == null || summary.usedPerDay == null) return undefined;
+  const max = summary.maxPerDay;
+  const used = summary.usedPerDay;
+  const compared =
+    used > 0 && max > used * 1.05
+      ? ` That is about ${(max / used).toFixed(1)} times the recent rate: there is room to use more.`
+      : max < used * 0.95
+        ? " That is less than the recent rate."
+        : " That is about the recent rate.";
+  return `Up to about ${perDay(max)} weekly limits a day would last the coming week, counting the resets on the way and what each subscription loses unused when it resets.${compared}`;
+}
+
 /** How much the pool has left, how fast it is used against how fast it
- * renews, and how long it lasts. */
+ * renews, how long it lasts, and how much more it could take. */
 export function ClaudePoolForecast({
   credentials,
 }: {
@@ -172,6 +209,15 @@ export function ClaudePoolForecast({
           "At that rate, counting the resets on the way, they don't all run out within a week."
         )}
       </Typography.Text>
+      {paceLine(summary) && <div>{paceLine(summary)}</div>}
+      {summary.useFirst && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Next to reset: {summary.useFirst.name}, with{" "}
+          {Math.round(summary.useFirst.left * 100)}% left,{" "}
+          <TimeAgo date={new Date(summary.useFirst.resetsAt)} /> (Auto spends it
+          first).
+        </Typography.Text>
+      )}
     </div>
   );
 }
