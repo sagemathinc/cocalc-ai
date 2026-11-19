@@ -217,6 +217,13 @@ describeDb("fresh Claude readings for Auto", () => {
   test("the query and claudeUsageProbeDue agree on malformed values", async () => {
     const owner = randomUUID();
     const iso = (ms: number) => new Date(ms).toISOString();
+    // Raw JSON numbers (a JS object cannot hold them as written).
+    const RAW: Record<string, string> = {
+      __HUGE__: "1e10000",
+      // JSON.parse rounds these to 0.98 and to a whole number.
+      __ROUNDS_TO_FULL__: "0.97999999999999999",
+      __ROUNDS_TO_WHOLE__: `${sec(now + HOUR)}.00000000000001`,
+    };
     const HUGE = "__HUGE__";
     const observed = [
       undefined,
@@ -257,10 +264,13 @@ describeDb("fresh Claude readings for Auto", () => {
       { utilization: HUGE, resets_at: sec(now + HOUR) },
       { utilization: 1, resets_at: HUGE },
       { utilization: "1", resets_at: sec(now + HOUR) },
+      { utilization: "__ROUNDS_TO_FULL__", resets_at: sec(now + HOUR) },
+      { utilization: 1, resets_at: "__ROUNDS_TO_WHOLE__" },
     ];
     const excluded = [undefined, true, "true"];
     const dims = [observed, checked, until, fiveHour, excluded];
-    const primes = [1, 5, 3, 7, 2]; // coprime with each length: every value appears
+    // Coprime with each length: every value, and every pair, appears.
+    const primes = [1, 5, 3, 7, 2];
     const ids: string[] = [];
     for (let i = 0; i < 700; i++) {
       const [o, c, u, f, e] = dims.map(
@@ -281,7 +291,10 @@ describeDb("fresh Claude readings for Auto", () => {
       ids.push(
         await credential(
           owner,
-          JSON.stringify(metadata).replaceAll(`"${HUGE}"`, "1e10000"),
+          Object.entries(RAW).reduce(
+            (json, [marker, raw]) => json.replaceAll(`"${marker}"`, raw),
+            JSON.stringify(metadata),
+          ),
         ),
       );
     }
@@ -301,6 +314,63 @@ describeDb("fresh Claude readings for Auto", () => {
     expect(expected.length).toBeLessThan(ids.length - 50);
     expect(actual).toEqual(expected);
   }, 60_000);
+
+  test("windows a double sees as full cannot fill every pass", async () => {
+    const owner = randomUUID();
+    // Older readings than the real candidate, each with a 5-hour window
+    // that code (JSON.parse) sees as full: 0.97999999999999999 is 0.98.
+    for (let i = 0; i < 12; i++)
+      await credential(
+        owner,
+        `{"claude_usage": {"observed_at": "${new Date(now - (20 + i) * HOUR).toISOString()}",
+          "windows": {"five_hour": {"utilization": 0.97999999999999999, "resets_at": ${sec(now + HOUR)}}}},
+          "claude_usage_history": ${JSON.stringify(usedAuto(HOUR))}}`,
+      );
+    const real = await credential(owner, {
+      claude_usage: reading(6 * HOUR),
+      claude_usage_history: usedAuto(HOUR),
+    });
+    await project(owner, await host(), "running", 0);
+    const { calls, deps: d } = deps(async () => ({
+      observed_at: new Date(now).toISOString(),
+    }));
+    await runClaudeUsageProbes(d, () => now);
+    expect(calls.map((c) => c.credential_id)).toEqual([real]);
+  });
+
+  test("a row the query returns but code rejects is recorded, not retried", async () => {
+    const owner = randomUUID();
+    const id = await credential(owner, {
+      claude_usage_history: usedAuto(HOUR),
+    });
+    await project(owner, await host(), "running", 0);
+    const { calls, deps: d } = deps(async () => ({
+      observed_at: new Date(now).toISOString(),
+    }));
+    // Make code disagree: the query's row looks excluded to code.
+    const disagree: ClaudeUsageProbeDeps = {
+      ...d,
+      query: async (sql, values) => {
+        const result = await query(sql, values);
+        if (!sql.includes("ORDER BY")) return result;
+        return {
+          ...result,
+          rows: result.rows.map((row) => ({
+            ...row,
+            metadata: { ...row.metadata, claude_pool_excluded: true },
+          })),
+        };
+      },
+    };
+    await runClaudeUsageProbes(disagree, () => now);
+    expect(calls).toEqual([]);
+    expect(await probeRecord(id)).toEqual({
+      at: new Date(now).toISOString(),
+      ok: false,
+      error: "not due by the code rule",
+    });
+    expect(await dueClaudeUsageProbeRows(query, now)).toEqual([]);
+  });
 
   test("checks on a running project's host of this bay, once per four hours", async () => {
     const owner = randomUUID();

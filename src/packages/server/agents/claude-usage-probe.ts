@@ -92,8 +92,8 @@ interface Candidate {
  * database: at most `limit` rows leave it. This is claudeUsageProbeDue
  * (util/ai/claude-usage-probe.ts) on the same raw values, plus "the account
  * used Auto lately": times count only as isIsoTime allows and then compare
- * as text (they sort in time order), numbers compare as numeric (which holds
- * any JSON number), so no value can fail the query. The partial index on the
+ * as text (they sort in time order); numbers compare as the doubles code
+ * sees, after a numeric range check, so no value can fail the query. The partial index on the
  * reading time (util/db-schema/external-credentials.ts) serves the order.
  */
 export async function dueClaudeUsageProbeRows(
@@ -112,15 +112,21 @@ export async function dueClaudeUsageProbeRows(
         AND ${isoTimeSql("(c.metadata->'claude_usage_probe'->>'at')")} < $3
         AND c.metadata->'claude_pool_excluded' IS DISTINCT FROM 'true'::jsonb
         AND ${isoTimeSql("(c.metadata->'claude_pool_limited'->>'until')")} < $4
-        -- Not a 5-hour window that was full and has not reset.
+        -- Not a 5-hour window that was full and has not reset. Compared as
+        -- doubles, as code sees them (JSON.parse), once a numeric range
+        -- check (any JSON number fits a numeric) makes the cast safe.
         AND NOT COALESCE(
           CASE WHEN jsonb_typeof(${FIVE_HOUR}->'utilization') = 'number'
                 AND jsonb_typeof(${FIVE_HOUR}->'resets_at') = 'number'
-               THEN (${FIVE_HOUR}->'utilization')::numeric BETWEEN $6::numeric AND 10
+                AND (${FIVE_HOUR}->'utilization')::numeric BETWEEN 0.9 AND 11
                 AND (${FIVE_HOUR}->'resets_at')::numeric
-                    = trunc((${FIVE_HOUR}->'resets_at')::numeric)
-                AND (${FIVE_HOUR}->'resets_at')::numeric > $7::numeric
-                AND (${FIVE_HOUR}->'resets_at')::numeric <= $8::numeric
+                    BETWEEN $7::numeric - 1 AND $8::numeric + 1
+               THEN (${FIVE_HOUR}->>'utilization')::float8 >= $6::float8
+                AND (${FIVE_HOUR}->>'utilization')::float8 <= 10
+                AND (${FIVE_HOUR}->>'resets_at')::float8
+                    = trunc((${FIVE_HOUR}->>'resets_at')::float8)
+                AND (${FIVE_HOUR}->>'resets_at')::float8 > $7::float8
+                AND (${FIVE_HOUR}->>'resets_at')::float8 <= $8::float8
           END, false)
         -- The account used Auto lately: a pick recorded a reading.
         AND EXISTS (
@@ -140,8 +146,10 @@ export async function dueClaudeUsageProbeRows(
       iso(now),
       iso(now + CLAUDE_USAGE_PROBE_FUTURE_MS),
       CLAUDE_USAGE_PROBE_FULL,
-      now / 1000,
-      (now + CLAUDE_USAGE_PROBE_MAX_RESET_MS) / 1000,
+      // For a whole resets_at (seconds): resets_at * 1000 > now, and
+      // resets_at * 1000 - now <= the maximum, exactly as in code.
+      Math.floor(now / 1000),
+      Math.floor((now + CLAUDE_USAGE_PROBE_MAX_RESET_MS) / 1000),
       now - CLAUDE_USAGE_PROBE_ACTIVE_MS,
       limit,
     ],
@@ -215,9 +223,20 @@ export async function runClaudeUsageProbes(
 ): Promise<{ checked: number; failed: number }> {
   let checked = 0;
   let failed = 0;
-  for (const row of await dueClaudeUsageProbes(deps.query, now())) {
+  for (const row of await dueClaudeUsageProbeRows(deps.query, now())) {
     const previous = row.metadata?.[CLAUDE_USAGE_PROBE_METADATA_KEY] ?? null;
     const at = new Date(now()).toISOString();
+    if (!claudeUsageProbeDue(row.metadata, now())) {
+      // The query and code disagree (they should not): record it like a
+      // check, so this row cannot take a place in every pass.
+      await setProbe(
+        deps.query,
+        row.id,
+        { at, ok: false, error: "not due by the code rule" },
+        previous,
+      );
+      continue;
+    }
     if (!(await setProbe(deps.query, row.id, { at }, previous))) continue;
     let error: string | undefined;
     try {
