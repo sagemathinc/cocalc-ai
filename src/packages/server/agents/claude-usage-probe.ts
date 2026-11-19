@@ -17,14 +17,12 @@ import {
   CLAUDE_SUBSCRIPTION_KIND,
 } from "@cocalc/util/ai/external-credential-profiles";
 import {
+  CLAUDE_USAGE_PROBE_ACTIVE_MS,
+  CLAUDE_USAGE_PROBE_AFTER_MS,
+  CLAUDE_USAGE_PROBE_FULL,
   CLAUDE_USAGE_PROBE_METADATA_KEY,
-  claudeAccountUsesAuto,
   claudeUsageProbeDue,
 } from "@cocalc/util/ai/claude-usage-probe";
-import {
-  CLAUDE_USAGE_METADATA_KEY,
-  parseClaudeRateLimitSnapshot,
-} from "@cocalc/util/ai/claude-usage";
 
 const logger = getLogger("server:agents:claude-usage-probe");
 
@@ -48,8 +46,8 @@ export interface ClaudeUsageProbeDeps {
     account_id: string;
     credential_id: string;
   }) => Promise<{ observed_at: string }>;
-  /** Whether this bay controls the host. */
-  ownsHost: (host_id: string) => Promise<boolean>;
+  /** This bay: checks run on hosts it controls. */
+  bayId: () => Promise<string>;
 }
 
 const defaultDeps: ClaudeUsageProbeDeps = {
@@ -66,14 +64,16 @@ const defaultDeps: ClaudeUsageProbeDeps = {
     });
     return await client.probeClaudeSubscriptionUsage(options);
   },
-  async ownsHost(host_id) {
-    const { resolveHostBayAcrossCluster } =
-      await import("@cocalc/server/inter-bay/directory");
+  async bayId() {
     const { getConfiguredBayId } = await import("@cocalc/server/bay-config");
-    const owner = await resolveHostBayAcrossCluster(host_id);
-    return owner?.bay_id === getConfiguredBayId();
+    return getConfiguredBayId();
   },
 };
+
+// When the reading was taken, as stored ("" if none): the expression of the
+// partial index on external_credentials.
+const READING_AT = "COALESCE(c.metadata->'claude_usage'->>'observed_at', '')";
+const FIVE_HOUR = "c.metadata->'claude_usage'->'windows'->'five_hour'";
 
 interface Candidate {
   id: string;
@@ -81,38 +81,60 @@ interface Candidate {
   metadata: Record<string, any>;
 }
 
-/** The subscriptions to check now, oldest reading first. */
+/**
+ * The subscriptions to check now, oldest reading first, chosen in the
+ * database: at most `limit` rows leave it. Times are compared as the ISO
+ * strings they are stored as (toISOString sorts in time order), so a bad
+ * value cannot fail the query; it only sorts as "old". The partial index on
+ * the reading time (util/db-schema/external-credentials.ts) serves the order.
+ */
 export async function dueClaudeUsageProbes(
   query: Query,
   now = Date.now(),
   limit = MAX_PER_PASS,
 ): Promise<Candidate[]> {
+  const stale = new Date(now - CLAUDE_USAGE_PROBE_AFTER_MS).toISOString();
   const { rows } = await query(
-    `SELECT id, owner_account_id, metadata FROM external_credentials
-      WHERE provider=$1 AND kind=$2 AND scope='account'
-        AND owner_account_id IS NOT NULL AND revoked IS NULL`,
-    [ANTHROPIC_API_PROVIDER, CLAUDE_SUBSCRIPTION_KIND],
+    `SELECT c.id, c.owner_account_id, c.metadata
+       FROM external_credentials c
+      WHERE c.kind=$2 AND c.revoked IS NULL AND c.provider=$1
+        AND c.scope='account' AND c.owner_account_id IS NOT NULL
+        AND ${READING_AT} < $3
+        AND COALESCE(c.metadata->'claude_usage_probe'->>'at', '') < $3
+        AND c.metadata->'claude_pool_excluded' IS DISTINCT FROM 'true'::jsonb
+        AND COALESCE(c.metadata->'claude_pool_limited'->>'until', '') < $4
+        AND NOT COALESCE(
+          CASE WHEN jsonb_typeof(${FIVE_HOUR}->'utilization') = 'number'
+                AND jsonb_typeof(${FIVE_HOUR}->'resets_at') = 'number'
+               THEN (${FIVE_HOUR}->>'utilization')::float8 >= $5
+                AND (${FIVE_HOUR}->>'resets_at')::float8 > $6
+          END, false)
+        -- The account used Auto lately: a pick recorded a reading.
+        AND EXISTS (
+          SELECT 1 FROM external_credentials h
+           WHERE h.owner_account_id=c.owner_account_id AND h.kind=$2
+             AND h.provider=$1 AND h.scope='account' AND h.revoked IS NULL
+             AND CASE WHEN h.metadata->'claude_usage_history'->-1->>'at'
+                           ~ '^[0-9]{1,16}$'
+                      THEN (h.metadata->'claude_usage_history'->-1->>'at')::bigint > $7
+                      ELSE false END)
+      ORDER BY ${READING_AT}
+      LIMIT $8`,
+    [
+      ANTHROPIC_API_PROVIDER,
+      CLAUDE_SUBSCRIPTION_KIND,
+      stale,
+      new Date(now).toISOString(),
+      CLAUDE_USAGE_PROBE_FULL,
+      now / 1000,
+      now - CLAUDE_USAGE_PROBE_ACTIVE_MS,
+      limit,
+    ],
   );
-  const byAccount = new Map<string, Candidate[]>();
-  for (const row of rows as Candidate[]) {
-    const list = byAccount.get(row.owner_account_id) ?? [];
-    list.push(row);
-    byAccount.set(row.owner_account_id, list);
-  }
-  const due: Candidate[] = [];
-  for (const list of byAccount.values()) {
-    if (!claudeAccountUsesAuto(list, now)) continue;
-    for (const row of list)
-      if (claudeUsageProbeDue(row.metadata, now)) due.push(row);
-  }
-  const observed = (row: Candidate) => {
-    const reading = parseClaudeRateLimitSnapshot(
-      row.metadata?.[CLAUDE_USAGE_METADATA_KEY],
-      now,
-    );
-    return reading ? Date.parse(reading.observed_at) : 0;
-  };
-  return due.sort((a, b) => observed(a) - observed(b)).slice(0, limit);
+  // The same rule in code, for what the query cannot check exactly.
+  return (rows as Candidate[]).filter((row) =>
+    claudeUsageProbeDue(row.metadata, now),
+  );
 }
 
 async function setProbe(
@@ -146,18 +168,20 @@ async function projectFor(
   deps: ClaudeUsageProbeDeps,
   account_id: string,
 ): Promise<{ project_id: string; host_id: string } | undefined> {
+  // Only hosts this bay controls (as resolveHostBayDirect decides), before
+  // the limit: other bays' hosts cannot run the check.
   const { rows } = await deps.query(
-    `SELECT project_id, host_id FROM projects
-      WHERE deleted IS NOT TRUE AND host_id IS NOT NULL
-        AND users -> $1::text ->> 'group' IN ('owner', 'collaborator')
-      ORDER BY COALESCE(state->>'state', '') = 'running' DESC,
-               last_edited DESC NULLS LAST
-      LIMIT 5`,
-    [account_id],
+    `SELECT p.project_id, p.host_id FROM projects p
+       JOIN project_hosts h ON h.id = p.host_id AND h.deleted IS NULL
+      WHERE p.deleted IS NOT TRUE
+        AND COALESCE(h.bay_id, $2) = $2
+        AND p.users -> $1::text ->> 'group' IN ('owner', 'collaborator')
+      ORDER BY COALESCE(p.state->>'state', '') = 'running' DESC,
+               p.last_edited DESC NULLS LAST
+      LIMIT 1`,
+    [account_id, await deps.bayId()],
   );
-  for (const row of rows) {
-    if (await deps.ownsHost(row.host_id)) return row;
-  }
+  return rows[0];
 }
 
 /** One pass: check each due subscription. Returns how many were checked. */

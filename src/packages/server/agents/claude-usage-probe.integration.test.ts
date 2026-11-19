@@ -74,11 +74,13 @@ describeDb("fresh Claude readings for Auto", () => {
     await syncSchema({
       external_credentials: SCHEMA.external_credentials,
       projects: SCHEMA.projects,
+      project_hosts: SCHEMA.project_hosts,
     });
   });
   beforeEach(async () => {
     await query("DELETE FROM external_credentials");
     await query("DELETE FROM projects");
+    await query("DELETE FROM project_hosts");
   });
   afterAll(async () => {
     await getPool().end();
@@ -103,14 +105,28 @@ describeDb("fresh Claude readings for Auto", () => {
       claude_usage: reading(30 * HOUR),
       claude_usage_history: usedAuto(8 * 24 * HOUR),
     });
+    // Older still, but its 5-hour window is full, or it is limited: the
+    // database skips them, so they never take a place under the limit.
+    const full = reading(40 * HOUR);
+    full.windows.five_hour.utilization = 1;
+    await credential(auto, { claude_usage: full });
+    await credential(auto, {
+      claude_usage: reading(40 * HOUR),
+      claude_pool_limited: { until: new Date(now + HOUR).toISOString() },
+    });
+    await credential(auto, {
+      claude_usage: reading(40 * HOUR),
+      claude_usage_probe: { at: new Date(now - HOUR).toISOString() },
+    });
     const due = await dueClaudeUsageProbes(query, now);
     expect(due.map((row) => row.id)).toEqual([staler, stale]);
+    expect(
+      (await dueClaudeUsageProbes(query, now, 1)).map((row) => row.id),
+    ).toEqual([staler]);
   });
 
-  function deps(
-    probe: ClaudeUsageProbeDeps["probe"],
-    owned = (_host: string) => true,
-  ) {
+  const BAY = "bay-0";
+  function deps(probe: ClaudeUsageProbeDeps["probe"]) {
     const calls: any[] = [];
     return {
       calls,
@@ -120,9 +136,19 @@ describeDb("fresh Claude readings for Auto", () => {
           calls.push(options);
           return await probe(options);
         },
-        ownsHost: async (host) => owned(host),
+        bayId: async () => BAY,
       } satisfies ClaudeUsageProbeDeps,
     };
+  }
+
+  // A host of this bay, or of another; bay_id NULL means this bay.
+  async function host(bay_id: string | null = BAY): Promise<string> {
+    const id = randomUUID();
+    await query("INSERT INTO project_hosts(id, bay_id) VALUES ($1,$2)", [
+      id,
+      bay_id,
+    ]);
+    return id;
   }
 
   async function project(
@@ -152,22 +178,21 @@ describeDb("fresh Claude readings for Auto", () => {
       claude_usage: reading(6 * HOUR),
       claude_usage_history: usedAuto(HOUR),
     });
-    const elsewhere = randomUUID();
-    const host = randomUUID();
+    const elsewhere = await host("bay-1");
+    const local = await host(null);
     await project(owner, elsewhere, "running", 0);
-    await project(owner, host, "opened", 0);
-    const running = await project(owner, host, "running", 5 * HOUR);
-    const { calls, deps: d } = deps(
-      async () => ({ observed_at: new Date(now).toISOString() }),
-      (h) => h === host,
-    );
+    await project(owner, local, "opened", 0);
+    const running = await project(owner, local, "running", 5 * HOUR);
+    const { calls, deps: d } = deps(async () => ({
+      observed_at: new Date(now).toISOString(),
+    }));
     await expect(runClaudeUsageProbes(d, () => now)).resolves.toEqual({
       checked: 1,
       failed: 0,
     });
     expect(calls).toEqual([
       {
-        host_id: host,
+        host_id: local,
         project_id: running,
         account_id: owner,
         credential_id: id,
@@ -191,7 +216,7 @@ describeDb("fresh Claude readings for Auto", () => {
     const id = await credential(owner, {
       claude_usage_history: usedAuto(HOUR),
     });
-    await project(owner, randomUUID(), "running", 0);
+    await project(owner, await host(), "running", 0);
     const { calls, deps: d } = deps(async () => {
       throw Error("Claude reported no limits");
     });
@@ -213,20 +238,78 @@ describeDb("fresh Claude readings for Auto", () => {
     const id = await credential(owner, {
       claude_usage_history: usedAuto(HOUR),
     });
-    await project(owner, randomUUID(), "running", 0);
-    const { calls, deps: d } = deps(
-      async () => ({ observed_at: "" }),
-      () => false,
-    );
+    await project(owner, await host("bay-1"), "running", 0);
+    // A deleted host of this bay does not count either.
+    const gone = await host();
+    await query("UPDATE project_hosts SET deleted=now() WHERE id=$1", [gone]);
+    await project(owner, gone, "running", 0);
+    const { calls, deps: d } = deps(async () => ({ observed_at: "" }));
     await runClaudeUsageProbes(d, () => now);
     expect(calls).toEqual([]);
     expect((await probeRecord(id)).error).toMatch(/no project/);
   });
 
+  test("a local project behind newer ones on other bays' hosts is found", async () => {
+    const owner = randomUUID();
+    await credential(owner, { claude_usage_history: usedAuto(HOUR) });
+    for (let i = 0; i < 5; i++)
+      await project(owner, await host("bay-1"), "running", i * HOUR);
+    const local = await host();
+    const older = await project(owner, local, "opened", 30 * 24 * HOUR);
+    const { calls, deps: d } = deps(async () => ({
+      observed_at: new Date(now).toISOString(),
+    }));
+    await runClaudeUsageProbes(d, () => now);
+    expect(calls.map((c) => [c.host_id, c.project_id])).toEqual([
+      [local, older],
+    ]);
+  });
+
+  test("at most the limit leaves the database, oldest readings first", async () => {
+    const owner = randomUUID();
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++)
+      ids.push(
+        await credential(owner, {
+          claude_usage: reading((10 + i) * HOUR),
+          claude_usage_history: usedAuto(HOUR),
+        }),
+      );
+    const due = await dueClaudeUsageProbes(query, now, 3);
+    expect(due.map((row) => row.id)).toEqual([ids[5], ids[4], ids[3]]);
+  });
+
+  test("the reading-time index serves the order", async () => {
+    const { rows } = await query(
+      "SELECT indexdef FROM pg_indexes WHERE indexname='external_credentials_claude_reading_at_idx'",
+    );
+    expect(rows[0]?.indexdef).toMatch(/claude_usage/);
+    const owner = randomUUID();
+    await credential(owner, { claude_usage_history: usedAuto(HOUR) });
+    const client = await getPool().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL enable_seqscan = off");
+      await client.query("SET LOCAL enable_sort = off");
+      const plans: string[] = [];
+      await dueClaudeUsageProbes(async (sql, values) => {
+        const plan = await client.query(`EXPLAIN ${sql}`, values as any[]);
+        plans.push(plan.rows.map((r) => r["QUERY PLAN"]).join("\n"));
+        return await client.query(sql, values as any[]);
+      }, now);
+      expect(plans[0]).toMatch(/external_credentials_claude_reading_at_idx/);
+      // Rows come in index order: no sort of the bay's subscriptions.
+      expect(plans[0]).not.toMatch(/Sort/);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  });
+
   test("concurrent passes check a subscription once", async () => {
     const owner = randomUUID();
     await credential(owner, { claude_usage_history: usedAuto(HOUR) });
-    await project(owner, randomUUID(), "running", 0);
+    await project(owner, await host(), "running", 0);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     const { calls, deps: d } = deps(async () => {

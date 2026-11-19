@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { CLAUDE_SUBSCRIPTION_KIND } from "../ai/external-credential-profiles";
 import { Table } from "./types";
 
 Table({
@@ -18,6 +19,16 @@ Table({
       "organization_id",
       "revoked",
       "updated",
+    ],
+    pg_custom_indexes: [
+      // Claude subscriptions by reading time, for fresh readings
+      // (server/agents/claude-usage-probe.ts orders by this expression).
+      {
+        name: "external_credentials_claude_reading_at_idx",
+        query:
+          "((COALESCE(metadata->'claude_usage'->>'observed_at', ''))) " +
+          `WHERE kind = '${CLAUDE_SUBSCRIPTION_KIND}' AND revoked IS NULL`,
+      },
     ],
   },
   fields: {

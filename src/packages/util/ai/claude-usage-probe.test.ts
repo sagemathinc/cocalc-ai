@@ -1,6 +1,5 @@
 import {
   CLAUDE_USAGE_PROBE_METADATA_KEY,
-  claudeAccountUsesAuto,
   claudeUsageProbeDue,
   parseClaudeUsageProbe,
 } from "./claude-usage-probe";
@@ -97,34 +96,6 @@ describe("claudeUsageProbeDue", () => {
     reset.windows.five_hour.resets_at = sec(now - HOUR);
     expect(claudeUsageProbeDue({ claude_usage: reset }, now)).toBe(true);
   });
-});
-
-test("an account uses Auto when a pick recorded a reading this week", () => {
-  const entry = (ageMs: number) => ({
-    at: now - ageMs,
-    week: 0.4,
-    resets_at: sec(now + HOUR),
-  });
-  expect(
-    claudeAccountUsesAuto(
-      [
-        { metadata: {} },
-        {
-          metadata: {
-            claude_usage_history: [entry(9 * 24 * HOUR), entry(2 * 24 * HOUR)],
-          },
-        },
-      ],
-      now,
-    ),
-  ).toBe(true);
-  expect(
-    claudeAccountUsesAuto(
-      [{ metadata: { claude_usage_history: [entry(8 * 24 * HOUR)] } }],
-      now,
-    ),
-  ).toBe(false);
-  expect(claudeAccountUsesAuto([{ metadata: null }, {}], now)).toBe(false);
 });
 
 test("stored checks are revalidated", () => {

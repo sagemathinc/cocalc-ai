@@ -13,7 +13,6 @@
 import {
   CLAUDE_POOL_EXCLUDED_METADATA_KEY,
   CLAUDE_POOL_LIMITED_METADATA_KEY,
-  CLAUDE_USAGE_HISTORY_METADATA_KEY,
 } from "./claude-pool";
 import {
   CLAUDE_USAGE_METADATA_KEY,
@@ -28,8 +27,8 @@ const HOUR_MS = 3600_000;
 export const CLAUDE_USAGE_PROBE_AFTER_MS = 4 * HOUR_MS;
 /** Only accounts with an Auto pick this recently are checked. */
 export const CLAUDE_USAGE_PROBE_ACTIVE_MS = 7 * 24 * HOUR_MS;
-// A 5-hour window this full cannot answer until it resets.
-const FULL = 0.98;
+/** A 5-hour window this full cannot answer until it resets. */
+export const CLAUDE_USAGE_PROBE_FULL = 0.98;
 
 export interface ClaudeUsageProbeRecord {
   at: string;
@@ -80,21 +79,7 @@ export function claudeUsageProbeDue(
   const session = reading.windows.five_hour;
   return !(
     session &&
-    session.utilization >= FULL &&
+    session.utilization >= CLAUDE_USAGE_PROBE_FULL &&
     session.resets_at * 1000 > now
   );
-}
-
-/** Whether the account used Auto lately: a pick records each member's
- * reading in its usage history. */
-export function claudeAccountUsesAuto(
-  rows: { metadata?: Record<string, any> | null }[],
-  now = Date.now(),
-): boolean {
-  return rows.some((row) => {
-    const history = row.metadata?.[CLAUDE_USAGE_HISTORY_METADATA_KEY];
-    if (!Array.isArray(history) || history.length === 0) return false;
-    const at = Number(history[history.length - 1]?.at);
-    return Number.isFinite(at) && at > now - CLAUDE_USAGE_PROBE_ACTIVE_MS;
-  });
 }
