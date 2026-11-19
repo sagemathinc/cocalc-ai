@@ -7,6 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import { agentStore } from "./store";
 import { cleanupCocalcConnectorCredentials } from "./cocalc-connector-retention";
 import { removeExpiredExternalInboxObjects } from "./external-inbox-objects";
+import { AGENT_TURN_USAGE_RETENTION_DAYS } from "@cocalc/util/ai/agent-turn-usage";
 
 const logger = getLogger("agents:maintenance");
 const BATCH = 5000;
@@ -108,6 +109,15 @@ async function cleanupAgentMessagingRows(): Promise<CleanupResult> {
       `DELETE FROM agent_network_broadcasts WHERE (account_id,broadcast_id) IN
        (SELECT account_id,broadcast_id FROM agent_network_broadcasts
         WHERE created_at<now()-interval '30 days' LIMIT $1)`,
+      result,
+    );
+    await remove(
+      db,
+      "turn_usage",
+      // By hub receipt time, never a reporting host's clock.
+      `DELETE FROM agent_turn_usage WHERE (account_id,id) IN
+       (SELECT account_id,id FROM agent_turn_usage
+        WHERE received_at<now()-make_interval(days => ${AGENT_TURN_USAGE_RETENTION_DAYS}) LIMIT $1)`,
       result,
     );
     await remove(

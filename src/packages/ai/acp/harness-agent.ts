@@ -46,6 +46,8 @@ import {
   countTrailingChars,
 } from "@cocalc/util/linear-text";
 import { hasBlobImageReference } from "./blob-image-reference";
+import { recordAgentTurnUsage } from "./turn-usage";
+import type { AgentTurnModelUsage } from "@cocalc/util/ai/agent-turn-usage";
 
 const logger = getLogger("ai:acp:harness-agent");
 
@@ -86,6 +88,37 @@ export class HarnessAgent implements AcpAgent {
     this.conversation = { ...conversation };
     if (!conversation.path || !conversation.threadId)
       throw Error("ACP conversation binding is required");
+  }
+
+  /** What the turn used, for usage by agent; never fails the turn. */
+  private recordUsage(
+    request: AcpEvaluateRequest,
+    result: { stopReason: string; models: AgentTurnModelUsage[] },
+    startedAt: number,
+  ): void {
+    // Project-configured ACP agents report no comparable usage.
+    if (this.binding.profile.id !== "claude-code") return;
+    const credential = this.binding.credential;
+    recordAgentTurnUsage(request.account_id, {
+      project_id: this.binding.projectId,
+      path: this.conversation.path,
+      thread_id: this.conversation.threadId,
+      provider: "claude",
+      payment: credential.mode,
+      ...("credentialId" in credential
+        ? { credential_id: credential.credentialId }
+        : {}),
+      ...(request.harness_pool ? { pool: true } : {}),
+      models: result.models,
+      started_at: startedAt,
+      ended_at: Date.now(),
+      outcome:
+        result.stopReason === "end_turn"
+          ? "completed"
+          : result.stopReason === "cancelled"
+            ? "interrupted"
+            : "failed",
+    });
   }
 
   async evaluate(request: AcpEvaluateRequest): Promise<void> {
@@ -315,6 +348,7 @@ export class HarnessAgent implements AcpAgent {
           },
         });
       }
+      const promptStarted = Date.now();
       const result = await client.prompt(
         harnessPrompt(
           {
@@ -430,6 +464,7 @@ export class HarnessAgent implements AcpAgent {
             );
         },
       );
+      this.recordUsage(request, result, promptStarted);
       await publishControls();
       await request.stream({
         type: "event",

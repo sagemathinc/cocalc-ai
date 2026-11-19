@@ -459,6 +459,18 @@ export const TABLE_OWNERSHIP = {
       "Per-account payment choice for agents (credential references only), authoritative on the account home bay. Like account credentials it does not move on account rehome; a missing row means the account default.",
   }),
 
+  ...entries(["agent_turn_usage"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id: "Agent locator for usage telemetry, not project placement authority.",
+      host_id: "Reporting host, informational.",
+    },
+    notes:
+      "Per-turn token usage of an account's agents (telemetry, bounded retention), authoritative on the account home bay. Does not move on account rehome; old rows simply age out.",
+  }),
+
   ...entries(["agent_sensors", "agent_sensor_runs"], {
     ownership: "project-owning",
     authority: "project_id",

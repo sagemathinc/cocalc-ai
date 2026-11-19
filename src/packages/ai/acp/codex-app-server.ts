@@ -67,6 +67,13 @@ import {
   supportsCodexAttentionInput,
 } from "./codex-attention";
 import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
+import { recordAgentTurnUsage } from "./turn-usage";
+import {
+  codexTurnModelUsage,
+  mergeTurnModelUsage,
+  type AgentTurnUsageOutcome,
+  type CodexTokenTotals,
+} from "@cocalc/util/ai/agent-turn-usage";
 import {
   isRegExpWhitespace,
   trimTrailingChars,
@@ -2982,6 +2989,48 @@ export class CodexAppServerAgent implements AcpAgent {
     }
   }
 
+  /** What a turn used, for usage by agent; never fails the turn. */
+  private recordTurnUsage(
+    request: AcpEvaluateRequest,
+    turn: {
+      spawned: SpawnedCodexAppServer;
+      model?: string;
+      threads: Map<
+        string,
+        { first: { total?: CodexTokenTotals; last?: CodexTokenTotals }; latest: { total?: CodexTokenTotals } }
+      >;
+      startedAt: number;
+      outcome: AgentTurnUsageOutcome;
+    },
+  ): void {
+    try {
+      const path = request.chat?.path;
+      const thread_id = request.chat?.thread_id;
+      const project_id = request.chat?.project_id ?? request.project_id;
+      if (!path || !thread_id || !project_id) return;
+      const models = mergeTurnModelUsage(
+        [...turn.threads.values()].flatMap(({ first, latest }) =>
+          codexTurnModelUsage(turn.model, first, latest),
+        ),
+      );
+      const credential_id = turn.spawned.credentialId;
+      recordAgentTurnUsage(request.account_id, {
+        project_id,
+        path,
+        thread_id,
+        provider: "codex",
+        payment: authSourceForSpawned(turn.spawned) ?? "unknown",
+        ...(credential_id ? { credential_id } : {}),
+        models,
+        started_at: turn.startedAt,
+        ended_at: Date.now(),
+        outcome: turn.outcome,
+      });
+    } catch (error) {
+      logger.debug("codex turn usage not recorded", { error: `${error}` });
+    }
+  }
+
   private async evaluateOnce(
     request: AcpEvaluateRequest,
   ): Promise<"completed" | "interrupted"> {
@@ -3049,6 +3098,17 @@ export class CodexAppServerAgent implements AcpAgent {
     let finalResponse = "";
     let latestUsage: AcpStreamUsage | undefined;
     let completedGoalUsage: AcpStreamUsage | undefined;
+    // What this turn used, for usage by agent: the thread's token totals at
+    // the turn's first and latest report (a goal continuation stays in the
+    // thread). Subagents report on their own threads' turns, which this loop
+    // does not see, so they are not counted yet.
+    const turnStartedAt = Date.now();
+    const turnTokens = new Map<
+      string,
+      { first: { total?: CodexTokenTotals; last?: CodexTokenTotals }; latest: { total?: CodexTokenTotals } }
+    >();
+    let turnModel: string | undefined;
+    let turnOutcome: AgentTurnUsageOutcome = "failed";
     const cumulativeUsage = (
       usage?: AcpStreamUsage,
     ): AcpStreamUsage | undefined => {
@@ -3267,6 +3327,7 @@ export class CodexAppServerAgent implements AcpAgent {
         normalizeCodexSessionId(session_id);
       const resumeId = requestedThreadKey ? session.sessionId : undefined;
       const model = this.effectiveModel(effectiveConfig);
+      turnModel = model;
       const serviceTier = this.resolveAppServerServiceTier(
         effectiveConfig,
         model,
@@ -4051,6 +4112,17 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           }
           case "thread/tokenUsage/updated": {
+            const tokenUsage = notification.params?.tokenUsage;
+            if (tokenUsage?.total) {
+              const key = `${notification.params?.threadId ?? actualThreadId ?? ""}`;
+              const seen = turnTokens.get(key);
+              if (seen) seen.latest = { total: tokenUsage.total };
+              else
+                turnTokens.set(key, {
+                  first: { total: tokenUsage.total, last: tokenUsage.last },
+                  latest: { total: tokenUsage.total },
+                });
+            }
             const usage = notification.params?.tokenUsage?.last;
             if (usage) {
               latestUsage = {
@@ -4348,6 +4420,7 @@ export class CodexAppServerAgent implements AcpAgent {
       runtimeHealthy = true;
       fundedFinishStatus = "committed";
       fundedFinishOutcome = "turn completed";
+      turnOutcome = "completed";
     } catch (err) {
       if (quotaPollTimer) {
         clearInterval(quotaPollTimer);
@@ -4355,6 +4428,7 @@ export class CodexAppServerAgent implements AcpAgent {
       if (maxTurnTimer) {
         clearTimeout(maxTurnTimer);
       }
+      if (runningEntry?.interrupted) turnOutcome = "interrupted";
       if (runningEntry?.interrupted && !quotaStopReason) {
         runtime.managerState = "interrupted";
         runtimeHealthy = true;
@@ -4469,6 +4543,13 @@ export class CodexAppServerAgent implements AcpAgent {
         withTurnFailure(failed, { kind: "limit", scope: "cocalc" });
       throw failed;
     } finally {
+      this.recordTurnUsage(request, {
+        spawned,
+        model: turnModel,
+        threads: turnTokens,
+        startedAt: turnStartedAt,
+        outcome: turnOutcome,
+      });
       await spawned.endConnectorTurn?.().catch((error) => {
         logger.warn("managed CoCalc connector revocation unconfirmed", {
           error: String(error),

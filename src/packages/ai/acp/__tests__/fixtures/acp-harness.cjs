@@ -454,6 +454,32 @@ lineReader.on("line", (line) => {
         }
         return result(message.id, { stopReason: "end_turn" });
       }
+      if (text === "report-usage") {
+        // claude-agent-acp's prompt response: tokens by model for the turn.
+        return result(message.id, {
+          stopReason: "end_turn",
+          usage: { inputTokens: 15, outputTokens: 51, totalTokens: 1266 },
+          _meta: {
+            quota: {
+              model_usage: [
+                {
+                  model: "claude-opus-5-5",
+                  token_count: {
+                    inputTokens: 10,
+                    cachedInputTokens: 1000,
+                    cachedWriteTokens: 200,
+                    outputTokens: 50,
+                  },
+                },
+                {
+                  model: "claude-haiku-5-5",
+                  token_count: { inputTokens: 5, outputTokens: 1 },
+                },
+              ],
+            },
+          },
+        });
+      }
       if (text === "limit-rejected" || text === "limit-warning") {
         // Claude reports the credential's limits with the turn, then fails
         // the prompt with a generic internal error (as for a weekly limit).
