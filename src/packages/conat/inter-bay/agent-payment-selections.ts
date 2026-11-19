@@ -116,6 +116,10 @@ export interface AgentPaymentSelectionsApi {
       rows: Array<{ usage: unknown; host_id?: string }>;
     },
   ): Promise<{ recorded: number }>;
+  /** This account's usage by agent over the last `hours`. */
+  turnUsageReport(
+    opts: AgentPaymentHomeRequest & { hours: number },
+  ): Promise<import("@cocalc/util/ai/agent-turn-usage").AgentUsageReport>;
 }
 
 export function agentPaymentSelectionsSubject(bay_id: string): string {
