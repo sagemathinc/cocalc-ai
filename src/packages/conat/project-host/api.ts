@@ -774,6 +774,13 @@ export interface HostControlApi {
     before: CloudflaredDiagnosticSnapshot;
     after: CloudflaredDiagnosticSnapshot;
   }>;
+  /** Take a fresh reading of a Claude subscription's limits (a one-word
+   * Haiku reply) and save it; for a subscription whose reading is old. */
+  probeClaudeSubscriptionUsage: (opts: {
+    project_id: string;
+    account_id: string;
+    credential_id: string;
+  }) => Promise<{ observed_at: string }>;
   runSyntheticRuntimeProbe: () => Promise<{
     project_id: string;
     started_at: string;

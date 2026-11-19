@@ -1603,6 +1603,23 @@ export async function startMasterRegistration({
         after,
       };
     },
+    async probeClaudeSubscriptionUsage({
+      project_id,
+      account_id,
+      credential_id,
+    }) {
+      await awaitReadyForControl(
+        "probeClaudeSubscriptionUsage",
+        waitUntilReady,
+      );
+      const { probeClaudeSubscriptionUsage } =
+        await import("./acp/claude-usage-probe");
+      return await probeClaudeSubscriptionUsage({
+        projectId: project_id,
+        accountId: account_id,
+        credentialId: credential_id,
+      });
+    },
     async runSyntheticRuntimeProbe() {
       await awaitReadyForControl("runSyntheticRuntimeProbe", waitUntilReady);
       if (syntheticRuntimeProbeInflight) {
