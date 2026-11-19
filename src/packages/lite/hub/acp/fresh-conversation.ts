@@ -25,6 +25,12 @@ export function freshThreadConfig(
     agent_mode: source.agent_mode,
     agent_model: source.agent_model,
     acp_config: config,
+    // A Claude (ACP harness) agent stays one: without its runtime the new
+    // conversation would run as Codex. Its session is per thread, so the
+    // successor starts a new one.
+    ...(source.agent_runtime != null
+      ? { agent_runtime: source.agent_runtime }
+      : {}),
     thread_color: source.thread_color,
     thread_accent_color: source.thread_accent_color,
     thread_icon: source.thread_icon,
