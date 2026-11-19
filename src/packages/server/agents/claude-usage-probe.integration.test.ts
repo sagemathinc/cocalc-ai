@@ -11,7 +11,9 @@ import {
   ANTHROPIC_API_PROVIDER,
   CLAUDE_SUBSCRIPTION_KIND,
 } from "@cocalc/util/ai/external-credential-profiles";
+import { claudeUsageProbeDue } from "@cocalc/util/ai/claude-usage-probe";
 import {
+  dueClaudeUsageProbeRows,
   dueClaudeUsageProbes,
   runClaudeUsageProbes,
   type ClaudeUsageProbeDeps,
@@ -211,6 +213,94 @@ describeDb("fresh Claude readings for Auto", () => {
     // A malformed reading time sorts first (as no reading).
     expect(due[0].id).toBe(badReading);
   });
+
+  test("the query and claudeUsageProbeDue agree on malformed values", async () => {
+    const owner = randomUUID();
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const HUGE = "__HUGE__";
+    const observed = [
+      undefined,
+      iso(now - 10 * HOUR),
+      iso(now - HOUR),
+      iso(now + 4 * 60_000),
+      iso(now + 6 * 60_000),
+      "9999-99-99T99:99:99Z",
+      "9999-01-01T00:00:00.000Z",
+      "2026-02-30T00:00:00.000Z",
+      iso(now - HOUR).replace(/\.\d{3}Z$/, "Z"),
+      "zzzz",
+      5,
+    ];
+    const checked = [
+      undefined,
+      iso(now - HOUR),
+      iso(now - 5 * HOUR),
+      "zzzz",
+      "9999-01-01T00:00:00.000Z",
+      "9999-99-99T99:99:99Z",
+    ];
+    const until = [
+      undefined,
+      iso(now + HOUR),
+      iso(now - HOUR),
+      "zzzz",
+      "9999-99-99T99:99:99Z",
+    ];
+    const fiveHour = [
+      undefined,
+      { utilization: 1, resets_at: sec(now + HOUR) },
+      { utilization: 1, resets_at: sec(now + HOUR) + 0.5 },
+      { utilization: 1, resets_at: sec(now + 366 * 24 * HOUR) },
+      { utilization: 1, resets_at: sec(now + 366 * 24 * HOUR) + 1 },
+      { utilization: 11, resets_at: sec(now + HOUR) },
+      { utilization: 0.5, resets_at: sec(now + HOUR) },
+      { utilization: HUGE, resets_at: sec(now + HOUR) },
+      { utilization: 1, resets_at: HUGE },
+      { utilization: "1", resets_at: sec(now + HOUR) },
+    ];
+    const excluded = [undefined, true, "true"];
+    const dims = [observed, checked, until, fiveHour, excluded];
+    const primes = [1, 5, 3, 7, 2]; // coprime with each length: every value appears
+    const ids: string[] = [];
+    for (let i = 0; i < 700; i++) {
+      const [o, c, u, f, e] = dims.map(
+        (values, d) =>
+          values[(Math.floor(i / (d + 1)) * primes[d]) % values.length],
+      ) as any[];
+      const metadata: Record<string, any> = {
+        claude_usage_history: usedAuto(HOUR),
+      };
+      if (o !== undefined || f !== undefined)
+        metadata.claude_usage = {
+          ...(o !== undefined ? { observed_at: o } : {}),
+          windows: f !== undefined ? { five_hour: f } : {},
+        };
+      if (c !== undefined) metadata.claude_usage_probe = { at: c };
+      if (u !== undefined) metadata.claude_pool_limited = { until: u };
+      if (e !== undefined) metadata.claude_pool_excluded = e;
+      ids.push(
+        await credential(
+          owner,
+          JSON.stringify(metadata).replaceAll(`"${HUGE}"`, "1e10000"),
+        ),
+      );
+    }
+    // What code decides, on the values as they come back from the database.
+    const { rows } = await query(
+      "SELECT id, metadata FROM external_credentials WHERE owner_account_id=$1",
+      [owner],
+    );
+    const expected = rows
+      .filter((row) => claudeUsageProbeDue(row.metadata, now))
+      .map((row) => row.id)
+      .sort();
+    const actual = (await dueClaudeUsageProbeRows(query, now, 10_000))
+      .map((row) => row.id)
+      .sort();
+    expect(expected.length).toBeGreaterThan(50);
+    expect(expected.length).toBeLessThan(ids.length - 50);
+    expect(actual).toEqual(expected);
+  }, 60_000);
 
   test("checks on a running project's host of this bay, once per four hours", async () => {
     const owner = randomUUID();

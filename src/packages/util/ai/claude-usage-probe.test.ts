@@ -98,6 +98,93 @@ describe("claudeUsageProbeDue", () => {
   });
 });
 
+describe("malformed values count as absent", () => {
+  const stale = { claude_usage: reading(10 * HOUR) };
+  test("times that are not real toISOString times", () => {
+    for (const bad of [
+      "9999-99-99T99:99:99Z",
+      "2026-02-30T00:00:00.000Z",
+      new Date(now).toISOString().replace(".000Z", "Z"),
+      "zzzz",
+    ]) {
+      // As a reading time: no reading, so due.
+      expect(
+        claudeUsageProbeDue(
+          { claude_usage: { ...reading(HOUR), observed_at: bad } },
+          now,
+        ),
+      ).toBe(true);
+      // As the last check or a limit: none, so due.
+      expect(
+        claudeUsageProbeDue(
+          { ...stale, [CLAUDE_USAGE_PROBE_METADATA_KEY]: { at: bad } },
+          now,
+        ),
+      ).toBe(true);
+      expect(
+        claudeUsageProbeDue(
+          { ...stale, claude_pool_limited: { until: bad } },
+          now,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  test("a reading from the future is no reading", () => {
+    for (const future of [
+      "9999-01-01T00:00:00.000Z",
+      new Date(now + 6 * 60_000).toISOString(),
+    ])
+      expect(
+        claudeUsageProbeDue(
+          { claude_usage: { ...reading(HOUR), observed_at: future } },
+          now,
+        ),
+      ).toBe(true);
+    expect(
+      claudeUsageProbeDue(
+        {
+          claude_usage: {
+            ...reading(HOUR),
+            observed_at: new Date(now + 4 * 60_000).toISOString(),
+          },
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  test("a full window needs a whole reset time within a year", () => {
+    const full = (resets_at: number) => ({
+      claude_usage: {
+        ...reading(10 * HOUR),
+        windows: { five_hour: { utilization: 1, resets_at } },
+      },
+    });
+    expect(claudeUsageProbeDue(full(sec(now + HOUR)), now)).toBe(false);
+    expect(claudeUsageProbeDue(full(sec(now + HOUR) + 0.5), now)).toBe(true);
+    expect(claudeUsageProbeDue(full(sec(now + 366 * 24 * HOUR)), now)).toBe(
+      false,
+    );
+    expect(claudeUsageProbeDue(full(sec(now + 366 * 24 * HOUR) + 1), now)).toBe(
+      true,
+    );
+    expect(
+      claudeUsageProbeDue(
+        {
+          claude_usage: {
+            ...reading(10 * HOUR),
+            windows: {
+              five_hour: { utilization: 11, resets_at: sec(now + HOUR) },
+            },
+          },
+        },
+        now,
+      ),
+    ).toBe(true);
+  });
+});
+
 test("stored checks are revalidated", () => {
   expect(
     parseClaudeUsageProbe({ at: "2026-11-19T20:00:00.000Z", ok: true }),
@@ -109,7 +196,7 @@ test("stored checks are revalidated", () => {
   expect(parseClaudeUsageProbe("x")).toBeUndefined();
   expect(
     parseClaudeUsageProbe({
-      at: "2026-11-19T20:00:00Z",
+      at: "2026-11-19T20:00:00.000Z",
       error: "e".repeat(999),
     })?.error,
   ).toHaveLength(300);

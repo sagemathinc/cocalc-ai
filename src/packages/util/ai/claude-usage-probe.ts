@@ -14,10 +14,8 @@ import {
   CLAUDE_POOL_EXCLUDED_METADATA_KEY,
   CLAUDE_POOL_LIMITED_METADATA_KEY,
 } from "./claude-pool";
-import {
-  CLAUDE_USAGE_METADATA_KEY,
-  parseClaudeRateLimitSnapshot,
-} from "./claude-usage";
+import { CLAUDE_USAGE_METADATA_KEY } from "./claude-usage";
+import { isIsoTime } from "./claude-usage-sql";
 
 /** Credential metadata: the last check, { at (ISO), ok, error? }. */
 export const CLAUDE_USAGE_PROBE_METADATA_KEY = "claude_usage_probe";
@@ -29,6 +27,12 @@ export const CLAUDE_USAGE_PROBE_AFTER_MS = 4 * HOUR_MS;
 export const CLAUDE_USAGE_PROBE_ACTIVE_MS = 7 * 24 * HOUR_MS;
 /** A 5-hour window this full cannot answer until it resets. */
 export const CLAUDE_USAGE_PROBE_FULL = 0.98;
+/** A reading time later than now by more than this is not a reading (as in
+ * parseClaudeRateLimitSnapshot). */
+export const CLAUDE_USAGE_PROBE_FUTURE_MS = 5 * 60_000;
+/** A reset later than now by more than this is not a reading (as in
+ * util/ai/claude-usage.ts). */
+export const CLAUDE_USAGE_PROBE_MAX_RESET_MS = 366 * 24 * HOUR_MS;
 
 export interface ClaudeUsageProbeRecord {
   at: string;
@@ -41,12 +45,7 @@ export function parseClaudeUsageProbe(
 ): ClaudeUsageProbeRecord | undefined {
   if (!value || typeof value !== "object") return;
   const { at, ok, error } = value as Record<string, unknown>;
-  if (
-    typeof at !== "string" ||
-    at.length > 40 ||
-    !Number.isFinite(Date.parse(at))
-  )
-    return;
+  if (!isIsoTime(at)) return;
   return {
     at,
     ...(typeof ok === "boolean" ? { ok } : {}),
@@ -54,32 +53,42 @@ export function parseClaudeUsageProbe(
   };
 }
 
-/** Whether one of an account's subscriptions needs a fresh reading now. */
+/**
+ * Whether one of an account's subscriptions needs a fresh reading now.
+ * The home bay's query (server/agents/claude-usage-probe.ts) applies exactly
+ * this rule to the same raw values; keep them the same. Times count only as
+ * isIsoTime allows, and then compare as text.
+ */
 export function claudeUsageProbeDue(
   metadata: Record<string, any> | null | undefined,
   now = Date.now(),
 ): boolean {
+  const iso = (ms: number) => new Date(ms).toISOString();
   if (metadata?.[CLAUDE_POOL_EXCLUDED_METADATA_KEY] === true) return false;
-  const limited = Date.parse(
-    metadata?.[CLAUDE_POOL_LIMITED_METADATA_KEY]?.until,
-  );
-  if (Number.isFinite(limited) && limited > now) return false;
-  const probe = parseClaudeUsageProbe(
-    metadata?.[CLAUDE_USAGE_PROBE_METADATA_KEY],
-  );
-  if (probe && Date.parse(probe.at) > now - CLAUDE_USAGE_PROBE_AFTER_MS)
+  const until = metadata?.[CLAUDE_POOL_LIMITED_METADATA_KEY]?.until;
+  if (isIsoTime(until) && until >= iso(now)) return false;
+  const checked = metadata?.[CLAUDE_USAGE_PROBE_METADATA_KEY]?.at;
+  const stale = iso(now - CLAUDE_USAGE_PROBE_AFTER_MS);
+  if (isIsoTime(checked) && checked >= stale) return false;
+  const usage = metadata?.[CLAUDE_USAGE_METADATA_KEY];
+  const observed = usage?.observed_at;
+  // A reading time in the future is no reading.
+  if (
+    isIsoTime(observed) &&
+    observed >= stale &&
+    observed <= iso(now + CLAUDE_USAGE_PROBE_FUTURE_MS)
+  )
     return false;
-  const reading = parseClaudeRateLimitSnapshot(
-    metadata?.[CLAUDE_USAGE_METADATA_KEY],
-    now,
-  );
-  if (!reading) return true;
-  if (Date.parse(reading.observed_at) > now - CLAUDE_USAGE_PROBE_AFTER_MS)
-    return false;
-  const session = reading.windows.five_hour;
+  // A 5-hour window that was full and has not reset cannot answer yet.
+  const session = usage?.windows?.five_hour;
+  const utilization = session?.utilization;
+  const resets = session?.resets_at;
   return !(
-    session &&
-    session.utilization >= CLAUDE_USAGE_PROBE_FULL &&
-    session.resets_at * 1000 > now
+    typeof utilization === "number" &&
+    utilization >= CLAUDE_USAGE_PROBE_FULL &&
+    utilization <= 10 &&
+    Number.isInteger(resets) &&
+    resets * 1000 > now &&
+    resets * 1000 - now <= CLAUDE_USAGE_PROBE_MAX_RESET_MS
   );
 }

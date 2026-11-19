@@ -20,6 +20,8 @@ import {
   CLAUDE_USAGE_PROBE_ACTIVE_MS,
   CLAUDE_USAGE_PROBE_AFTER_MS,
   CLAUDE_USAGE_PROBE_FULL,
+  CLAUDE_USAGE_PROBE_FUTURE_MS,
+  CLAUDE_USAGE_PROBE_MAX_RESET_MS,
   CLAUDE_USAGE_PROBE_METADATA_KEY,
   claudeUsageProbeDue,
 } from "@cocalc/util/ai/claude-usage-probe";
@@ -87,35 +89,38 @@ interface Candidate {
 
 /**
  * The subscriptions to check now, oldest reading first, chosen in the
- * database: at most `limit` rows leave it. Times are compared as the ISO
- * strings they are stored as (toISOString sorts in time order); a missing or
- * malformed one counts as old, as in claudeUsageProbeDue. Numbers are
- * compared as numeric, which holds any JSON number, so no value can fail the
- * query. The partial index on the reading time
- * (util/db-schema/external-credentials.ts) serves the order.
+ * database: at most `limit` rows leave it. This is claudeUsageProbeDue
+ * (util/ai/claude-usage-probe.ts) on the same raw values, plus "the account
+ * used Auto lately": times count only as isIsoTime allows and then compare
+ * as text (they sort in time order), numbers compare as numeric (which holds
+ * any JSON number), so no value can fail the query. The partial index on the
+ * reading time (util/db-schema/external-credentials.ts) serves the order.
  */
-export async function dueClaudeUsageProbes(
+export async function dueClaudeUsageProbeRows(
   query: Query,
   now = Date.now(),
   limit = MAX_PER_PASS,
 ): Promise<Candidate[]> {
-  const stale = new Date(now - CLAUDE_USAGE_PROBE_AFTER_MS).toISOString();
+  const iso = (ms: number) => new Date(ms).toISOString();
   const { rows } = await query(
     `SELECT c.id, c.owner_account_id, c.metadata
        FROM external_credentials c
       WHERE c.kind=$2 AND c.revoked IS NULL AND c.provider=$1
         AND c.scope='account' AND c.owner_account_id IS NOT NULL
-        AND ${READING_AT} < $3
+        -- No reading, an old one, or one from the future.
+        AND (${READING_AT} < $3 OR ${READING_AT} > $5)
         AND ${isoTimeSql("(c.metadata->'claude_usage_probe'->>'at')")} < $3
         AND c.metadata->'claude_pool_excluded' IS DISTINCT FROM 'true'::jsonb
         AND ${isoTimeSql("(c.metadata->'claude_pool_limited'->>'until')")} < $4
+        -- Not a 5-hour window that was full and has not reset.
         AND NOT COALESCE(
           CASE WHEN jsonb_typeof(${FIVE_HOUR}->'utilization') = 'number'
                 AND jsonb_typeof(${FIVE_HOUR}->'resets_at') = 'number'
-               -- Out-of-range values make no reading, as in code.
-               THEN (${FIVE_HOUR}->'utilization')::numeric BETWEEN $5::numeric AND 10
-                AND (${FIVE_HOUR}->'resets_at')::numeric > $6::numeric
-                AND (${FIVE_HOUR}->'resets_at')::numeric < $6::numeric + 366 * 86400
+               THEN (${FIVE_HOUR}->'utilization')::numeric BETWEEN $6::numeric AND 10
+                AND (${FIVE_HOUR}->'resets_at')::numeric
+                    = trunc((${FIVE_HOUR}->'resets_at')::numeric)
+                AND (${FIVE_HOUR}->'resets_at')::numeric > $7::numeric
+                AND (${FIVE_HOUR}->'resets_at')::numeric <= $8::numeric
           END, false)
         -- The account used Auto lately: a pick recorded a reading.
         AND EXISTS (
@@ -124,23 +129,34 @@ export async function dueClaudeUsageProbes(
              AND h.provider=$1 AND h.scope='account' AND h.revoked IS NULL
              AND CASE WHEN h.metadata->'claude_usage_history'->-1->>'at'
                            ~ '^[0-9]{1,16}$'
-                      THEN (h.metadata->'claude_usage_history'->-1->>'at')::bigint > $7
+                      THEN (h.metadata->'claude_usage_history'->-1->>'at')::bigint > $9
                       ELSE false END)
       ORDER BY ${READING_AT}
-      LIMIT $8`,
+      LIMIT $10`,
     [
       ANTHROPIC_API_PROVIDER,
       CLAUDE_SUBSCRIPTION_KIND,
-      stale,
-      new Date(now).toISOString(),
+      iso(now - CLAUDE_USAGE_PROBE_AFTER_MS),
+      iso(now),
+      iso(now + CLAUDE_USAGE_PROBE_FUTURE_MS),
       CLAUDE_USAGE_PROBE_FULL,
       now / 1000,
+      (now + CLAUDE_USAGE_PROBE_MAX_RESET_MS) / 1000,
       now - CLAUDE_USAGE_PROBE_ACTIVE_MS,
       limit,
     ],
   );
-  // The same rule in code, for what the query cannot check exactly.
-  return (rows as Candidate[]).filter((row) =>
+  return rows as Candidate[];
+}
+
+/** The subscriptions to check now (dueClaudeUsageProbeRows), with the rule
+ * applied again in code as a guard. */
+export async function dueClaudeUsageProbes(
+  query: Query,
+  now = Date.now(),
+  limit = MAX_PER_PASS,
+): Promise<Candidate[]> {
+  return (await dueClaudeUsageProbeRows(query, now, limit)).filter((row) =>
     claudeUsageProbeDue(row.metadata, now),
   );
 }
