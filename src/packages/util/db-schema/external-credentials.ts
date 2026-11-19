@@ -4,6 +4,7 @@
  */
 
 import { CLAUDE_SUBSCRIPTION_KIND } from "../ai/external-credential-profiles";
+import { claudeReadingAtSql } from "../ai/claude-usage-sql";
 import { Table } from "./types";
 
 Table({
@@ -26,7 +27,7 @@ Table({
       {
         name: "external_credentials_claude_reading_at_idx",
         query:
-          "((COALESCE(metadata->'claude_usage'->>'observed_at', ''))) " +
+          `(${claudeReadingAtSql()}) ` +
           `WHERE kind = '${CLAUDE_SUBSCRIPTION_KIND}' AND revoked IS NULL`,
       },
     ],

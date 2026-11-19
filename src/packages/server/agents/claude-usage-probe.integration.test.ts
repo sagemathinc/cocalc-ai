@@ -41,7 +41,8 @@ describeDb("fresh Claude readings for Auto", () => {
 
   async function credential(
     owner: string,
-    metadata: Record<string, unknown>,
+    // Raw JSON text for values a JS object cannot hold (e.g. 1e10000).
+    metadata: Record<string, unknown> | string,
     revoked = false,
   ): Promise<string> {
     const id = randomUUID();
@@ -171,6 +172,45 @@ describeDb("fresh Claude readings for Auto", () => {
     );
     return project_id;
   }
+
+  test("malformed metadata counts as missing and cannot fail the query", async () => {
+    const owner = randomUUID();
+    const history = JSON.stringify(usedAuto(HOUR));
+    const fresh = JSON.stringify(reading(HOUR));
+    // Malformed times compare above every ISO time as text; each one is
+    // treated as absent, as claudeUsageProbeDue does.
+    const badReading = await credential(owner, {
+      claude_usage: { ...reading(HOUR), observed_at: "zzzz" },
+      claude_usage_history: usedAuto(HOUR),
+    });
+    const badCheck = await credential(owner, {
+      claude_usage: reading(6 * HOUR),
+      claude_usage_probe: { at: "zzzz" },
+    });
+    const badLimit = await credential(owner, {
+      claude_usage: reading(7 * HOUR),
+      claude_pool_limited: { until: "zzzz" },
+    });
+    // A JSON number no float holds, in an old reading: no error, and (out
+    // of range) not a full window.
+    const huge = await credential(
+      owner,
+      `{"claude_usage": {"observed_at": "${new Date(now - 8 * HOUR).toISOString()}",
+        "windows": {"five_hour": {"utilization": 1e10000, "resets_at": ${sec(now + HOUR)}},
+                    "seven_day": {"utilization": 0.5, "resets_at": ${sec(now + 72 * HOUR)}}}}}`,
+    );
+    await credential(
+      owner,
+      `{"claude_usage": ${fresh}, "claude_usage_history": ${history},
+        "x": {"utilization": 1e10000}}`,
+    );
+    const due = await dueClaudeUsageProbes(query, now);
+    expect(due.map((row) => row.id).sort()).toEqual(
+      [badReading, badCheck, badLimit, huge].sort(),
+    );
+    // A malformed reading time sorts first (as no reading).
+    expect(due[0].id).toBe(badReading);
+  });
 
   test("checks on a running project's host of this bay, once per four hours", async () => {
     const owner = randomUUID();

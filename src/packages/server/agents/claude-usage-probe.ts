@@ -23,6 +23,10 @@ import {
   CLAUDE_USAGE_PROBE_METADATA_KEY,
   claudeUsageProbeDue,
 } from "@cocalc/util/ai/claude-usage-probe";
+import {
+  claudeReadingAtSql,
+  isoTimeSql,
+} from "@cocalc/util/ai/claude-usage-sql";
 
 const logger = getLogger("server:agents:claude-usage-probe");
 
@@ -72,7 +76,7 @@ const defaultDeps: ClaudeUsageProbeDeps = {
 
 // When the reading was taken, as stored ("" if none): the expression of the
 // partial index on external_credentials.
-const READING_AT = "COALESCE(c.metadata->'claude_usage'->>'observed_at', '')";
+const READING_AT = claudeReadingAtSql("c");
 const FIVE_HOUR = "c.metadata->'claude_usage'->'windows'->'five_hour'";
 
 interface Candidate {
@@ -84,9 +88,11 @@ interface Candidate {
 /**
  * The subscriptions to check now, oldest reading first, chosen in the
  * database: at most `limit` rows leave it. Times are compared as the ISO
- * strings they are stored as (toISOString sorts in time order), so a bad
- * value cannot fail the query; it only sorts as "old". The partial index on
- * the reading time (util/db-schema/external-credentials.ts) serves the order.
+ * strings they are stored as (toISOString sorts in time order); a missing or
+ * malformed one counts as old, as in claudeUsageProbeDue. Numbers are
+ * compared as numeric, which holds any JSON number, so no value can fail the
+ * query. The partial index on the reading time
+ * (util/db-schema/external-credentials.ts) serves the order.
  */
 export async function dueClaudeUsageProbes(
   query: Query,
@@ -100,14 +106,16 @@ export async function dueClaudeUsageProbes(
       WHERE c.kind=$2 AND c.revoked IS NULL AND c.provider=$1
         AND c.scope='account' AND c.owner_account_id IS NOT NULL
         AND ${READING_AT} < $3
-        AND COALESCE(c.metadata->'claude_usage_probe'->>'at', '') < $3
+        AND ${isoTimeSql("(c.metadata->'claude_usage_probe'->>'at')")} < $3
         AND c.metadata->'claude_pool_excluded' IS DISTINCT FROM 'true'::jsonb
-        AND COALESCE(c.metadata->'claude_pool_limited'->>'until', '') < $4
+        AND ${isoTimeSql("(c.metadata->'claude_pool_limited'->>'until')")} < $4
         AND NOT COALESCE(
           CASE WHEN jsonb_typeof(${FIVE_HOUR}->'utilization') = 'number'
                 AND jsonb_typeof(${FIVE_HOUR}->'resets_at') = 'number'
-               THEN (${FIVE_HOUR}->>'utilization')::float8 >= $5
-                AND (${FIVE_HOUR}->>'resets_at')::float8 > $6
+               -- Out-of-range values make no reading, as in code.
+               THEN (${FIVE_HOUR}->'utilization')::numeric BETWEEN $5::numeric AND 10
+                AND (${FIVE_HOUR}->'resets_at')::numeric > $6::numeric
+                AND (${FIVE_HOUR}->'resets_at')::numeric < $6::numeric + 366 * 86400
           END, false)
         -- The account used Auto lately: a pick recorded a reading.
         AND EXISTS (
