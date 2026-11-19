@@ -110,7 +110,8 @@ export function parseAgentTurnUsage(
   )
     return undefined;
   const turn_id = v.turn_id == null ? undefined : text(v.turn_id, 64);
-  if (v.turn_id != null && (!turn_id || !isValidUUID(turn_id))) return undefined;
+  if (v.turn_id != null && (!turn_id || !isValidUUID(turn_id)))
+    return undefined;
   const credential_id =
     v.credential_id == null ? undefined : text(v.credential_id, 64);
   if (
@@ -275,12 +276,15 @@ export function mergeTurnModelUsage(
 /** One agent conversation's use of one model over a period (usage by agent). */
 export interface AgentUsageRow {
   project_id: string;
+  /** With project_id and thread_id, which agent: a hash of its chat path. */
+  path_hash: string;
   thread_id: string;
   provider: AgentTurnUsageProvider;
   model: string;
   /** The account's name for the agent, when this is its current conversation. */
   name?: string;
   turns: number;
+  /** Each token sum is at most Number.MAX_SAFE_INTEGER (capped). */
   input_tokens: number;
   cached_input_tokens: number;
   cache_write_tokens: number;
@@ -299,5 +303,6 @@ export interface AgentUsageReport {
 }
 
 /** Periods the report offers (hours): at most the retention. */
-export const AGENT_USAGE_REPORT_MAX_HOURS = AGENT_TURN_USAGE_RETENTION_DAYS * 24;
+export const AGENT_USAGE_REPORT_MAX_HOURS =
+  AGENT_TURN_USAGE_RETENTION_DAYS * 24;
 export const AGENT_USAGE_REPORT_MAX_ROWS = 500;

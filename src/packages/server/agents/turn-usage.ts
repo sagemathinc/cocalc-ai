@@ -177,6 +177,17 @@ async function insertHostTurns(
   return stored;
 }
 
+/** Token sums are reported as JSON numbers, so a sum is capped at the
+ * largest integer a number holds exactly. The stored bounds (per field, per
+ * turn, per host and hour) allow far larger sums than real use reaches; a
+ * capped sum shows as at least this much rather than failing the report or
+ * losing precision. */
+export const AGENT_USAGE_REPORT_MAX_TOKENS = Number.MAX_SAFE_INTEGER;
+
+function capped(field: string): string {
+  return `LEAST(COALESCE(sum((m->>'${field}')::numeric), 0), ${AGENT_USAGE_REPORT_MAX_TOKENS})::bigint`;
+}
+
 /**
  * Home-bay read: this account's usage by agent conversation and model over
  * the last `hours`, busiest first, with the account's name for each agent
@@ -200,41 +211,51 @@ export async function agentUsageReport({
   );
   const since = new Date(now - period * 3600_000);
   const { rows } = await query(
-    `SELECT u.project_id, u.thread_id, u.provider,
+    `SELECT u.project_id, u.path_hash, u.thread_id, u.provider,
             COALESCE(m->>'model', 'unknown') AS model,
             count(DISTINCT u.id)::int AS turns,
-            COALESCE(sum((m->>'input_tokens')::bigint), 0)::bigint AS input_tokens,
-            COALESCE(sum((m->>'cached_input_tokens')::bigint), 0)::bigint AS cached_input_tokens,
-            COALESCE(sum((m->>'cache_write_tokens')::bigint), 0)::bigint AS cache_write_tokens,
-            COALESCE(sum((m->>'output_tokens')::bigint), 0)::bigint AS output_tokens,
+            ${capped("input_tokens")} AS input_tokens,
+            ${capped("cached_input_tokens")} AS cached_input_tokens,
+            ${capped("cache_write_tokens")} AS cache_write_tokens,
+            ${capped("output_tokens")} AS output_tokens,
             max(u.ended_at) AS last_at
        FROM agent_turn_usage u
        CROSS JOIN LATERAL jsonb_array_elements(u.models) AS m
       WHERE u.account_id=$1 AND u.ended_at > $2
-      GROUP BY u.project_id, u.thread_id, u.provider, COALESCE(m->>'model', 'unknown')
-      ORDER BY sum((m->>'output_tokens')::bigint) DESC NULLS LAST
+      GROUP BY u.project_id, u.path_hash, u.thread_id, u.provider,
+               COALESCE(m->>'model', 'unknown')
+      ORDER BY sum((m->>'output_tokens')::numeric) DESC NULLS LAST
       LIMIT $3`,
     [account_id, since, AGENT_USAGE_REPORT_MAX_ROWS + 1],
   );
   const names = (
     await query(
-      `SELECT name, project_id, metadata->>'thread_id' AS thread_id
+      `SELECT name, project_id, metadata->>'path' AS path,
+              metadata->>'thread_id' AS thread_id
          FROM agent_personal_names
         WHERE account_id=$1 AND retired_at IS NULL`,
       [account_id],
     )
   ).rows;
+  // An agent is its (project, path, thread): a copied chat can keep the
+  // thread id under another path, and that is another agent.
   const nameOf = new Map(
-    names.map((n) => [`${n.project_id}/${n.thread_id}`, n.name as string]),
+    names
+      .filter((n) => n.path && n.thread_id)
+      .map((n) => [
+        `${n.project_id}/${turnUsagePathHash(n.path)}/${n.thread_id}`,
+        n.name as string,
+      ]),
   );
   const truncated = rows.length > AGENT_USAGE_REPORT_MAX_ROWS;
   return {
     since: since.toISOString(),
     hours: period,
     rows: rows.slice(0, AGENT_USAGE_REPORT_MAX_ROWS).map((r) => {
-      const name = nameOf.get(`${r.project_id}/${r.thread_id}`);
+      const name = nameOf.get(`${r.project_id}/${r.path_hash}/${r.thread_id}`);
       return {
         project_id: r.project_id,
+        path_hash: r.path_hash,
         thread_id: r.thread_id,
         provider: r.provider,
         model: r.model,
