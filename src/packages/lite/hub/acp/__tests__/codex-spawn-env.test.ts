@@ -12,8 +12,9 @@
  * probes a local HTTP endpoint that checks the bearer token, once with its
  * environment and once with both token variables removed.
  *
- * Only the credential and payment lookups are mocked. Limits: this does not run a
- * real Codex binary, and the probe is a local test endpoint, not a CoCalc hub.
+ * Only the credential and payment lookups are mocked. Limits: this does not
+ * run a real Codex binary, and the probe is a local test endpoint, not a
+ * CoCalc hub.
  */
 
 import {
