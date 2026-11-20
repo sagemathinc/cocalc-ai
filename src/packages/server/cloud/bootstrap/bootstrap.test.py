@@ -1469,6 +1469,122 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             with self.assertRaises(OSError):
                 os.getxattr(image / "usr" / "bin" / "foreign", "security.capability")
 
+    @unittest.skipUnless(
+        os.geteuid() == 0 and os.environ.get("COCALC_TEST_CONFINED") == "1",
+        "needs real root and COCALC_TEST_CONFINED=1 (runs the walker and copies confined)",
+    )
+    def test_unmapped_owners_in_a_real_jail(self) -> None:
+        # Host 0 is not mapped in the jail: the walk and the confined copies
+        # must fail closed on it, never skip it, and pass once the repair has
+        # given the known host-root apt dirs to the container root.
+        namespace = self.helper_namespace()
+        uid = int(os.environ.get("COCALC_TEST_CONFINED_UID", "2000"))
+        container = int(os.environ.get("COCALC_TEST_CONTAINER_ROOT", "231072"))
+        id_map = f"{uid} {uid} 1\n{container} {container} 65536\n"
+        id_maps = (uid, uid, id_map, id_map)
+        v2 = struct.pack("<IIIII", 0x02000001, 1 << 12, 0, 0, 0)  # cap_net_admin=ep, host-global
+        converted = struct.pack("<IIIIII", 0x03000001, 1 << 12, 0, 0, 0, container)
+        walker = ["/usr/local/libexec/cocalc-runtime-storage-path-helper", "_image-caps-walk", "--rootid", str(container)]
+        with tempfile.TemporaryDirectory(dir=os.environ.get("COCALC_TEST_CONFINED_DIR")) as tmpdir:
+            base = Path(tmpdir)
+            os.chmod(base, 0o711)
+
+            def run(argv, binds, setfcap=True):
+                spec = json.dumps({"argv": argv, "binds": binds, "setfcap": setfcap, "tolerate_skips": False})
+                child = os.fork()
+                if child == 0:
+                    code = 70
+                    try:
+                        code = namespace["run_confined_exec"](["_confined-exec", spec], run_dir=f"{tmpdir}/run", id_maps=id_maps)
+                    finally:
+                        os._exit(code if 0 <= code < 256 else 71)
+                _pid, status = os.waitpid(child, 0)
+                return os.waitstatus_to_exitcode(status)
+
+            def image(name):
+                root = base / name
+                (root / "usr" / "bin").mkdir(parents=True)
+                for path in (root, root / "usr", root / "usr" / "bin"):
+                    os.chown(path, container, container)
+                return root
+
+            def capped(path, owner):
+                shutil.copy("/bin/true", path)
+                os.chown(path, owner, owner)
+                os.setxattr(path, "security.capability", v2)
+
+            def walk(root):
+                fd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+                try:
+                    return run(walker, [[fd, "/dest", True]])
+                finally:
+                    os.close(fd)
+
+            def copy(root, argv):
+                dest = base / f"dest-{len(os.listdir(base))}"
+                dest.mkdir()
+                os.chown(dest, uid, uid)
+                srcfd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+                destfd = os.open(dest, os.O_PATH | os.O_DIRECTORY)
+                try:
+                    return run([*argv, "--", "/src/" if "rsync" in argv[0] else "/src/.", "/dest/"],
+                               [[srcfd, "/src", False], [destfd, "/dest", True]])
+                finally:
+                    os.close(srcfd)
+                    os.close(destfd)
+
+            # 1. A 0700 dir in the container range is read and converted.
+            sealed = image("sealed")
+            (sealed / "usr" / "lib" / "private").mkdir(parents=True)
+            os.chown(sealed / "usr" / "lib", container, container)
+            os.chown(sealed / "usr" / "lib" / "private", container, container)
+            os.chmod(sealed / "usr" / "lib" / "private", 0o700)
+            capped(sealed / "usr" / "lib" / "private" / "helper", container)
+            self.assertEqual(walk(sealed), 0)
+            self.assertEqual(os.getxattr(sealed / "usr" / "lib" / "private" / "helper", "security.capability"), converted)
+
+            # 2. The #205 shape: apt's partial dirs left 0:0 0700 by an old normalize.
+            apt = image("apt")
+            lists = apt / "var" / "lib" / "apt" / "lists"
+            lists.mkdir(parents=True)
+            for path in (apt / "var", apt / "var" / "lib", apt / "var" / "lib" / "apt", lists):
+                os.chown(path, container, container)
+            (lists / "partial").mkdir()
+            os.chown(lists / "partial", 0, 0)
+            os.chmod(lists / "partial", 0o700)
+            capped(apt / "usr" / "bin" / "helper", container)
+            self.assertNotEqual(walk(apt), 0)
+            for argv in (namespace["CONFINED_RSYNC"], namespace["CONFINED_CP"]):
+                with self.subTest(copy=argv[0], repaired=False):
+                    self.assertNotEqual(copy(apt, argv), 0)
+            fd = os.open(apt, os.O_PATH | os.O_DIRECTORY)
+            try:
+                self.assertEqual(namespace["repair_host_root_apt_dirs"](fd, owner=(container, container)), ["var/lib/apt/lists/partial"])
+            finally:
+                os.close(fd)
+            info = os.stat(lists / "partial")
+            self.assertEqual((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)), (container, container, 0o700))
+            self.assertEqual(walk(apt), 0)
+            self.assertEqual(os.getxattr(apt / "usr" / "bin" / "helper", "security.capability"), converted)
+            for argv in (namespace["CONFINED_RSYNC"], namespace["CONFINED_CP"]):
+                with self.subTest(copy=argv[0], repaired=True):
+                    self.assertEqual(copy(apt, argv), 0)
+
+            # 3. A READABLE host-root file with a host-global cap: getxattr may
+            # work, but the cap cannot be rewritten on an unmapped inode, so the
+            # walk fails (the image stays unstamped) and the repair leaves it.
+            readable = image("readable")
+            capped(readable / "usr" / "bin" / "rootcap", 0)
+            os.chmod(readable / "usr" / "bin" / "rootcap", 0o755)
+            self.assertNotEqual(walk(readable), 0)
+            self.assertEqual(os.getxattr(readable / "usr" / "bin" / "rootcap", "security.capability"), v2)
+            fd = os.open(readable, os.O_PATH | os.O_DIRECTORY)
+            try:
+                self.assertEqual(namespace["repair_host_root_apt_dirs"](fd, owner=(container, container)), [])
+            finally:
+                os.close(fd)
+            self.assertEqual(os.stat(readable / "usr" / "bin" / "rootcap").st_uid, 0)
+
     def test_image_caps_state_is_validated_and_written_atomically(self) -> None:
         namespace = self.helper_namespace()
         read, write = namespace["read_image_caps_state"], namespace["write_image_caps_state"]
@@ -1498,6 +1614,7 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         identities = iter(["inode:1:2:3", "inode:1:2:4", "inode:1:2:4", "inode:9:9:9"])
         namespace["image_identity"] = lambda _fd: next(identities)
         namespace["subvolume_readonly"] = lambda _fd: False
+        namespace["repair_host_root_apt_dirs"] = lambda _fd: []
         with tempfile.TemporaryDirectory() as tmpdir:
             state = str(Path(tmpdir) / "image-caps.json")
             calls = []
@@ -1528,6 +1645,110 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             self.assertEqual(len(images), 5)
             self.assertIn("inode:9:9:9", images)
             self.assertNotIn("inode:0:0:0", images)
+
+    @contextmanager
+    def host_root_view(self, namespace, root: Path, owned_by_root):
+        """fstat reports 0:0 for the paths in owned_by_root (a test user
+        cannot create host-root files); fchown is recorded, not done."""
+        real_fstat = os.fstat
+        chowns = []
+
+        def fstat(fd):
+            info = real_fstat(fd)
+            try:
+                path = os.readlink(f"/proc/self/fd/{fd}")
+            except OSError:
+                return info
+            if path in {str(root / rel) for rel in owned_by_root}:
+                values = list(info)
+                values[4] = values[5] = 0
+                return os.stat_result(values)
+            return info
+
+        def fchown(fd, uid, gid):
+            chowns.append((os.path.relpath(os.readlink(f"/proc/self/fd/{fd}"), root), uid, gid))
+
+        with mock.patch.object(namespace["os"], "fstat", side_effect=fstat), \
+                mock.patch.object(namespace["os"], "fchown", side_effect=fchown):
+            yield chowns
+
+    def test_host_root_apt_dirs_are_repaired_exactly(self) -> None:
+        namespace = self.helper_namespace()
+        repair = namespace["repair_host_root_apt_dirs"]
+        allowlist = list(namespace["HOST_ROOT_APT_REPAIRS"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "image"
+            for rel in allowlist:
+                (root / rel).mkdir(parents=True, exist_ok=True)
+            (root / "var" / "cache" / "apt" / "archives" / "lock").write_text("")
+            everything = [*allowlist, "var/lib/apt", "var/cache/apt", "var/cache/apt/archives/lock"]
+            fd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+            try:
+                with self.host_root_view(namespace, root, everything) as chowns:
+                    self.assertEqual(repair(fd, owner=(231072, 231072)), allowlist)
+                # Only the allowlisted dirs; their parents and contents stay for the walk.
+                self.assertEqual(chowns, [(rel, 231072, 231072) for rel in allowlist])
+                # Exactly 0:0 only: a dir already in the container range is left alone.
+                with self.host_root_view(namespace, root, []) as chowns:
+                    self.assertEqual(repair(fd, owner=(231072, 231072)), [])
+                self.assertEqual(chowns, [])
+                with self.host_root_view(namespace, root, allowlist):
+                    with self.assertRaises(ValueError):
+                        repair(fd, owner=(0, 231072))
+            finally:
+                os.close(fd)
+
+    def test_host_root_apt_repair_never_follows_links(self) -> None:
+        namespace = self.helper_namespace()
+        repair = namespace["repair_host_root_apt_dirs"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "image"
+            outside = Path(tmpdir) / "outside"
+            (outside / "partial").mkdir(parents=True)
+            (root / "var" / "lib" / "apt").mkdir(parents=True)
+            (root / "var" / "lib" / "apt" / "lists").symlink_to(str(outside))
+            (root / "var" / "cache" / "apt").mkdir(parents=True)
+            (root / "var" / "cache" / "apt" / "archives").write_text("not a dir")
+            fd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+            try:
+                # Even with the link targets reported 0:0, nothing is followed.
+                view = [str(outside), str(outside / "partial")]
+                with self.host_root_view(namespace, root, view) as chowns:
+                    self.assertEqual(repair(fd, owner=(231072, 231072)), [])
+                self.assertEqual(chowns, [])
+            finally:
+                os.close(fd)
+
+    def test_image_caps_preflight_repairs_inside_the_writable_window(self) -> None:
+        namespace = self.helper_namespace()
+        preflight = namespace["image_caps_preflight"]
+        events = []
+        namespace["image_identity"] = lambda _fd: "inode:1:2:3"
+        namespace["subvolume_readonly"] = lambda _fd: True
+        namespace["set_subvolume_readonly"] = lambda _fd, readonly: events.append(("readonly", readonly))
+
+        def repair(_fd):
+            events.append(("repair",))
+            return ["var/lib/apt/lists/partial"]
+
+        namespace["repair_host_root_apt_dirs"] = repair
+
+        def confined(*_args, **_kwargs):
+            events.append(("walk",))
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = str(Path(tmpdir) / "image-caps.json")
+            outcome = preflight(3, deadline=0, state_path=state, confined=confined, rootid=231072)
+            self.assertEqual(outcome, "walked; repaired host-root apt dirs: var/lib/apt/lists/partial")
+            self.assertEqual(events, [("readonly", False), ("repair",), ("walk",), ("readonly", True)])
+            # A walk that fails after a repair still stamps nothing.
+            events.clear()
+            namespace["image_identity"] = lambda _fd: "inode:9:9:9"
+            with self.assertRaises(subprocess.CalledProcessError):
+                preflight(3, deadline=0, state_path=state, confined=lambda *_a, **_k: 2, rootid=231072)
+            self.assertEqual(events[-1], ("readonly", True))
+            self.assertEqual(namespace["read_image_caps_state"](state), {"inode:1:2:3": 1})
 
     def test_image_caps_walker_is_the_only_confined_helper_entry(self) -> None:
         namespace = self.helper_namespace()

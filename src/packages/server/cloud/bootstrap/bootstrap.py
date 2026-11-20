@@ -47,7 +47,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261120-r23"
+HELPER_SCHEMA_VERSION = "20261120-r24"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -10026,6 +10026,54 @@ def set_subvolume_readonly(treefd, readonly):
         os.close(fd)
 
 
+# normalize-rootfs before helper schema 20261120-r23 created apt's partial
+# dirs (and a missing lists or archives) as host root, after the ownership
+# bridge (the root cause found with finding 093).  An unmapped owner's 0700
+# dir cannot be read by the confined walk, so exactly these dirs, while
+# still 0:0, go to the container root first, which is the owner the step
+# meant them to have.
+HOST_ROOT_APT_REPAIRS = (
+    "var/lib/apt/lists",
+    "var/lib/apt/lists/partial",
+    "var/lib/apt/lists/auxfiles",
+    "var/cache/apt/archives",
+    "var/cache/apt/archives/partial",
+)
+
+
+def repair_host_root_apt_dirs(treefd, owner=None):
+    """Give the allowlisted apt dirs that are real directories owned 0:0 on
+    the tree's device to the container root.  No symlink is followed and no
+    mount crossed; anything else, their contents included, is left to the
+    walk, which fails closed on what it cannot read.  Returns the relative
+    paths changed."""
+    dev = os.fstat(treefd).st_dev
+    repaired = []
+    for rel in HOST_ROOT_APT_REPAIRS:
+        try:
+            fd = openat2(
+                treefd,
+                rel,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                resolve=RESOLVE_FLAGS | RESOLVE_NO_XDEV,
+            )
+        except OSError:
+            continue  # absent, a symlink on the way, not a directory, a mount
+        try:
+            info = os.fstat(fd)
+            if info.st_dev != dev or (info.st_uid, info.st_gid) != (0, 0):
+                continue
+            if owner is None:
+                owner = container_root_ids()
+            if 0 in owner:
+                fail("the container root must not be host root")
+            os.fchown(fd, *owner)
+            repaired.append(rel)
+        finally:
+            os.close(fd)
+    return repaired
+
+
 def image_caps_preflight(treefd, *, deadline, state_path=IMAGE_CAPS_STATE, confined=None, rootid=None, force=False):
     """Walk an image root once (see image_caps_walk) unless its identity is
     stamped for this version; stamp the identity read again from the same
@@ -10043,6 +10091,7 @@ def image_caps_preflight(treefd, *, deadline, state_path=IMAGE_CAPS_STATE, confi
         if readonly:
             set_subvolume_readonly(treefd, False)
         try:
+            repaired = repair_host_root_apt_dirs(treefd)
             status = confined(
                 [CONFINED_EXEC_PATH, IMAGE_CAPS_WALK, "--rootid", str(rootid)],
                 [(treefd, IMAGE_CAPS_TARGET, True)],
@@ -10063,6 +10112,8 @@ def image_caps_preflight(treefd, *, deadline, state_path=IMAGE_CAPS_STATE, confi
         if len(images) > IMAGE_CAPS_STATE_MAX_IMAGES:
             images = dict(list(images.items())[-IMAGE_CAPS_STATE_MAX_IMAGES:])
         write_image_caps_state(images, state_path)
+        if repaired:
+            return "walked; repaired host-root apt dirs: " + ", ".join(repaired)
         return "walked"
     finally:
         os.close(lockfd)
