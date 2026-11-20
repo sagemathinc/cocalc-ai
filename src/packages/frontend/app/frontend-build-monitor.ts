@@ -4,8 +4,12 @@
  */
 
 import { useEffect, useState } from "react";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { frontend_build_fingerprint } from "@cocalc/frontend/components/constants";
+import {
+  cocalc_setup_profile,
+  frontend_build_fingerprint,
+} from "@cocalc/frontend/components/constants";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import {
@@ -54,6 +58,91 @@ export function isFrontendBuildMismatch(
   const local = usableBuildId(localFingerprint);
   const current = usableBuildId(manifest?.fingerprint);
   return !!local && !!current && local !== current;
+}
+
+// CoCalc Star replaces its whole frontend when it is upgraded or downgraded,
+// so a tab still running the previous build cannot load the lazy chunks it
+// needs. There, a detected build change reloads the tab, after a short notice,
+// instead of only recommending it. At most once per build, per tab session: if
+// the reloaded page still runs a different build (e.g. a cached page), the
+// indicator is left to recommend the reload instead, so this can never loop.
+export const FORCED_RELOAD_STORAGE_KEY = "cocalc-forced-reload-fingerprint";
+export const FORCED_RELOAD_DELAY_MS = 10_000;
+export const FORCED_RELOAD_NOTICE = "Star was updated; reloading in 10 s";
+
+export function shouldForceReloadForBuild({
+  manifest,
+  setupProfile = `${cocalc_setup_profile ?? ""}`,
+  localFingerprint = `${frontend_build_fingerprint ?? ""}`,
+  alreadyReloadedFor,
+}: {
+  manifest: FrontendBuildManifest;
+  setupProfile?: string;
+  localFingerprint?: string;
+  alreadyReloadedFor?: string | null;
+}): boolean {
+  if (setupProfile.trim() !== "star") return false;
+  if (!isFrontendBuildMismatch(manifest, localFingerprint)) return false;
+  return alreadyReloadedFor !== usableBuildId(manifest.fingerprint);
+}
+
+// Returns true when a reload was scheduled; the indicator is then skipped.
+export function forceReloadIfRequired(
+  manifest: FrontendBuildManifest,
+  {
+    setupProfile,
+    localFingerprint,
+    getStorage = () => window.sessionStorage,
+    notify = () =>
+      alert_message({
+        type: "info",
+        title: FORCED_RELOAD_NOTICE,
+        timeout: FORCED_RELOAD_DELAY_MS / 1000,
+      }),
+    reload = reloadForFrontendBuild,
+  }: {
+    setupProfile?: string;
+    localFingerprint?: string;
+    getStorage?: () => Pick<Storage, "getItem" | "setItem">;
+    notify?: () => void;
+    reload?: (manifest: FrontendBuildManifest) => void;
+  } = {},
+): boolean {
+  let storage: Pick<Storage, "getItem" | "setItem">;
+  let alreadyReloadedFor: string | null = null;
+  try {
+    storage = getStorage();
+    alreadyReloadedFor = storage.getItem(FORCED_RELOAD_STORAGE_KEY);
+  } catch {
+    return false; // no session storage: never risk a reload loop
+  }
+  if (
+    !shouldForceReloadForBuild({
+      manifest,
+      setupProfile,
+      localFingerprint,
+      alreadyReloadedFor,
+    })
+  ) {
+    return false;
+  }
+  try {
+    // Recorded before the notice, so later checks in this tab (and the
+    // reloaded page) never schedule a second reload for this build.
+    storage.setItem(
+      FORCED_RELOAD_STORAGE_KEY,
+      usableBuildId(manifest.fingerprint) ?? "",
+    );
+  } catch {
+    return false;
+  }
+  try {
+    notify();
+  } catch {
+    // The notice is a courtesy; the reload still happens.
+  }
+  setTimeout(() => reload(manifest), FORCED_RELOAD_DELAY_MS);
+  return true;
 }
 
 export function urlWithoutFrontendRefreshToken(
@@ -118,6 +207,7 @@ function startMonitor(): () => void {
         const manifest = (await response.json()) as FrontendBuildManifest;
         if (closed || manifest?.schema !== 1) return;
         const changed = isFrontendBuildMismatch(manifest);
+        if (changed && forceReloadIfRequired(manifest)) return;
         update((previous) => ({
           ...previous,
           current: manifest,
