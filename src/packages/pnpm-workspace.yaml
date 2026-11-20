@@ -64,7 +64,7 @@ overrides:
   "qs@<6.16.1": ">=6.16.1"
   "socket.io-parser@>=4.0.0 <4.2.7": "~4.2.7"
   "engine.io@>=6.0.0 <6.6.10": "~6.6.10"
-  "minimatch@<3.1.4": "11.0.1"
+  "minimatch@<3.1.4": "3.1.4"
   "minimatch@>=7.0.0 <11.0.1": "11.0.1"
   "brace-expansion@<1.1.21": "^1.1.21"
   "brace-expansion@>=2.0.0 <2.1.7": "^2.1.7"
