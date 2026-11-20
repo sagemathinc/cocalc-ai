@@ -90,3 +90,19 @@ test("close removes the connection's wrappers", () => {
   expect(Object.prototype.hasOwnProperty.call(db, "prepare")).toBe(false);
   expect(Object.prototype.hasOwnProperty.call(db, "exec")).toBe(false);
 });
+
+// 028: a connection that was NOT closed (here: poisoned) may still be open,
+// so it keeps its guard
+test("a close that did not happen keeps the connection's wrappers", () => {
+  init(cachingCounter);
+  const stream = new PersistentStream({
+    path: "/tmp/close-leak-test-poisoned",
+    ephemeral: true,
+  });
+  const db = (stream as any).db;
+  (stream as any).poisoned = true;
+  stream.close();
+  expect(Object.prototype.hasOwnProperty.call(db, "prepare")).toBe(true);
+  expect(Object.prototype.hasOwnProperty.call(db, "exec")).toBe(true);
+  expect(() => db.prepare("SELECT 1")).toThrow("had a sync error");
+});
