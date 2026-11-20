@@ -47,7 +47,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261120-r22"
+HELPER_SCHEMA_VERSION = "20261120-r23"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -8522,6 +8522,8 @@ RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
 RESOLVE_BENEATH = 0x08
 RESOLVE_FLAGS = RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH
+RESOLVE_NO_XDEV = 0x01
+RESOLVE_IN_ROOT = 0x10
 O_PATH = getattr(os, "O_PATH", 0o10000000)
 LIBC = ctypes.CDLL(None, use_errno=True)
 
@@ -8543,11 +8545,11 @@ def validate_relative(path, *, allow_root=False):
         fail(f"path must stay beneath root: {path!r}")
 
 
-def openat2(dirfd, path, flags, mode=0):
+def openat2(dirfd, path, flags, mode=0, resolve=RESOLVE_FLAGS):
     encoded = os.fsencode(path)
     if b"\0" in encoded:
         fail("path contains NUL")
-    how = OpenHow(flags=flags, mode=mode, resolve=RESOLVE_FLAGS)
+    how = OpenHow(flags=flags, mode=mode, resolve=resolve)
     result = LIBC.syscall(
         SYS_OPENAT2,
         ctypes.c_int(dirfd),
@@ -10589,6 +10591,531 @@ def ensure_private_root_directory(path, required_uid=0, mode=0o700):
         fail(f"unsafe privileged runtime directory: {path}")
 
 
+# normalize-rootfs changes an image tree as host root (finding 093).  The
+# tree's content is the image's, so every path in it is resolved against the
+# pinned tree as its root (RESOLVE_IN_ROOT: absolute and ".." symlinks stay
+# inside), never across a mount, and each mutation goes through a pinned fd
+# whose type, device and link count were checked first.  A refusal fails the
+# normalize; nothing falls back to a path-based operation.
+RESOLVE_IMAGE = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV
+# One component beneath a held directory: no symlink is followed, no mount crossed.
+RESOLVE_WALK = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV
+IMAGE_RESOLVE_ATTEMPTS = 8
+IMAGE_WALK_MAX_DEPTH = 256
+AT_EMPTY_PATH = 0x1000
+AT_SYMLINK_NOFOLLOW = 0x100
+NORMALIZE_REFUSED = "normalize-image-path-refused"
+NORMALIZE_SHELLS = ("/bin/bash", "/bin/sh")
+NORMALIZE_PACKAGE_MANAGERS = (
+    ("apt-get", "debian"),
+    ("dnf", "rhel"),
+    ("microdnf", "rhel"),
+    ("yum", "rhel"),
+    ("zypper", "sles"),
+)
+NORMALIZE_CA_PATHS = (
+    ("etc/ssl/certs", stat.S_IFDIR),
+    ("etc/ssl/cert.pem", stat.S_IFREG),
+    ("etc/pki/tls/certs/ca-bundle.crt", stat.S_IFREG),
+    ("etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", stat.S_IFREG),
+    ("etc/ssl/ca-bundle.pem", stat.S_IFREG),
+)
+NORMALIZE_GLIBC_PATHS = (
+    "lib64/ld-linux-x86-64.so.2",
+    "lib/x86_64-linux-gnu/libc.so.6",
+    "lib/ld-linux-aarch64.so.1",
+    "lib64/ld-linux-aarch64.so.1",
+    "lib/aarch64-linux-gnu/libc.so.6",
+)
+APT_STATE_TREES = ("var/lib/apt/lists", "var/cache/apt/archives")
+APT_STATE_DIRS = (
+    ("var/lib/apt/lists", 0o755),
+    ("var/lib/apt/lists/auxfiles", 0o755),
+    ("var/cache/apt/archives", 0o755),
+    ("var/lib/apt/lists/partial", 0o700),
+    ("var/cache/apt/archives/partial", 0o700),
+)
+
+
+class NormalizeRefused(ValueError):
+    """A stable SECURITY_DENY line; detail names a path inside the image only."""
+
+    def __init__(self, code, rel, reason):
+        super().__init__(f"SECURITY_DENY code={code} detail={rel}: {reason}")
+        self.code = code
+
+
+class NormalizePreflightFailed(Exception):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
+class ImageTree:
+    """The pinned image root: its device, and once inventoried, how many
+    links inside the tree each multiply linked nondirectory has."""
+
+    def __init__(self, fd):
+        self.fd = fd
+        self.dev = os.fstat(fd).st_dev
+        self.links = None
+        self.changed = set()
+
+
+def image_resolve(tree, rel, flags, mode=0):
+    """openat2 rel with the pinned tree as its root.  Missing paths raise
+    FileNotFoundError or NotADirectoryError; everything else refuses."""
+    for _attempt in range(IMAGE_RESOLVE_ATTEMPTS):
+        try:
+            return openat2(tree.fd, rel, flags | os.O_CLOEXEC, mode, resolve=RESOLVE_IMAGE)
+        except (FileNotFoundError, NotADirectoryError):
+            raise
+        except OSError as err:
+            if err.errno == errno.EAGAIN:
+                continue
+            if err.errno in (errno.ENOSYS, errno.EINVAL):
+                raise NormalizeRefused("normalize-openat2-unavailable", rel, os.strerror(err.errno)) from None
+            raise NormalizeRefused(NORMALIZE_REFUSED, rel, os.strerror(err.errno)) from None
+    raise NormalizeRefused(NORMALIZE_REFUSED, rel, "resolution kept racing")
+
+
+def image_check(tree, fd, rel, kind=None):
+    info = os.fstat(fd)
+    if info.st_dev != tree.dev:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "on another filesystem")
+    if kind is not None and stat.S_IFMT(info.st_mode) != kind:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "unexpected file type")
+    return info
+
+
+def image_open(tree, rel, flags, kind=None):
+    fd = image_resolve(tree, rel, flags)
+    try:
+        return fd, image_check(tree, fd, rel, kind)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def image_stat(tree, rel):
+    """What rel resolves to inside the tree (symlinks followed inside it), or None."""
+    try:
+        fd, info = image_open(tree, rel, O_PATH)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    os.close(fd)
+    return info
+
+
+def image_executable(tree, rel):
+    info = image_stat(tree, rel)
+    return info is not None and stat.S_ISREG(info.st_mode) and bool(info.st_mode & 0o111)
+
+
+def image_probe(tree):
+    """The facts the old shell probes read, resolved inside the image."""
+    shell = next((path for path in NORMALIZE_SHELLS if image_executable(tree, path.lstrip("/"))), None)
+    if shell is None:
+        raise NormalizeRefused("rootfs-shell-missing", ".", "no executable bin/bash or bin/sh")
+    sudo_present = image_executable(tree, "usr/bin/sudo") or image_executable(tree, "bin/sudo")
+    ca_present = False
+    for rel, kind in NORMALIZE_CA_PATHS:
+        info = image_stat(tree, rel)
+        if info is not None and stat.S_IFMT(info.st_mode) == kind:
+            ca_present = True
+            break
+    distro_family, package_manager = "unknown", "none"
+    for name, family in NORMALIZE_PACKAGE_MANAGERS:
+        if image_executable(tree, f"usr/bin/{name}") or image_executable(tree, f"bin/{name}"):
+            distro_family, package_manager = family, name
+            break
+    if not any(image_stat(tree, rel) is not None for rel in NORMALIZE_GLIBC_PATHS):
+        raise NormalizePreflightFailed("rootfs preflight failed: glibc is required", 43)
+    if (not sudo_present or not ca_present) and package_manager == "none":
+        raise NormalizePreflightFailed(
+            "rootfs preflight failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled",
+            44,
+        )
+    return {
+        "ok": True,
+        "distro_family": distro_family,
+        "package_manager": package_manager,
+        "shell": shell,
+        "glibc": True,
+        "sudo_present": sudo_present,
+        "ca_certificates_present": ca_present,
+    }
+
+
+def fchown_pinned(fd, uid, gid):
+    """Change the owner of exactly the inode fd pins (O_PATH fds included;
+    a symlink itself, never its target)."""
+    if LIBC.fchownat(ctypes.c_int(fd), b"", ctypes.c_uint(uid), ctypes.c_uint(gid), AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def chmod_pinned(fd, mode):
+    # The magic link names the pinned inode, which is never a symlink here.
+    os.chmod(f"/proc/self/fd/{fd}", mode)
+
+
+def image_split(rel):
+    parent, _, name = rel.rpartition("/")
+    return parent or ".", name
+
+
+def image_ensure_dir(tree, rel, owner, mode=0o755):
+    """mkdir -p inside the image.  Existing components resolve inside the
+    tree; only a directory created here is given owner and mode."""
+    parts = rel.split("/")
+    for index in range(len(parts)):
+        sub = "/".join(parts[: index + 1])
+        try:
+            fd, _info = image_open(tree, sub, O_PATH | os.O_DIRECTORY, stat.S_IFDIR)
+            os.close(fd)
+            continue
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+        parent, name = image_split(sub)
+        parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+        try:
+            try:
+                os.mkdir(name, 0o700, dir_fd=parentfd)
+            except FileExistsError:
+                # A dangling symlink or a non-directory is in the way.
+                raise NormalizeRefused(NORMALIZE_REFUSED, sub, "not a directory") from None
+            fd = image_open_child(parentfd, name, os.O_RDONLY | os.O_DIRECTORY, sub)
+            try:
+                image_check(tree, fd, sub, stat.S_IFDIR)
+                fchown_pinned(fd, *owner)
+                os.fchmod(fd, mode)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(parentfd)
+
+
+def image_chmod_dir(tree, rel, mode):
+    """chmod an existing directory resolved inside the tree; absent is fine."""
+    try:
+        fd, _info = image_open(tree, rel, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    try:
+        os.fchmod(fd, mode)
+    finally:
+        os.close(fd)
+
+
+def image_remove_tree(tree, parentfd, name, rel, depth=0):
+    if depth > IMAGE_WALK_MAX_DEPTH:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "too deep")
+    fd = image_open_child(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK, rel)
+    try:
+        image_check(tree, fd, rel, stat.S_IFDIR)
+        for child in os.listdir(fd):
+            info = os.stat(child, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                image_remove_tree(tree, fd, child, f"{rel}/{child}", depth + 1)
+            else:
+                os.unlink(child, dir_fd=fd)
+    finally:
+        os.close(fd)
+    os.rmdir(name, dir_fd=parentfd)
+
+
+def image_replace_with_symlink(tree, rel, target):
+    """ln -snf target rel, where rel's parent resolves inside the tree and
+    rel itself is never followed."""
+    parent, name = image_split(rel)
+    parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+    try:
+        try:
+            info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+        except FileNotFoundError:
+            info = None
+        if info is not None and stat.S_ISLNK(info.st_mode) and os.readlink(name, dir_fd=parentfd) == target:
+            return
+        if info is not None and stat.S_ISDIR(info.st_mode):
+            image_remove_tree(tree, parentfd, name, rel)
+        elif info is not None:
+            os.unlink(name, dir_fd=parentfd)
+        os.symlink(target, name, dir_fd=parentfd)
+    finally:
+        os.close(parentfd)
+
+
+def image_empty_file(tree, rel, mode, owner):
+    """The equivalent of ': >rel; chmod mode rel' without truncating anything
+    before it is known to be a singly linked regular file in the tree."""
+    parent, name = image_split(rel)
+    parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+    try:
+        try:
+            pathfd = image_open_child(parentfd, name, O_PATH | os.O_NOFOLLOW, rel)
+        except FileNotFoundError:
+            fd = image_open_child(parentfd, name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, rel, mode)
+            try:
+                image_check(tree, fd, rel, stat.S_IFREG)
+                fchown_pinned(fd, *owner)
+                os.fchmod(fd, mode)
+            finally:
+                os.close(fd)
+            return
+        try:
+            info = image_check(tree, pathfd, rel, stat.S_IFREG)
+            if info.st_size == 0 and stat.S_IMODE(info.st_mode) == mode:
+                return
+            if info.st_nlink != 1:
+                raise NormalizeRefused(NORMALIZE_REFUSED, rel, "hard linked")
+            fd = os.open(f"/proc/self/fd/{pathfd}", os.O_WRONLY | os.O_NOCTTY | os.O_CLOEXEC)
+        finally:
+            os.close(pathfd)
+        try:
+            again = os.fstat(fd)
+            if (again.st_dev, again.st_ino) != (info.st_dev, info.st_ino) or again.st_nlink != 1:
+                raise NormalizeRefused(NORMALIZE_REFUSED, rel, "changed while opening")
+            os.ftruncate(fd, 0)
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parentfd)
+
+
+def walk_image_tree(tree, dirfd, rel, visit, depth=0):
+    """Visit every entry beneath the held directory dirfd.  Each entry is
+    opened without following it, beneath dirfd, on the tree's device, and
+    must still be the inode lstat saw; visit gets that pinned fd."""
+    if depth > IMAGE_WALK_MAX_DEPTH:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "too deep")
+    for name in os.listdir(dirfd):
+        child = name if rel == "." else f"{rel}/{name}"
+        seen = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+        if seen.st_dev != tree.dev:
+            raise NormalizeRefused(NORMALIZE_REFUSED, child, "on another filesystem")
+        directory = stat.S_ISDIR(seen.st_mode)
+        flags = (os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK) if directory else (O_PATH | os.O_NOFOLLOW)
+        try:
+            fd = image_open_child(dirfd, name, flags, child)
+        except FileNotFoundError:
+            raise NormalizeRefused(NORMALIZE_REFUSED, child, "changed during the walk") from None
+        try:
+            info = image_check(tree, fd, child, stat.S_IFMT(seen.st_mode))
+            if info.st_ino != seen.st_ino:
+                raise NormalizeRefused(NORMALIZE_REFUSED, child, "changed during the walk")
+            visit(fd, info, child)
+            if directory:
+                walk_image_tree(tree, fd, child, visit, depth + 1)
+        finally:
+            os.close(fd)
+
+
+def image_open_child(parentfd, name, flags, rel, mode=0):
+    """One component beneath a held directory; a missing one raises
+    FileNotFoundError, anything else refuses."""
+    try:
+        return openat2(parentfd, name, flags | os.O_CLOEXEC, mode, resolve=RESOLVE_WALK)
+    except FileNotFoundError:
+        raise
+    except OSError as err:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, os.strerror(err.errno)) from None
+
+
+def image_open_root(tree):
+    fd, _info = image_open(tree, ".", os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+    return fd
+
+
+def inventory_image_links(tree):
+    """Count each multiply linked nondirectory's links inside the tree.  A
+    link count above that means a link outside it: refuse before any change."""
+    seen = {}
+    nlinks = {}
+
+    def count(_fd, info, _rel):
+        if not stat.S_ISDIR(info.st_mode) and info.st_nlink > 1:
+            key = (info.st_dev, info.st_ino)
+            seen[key] = seen.get(key, 0) + 1
+            nlinks[key] = info.st_nlink
+
+    rootfd = image_open_root(tree)
+    try:
+        walk_image_tree(tree, rootfd, ".", count)
+    finally:
+        os.close(rootfd)
+    for key, links in seen.items():
+        if nlinks[key] != links:
+            raise NormalizeRefused(NORMALIZE_REFUSED, ".", "a file is hard linked outside the image")
+    tree.links = seen
+
+
+def image_claim_inode(tree, info, rel):
+    """True when this pinned inode should be changed now: once per inode,
+    and a multiply linked one only while all its links are in the tree."""
+    if stat.S_ISDIR(info.st_mode) or info.st_nlink == 1:
+        return True
+    key = (info.st_dev, info.st_ino)
+    if tree.links is None or tree.links.get(key) != info.st_nlink:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "hard linked outside the image")
+    if key in tree.changed:
+        return False
+    tree.changed.add(key)
+    return True
+
+
+def set_pinned_owner(tree, fd, info, rel, uid, gid):
+    if (info.st_uid, info.st_gid) == (uid, gid) or not image_claim_inode(tree, info, rel):
+        return
+    fchown_pinned(fd, uid, gid)
+    # chown clears setuid/setgid; put them back as the old remap did.
+    if not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o6000:
+        chmod_pinned(fd, stat.S_IMODE(info.st_mode))
+
+
+def parse_id_map(text):
+    ranges = []
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            fail("unexpected rootless podman id map")
+        ranges.append(tuple(int(part) for part in parts))
+    if not ranges:
+        fail("missing rootless podman id map")
+    return ranges
+
+
+def rootfs_id_mapper(ranges, runtime_id, ownership_source):
+    """The old to-canonical pass followed by its to-host pass, as one
+    function of an inode's current id (both passes were per inode)."""
+    if ownership_source not in ("keep-id", "oci-extract"):
+        fail("unsupported RootFS ownership source")
+
+    def host_to_intermediate(identifier):
+        for ns_start, host_start, length in ranges:
+            if host_start <= identifier < host_start + length:
+                return ns_start + (identifier - host_start)
+        return None
+
+    def intermediate_to_host(identifier):
+        for ns_start, host_start, length in ranges:
+            if ns_start <= identifier < ns_start + length:
+                return host_start + (identifier - ns_start)
+        fail(f"id {identifier} is not covered by the rootless podman map; the host subuid/subgid allocation is too small for this image")
+
+    def to_canonical(identifier):
+        intermediate = host_to_intermediate(identifier)
+        if intermediate is None or ownership_source == "oci-extract":
+            return identifier if intermediate is None else intermediate
+        if intermediate == 0:
+            return runtime_id
+        if 0 < intermediate <= runtime_id:
+            return intermediate - 1
+        return intermediate
+
+    def to_host(identifier):
+        intermediate = host_to_intermediate(identifier)
+        if intermediate is None:
+            intermediate = identifier
+        if intermediate < runtime_id:
+            intermediate += 1
+        elif intermediate == runtime_id:
+            intermediate = 0
+        return intermediate_to_host(intermediate)
+
+    return lambda identifier: to_host(to_canonical(identifier))
+
+
+def remap_image_ids(tree, uid_ranges, gid_ranges, ownership_source, runtime_id=2001):
+    map_uid = rootfs_id_mapper(uid_ranges, runtime_id, ownership_source)
+    map_gid = rootfs_id_mapper(gid_ranges, runtime_id, ownership_source)
+    if tree.links is None:
+        inventory_image_links(tree)
+
+    def remap(fd, info, rel):
+        set_pinned_owner(tree, fd, info, rel, map_uid(info.st_uid), map_gid(info.st_gid))
+
+    rootfd = image_open_root(tree)
+    try:
+        remap(rootfd, os.fstat(rootfd), ".")
+        walk_image_tree(tree, rootfd, ".", remap)
+    finally:
+        os.close(rootfd)
+
+
+def normalize_apt_state(tree, owner):
+    """The apt state trees go to the container root, then the partial dirs
+    apt needs exist with the modes apt expects."""
+
+    def own(fd, info, rel):
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
+            raise NormalizeRefused(NORMALIZE_REFUSED, rel, "special file in apt state")
+        set_pinned_owner(tree, fd, info, rel, *owner)
+
+    if tree.links is None:
+        inventory_image_links(tree)
+    for rel in APT_STATE_TREES:
+        parent, name = image_split(rel)
+        try:
+            parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        try:
+            try:
+                info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(info.st_mode):
+                continue
+            try:
+                fd = image_open_child(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK, rel)
+            except FileNotFoundError:
+                raise NormalizeRefused(NORMALIZE_REFUSED, rel, "changed during the walk") from None
+            try:
+                top = image_check(tree, fd, rel, stat.S_IFDIR)
+                if top.st_ino != info.st_ino:
+                    raise NormalizeRefused(NORMALIZE_REFUSED, rel, "changed during the walk")
+                own(fd, top, rel)
+                walk_image_tree(tree, fd, rel, own)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(parentfd)
+    for rel, _mode in APT_STATE_DIRS:
+        image_ensure_dir(tree, rel, owner)
+    for rel, mode in APT_STATE_DIRS:
+        image_chmod_dir(tree, rel, mode)
+
+
+def normalize_image_layout(tree, owner):
+    """The directories, links and marker files every project image needs."""
+    for rel in ("home", "home/user", "tmp", "var/tmp", "run", "etc", "var"):
+        image_ensure_dir(tree, rel, owner)
+    for rel in ("tmp", "var/tmp"):
+        image_chmod_dir(tree, rel, 0o1777)
+    image_replace_with_symlink(tree, "var/run", "/run")
+    image_replace_with_symlink(tree, "etc/mtab", "/proc/mounts")
+    image_empty_file(tree, "run/podman-init", 0o755, owner)
+    image_empty_file(tree, "run/.containerenv", 0o644, owner)
+
+
+def normalize_image_tree(tree, ownership_source, skip_bridge, read_id_maps, owner):
+    """Everything normalize-rootfs does to the tree as host root, in order.
+    Returns the probe result the caller prints."""
+    result = image_probe(tree)
+    if not skip_bridge:
+        uid_ranges, gid_ranges = read_id_maps()
+        inventory_image_links(tree)
+        remap_image_ids(tree, uid_ranges, gid_ranges, ownership_source)
+    normalize_image_layout(tree, owner)
+    if not skip_bridge and result["package_manager"] == "apt-get":
+        normalize_apt_state(tree, owner)
+    return result
+
+
 def run_normalize_rootfs(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -10635,19 +11162,46 @@ def run_normalize_rootfs(
             stdin=subprocess.DEVNULL,
         )
         mounted = True
-        args = [
-            "/usr/local/sbin/cocalc-runtime-storage",
-            "_normalize-rootfs-anchored",
-            "--ownership-source",
-            ownership_source,
-        ]
-        if "--skip-ownership-bridge" in flags:
-            args.append("--skip-ownership-bridge")
-        args.extend(["--podman-user", podman_user, mountpoint])
-        subprocess.run(args, check=True, stdin=subprocess.DEVNULL)
-        own_root_links(datafd, container_root_ids())
+        wrapper = "/usr/local/sbin/cocalc-runtime-storage"
+        skip_bridge = "--skip-ownership-bridge" in flags
+
+        def read_id_maps():
+            maps = []
+            for kind in ("uid", "gid"):
+                output = subprocess.run(
+                    [wrapper, "_normalize-rootfs-idmap", "--podman-user", podman_user, kind],
+                    check=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    text=True,
+                ).stdout
+                maps.append(parse_id_map(output))
+            return maps
+
+        owner = container_root_ids()
+        if 0 in owner:
+            fail("the container root must not be host root")
+        result = normalize_image_tree(ImageTree(datafd), ownership_source, skip_bridge, read_id_maps, owner)
+        if not skip_bridge:
+            # Setuid helpers and sudo go back to the container root inside a
+            # rootless container, where host paths cannot be reached.
+            subprocess.run(
+                [
+                    wrapper,
+                    "_normalize-rootfs-setid",
+                    "--podman-user",
+                    podman_user,
+                    "--shell",
+                    result["shell"],
+                    mountpoint,
+                ],
+                check=True,
+                stdin=subprocess.DEVNULL,
+            )
+        own_root_links(datafd, owner)
         # A newly normalized image never keeps host-global capabilities.
         image_caps_preflight(datafd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS, force=True)
+        print(json.dumps(result, separators=(",", ":")), flush=True)
     finally:
         if mounted:
             subprocess.run(
@@ -11752,6 +12306,12 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
             return run_confined_exec(argv)
         run(argv, allowed_roots)
         return 0
+    except NormalizeRefused as err:
+        print(err, file=sys.stderr)
+        return 2
+    except NormalizePreflightFailed as err:
+        print(err, file=sys.stderr)
+        return err.status
     except (OSError, ValueError, subprocess.CalledProcessError) as err:
         print(f"SECURITY_DENY code=path-helper-failed detail={err}", file=sys.stderr)
         return 2
@@ -15606,38 +16166,31 @@ PY
     fi
     exec /usr/local/libexec/cocalc-runtime-storage-path-helper "${helper_args[@]}"
     ;;
-  _normalize-rootfs-anchored)
-    skip_ownership_bridge=false
-    ownership_source="keep-id"
-    podman_user=""
-    while [ "$#" -gt 0 ]; do
-      case "$1" in
-        --skip-ownership-bridge)
-          skip_ownership_bridge=true
-          shift
-          ;;
-        --ownership-source)
-          [ "$#" -ge 2 ] || deny "rootfs-anchored-args-invalid" "ownership-source"
-          ownership_source="$2"
-          shift 2
-          ;;
-        --podman-user)
-          [ "$#" -ge 2 ] || deny "rootfs-anchored-args-invalid" "podman-user"
-          podman_user="$2"
-          shift 2
-          ;;
-        --)
-          shift
-          break
-          ;;
-        -*) deny "rootfs-anchored-args-invalid" "$1" ;;
-        *) break ;;
-      esac
-    done
-    if [ "$#" -ne 1 ] || [ "$podman_user" != "$RUNTIME_USER" ]; then
-      deny "rootfs-anchored-args-invalid" "$*"
+  _normalize-rootfs-idmap)
+    # The rootless Podman id map normalize-rootfs remaps an image with
+    # (finding 093: the image itself is changed by the path helper, by fd).
+    if [ "$#" -ne 3 ] || [ "$1" != "--podman-user" ] || [ "$2" != "$RUNTIME_USER" ]; then
+      deny "rootfs-idmap-args-invalid" "$*"
     fi
-    rootfs="$1"
+    case "$3" in
+      uid|gid) ;;
+      *) deny "rootfs-idmap-args-invalid" "$3" ;;
+    esac
+    run_rootfs_podman_as_user "$2" unshare cat "/proc/self/${3}_map"
+    ;;
+  _normalize-rootfs-setid)
+    # Setuid helpers and sudo go to the container root inside a rootless
+    # container over the helper's private bind mount of the image.
+    if [ "$#" -ne 5 ] || [ "$1" != "--podman-user" ] || [ "$2" != "$RUNTIME_USER" ] || [ "$3" != "--shell" ]; then
+      deny "rootfs-setid-args-invalid" "$*"
+    fi
+    podman_user="$2"
+    shell_path="$4"
+    rootfs="$5"
+    case "$shell_path" in
+      /bin/bash|/bin/sh) ;;
+      *) deny "rootfs-setid-args-invalid" "$shell_path" ;;
+    esac
     case "$rootfs" in
       /run/cocalc-rootfs-normalize/rootfs-*) ;;
       *) deny "rootfs-anchored-path-invalid" "$rootfs" ;;
@@ -15653,150 +16206,6 @@ PY
        [ "$((8#$runtime_dir_mode & 022))" -ne 0 ]; then
       deny "rootfs-anchored-owner-invalid" "$rootfs"
     fi
-    case "$ownership_source" in
-      keep-id|oci-extract) ;;
-      *) deny "rootfs-ownership-source-invalid" "$ownership_source" ;;
-    esac
-    unset COCALC_ROOTFS_OWNERSHIP_SOURCE COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE
-    shell_path=""
-    if [ -x "$rootfs/bin/bash" ]; then
-      shell_path="/bin/bash"
-    elif [ -x "$rootfs/bin/sh" ]; then
-      shell_path="/bin/sh"
-    else
-      deny "rootfs-shell-missing" "$rootfs"
-    fi
-    fail() {
-      echo "$1" >&2
-      exit "${2:-1}"
-    }
-    case "$ownership_source" in
-      keep-id|oci-extract)
-        ;;
-      *)
-        fail "rootfs preflight failed: unsupported ownership source '$ownership_source'" 78
-        ;;
-    esac
-    remap_rootfs_ids_script="$(mktemp)"
-    rewrite_uid_map_file="$(mktemp)"
-    rewrite_gid_map_file="$(mktemp)"
-    cat >"$remap_rootfs_ids_script" <<'EOF_COCALC_REWRITE_ROOTFS_IDS'
-#!/usr/bin/env python3
-import os
-import stat
-import sys
-
-mode = sys.argv[1]
-rootfs = sys.argv[2]
-runtime_uid = int(sys.argv[3])
-runtime_gid = int(sys.argv[4])
-uid_map_path = sys.argv[5]
-gid_map_path = sys.argv[6]
-ownership_source = sys.argv[7]
-
-def parse_map(path: str) -> list[tuple[int, int, int]]:
-    ranges: list[tuple[int, int, int]] = []
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            parts = line.split()
-            if len(parts) != 3:
-                continue
-            ranges.append((int(parts[0]), int(parts[1]), int(parts[2])))
-    if not ranges:
-        raise RuntimeError(f"missing uid/gid map in {path}")
-    return ranges
-
-uid_ranges = parse_map(uid_map_path)
-gid_ranges = parse_map(gid_map_path)
-
-def map_keep_id(identifier: int, runtime_id: int) -> int:
-    if identifier < 0:
-        return identifier
-    if identifier < runtime_id:
-        return identifier + 1
-    if identifier == runtime_id:
-        return 0
-    return identifier
-
-def reverse_keep_id(identifier: int, runtime_id: int) -> int:
-    if identifier < 0:
-        return identifier
-    if identifier == 0:
-        return runtime_id
-    if 0 < identifier <= runtime_id:
-        return identifier - 1
-    return identifier
-
-def host_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
-    for ns_start, host_start, length in ranges:
-        if host_start <= identifier < host_start + length:
-            return ns_start + (identifier - host_start)
-    raise RuntimeError(
-        f"id {identifier} is not covered by the current rootless podman host map; the host subuid/subgid allocation is too small for this image"
-    )
-
-def extracted_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
-    try:
-        return host_to_intermediate(identifier, ranges)
-    except RuntimeError:
-        return identifier
-
-def intermediate_to_host(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
-    for ns_start, host_start, length in ranges:
-        if ns_start <= identifier < ns_start + length:
-            return host_start + (identifier - ns_start)
-    raise RuntimeError(
-        f"id {identifier} is not covered by the rootless podman map; the host subuid/subgid allocation is too small for this image"
-    )
-
-def current_host_to_canonical(identifier: int, ranges: list[tuple[int, int, int]], runtime_id: int) -> int:
-    try:
-        intermediate = host_to_intermediate(identifier, ranges)
-    except RuntimeError:
-        return identifier
-    if ownership_source == "oci-extract":
-        return intermediate
-    if ownership_source != "keep-id":
-        raise RuntimeError(f"unknown ownership source {ownership_source}")
-    return reverse_keep_id(intermediate, runtime_id)
-
-def remap(path: str) -> None:
-    st = os.lstat(path)
-    if mode == "to-canonical":
-        mapped_uid = current_host_to_canonical(st.st_uid, uid_ranges, runtime_uid)
-        mapped_gid = current_host_to_canonical(st.st_gid, gid_ranges, runtime_gid)
-    elif mode == "to-host":
-        mapped_uid = intermediate_to_host(
-            map_keep_id(extracted_to_intermediate(st.st_uid, uid_ranges), runtime_uid),
-            uid_ranges,
-        )
-        mapped_gid = intermediate_to_host(
-            map_keep_id(extracted_to_intermediate(st.st_gid, gid_ranges), runtime_gid),
-            gid_ranges,
-        )
-    else:
-        raise RuntimeError(f"unknown remap mode: {mode}")
-    if mapped_uid == st.st_uid and mapped_gid == st.st_gid:
-        pass
-    else:
-        file_mode = stat.S_IMODE(st.st_mode)
-        os.lchown(path, mapped_uid, mapped_gid)
-        if not stat.S_ISLNK(st.st_mode) and (st.st_mode & 0o6000):
-            os.chmod(path, file_mode, follow_symlinks=False)
-    if stat.S_ISDIR(st.st_mode):
-        with os.scandir(path) as entries:
-            for entry in entries:
-                remap(entry.path)
-
-remap(rootfs)
-EOF_COCALC_REWRITE_ROOTFS_IDS
-chmod 0755 "$remap_rootfs_ids_script"
-    cleanup_rewrite_script() {
-      rm -f "$remap_rootfs_ids_script"
-      rm -f "$rewrite_uid_map_file"
-      rm -f "$rewrite_gid_map_file"
-    }
-    trap cleanup_rewrite_script EXIT
     fix_setid_runtime_helpers_script="$(cat <<'EOF_COCALC_FIX_SETID_RUNTIME_HELPERS'
 set -euo pipefail
 runtime_uid="${COCALC_RUNTIME_UID:?}"
@@ -15825,131 +16234,19 @@ if [ -d /etc/sudoers.d ]; then
 fi
 EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
 )"
-    normalize_runtime_package_state_rootfs() {
-      case "$package_manager" in
-        apt-get)
-          root_owner_uid="$(stat -c '%u' "$rootfs/etc")"
-          root_owner_gid="$(stat -c '%g' "$rootfs/etc")"
-          for dir in \
-            "$rootfs/var/lib/apt/lists" \
-            "$rootfs/var/cache/apt/archives"
-          do
-            [ -d "$dir" ] || continue
-            chown -R "$root_owner_uid:$root_owner_gid" "$dir"
-          done
-          mkdir -p \
-            "$rootfs/var/lib/apt/lists/partial" \
-            "$rootfs/var/lib/apt/lists/auxfiles" \
-            "$rootfs/var/cache/apt/archives/partial"
-          chmod 0755 \
-            "$rootfs/var/lib/apt/lists" \
-            "$rootfs/var/lib/apt/lists/auxfiles" \
-            "$rootfs/var/cache/apt/archives" || true
-          chmod 0700 \
-            "$rootfs/var/lib/apt/lists/partial" \
-            "$rootfs/var/cache/apt/archives/partial" || true
-          ;;
-      esac
-    }
-    has_ca_certificates_rootfs() {
-      [ -d "$rootfs/etc/ssl/certs" ] || \
-        [ -f "$rootfs/etc/ssl/cert.pem" ] || \
-        [ -f "$rootfs/etc/pki/tls/certs/ca-bundle.crt" ] || \
-        [ -f "$rootfs/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem" ] || \
-        [ -f "$rootfs/etc/ssl/ca-bundle.pem" ]
-    }
-    sudo_present=false
-    if [ -x "$rootfs/usr/bin/sudo" ] || [ -x "$rootfs/bin/sudo" ]; then
-      sudo_present=true
-    fi
-    ca_certificates_present=false
-    if has_ca_certificates_rootfs; then
-      ca_certificates_present=true
-    fi
-    distro_family="unknown"
-    package_manager="none"
-    if [ -x "$rootfs/usr/bin/apt-get" ] || [ -x "$rootfs/bin/apt-get" ]; then
-      distro_family="debian"
-      package_manager="apt-get"
-    elif [ -x "$rootfs/usr/bin/dnf" ] || [ -x "$rootfs/bin/dnf" ]; then
-      distro_family="rhel"
-      package_manager="dnf"
-    elif [ -x "$rootfs/usr/bin/microdnf" ] || [ -x "$rootfs/bin/microdnf" ]; then
-      distro_family="rhel"
-      package_manager="microdnf"
-    elif [ -x "$rootfs/usr/bin/yum" ] || [ -x "$rootfs/bin/yum" ]; then
-      distro_family="rhel"
-      package_manager="yum"
-    elif [ -x "$rootfs/usr/bin/zypper" ] || [ -x "$rootfs/bin/zypper" ]; then
-      distro_family="sles"
-      package_manager="zypper"
-    fi
-    if [ ! -e "$rootfs/lib64/ld-linux-x86-64.so.2" ] && \
-       [ ! -e "$rootfs/lib/x86_64-linux-gnu/libc.so.6" ] && \
-       [ ! -e "$rootfs/lib/ld-linux-aarch64.so.1" ] && \
-       [ ! -e "$rootfs/lib64/ld-linux-aarch64.so.1" ] && \
-       [ ! -e "$rootfs/lib/aarch64-linux-gnu/libc.so.6" ]; then
-      fail "rootfs preflight failed: glibc is required" 43
-    fi
-    if [ "$sudo_present" = false ] || [ "$ca_certificates_present" = false ]; then
-      if [ "$package_manager" = "none" ]; then
-        fail "rootfs preflight failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled" 44
-      fi
-    fi
-    mkdir -p "$rootfs/home" "$rootfs/home/user" "$rootfs/tmp" "$rootfs/var/tmp" "$rootfs/run" "$rootfs/etc" "$rootfs/var"
-    chmod 1777 "$rootfs/tmp" "$rootfs/var/tmp" || true
-    if [ -e "$rootfs/var/run" ] && [ ! -L "$rootfs/var/run" ]; then
-      rm -rf "$rootfs/var/run"
-    fi
-    ln -snf /run "$rootfs/var/run"
-    if [ -e "$rootfs/etc/mtab" ] && [ ! -L "$rootfs/etc/mtab" ]; then
-      rm -f "$rootfs/etc/mtab"
-    fi
-    ln -snf /proc/mounts "$rootfs/etc/mtab"
-    : >"$rootfs/run/podman-init"
-    chmod 0755 "$rootfs/run/podman-init" || true
-    : >"$rootfs/run/.containerenv"
-    chmod 0644 "$rootfs/run/.containerenv" || true
-    if [ "$skip_ownership_bridge" = false ]; then
-      run_rootfs_podman_as_user "$podman_user" \
-        unshare cat /proc/self/uid_map >"$rewrite_uid_map_file"
-      run_rootfs_podman_as_user "$podman_user" \
-        unshare cat /proc/self/gid_map >"$rewrite_gid_map_file"
-      /usr/bin/python3 "$remap_rootfs_ids_script" \
-        "to-canonical" \
-        "$rootfs" \
-        "2001" \
-        "2001" \
-        "$rewrite_uid_map_file" \
-        "$rewrite_gid_map_file" \
-        "$ownership_source"
-      /usr/bin/python3 "$remap_rootfs_ids_script" \
-        "to-host" \
-        "$rootfs" \
-        "2001" \
-        "2001" \
-        "$rewrite_uid_map_file" \
-        "$rewrite_gid_map_file" \
-        "$ownership_source"
-      normalize_runtime_package_state_rootfs
-      run_rootfs_podman_as_user "$podman_user" \
-        run --rm --network host \
-          --userns=keep-id:uid=2001,gid=2001 \
-          --user 0:0 \
-          --workdir / \
-          -e HOME=/root \
-          -e USER=root \
-          -e LOGNAME=root \
-          -e COCALC_RUNTIME_UID=2001 \
-          -e COCALC_RUNTIME_GID=2001 \
-          --security-opt label=disable \
-          --rootfs "$rootfs" "$shell_path" -lc \
-          "$fix_setid_runtime_helpers_script" >/dev/null
-    fi
-    normalize_result="$(printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","glibc":true,"sudo_present":%s,"ca_certificates_present":%s}\n' \
-      "$distro_family" "$package_manager" "$shell_path" "$sudo_present" "$ca_certificates_present")"
-    printf '%s\n' "$normalize_result"
-    exit 0
+    run_rootfs_podman_as_user "$podman_user" \
+      run --rm --network host \
+        --userns=keep-id:uid=2001,gid=2001 \
+        --user 0:0 \
+        --workdir / \
+        -e HOME=/root \
+        -e USER=root \
+        -e LOGNAME=root \
+        -e COCALC_RUNTIME_UID=2001 \
+        -e COCALC_RUNTIME_GID=2001 \
+        --security-opt label=disable \
+        --rootfs "$rootfs" "$shell_path" -lc \
+        "$fix_setid_runtime_helpers_script" >/dev/null
     ;;
   rootfs-rustic-backup)
     if [ "$#" -lt 3 ]; then
