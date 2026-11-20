@@ -5,7 +5,10 @@
 
 import { useEffect, useState } from "react";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { frontend_build_fingerprint } from "@cocalc/frontend/components/constants";
+import {
+  cocalc_setup_profile,
+  frontend_build_fingerprint,
+} from "@cocalc/frontend/components/constants";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import {
@@ -54,6 +57,54 @@ export function isFrontendBuildMismatch(
   const local = usableBuildId(localFingerprint);
   const current = usableBuildId(manifest?.fingerprint);
   return !!local && !!current && local !== current;
+}
+
+// CoCalc Star replaces its whole frontend when it is upgraded or downgraded,
+// so a tab still running the previous build cannot load the lazy chunks it
+// needs. There, a detected build change reloads the tab instead of only
+// recommending it. At most once per build, per tab session: if the reloaded
+// page still runs a different build (e.g. a cached page), the indicator is
+// left to recommend the reload instead, so this can never loop.
+export const FORCED_RELOAD_STORAGE_KEY = "cocalc-forced-reload-fingerprint";
+
+export function shouldForceReloadForBuild({
+  manifest,
+  setupProfile = `${cocalc_setup_profile ?? ""}`,
+  localFingerprint = `${frontend_build_fingerprint ?? ""}`,
+  alreadyReloadedFor,
+}: {
+  manifest: FrontendBuildManifest;
+  setupProfile?: string;
+  localFingerprint?: string;
+  alreadyReloadedFor?: string | null;
+}): boolean {
+  if (setupProfile.trim() !== "star") return false;
+  if (!isFrontendBuildMismatch(manifest, localFingerprint)) return false;
+  return alreadyReloadedFor !== usableBuildId(manifest.fingerprint);
+}
+
+function forceReloadIfRequired(manifest: FrontendBuildManifest): boolean {
+  let alreadyReloadedFor: string | null = null;
+  try {
+    alreadyReloadedFor = window.sessionStorage.getItem(
+      FORCED_RELOAD_STORAGE_KEY,
+    );
+  } catch {
+    return false; // no session storage: never risk a reload loop
+  }
+  if (!shouldForceReloadForBuild({ manifest, alreadyReloadedFor })) {
+    return false;
+  }
+  try {
+    window.sessionStorage.setItem(
+      FORCED_RELOAD_STORAGE_KEY,
+      usableBuildId(manifest.fingerprint) ?? "",
+    );
+  } catch {
+    return false;
+  }
+  reloadForFrontendBuild(manifest);
+  return true;
 }
 
 export function urlWithoutFrontendRefreshToken(
@@ -118,6 +169,7 @@ function startMonitor(): () => void {
         const manifest = (await response.json()) as FrontendBuildManifest;
         if (closed || manifest?.schema !== 1) return;
         const changed = isFrontendBuildMismatch(manifest);
+        if (changed && forceReloadIfRequired(manifest)) return;
         update((previous) => ({
           ...previous,
           current: manifest,

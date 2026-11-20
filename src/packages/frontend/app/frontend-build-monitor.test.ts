@@ -1,5 +1,6 @@
 import {
   isFrontendBuildMismatch,
+  shouldForceReloadForBuild,
   isLikelyStaleChunkError,
   urlWithoutFrontendRefreshToken,
 } from "./frontend-build-monitor";
@@ -47,5 +48,47 @@ describe("frontend build monitor", () => {
         "https://cocalc.example/agents/name?tab=files#log",
       ),
     ).toBeUndefined();
+  });
+
+  it("forces a reload on CoCalc Star when the build changed, once per build", () => {
+    const star = { manifest, setupProfile: "star" };
+    // a newer or older build on the server: reload
+    expect(
+      shouldForceReloadForBuild({ ...star, localFingerprint: "other-build" }),
+    ).toBe(true);
+    // same build: nothing to do
+    expect(
+      shouldForceReloadForBuild({ ...star, localFingerprint: "current-build" }),
+    ).toBe(false);
+    // unknown local build: never force
+    expect(
+      shouldForceReloadForBuild({ ...star, localFingerprint: "N/A" }),
+    ).toBe(false);
+    // already reloaded for this build in this tab: no loop
+    expect(
+      shouldForceReloadForBuild({
+        ...star,
+        localFingerprint: "other-build",
+        alreadyReloadedFor: "current-build",
+      }),
+    ).toBe(false);
+    // a later build after that: reload again
+    expect(
+      shouldForceReloadForBuild({
+        ...star,
+        localFingerprint: "other-build",
+        alreadyReloadedFor: "an-older-build",
+      }),
+    ).toBe(true);
+    // other sites only recommend the reload (the indicator)
+    for (const setupProfile of ["", "plus", "cocalc"]) {
+      expect(
+        shouldForceReloadForBuild({
+          manifest,
+          setupProfile,
+          localFingerprint: "other-build",
+        }),
+      ).toBe(false);
+    }
   });
 });
