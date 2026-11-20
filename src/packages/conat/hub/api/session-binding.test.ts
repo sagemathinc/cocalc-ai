@@ -169,6 +169,42 @@ describe("Hub API session binding", () => {
     },
   );
 
+  it.each([
+    "projects.setProjectSnapshotSchedule",
+    "projects.setProjectBackupSchedule",
+  ])("%s binds exactly the caller's own session", async (name) => {
+    const call = (opts: any, context: any) =>
+      transformArgs({
+        name,
+        args: [{ project_id: PROJECT, schedule: { disabled: true }, ...opts }],
+        account_id: ACCOUNT,
+        ...context,
+      });
+    // the caller's own session is bound, whether or not it was named
+    for (const opts of [{}, { session_hash: OWN }]) {
+      const [bound] = await call(opts, { auth_session_hash: OWN });
+      expect(bound.session_hash).toBe(OWN);
+      expect(bound.account_id).toBe(ACCOUNT);
+    }
+    // naming another session is refused
+    await expect(
+      call({ session_hash: FORGED }, { auth_session_hash: OWN }),
+    ).rejects.toThrow("session_hash must be the caller's own");
+    // a caller without a session gets null: no browser_id fallback
+    const [noSession] = await call(
+      { browser_id: "fresh-browser" },
+      { auth_session_hash: null },
+    );
+    expect(noSession.session_hash).toBeNull();
+    // an internal call (no auth_session_hash) carries no session
+    const [internal] = await call({ session_hash: FORGED }, {});
+    expect("session_hash" in internal).toBe(false);
+    // agents cannot change schedules
+    await expect(
+      call({}, { auth_session_hash: OWN, auth_actor: "agent" }),
+    ).rejects.toThrow("user must be signed in");
+  });
+
   it("keeps null for bound-session methods, so no browser fallback", async () => {
     // A caller without a session (an API key, or an old router that does
     // not stamp) must not borrow a browser session it names.

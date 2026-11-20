@@ -1322,6 +1322,9 @@ export const projects = {
   getCoursePaymentOverview: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
+  // Fresh-auth gated: bind the caller's own session.
+  setProjectSnapshotSchedule: authFirstRequireAccountWithBoundSession,
+  setProjectBackupSchedule: authFirstRequireAccountWithBoundSession,
   getProjectRunQuota: authFirstRequireAccount,
   setProjectDeletionProtection: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
@@ -2220,6 +2223,27 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectBackupSchedule>;
+
+  // Change the automatic snapshot / backup schedule: the fields given replace
+  // the stored ones (defaults fill the rest). Requires fresh auth and the
+  // schedule dialogs' permission (owner, admin, or a collaborator when the
+  // owner allows collaborators to manage storage history). Returns the
+  // stored schedule.
+  setProjectSnapshotSchedule: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    project_id: string;
+    schedule: Partial<SnapshotSchedule>;
+  }) => Promise<SnapshotSchedule>;
+
+  setProjectBackupSchedule: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    project_id: string;
+    schedule: Partial<SnapshotSchedule>;
+  }) => Promise<SnapshotSchedule>;
 
   getBackups: (opts: {
     account_id?: string;

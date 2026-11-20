@@ -1042,6 +1042,10 @@ export interface CreateProjectOptions {
   region?: string;
   // start running the moment the project is created -- uses more resources, but possibly better user experience
   start?: boolean;
+  // Create the project with automatic snapshots / backups disabled, stored in
+  // the same insert, so no scheduler ever sees an enabled schedule.
+  disable_auto_snapshots?: boolean;
+  disable_auto_backups?: boolean;
   // Internal project-host control option: when false, only register metadata.
   ensure_volume?: boolean;
   // Internal migration option: legacy cocalc.com imports may recreate all

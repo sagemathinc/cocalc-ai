@@ -5941,3 +5941,154 @@ describe("Sagebrush admin grants across bays", () => {
     assert.deepEqual(await answer(), { admin: true, two_factor: true });
   });
 });
+
+describe("automatic snapshot and backup schedules across bays", () => {
+  // The schedules are stored with the project, on its owning bay. Tess
+  // (seed) creates a project with both schedules off; uma (attached) becomes
+  // its owner and changes them through her own home bay, with fresh auth.
+  // Fresh accounts: earlier groups use up alice's and bob's project limits.
+  let project;
+  let tess;
+  let uma;
+
+  before(async () => {
+    tess = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "schedules-creator",
+    });
+    uma = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "schedules-owner",
+    });
+    tess.client = await client(tess);
+    uma.client = await client(uma);
+  });
+
+  async function scheduleRows() {
+    const rows = {};
+    for (const bay of cluster.bayIds) {
+      rows[bay] = await runInBay(
+        cluster,
+        bay,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT owning_bay_id, snapshots, backups FROM projects WHERE project_id=$1",
+           [${JSON.stringify(project)}]);
+         return rows[0] ?? null;`,
+      );
+    }
+    return rows;
+  }
+
+  after(async () => {
+    // Back to the workspace runtime the rest of the suite uses.
+    if (cluster.envOverrides.size > 0) await cluster.restartAllWithEnv({});
+  });
+
+  it("creates a project with both schedules off in its creating row", async () => {
+    project = await tess.client.call("projects.createProject", {
+      title: "no automatic storage history",
+      start: false,
+      disable_auto_snapshots: true,
+      disable_auto_backups: true,
+    });
+    assert.equal(await owningBay(project), SEED);
+    const rows = await scheduleRows();
+    assert.equal(rows[SEED].snapshots.disabled, true);
+    assert.equal(rows[SEED].backups.disabled, true);
+    assert.equal(rows[SEED].backups.frequent, 0);
+    // Only the owning bay holds the project's row.
+    assert.equal(rows[ATTACHED], null);
+  });
+
+  it("lets the owner on the other bay read and change them (fresh auth)", async () => {
+    await invite(tess, uma, project);
+    await tess.client.call("projects.transferProjectOwnership", {
+      project_id: project,
+      from_account_id: tess.account_id,
+      to_account_id: uma.account_id,
+    });
+    await eventually(
+      async () =>
+        (await listed(uma.client, project))?.users_summary?.[uma.account_id]
+          ?.group === "owner",
+      { what: "uma to own the project" },
+    );
+    // The workspace runtime has no snapshots or backups; a project-host
+    // runtime does. Storing a schedule needs no host.
+    await cluster.restartAllWithEnv({ COCALC_PROJECT_RUNTIME: "external" });
+
+    // Read through uma's home bay, right after creation: still off.
+    const before = await eventually(
+      async () =>
+        await uma.client.call("projects.getProjectBackupSchedule", {
+          project_id: project,
+        }),
+      { timeoutMs: 120_000, intervalMs: 1_000, what: "the backup schedule" },
+    );
+    assert.equal(before.disabled, true);
+    assert.equal(
+      (
+        await uma.client.call("projects.getProjectSnapshotSchedule", {
+          project_id: project,
+        })
+      ).disabled,
+      true,
+    );
+
+    const forwarded = async () =>
+      await runInBay(
+        cluster,
+        SEED,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.setProjectBackupSchedule' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+           [${JSON.stringify(ATTACHED)}, ${JSON.stringify(uma.account_id)}]);
+         return rows[0].n;`,
+      );
+    // The owner's plan limit is checked on the owning bay: nothing changes.
+    await assert.rejects(
+      uma.client.call("projects.setProjectBackupSchedule", {
+        project_id: project,
+        schedule: { disabled: false, daily: 100 },
+      }),
+      /automatic backups total \d+ exceeds project limit \d+/,
+    );
+    assert.equal((await scheduleRows())[SEED].backups.disabled, true);
+    const calls = await forwarded();
+    const stored = await uma.client.call("projects.setProjectBackupSchedule", {
+      project_id: project,
+      schedule: { disabled: false, daily: 1, weekly: 1, monthly: 1 },
+    });
+    assert.deepEqual(stored, {
+      frequent: 0,
+      daily: 1,
+      weekly: 1,
+      monthly: 1,
+      disabled: false,
+    });
+    // It ran on the owning bay, forwarded from uma's home bay.
+    assert.equal(await forwarded(), calls + 1);
+    const rows = await scheduleRows();
+    assert.deepEqual(rows[SEED].backups, stored);
+    assert.equal(rows[SEED].snapshots.disabled, true);
+    assert.equal(rows[ATTACHED], null);
+    assert.deepEqual(
+      await uma.client.call("projects.getProjectBackupSchedule", {
+        project_id: project,
+      }),
+      stored,
+    );
+  });
+
+  it("refuses a collaborator the owner has not allowed to manage storage history", async () => {
+    await assert.rejects(
+      tess.client.call("projects.setProjectSnapshotSchedule", {
+        project_id: project,
+        schedule: { disabled: false },
+      }),
+      /Only project owners can change snapshot schedules/,
+    );
+    assert.equal((await scheduleRows())[SEED].snapshots.disabled, true);
+  });
+});
