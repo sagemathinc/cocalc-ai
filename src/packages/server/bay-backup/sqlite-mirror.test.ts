@@ -40,6 +40,21 @@ describe("changed-only SQLite mirror", () => {
       now: () => new Date("2026-08-05T12:00:00.000Z"),
     });
 
+  it("[RULE7] never mirrors the persist's records marker (copy B) or its migration flag (028 ALT-D2)", async () => {
+    const state = join(sourceDir, ".cocalc-persist-state");
+    await mkdir(join(state, "poisoned"), { recursive: true });
+    await writeFile(join(state, "records-marker.json"), "{}");
+    await writeFile(join(state, "records-migrated.json"), "{}");
+    await writeFile(join(state, "poisoned", "k"), "{}");
+    const result = await refresh();
+    expect(result.changed_files).toEqual([
+      join(".cocalc-persist-state", "poisoned", "k"),
+    ]);
+    await expect(
+      readFile(join(mirrorDir, ".cocalc-persist-state", "records-marker.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("backs up only changed databases and ignores WAL/SHM mirror files", async () => {
     const database = join(sourceDir, "nested", "stream.db");
     await writeFile(database, "v1");

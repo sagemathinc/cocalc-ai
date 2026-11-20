@@ -23,9 +23,14 @@ describe("value hashes", () => {
   const project_id = uuid();
   const docs: any[] = [];
   const reports: any[] = [];
+  // which document made each report
+  const reporters: any[] = [];
   const track = (doc) => {
     docs.push(doc);
-    doc.on("inconsistency", (e) => reports.push(e));
+    doc.on("inconsistency", (e) => {
+      reports.push(e);
+      reporters.push(doc);
+    });
     return doc;
   };
   const openString = async (path: string) => {
@@ -131,7 +136,11 @@ describe("value hashes", () => {
     await s1.save();
     const before = reports.length;
     const s2 = await openString(path);
-    const found = reports.slice(before).filter((e) => e.path === path);
+    // s2's own reports (s1, which also holds the bad snapshot, may report it
+    // too while it checks whether held-back snapshots can be made)
+    const found = reports
+      .slice(before)
+      .filter((e, i) => e.path === path && reporters[before + i] === s2);
     // s2 started from the bad snapshot: it says so, and computes the value
     // from the snapshotted patch instead.
     expect(found.length).toBeGreaterThan(0);

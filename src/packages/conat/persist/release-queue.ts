@@ -9,6 +9,8 @@ export const PERSIST_STREAM_RELEASE_GRACE_MS_ENV =
 
 type Releasable = {
   close: () => void;
+  // a persist stream commits what it has queued, then runs fn (028 §4.5)
+  atWriteIdle?: (fn: () => void) => void;
 };
 
 type PendingRelease = {
@@ -185,7 +187,15 @@ export class PersistStreamReleaseQueue {
   private release(next: PendingRelease): void {
     const started = this.now();
     try {
-      next.stream.close();
+      // releaseDurably (storage.ts): the reference is released only once
+      // what the stream has queued is committed, so the final release never
+      // closes (and checkpoints) over uncommitted writes
+      const stream = next.stream;
+      if (stream.atWriteIdle != null) {
+        stream.atWriteIdle(() => stream.close());
+      } else {
+        stream.close();
+      }
     } catch (err) {
       this.errorsTotal += 1;
       this.onError?.(err);

@@ -7,6 +7,9 @@ let createBucketMock: jest.Mock;
 let listBucketsMock: jest.Mock;
 let deleteObjectMock: jest.Mock;
 let seedBackupConfigMock: jest.Mock;
+let seedDeletionConfigMock: jest.Mock;
+let seedResolveMock: jest.Mock;
+let localRestRepoMock: jest.Mock;
 let rusticMock: jest.Mock;
 let installSandboxBinaryMock: jest.Mock;
 let settings: Record<string, any> = {};
@@ -150,6 +153,15 @@ describe("project-backup", () => {
       ttl_seconds: 123,
       backup_repo_id: REPO_ID,
     }));
+    seedDeletionConfigMock = jest.fn(async () => ({
+      toml: "seed-delete-toml",
+    }));
+    seedResolveMock = jest.fn(async () => ({ backup_repo_id: REPO_ID }));
+    localRestRepoMock = jest.fn(async () => null);
+    jest.doMock("@cocalc/server/launchpad/rest-repo", () => ({
+      buildLaunchpadRestRusticRepoConfig: (...args: any[]) =>
+        localRestRepoMock(...args),
+    }));
     rusticMock = jest.fn(async () => ({
       stdout: "",
       stderr: "",
@@ -174,9 +186,10 @@ describe("project-backup", () => {
         hostConnection: jest.fn(() => ({
           getSeedBackupConfig: (...args: any[]) =>
             seedBackupConfigMock(...args),
-          resolveSeedBackupRepoAssignment: jest.fn(async () => ({
-            backup_repo_id: REPO_ID,
-          })),
+          getSeedBackupConfigForDeletion: (...args: any[]) =>
+            seedDeletionConfigMock(...args),
+          resolveSeedBackupRepoAssignment: (...args: any[]) =>
+            seedResolveMock(...args),
           getSeedProjectBackupShards: jest.fn(async () => ({
             checked_at: new Date().toISOString(),
             active_shards_per_region: 4,
@@ -270,7 +283,11 @@ describe("project-backup", () => {
         if (settings.host_row_missing) {
           return { rows: [] };
         }
-        return { rows: [{ region: "us-west1", metadata: {} }] };
+        return {
+          rows: [
+            { region: "us-west1", metadata: settings.host_metadata ?? {} },
+          ],
+        };
       }
       if (sql.includes("FROM project_moves")) {
         return { rows: [] };
@@ -281,7 +298,10 @@ describe("project-backup", () => {
       if (sql.includes("ALTER TABLE project_moves")) {
         return { rows: [] };
       }
-      if (sql.includes("project_copies")) {
+      if (
+        sql.includes("project_copies") ||
+        sql.includes("project_copy_snapshot_claims")
+      ) {
         return { rows: [] };
       }
       if (
@@ -468,7 +488,7 @@ describe("project-backup", () => {
         return { rows: [] };
       }
       if (sql.includes("FROM buckets WHERE id=$1")) {
-        return { rows: [bucketRow()] };
+        return { rows: settings.bucket_by_id_missing ? [] : [bucketRow()] };
       }
       if (sql.includes("FROM buckets WHERE name=$1")) {
         return {
@@ -1021,5 +1041,328 @@ describe("project-backup", () => {
       backup_id: "backup-b",
     });
     expect(settings.project_backup_indexes_rows).toHaveLength(0);
+  });
+
+  describe("the configuration for deleting a deleted project's backups", () => {
+    const r2 = {
+      r2_account_id: "account",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      repo_secret: "repo-secret",
+    };
+    const resolve = async (opts: {
+      host_id?: string | null;
+      backup_repo_id?: string | null;
+    }) => {
+      const { getDeletedProjectBackupConfigForDeletion } =
+        await import("./index");
+      return await getDeletedProjectBackupConfigForDeletion({
+        project_id: PROJECT_ID,
+        ...opts,
+      });
+    };
+
+    it("says there is nothing to delete only when no repository was recorded", async () => {
+      settings = { ...r2 };
+      expect(await resolve({ host_id: HOST_ID, backup_repo_id: null })).toEqual(
+        {
+          toml: "",
+          empty: "no_backup_repo",
+        },
+      );
+    });
+
+    it("builds it from an existing repository", async () => {
+      settings = { ...r2, repos: [repoRow({ id: REPO_ID })] };
+      const result = await resolve({
+        host_id: HOST_ID,
+        backup_repo_id: REPO_ID,
+      });
+      expect(result.empty).toBeUndefined();
+      expect(result.toml).toContain('repository = "opendal:s3"');
+      expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
+    });
+
+    it.each([
+      ["a missing repository row", { repos: [] }, "repo_missing"],
+      [
+        "a repository without a root",
+        { repos: [repoRow({ id: REPO_ID, root: "" })] },
+        "repo_missing",
+      ],
+      [
+        "a repository without a bucket",
+        { repos: [repoRow({ id: REPO_ID, bucket_id: "" })] },
+        "repo_missing",
+      ],
+      [
+        "a missing bucket row",
+        { repos: [repoRow({ id: REPO_ID })], bucket_by_id_missing: true },
+        "bucket_missing",
+      ],
+      [
+        "missing credentials",
+        {
+          repos: [repoRow({ id: REPO_ID })],
+          r2_access_key_id: "",
+          r2_secret_access_key: "",
+        },
+        "credentials_missing",
+      ],
+    ])("fails closed for %s", async (_label, overrides, token) => {
+      settings = { ...r2, ...overrides };
+      expect(
+        await resolve({ host_id: HOST_ID, backup_repo_id: REPO_ID }),
+      ).toEqual({ toml: "", empty: token });
+    });
+
+    describe("a self-host-local host", () => {
+      const local = { machine: { cloud: "self-host" } };
+
+      it("uses its local configuration", async () => {
+        settings = { ...r2, host_metadata: local };
+        localRestRepoMock.mockResolvedValue({ repo_toml: "local-toml" });
+        expect(
+          await resolve({ host_id: HOST_ID, backup_repo_id: null }),
+        ).toEqual({ toml: "local-toml" });
+      });
+
+      it("never reads an empty local configuration as no backups", async () => {
+        settings = { ...r2, host_metadata: local };
+        expect(
+          await resolve({ host_id: HOST_ID, backup_repo_id: null }),
+        ).toEqual({ toml: "", empty: "local_config_missing" });
+      });
+
+      it("falls back to a recorded repository", async () => {
+        settings = {
+          ...r2,
+          host_metadata: local,
+          repos: [repoRow({ id: REPO_ID })],
+        };
+        const result = await resolve({
+          host_id: HOST_ID,
+          backup_repo_id: REPO_ID,
+        });
+        expect(result.empty).toBeUndefined();
+        expect(result.toml).toContain('repository = "opendal:s3"');
+      });
+    });
+
+    describe("an attached bay", () => {
+      const attached = {
+        cluster_role: "attached",
+        seed_bay_id: "bay-0",
+        bay_id: "bay-1",
+        // the repositories are the seed's
+        repos: [],
+      };
+
+      it("gets it from the seed by repository id, without reading local repositories", async () => {
+        settings = { ...r2, ...attached };
+        expect(
+          await resolve({ host_id: HOST_ID, backup_repo_id: REPO_ID }),
+        ).toEqual({ toml: "seed-delete-toml" });
+        expect(seedDeletionConfigMock).toHaveBeenCalledWith({
+          project_id: PROJECT_ID,
+          backup_repo_id: REPO_ID,
+          source_bay_id: "bay-1",
+        });
+        expect(seedBackupConfigMock).not.toHaveBeenCalled();
+        expect(
+          queryMock.mock.calls.some(
+            ([sql]) =>
+              typeof sql === "string" &&
+              sql.includes("FROM project_backup_repos"),
+          ),
+        ).toBe(false);
+      });
+
+      it.each([
+        [
+          "the seed's reason",
+          { toml: "", empty: "bucket_missing" },
+          "bucket_missing",
+        ],
+        // the seed has the id we sent: "no repository" can't be its answer
+        [
+          "no repository",
+          { toml: "", empty: "no_backup_repo" },
+          "repo_missing",
+        ],
+        ["an unknown reason", { toml: "", empty: "exploded" }, "repo_missing"],
+        ["no reason", { toml: "" }, "repo_missing"],
+      ])(
+        "fails closed on an empty seed answer with %s",
+        async (_l, answer, token) => {
+          settings = { ...r2, ...attached };
+          seedDeletionConfigMock.mockResolvedValue(answer);
+          expect(
+            await resolve({ host_id: HOST_ID, backup_repo_id: REPO_ID }),
+          ).toEqual({ toml: "", empty: token });
+        },
+      );
+
+      it("fails closed when the seed can't answer (e.g. an older seed)", async () => {
+        settings = { ...r2, ...attached };
+        seedDeletionConfigMock.mockRejectedValue(new Error("no such method"));
+        expect(
+          await resolve({ host_id: HOST_ID, backup_repo_id: REPO_ID }),
+        ).toEqual({ toml: "", empty: "seed_config_unavailable" });
+      });
+
+      it("resolves no recorded repository locally", async () => {
+        settings = { ...r2, ...attached };
+        expect(
+          await resolve({ host_id: HOST_ID, backup_repo_id: null }),
+        ).toEqual({
+          toml: "",
+          empty: "no_backup_repo",
+        });
+        expect(seedDeletionConfigMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("the seed's deletion-only method", () => {
+      const seed = async (opts: Record<string, any>) => {
+        const { getSeedProjectBackupConfigForDeletion } =
+          await import("./index");
+        return await getSeedProjectBackupConfigForDeletion(opts as any);
+      };
+
+      it("builds it from its own repository and never assigns one", async () => {
+        settings = { ...r2, repos: [repoRow({ id: REPO_ID })] };
+        const result = await seed({
+          project_id: PROJECT_ID,
+          backup_repo_id: REPO_ID,
+          source_bay_id: "bay-1",
+        });
+        expect(result.toml).toContain('repository = "opendal:s3"');
+        expect(
+          queryMock.mock.calls.some(
+            ([sql]) =>
+              typeof sql === "string" &&
+              /(INSERT INTO|UPDATE|DELETE FROM) project_backup_repo_assignments|UPDATE projects /.test(
+                sql,
+              ),
+          ),
+        ).toBe(false);
+      });
+
+      it("answers repo_missing for a repository it doesn't have", async () => {
+        settings = { ...r2, repos: [] };
+        expect(
+          await seed({
+            project_id: PROJECT_ID,
+            backup_repo_id: REPO_ID,
+            source_bay_id: "bay-1",
+          }),
+        ).toEqual({ toml: "", empty: "repo_missing" });
+      });
+
+      it.each([
+        [
+          "a bad project id",
+          { project_id: "x", backup_repo_id: REPO_ID, source_bay_id: "bay-1" },
+        ],
+        [
+          "a bad repository id",
+          {
+            project_id: PROJECT_ID,
+            backup_repo_id: "x",
+            source_bay_id: "bay-1",
+          },
+        ],
+        [
+          "no repository id",
+          { project_id: PROJECT_ID, source_bay_id: "bay-1" },
+        ],
+        ["no source bay", { project_id: PROJECT_ID, backup_repo_id: REPO_ID }],
+      ])("refuses %s", async (_label, opts) => {
+        settings = { ...r2, repos: [repoRow({ id: REPO_ID })] };
+        await expect(seed(opts)).rejects.toThrow();
+      });
+    });
+  });
+
+  describe("nothing clears a live project's recorded backup repository", () => {
+    function projectWrites() {
+      return queryMock.mock.calls.filter(
+        ([sql]) =>
+          typeof sql === "string" &&
+          /UPDATE\s+projects\s+SET\b[^;]*\bbackup_repo_id\s*=/i.test(sql),
+      );
+    }
+
+    it.each([
+      ["a null", null],
+      ["an empty", ""],
+      ["a malformed", "not-a-uuid"],
+    ])(
+      "the setter refuses %s repository id",
+      async (_label, backup_repo_id) => {
+        settings = { backup_repo_id: REPO_ID };
+        const { setProjectBackupRepoId } = await import("./index");
+        await expect(
+          setProjectBackupRepoId({
+            project_id: PROJECT_ID,
+            backup_repo_id: backup_repo_id as any,
+          }),
+        ).rejects.toThrow("invalid backup_repo_id");
+        expect(queryMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("the setter records a repository id", async () => {
+      settings = { repos: [repoRow({ id: REPO_IDS[1] })] };
+      const { setProjectBackupRepoId } = await import("./index");
+      await setProjectBackupRepoId({
+        project_id: PROJECT_ID,
+        backup_repo_id: REPO_IDS[1],
+      });
+      expect(projectWrites().map(([, params]) => params)).toEqual([
+        [PROJECT_ID, REPO_IDS[1]],
+      ]);
+    });
+
+    describe("an attached bay resolving its assignment through the seed", () => {
+      const attached = {
+        cluster_role: "attached",
+        seed_bay_id: "bay-0",
+        bay_id: "bay-1",
+      };
+
+      it("records the repository the seed names", async () => {
+        settings = { ...attached };
+        const { resolveProjectBackupRepoAssignment } = await import("./index");
+        await expect(
+          resolveProjectBackupRepoAssignment({ project_id: PROJECT_ID }),
+        ).resolves.toEqual({ backup_repo_id: REPO_ID });
+        expect(projectWrites().map(([, params]) => params)).toEqual([
+          [PROJECT_ID, REPO_ID],
+        ]);
+      });
+
+      it.each([
+        ["null", { backup_repo_id: null }],
+        ["missing", {}],
+      ])(
+        "writes nothing when the seed's repository is %s",
+        async (_label, answer) => {
+          settings = { ...attached, backup_repo_id: REPO_ID };
+          seedResolveMock.mockImplementation(async () => answer);
+          const { resolveProjectBackupRepoAssignment } =
+            await import("./index");
+          await expect(
+            resolveProjectBackupRepoAssignment({
+              project_id: PROJECT_ID,
+              backup_repo_id: REPO_ID,
+            }),
+          ).resolves.toEqual(answer);
+          expect(seedResolveMock).toHaveBeenCalledTimes(1);
+          expect(projectWrites()).toEqual([]);
+        },
+      );
+    });
   });
 });

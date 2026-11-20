@@ -354,6 +354,36 @@ the hosts and in project backups.
     "Rotation" in README.md ("Configuration Escrow"): the escrow was opened,
     so treat its contents as exposed.
 
+## The persist's durability records after a restore
+
+The Conat persist keeps its durability records (finding 028) in
+`${COCALC_BAY_STATE_DIR}/persist-durability/`. The directory is scoped to the
+kernel's boot id and guarded by a marker kept in two copies: one in that
+directory, one in `<sync>/.cocalc-persist-state/records-marker.json`.
+
+- **Excluded from every backup, restore and import.** The SQLite mirror and
+  the launchpad export skip the marker's copy B and the migration flag
+  (`records-migrated.json`). No backup reads `persist-durability/`.
+- **No online rollback.** Nothing may change `persist-durability/`, or the
+  two files above, while the persist runs. That includes restores, imports,
+  rollbacks, snapshot restores and cleanups.
+- **After a restore, the persist refuses disk streams.** A restore replaces
+  `sync`, so marker copy B is gone while copy A remains. The persist then
+  refuses disk-backed streams and pages ("marker copy B is missing"); ephemeral
+  streams still run. This is intended: the records describe files that the
+  restore replaced.
+- **Recovery is ruled, not automatic.** Get an explicit go-ahead first. Then,
+  with the persist stopped (`systemctl stop cocalc-bay-conat-persist`), remove
+  `${COCALC_BAY_STATE_DIR}/persist-durability/` and the two files in
+  `<sync>/.cocalc-persist-state/`, and start the persist. It starts as on its
+  first start with this code: it checks that the old tmpfs records root
+  `/run/cocalc-persist` holds no records, writes a fresh marker and
+  re-creates the directory.
+
+A failed set-up of the records (a full or failing disk while the persist
+creates them) has its own runbook, for the bay and for project hosts:
+`src/packages/backend/conat/persist-records-recovery.md`.
+
 ## Testing this procedure
 
 - The weekly disposable drill runs the engine against the real backups (see

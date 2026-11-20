@@ -7,7 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayInfos } from "@cocalc/server/bay-registry";
-import { listHosts } from "@cocalc/server/conat/api/hosts";
+import { listHostsInternal } from "@cocalc/server/conat/api/hosts";
 import { runHostActionAsSystem } from "@cocalc/server/conat/api/system-host-actions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
@@ -95,7 +95,7 @@ async function stopOwnedDedicatedHosts({
   actor_account_id?: string | null;
 }): Promise<{ count: number; host_ids: string[] }> {
   const actor = actor_account_id ?? account_id;
-  const rows = await listHosts({
+  const rows = await listHostsInternal({
     account_id: actor,
     admin_view: true,
     trusted_admin_view: true,

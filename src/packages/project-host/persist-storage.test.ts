@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { DataEncoding } from "@cocalc/conat/core/codec";
 import { pstream } from "@cocalc/backend/conat/persist";
+import { setUnregisteredStreamOwnerForTests } from "@cocalc/conat/persist/context";
 import {
   applyPersistStorage,
   listPersistStorage,
@@ -31,6 +32,20 @@ jest.mock("./persist-fence", () => ({
 const PROJECT = "11111111-2222-4333-8444-555555555555";
 const LEGACY = ".local/share/cocalc/persist";
 const DAY = 24 * 60 * 60 * 1000;
+
+// 028 (AS-B2-SYNC-OWNER): the streams this test constructs directly belong to
+// PROJECT (production opens register their owner through the persist server)
+beforeAll(() => setUnregisteredStreamOwnerForTests(() => PROJECT));
+// 028 (ops0's NOFILE ruling, 11-18): a start-up check with a lower NOFILE
+// minimum, passed explicitly (this project's hard limit is below MIN_NOFILE)
+beforeAll(() =>
+  require("../backend/test/persist-nofile-hook").installTestPersistStartupCheck({
+    persist: require("@cocalc/backend/conat/persist"),
+    durability: require("@cocalc/backend/conat/persist-durability"),
+    context: require("@cocalc/conat/persist/context"),
+  }),
+);
+afterAll(() => setUnregisteredStreamOwnerForTests(undefined));
 
 let mount: string;
 let env: NodeJS.ProcessEnv;

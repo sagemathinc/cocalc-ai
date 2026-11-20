@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "es2022"
+    ],
+    "rootDir": ".",
+    "outDir": "../dist-fault-test",
+    "composite": false,
+    "incremental": false
+  },
+  "include": [
+    "./*.ts"
+  ]
+}

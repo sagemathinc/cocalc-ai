@@ -4815,14 +4815,35 @@ export async function listHostsLocal({
   );
 }
 
+// Options only server code may set: a caller's request never carries them.
+function withoutTrustedOptions(opts: ListHostsOptions): ListHostsOptions {
+  return Object.fromEntries(
+    Object.entries(opts ?? {}).filter(([key]) => !key.startsWith("trusted_")),
+  ) as ListHostsOptions;
+}
+
+// The hub API method: the caller's options, without the trusted_* ones.
 export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
+  return await listHostsInternal(withoutTrustedOptions(opts));
+}
+
+// For server code, which may set trusted_* options.
+export async function listHostsInternal(
+  opts: ListHostsOptions,
+): Promise<Host[]> {
+  // Local authorization first: listHostsLocal refuses a request this account
+  // may not make before any remote bay is asked.  The remote bays get the
+  // options without trusted_* (each decides what it trusts).
   const local = await listHostsLocal(opts);
+  const remoteOpts = withoutTrustedOptions(opts);
   const remoteHosts = await Promise.all(
     getConfiguredClusterBayIdsForStaticEnumerationOnly()
       .filter((bay_id) => bay_id !== getConfiguredBayId())
       .map(async (bay_id) => {
         try {
-          return await getInterBayBridge().hostConnection(bay_id).list(opts);
+          return await getInterBayBridge()
+            .hostConnection(bay_id)
+            .list(remoteOpts);
         } catch (err) {
           logger.warn(
             `listHosts: failed to load hosts from remote bay ${bay_id} -- ${err}`,

@@ -71,7 +71,7 @@ Table({
     },
     backup_purge_status: {
       type: "string",
-      desc: "Deferred backup purge status (scheduled, running, failed, purged).",
+      desc: "Backup purge status: scheduled, running, failed or quarantined (the purge lifecycle); purged (snapshots were forgotten); no_backup_repo (no backup repository was recorded at deletion); purged_corrective (closed by hand without a forget; requires metadata.backup_purge_correction {reason, at, ref}). The database rejects any other value.",
     },
     backup_purge_error: {
       type: "string",

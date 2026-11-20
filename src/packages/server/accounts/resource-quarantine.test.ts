@@ -24,7 +24,7 @@ jest.mock("@cocalc/database/pool", () => ({
 }));
 
 jest.mock("@cocalc/server/conat/api/hosts", () => ({
-  listHosts: (...args: any[]) => listHostsMock(...args),
+  listHostsInternal: (...args: any[]) => listHostsMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/api/system-host-actions", () => ({

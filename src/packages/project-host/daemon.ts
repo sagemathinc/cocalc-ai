@@ -690,6 +690,33 @@ function isSupportedManagedLocalRouterUrl(
   }
 }
 
+// The daemon's environment from its env files and the inherited env, with
+// COCALC_DATA and DATA set (throws if neither is known): what every process
+// of the daemon starts from.  Also used by the persist-records-recover
+// command (028 ALT-D2), which acts for the persist on these paths.
+export function baseDaemonEnv(): Record<string, string> {
+  const fileEnv = loadEnvFromFile(daemonEnvFilePath());
+  const localFileEnv = loadEnvFromFile(daemonLocalEnvFilePath());
+  const inheritedEnv = normalizeEnv(process.env);
+  const env = envIsTrue(inheritedEnv[RELOAD_ENV_FILES])
+    ? {
+        ...inheritedEnvForFileReload(inheritedEnv),
+        ...fileEnv,
+        ...localFileEnv,
+      }
+    : { ...fileEnv, ...localFileEnv, ...inheritedEnv };
+  delete env[RELOAD_ENV_FILES];
+  const dataDir = env.COCALC_DATA ?? env.DATA;
+  if (!dataDir) {
+    throw new Error(
+      "COCALC_DATA (or DATA) must be set, or provide a project-host env file",
+    );
+  }
+  env.COCALC_DATA = env.COCALC_DATA ?? dataDir;
+  env.DATA = env.DATA ?? dataDir;
+  return env;
+}
+
 function resolveEnv(index: number): {
   env: Record<string, string>;
   dataDir: string;
@@ -718,25 +745,8 @@ function resolveEnv(index: number): {
   projectHostPort?: number;
   sshPort?: number;
 } {
-  const fileEnv = loadEnvFromFile(daemonEnvFilePath());
-  const localFileEnv = loadEnvFromFile(daemonLocalEnvFilePath());
-  const inheritedEnv = normalizeEnv(process.env);
-  const env = envIsTrue(inheritedEnv[RELOAD_ENV_FILES])
-    ? {
-        ...inheritedEnvForFileReload(inheritedEnv),
-        ...fileEnv,
-        ...localFileEnv,
-      }
-    : { ...fileEnv, ...localFileEnv, ...inheritedEnv };
-  delete env[RELOAD_ENV_FILES];
-  const dataDir = env.COCALC_DATA ?? env.DATA;
-  if (!dataDir) {
-    throw new Error(
-      "COCALC_DATA (or DATA) must be set, or provide a project-host env file",
-    );
-  }
-  env.COCALC_DATA = env.COCALC_DATA ?? dataDir;
-  env.DATA = env.DATA ?? dataDir;
+  const env = baseDaemonEnv();
+  const dataDir = env.COCALC_DATA;
   if (!env.COCALC_BIN_PATH && env.COCALC_PROJECT_TOOLS) {
     env.COCALC_BIN_PATH = env.COCALC_PROJECT_TOOLS;
   }

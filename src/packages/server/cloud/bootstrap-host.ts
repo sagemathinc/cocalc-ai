@@ -1770,6 +1770,9 @@ export async function buildBootstrapScriptWithStatus(
     "libatomic1",
     "libcap2-bin",
     "cloud-guest-utils",
+    // the persist server's page-cache helper (finding 028); bootstrap.py and
+    // its units use /usr/bin/python3 too
+    "python3",
   ]);
   const envLinesJson = JSON.stringify(scripts.envLines);
   const cloudflaredJson = JSON.stringify(

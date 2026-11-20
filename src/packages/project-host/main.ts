@@ -6,6 +6,10 @@
  * Security: intentionally insecure for now. No auth, no TLS.
  */
 import { createServer as createHttpServer } from "http";
+import {
+  PERSIST_RECORDS_RECOVER_COMMAND,
+  mainPersistRecordsRecover,
+} from "./persist-records-recover-cli";
 import { initAcpProjectMembership } from "./acp/project-membership";
 import type { IncomingMessage, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
@@ -27,7 +31,10 @@ import {
 } from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
 import { formatManagedEgressBlockedMessage } from "@cocalc/util/managed-egress-message";
-import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import {
+  server as createPersistServer,
+  installPersistExitGuard,
+} from "@cocalc/backend/conat/persist";
 import { installProjectPersistVolumes } from "./persist-volume";
 import { BOARD_WRITE_SERVICE } from "@cocalc/conat/persist/board-policy";
 import { initPersistFenceService } from "@cocalc/conat/persist/fence";
@@ -383,6 +390,8 @@ export async function main(
   _config: ProjectHostConfig = {},
 ): Promise<ProjectHostContext> {
   configureProjectHostAcpWorkerLauncher({ entryPoint: __filename });
+  // 028 E-1: a natural exit must not close (and checkpoint) the disk streams
+  installPersistExitGuard();
   const runnerId = process.env.PROJECT_RUNNER_NAME || "project-host";
   const host = _config.host ?? process.env.HOST ?? "127.0.0.1";
   const port = _config.port ?? (Number(process.env.PORT) || (await getPort()));
@@ -1798,7 +1807,11 @@ export async function main(
 }
 
 // Allow running directly via `node dist/main.js`.
-if (require.main === module) {
+if (require.main === module && process.argv[2] === PERSIST_RECORDS_RECOVER_COMMAND) {
+  // an operator command (028 ALT-D2): nothing else starts; the process ends
+  // once its report is written
+  mainPersistRecordsRecover(process.argv.slice(3));
+} else if (require.main === module) {
   applyProjectHostProcessTitle();
   process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT = __filename;
   if (`${process.env.COCALC_CONAT_CLUSTER_NODE ?? ""}`.trim() === "1") {

@@ -1,0 +1,794 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+// The durability records of disk-backed persist streams (finding 028): see
+// conat/persist/durability-records.
+//
+// root: <the role's base>/records/<boot id>, on the persist's own disk,
+// checked by the gate in persist-records-root (ALT-D2, design note v8) once
+// per process, before any record operation.
+
+import * as fs from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { posix } from "node:path";
+import getLogger from "@cocalc/backend/logger";
+import {
+  createDurabilityRecords,
+  type DurabilityRecords,
+  type PostRebootRecords,
+} from "@cocalc/conat/persist/durability-records";
+import { data, syncFiles } from "@cocalc/backend/data";
+import { ownerOfLocalPath } from "@cocalc/conat/persist/util";
+import { isSqliteSyncError } from "@cocalc/conat/persist/storage";
+import { spawn } from "node:child_process";
+import {
+  evaluateRecordsGate,
+  writeAllSync,
+  type GateOptions,
+  type RecordsGate,
+} from "./persist-records-root";
+
+const logger = getLogger("persist:durability");
+
+export function sha256Hex(data: string): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+// A process's start time, /proc/<pid>/stat field 22 (clock ticks since
+// boot); undefined if it can't be read.  The comm field (2) may contain
+// spaces and parentheses, so fields are counted after its last ")".
+export function procStartTime(
+  pid: number | "self",
+  readFile: (path: string) => string = (path) =>
+    fs.readFileSync(path, "utf8"),
+): string | undefined {
+  let stat: string;
+  try {
+    stat = readFile(`/proc/${pid}/stat`);
+  } catch {
+    return;
+  }
+  const rest = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  // rest[0] is field 3, so field 22 is rest[19]
+  const start = rest[19];
+  return start != null && /^\d+$/.test(start) ? start : undefined;
+}
+
+// Whether the writer of a dirty record still runs: false only if its pid is
+// gone, or is now a different process (another start time).  Anything else
+// (no /proc, a record without procStart for a pid that exists) counts as
+// alive: its record keeps refusing (fail closed).
+export function isWriterAlive(
+  pid: number,
+  procStart?: string,
+  readFile?: (path: string) => string,
+): boolean {
+  let exists = true;
+  try {
+    (readFile ?? ((path) => fs.readFileSync(path, "utf8")))(
+      `/proc/${pid}/stat`,
+    );
+  } catch (err) {
+    if ((err as any)?.code === "ENOENT") exists = false;
+    else return true;
+  }
+  if (!exists) return false;
+  if (procStart == null) return true;
+  const now = procStartTime(pid, readFile);
+  if (now == null) return true;
+  return now === procStart;
+}
+
+// The persistent state directory for the post-reboot records (§3.2.5 (b)):
+// COCALC_PERSIST_STATE_DIR, else <the persist data dir>/.cocalc-persist-state.
+// Host-owned, never in a project; undefined if neither is known.
+export function persistStateDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (env.COCALC_PERSIST_STATE_DIR) return env.COCALC_PERSIST_STATE_DIR;
+  if (syncFiles.local) return posix.join(syncFiles.local, ".cocalc-persist-state");
+  return undefined;
+}
+
+// The same state dir for a given environment, without this process's
+// module-load state: COCALC_PERSIST_STATE_DIR, else <sync>/.cocalc-persist-state
+// with sync = COCALC_SYNC ?? <COCALC_DATA_DIR ?? DATA>/sync, the rule of
+// @cocalc/backend/data.  For tools that act for a persist whose env they
+// load (persist-records-recover); undefined if it can't be known.
+export function persistStateDirFor(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.COCALC_PERSIST_STATE_DIR) return env.COCALC_PERSIST_STATE_DIR;
+  const dataDir = env.COCALC_DATA_DIR ?? env.DATA;
+  const sync = env.COCALC_SYNC ?? (dataDir ? posix.join(dataDir, "sync") : undefined);
+  return sync ? posix.join(sync, ".cocalc-persist-state") : undefined;
+}
+
+function fsyncPath(path: string, flags = "r"): void {
+  const fd = fs.openSync(path, flags);
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Durable records in <dir>/poisoned/<key>: temp file, fsync, rename, fsync of
+// the directory; removal unlinks, then fsyncs the directory.
+export function nodePostRebootRecords(dir: string): PostRebootRecords {
+  const recordsDir = posix.join(dir, "poisoned");
+  const ensure = () => {
+    fs.mkdirSync(recordsDir, { recursive: true, mode: 0o700 });
+  };
+  return {
+    write: (key, data) => {
+      ensure();
+      const target = posix.join(recordsDir, key);
+      const tmp = `${target}.${process.pid}.tmp`;
+      const fd = fs.openSync(tmp, "w", 0o600);
+      try {
+        try {
+          // every byte, or a throw: never a truncated record (review B1)
+          writeAllSync(fs, fd, data);
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
+        fs.renameSync(tmp, target);
+      } catch (err) {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {}
+        throw err;
+      }
+      fsyncPath(recordsDir);
+    },
+    exists: (key) => {
+      try {
+        fs.lstatSync(posix.join(recordsDir, key));
+        return true;
+      } catch (err) {
+        return (err as any)?.code !== "ENOENT";
+      }
+    },
+    remove: (key) => {
+      try {
+        fs.unlinkSync(posix.join(recordsDir, key));
+      } catch (err) {
+        if ((err as any)?.code === "ENOENT") return;
+        throw err;
+      }
+      fsyncPath(recordsDir);
+    },
+  };
+}
+
+// records in root, for a process generation (a new one by default)
+export function nodeDurabilityRecords(
+  root: string,
+  generation = `${process.pid}-${randomUUID()}`,
+  stateDir: string | undefined = persistStateDir(),
+): DurabilityRecords {
+  return createDurabilityRecords({
+    root,
+    generation,
+    fs: fs as any,
+    sha256: sha256Hex,
+    pid: process.pid,
+    procStart: procStartTime("self"),
+    isWriterAlive: (pid, procStart) => isWriterAlive(pid, procStart),
+    postReboot: stateDir == null ? undefined : nodePostRebootRecords(stateDir),
+    warn: (message, err) => logger.warn(message, { err: `${err}` }),
+  });
+}
+
+// (b) records that could not be written are retried every minute, with a
+// non-paging alert each time (§3.2.5 (b)).
+export const POST_REBOOT_RETRY_MS = 60_000;
+let retryTimer: ReturnType<typeof setInterval> | undefined;
+function startPostRebootRetry(r: DurabilityRecords): void {
+  if (retryTimer != null) return;
+  retryTimer = setInterval(() => {
+    if (r.postRebootPending() > 0) r.retryPostReboot();
+  }, POST_REBOOT_RETRY_MS);
+  (retryTimer as any).unref?.();
+}
+
+// A full PRAGMA integrity_check of a closed database in a child process
+// (never on the persist main thread), at most one at a time per host, at most
+// 10 minutes (§3.2.6, §3.2.9).  The child exits with process.exit, so its
+// connection is never closed (a close would checkpoint).
+export const INTEGRITY_CHECK_TIMEOUT_MS = 10 * 60_000;
+const INTEGRITY_CHECK_SOURCE = String.raw`
+const { DatabaseSync } = require("node:sqlite");
+let out;
+try {
+  const db = new DatabaseSync(process.argv[1]);
+  db.exec("PRAGMA busy_timeout=5000");
+  const rows = db.prepare("PRAGMA integrity_check").all();
+  out = { ok: rows.length === 1 && Object.values(rows[0])[0] === "ok", rows: rows.length };
+} catch (err) {
+  out = { ok: false, error: String(err && err.message || err).slice(0, 200) };
+}
+process.stdout.write(JSON.stringify(out) + String.fromCharCode(10));
+process.exit(0);
+`;
+let integrityQueue: Promise<unknown> = Promise.resolve();
+export function integrityCheckClosedDatabase(
+  dbPath: string,
+  timeoutMs: number = INTEGRITY_CHECK_TIMEOUT_MS,
+): Promise<{ ok: boolean; why?: string }> {
+  const run = () =>
+    new Promise<{ ok: boolean; why?: string }>((resolve) => {
+      let stdout = "";
+      let stderr = "";
+      const child = spawn(
+        process.execPath,
+        ["-e", INTEGRITY_CHECK_SOURCE, dbPath],
+        { shell: false, env: {}, cwd: "/", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+      child.stdout.on("data", (d) => {
+        if (stdout.length < 4096) stdout += d.toString();
+      });
+      child.stderr.on("data", (d) => {
+        if (stderr.length < 1024) stderr += d.toString();
+      });
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        resolve({ ok: false, why: `${err}` });
+      });
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        if (code !== 0 || signal != null) {
+          resolve({
+            ok: false,
+            why: `exit ${code} ${signal} ${stderr.slice(0, 300)}`,
+          });
+          return;
+        }
+        try {
+          const r = JSON.parse(stdout.trim());
+          resolve(r.ok === true ? { ok: true } : { ok: false, why: stdout.trim() });
+        } catch {
+          resolve({ ok: false, why: "unparsable output" });
+        }
+      });
+    });
+  const next = integrityQueue.then(run, run);
+  integrityQueue = next.catch(() => {});
+  return next;
+}
+
+let records: DurabilityRecords | undefined;
+
+// Every MAINTENANCE open of a persist database (promotion, inspection,
+// compaction, the trim's offline reads; DESIGN §4A row 9, vanta P1) is
+// refused unless the stream's records are clean: a poisoned file, or one a
+// process left mid-write (dead or alive), must not be opened, read, copied or
+// checkpointed outside the open path that verifies it.  dbPath: the physical
+// <path>.db, as the stream was opened.  B2-M1 (ops0 3587): the records are
+// checked WITH the stream's owner, derived from the physical path as the open
+// path keys it, so a project-level poison (Q-F, §4A row 9) refuses too; a
+// path whose owner can't be derived is refused.
+export function assertPersistMaintenanceOpenAllowed(
+  dbPath: string,
+  check: (id: string, owner: string) => string = (id, owner) =>
+    persistDurabilityRecords().check(id, owner),
+  ownerOf: (id: string) => string | undefined = ownerOfLocalPath,
+): void {
+  const id = posix.normalize(dbPath.replace(/\.db$/, ""));
+  const owner = ownerOf(id);
+  // (the thrown text can reach a client: the stream's name only; the full
+  // path goes to the server log)
+  if (owner == null) {
+    logger.warn("persist maintenance open refused: owner can't be derived", {
+      dbPath,
+    });
+    throw new Error(
+      `persist maintenance open refused: the stream's owner can't be derived: ${maintenanceStreamName(dbPath)}`,
+    );
+  }
+  const state = check(id, owner);
+  if (state !== "ok") {
+    logger.warn("persist maintenance open refused", { dbPath, state });
+    throw new Error(
+      `persist maintenance open refused: the stream is ${state}: ${maintenanceStreamName(dbPath)}`,
+    );
+  }
+}
+
+// the name a client-facing maintenance error carries for a stream: its file
+// name without .db, never the host path
+export function maintenanceStreamName(dbPath: string): string {
+  return posix.basename(dbPath).replace(/\.db$/, "");
+}
+
+// SA-B2-1: a maintenance WRITE to a stream file (the trim's VACUUM and its
+// checkpoints, promotion's TRUNCATE checkpoint) can consume a sync error just
+// like a stream's own COMMIT.  So it runs with the stream's dirty record
+// armed (with its owner), exactly like a connection's write: a SQLite sync
+// error makes that record the poisoned-file record (refused until verified,
+// in this boot and after a reboot via the post-reboot record); the record
+// is disarmed only when fn returned or threw a non-sync error.  If the
+// record can't be created, the write does not start.
+// An fsync a maintenance write makes itself (fsyncMaintenanceOutput): its
+// error is a sync error like SQLite's (§3.2.2), and EDQUOT/ENOSPC there is
+// the project's quota (Q-F, §3.2.3).
+export class MaintenanceFsyncError extends Error {
+  constructor(
+    readonly path: string,
+    readonly cause: NodeJS.ErrnoException,
+  ) {
+    super(`fsync ${path}: ${cause?.code ?? cause}`);
+  }
+}
+
+// DESIGN §4A row 10 (astra 3548): a maintenance write's output is durable
+// BEFORE the maintenance step completes -- the file and its directory are
+// fsync'd here (O_NOFOLLOW), the next open's barrier is no substitute.
+export function fsyncMaintenanceOutput(dbPath: string, fsx: Pick<typeof fs, "openSync" | "fsyncSync" | "closeSync"> = fs): void {
+  for (const [path, flags] of [
+    [dbPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW],
+    [posix.dirname(dbPath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY],
+  ] as const) {
+    let fd: number | undefined;
+    try {
+      fd = fsx.openSync(path, flags);
+      fsx.fsyncSync(fd);
+    } catch (err) {
+      if (fd != null) {
+        try {
+          fsx.closeSync(fd);
+        } catch {}
+      }
+      throw new MaintenanceFsyncError(path, err as NodeJS.ErrnoException);
+    }
+    try {
+      fsx.closeSync(fd);
+    } catch (err) {
+      // (review advisory) not swallowed: the step is not reported done
+      throw new MaintenanceFsyncError(path, err as NodeJS.ErrnoException);
+    }
+  }
+}
+
+export function runArmedMaintenanceWrite<T>(
+  dbPath: string,
+  owner: string,
+  where: string,
+  fn: () => T,
+  records: ArmedRecords = persistDurabilityRecords(),
+): T {
+  const id = armMaintenanceWrite(dbPath, owner, records);
+  let result: T;
+  try {
+    result = fn();
+  } catch (err) {
+    settleMaintenanceWriteError(id, dbPath, owner, where, err, records);
+    throw err;
+  }
+  records.disarm(id);
+  return result;
+}
+
+// A maintenance write whose completion can't be proven: a failure after a
+// read-write connection to the stream's file was opened that is not a sync
+// error (the close may still have checkpointed, unreported), or a worker
+// that ended without its report (killed, timed out, no parseable result).
+// Its record stays ARMED: the stream stays refused in this process and is
+// verified at the next start (H-b).  (SA-B2-3; review's design note)
+export class MaintenanceCompletionUnprovenError extends Error {
+  constructor(
+    readonly path: string,
+    readonly why: unknown,
+  ) {
+    super(`persist maintenance write not proven complete: ${path}: ${why}`);
+  }
+}
+
+// A read-write maintenance connection to a stream's file: opened, fn run,
+// then an explicit TRUNCATE checkpoint (a sync error surfaces here, and the
+// close has nothing left to write) and the close.  Any failure after the
+// open that is not a sync error is MaintenanceCompletionUnprovenError,
+// including a checkpoint whose row shows it incomplete (busy, or not every
+// frame moved: checkpointIncomplete).  onCheckpoint gets the complete row
+// (the promotion site re-checks it with #195's barrier).
+// Why a TRUNCATE checkpoint's result row says it did NOT move every WAL frame
+// into the main file, or undefined if it did: busy must be exactly 0 (no
+// reader blocked it) and log and checkpointed integers and equal (both 0
+// after a TRUNCATE, both -1 when the file is not in WAL mode).  (088, SA 3415,
+// ops0 3703)
+export function checkpointIncomplete(row: unknown): string | undefined {
+  const r = (row != null && typeof row == "object" ? row : {}) as Record<string, unknown>;
+  const { busy, log, checkpointed } = r;
+  if (
+    busy !== 0 ||
+    typeof log != "number" ||
+    !Number.isInteger(log) ||
+    typeof checkpointed != "number" ||
+    !Number.isInteger(checkpointed) ||
+    log !== checkpointed
+  ) {
+    return `WAL checkpoint incomplete (busy=${String(busy)} log=${String(log)} checkpointed=${String(checkpointed)})`;
+  }
+}
+
+export function withMaintenanceConnection<T>(
+  dbPath: string,
+  busyTimeoutMs: number,
+  fn: (db: any) => T,
+  open: (path: string) => any = (path) => new (require("node:sqlite").DatabaseSync)(path),
+  onCheckpoint?: (row: unknown) => void,
+): T {
+  const db = open(dbPath); // a failure here: nothing was opened, nothing written
+  let result: T;
+  try {
+    db.exec(`PRAGMA busy_timeout=${busyTimeoutMs}`);
+    result = fn(db);
+    // the checkpoint's row is CHECKED (088): an incomplete one leaves frames
+    // that a later close -- ours or another connection's -- would
+    // checkpoint unarmed, so completion is unproven (the catch below)
+    const row = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    const incomplete = checkpointIncomplete(row);
+    if (incomplete != null) throw new Error(incomplete);
+    onCheckpoint?.(row);
+  } catch (err) {
+    try {
+      db.close();
+    } catch (closeErr) {
+      if (isSqliteSyncError(closeErr)) throw closeErr;
+    }
+    if (isSqliteSyncError(err)) throw err;
+    throw new MaintenanceCompletionUnprovenError(dbPath, err);
+  }
+  try {
+    db.close();
+  } catch (err) {
+    // a sync error propagates (the runner poisons); any other close error
+    // leaves completion unproven too (REVIEW-B2-CLOSE-1)
+    if (isSqliteSyncError(err)) throw err;
+    throw new MaintenanceCompletionUnprovenError(dbPath, err);
+  }
+  return result;
+}
+
+export async function runArmedMaintenanceWriteAsync<T>(
+  dbPath: string,
+  owner: string,
+  where: string,
+  fn: () => Promise<T>,
+  records: ArmedRecords = persistDurabilityRecords(),
+): Promise<T> {
+  const id = armMaintenanceWrite(dbPath, owner, records);
+  let result: T;
+  try {
+    result = await fn();
+  } catch (err) {
+    settleMaintenanceWriteError(id, dbPath, owner, where, err, records);
+    throw err;
+  }
+  records.disarm(id);
+  return result;
+}
+
+type ArmedRecords = Pick<
+  DurabilityRecords,
+  "arm" | "disarm" | "poison" | "poisonProject"
+>;
+
+function armMaintenanceWrite(
+  dbPath: string,
+  owner: string,
+  records: ArmedRecords,
+): string {
+  const id = posix.normalize(dbPath.replace(/\.db$/, ""));
+  try {
+    records.arm(id, owner);
+  } catch (err) {
+    logger.error("persist maintenance write refused: the dirty record can't be created", {
+      dbPath,
+      err: `${err}`,
+    });
+    throw new Error(
+      `persist maintenance write refused: the dirty record can't be created: ${maintenanceStreamName(dbPath)}`,
+    );
+  }
+  return id;
+}
+
+// a sync error: the record becomes the poison record (never disarmed);
+// completion unproven: stays armed; any other error: disarmed
+function settleMaintenanceWriteError(
+  id: string,
+  dbPath: string,
+  owner: string,
+  where: string,
+  err: unknown,
+  records: ArmedRecords,
+): void {
+  if (err instanceof MaintenanceCompletionUnprovenError) {
+    // neither disarmed nor poisoned: the record stays armed
+    logger.error(
+      "persist: a maintenance write could not be proven complete; its record stays armed and the stream refused (finding 028)",
+      { dbPath, where, err: `${err}` },
+    );
+    return;
+  }
+  if (isSqliteSyncError(err) || err instanceof MaintenanceFsyncError) {
+    const errno =
+      err instanceof MaintenanceFsyncError ? `${err.cause?.code ?? ""}` : "";
+    records.poison(id, {
+      where: `maintenance:${where}`,
+      errcode: Number((err as any)?.errcode ?? 0),
+      ...(errno ? { errno } : {}),
+    });
+    if (errno === "EDQUOT" || errno === "ENOSPC") {
+      // the project's quota at our fsync: every stream of the project (Q-F)
+      records.poisonProject(owner, { where: `maintenance:${where}`, errno, path: dbPath });
+    }
+    logger.error(
+      "PERSIST FILE POISONED (finding 028): a sync error in a maintenance write; the file is refused until it is verified",
+      { dbPath, where, err: `${err}` },
+    );
+    return;
+  }
+  records.disarm(id);
+}
+
+// The records gate of this process (persist-records-root): evaluated ONCE,
+// at the first USE -- the first record operation (a disk-stream open, a
+// maintenance call) or the start-up check -- never at module import (SA
+// 4306 S3: many processes import the persist module and never serve disk
+// streams), and shared by the records and persistStartupCheck.  It never
+// throws: a failure is a refusal (and a page), and the process stays up.
+let gate: RecordsGate | undefined;
+export function persistRecordsGate(
+  options: GateOptions = {},
+): RecordsGate {
+  if (gate == null) {
+    let g: RecordsGate;
+    try {
+      g = evaluateRecordsGate({
+        stateDir: persistStateDir(),
+        dataDir: data,
+        ...options,
+      });
+    } catch (err) {
+      // (evaluateRecordsGate does not throw; belt and braces)
+      g = { ok: false, code: "records_gate_error", reason: `${err}`, t1: "not-run", overrides: [] };
+    }
+    gate = g;
+    try {
+      if (!g.ok) {
+        logger.error(
+          "PERSIST ALERT (page): the durability records root is refused, so disk-backed persist streams are refused on this host until fixed (finding 028)",
+          { code: g.code, reason: g.reason, base: g.base, t1: g.t1 },
+        );
+      } else {
+        logger.info("persist: durability records root", recordsDiagnostics(g));
+        if ((g.prune_errors ?? 0) > 0) {
+          logger.warn("persist: other boots' records could not all be pruned", {
+            prune_errors: g.prune_errors,
+            detail: g.prune_error_detail,
+          });
+        }
+        if (g.overrides.length > 0) {
+          logger.warn("persist: durability records root overrides (tests only; finding 028)", {
+            overrides: g.overrides,
+          });
+        }
+      }
+    } catch {}
+  }
+  return gate;
+}
+
+// Non-secret diagnostics of the gate (design v8 runtime proof (a)): the
+// resolved path, dev/ino and the T1 result.  The token is never in the gate.
+export function recordsDiagnostics(g: RecordsGate = persistRecordsGate()) {
+  return {
+    records_ok: g.ok,
+    records_code: g.code ?? null,
+    records_role: g.role ?? null,
+    records_base: g.base ?? null,
+    // the state dir of marker copy B (SA 4317 R2: the recovery command must
+    // be given exactly this and records_base)
+    records_state_dir: g.state_dir ?? null,
+    records_root: g.root ?? null,
+    records_root_dev: g.root_dev ?? null,
+    records_root_ino: g.root_ino ?? null,
+    records_t1: g.t1,
+    records_new_boot: g.new_boot ?? false,
+    records_migrated: g.migrated ?? false,
+    records_pruned: g.pruned ?? 0,
+    records_prune_errors: g.prune_errors ?? 0,
+  };
+}
+
+// The records of a process whose gate refused: no record operation touches
+// the disk.  Every write refuses (arm throws, so the data write never
+// starts), every check is "unverified", nothing is cleared.
+export function refusingDurabilityRecords(g: RecordsGate): DurabilityRecords {
+  const refused = () =>
+    new Error(
+      `persist durability records refused (${g.code ?? "refused"}): disk-backed streams are unavailable on this host`,
+    );
+  return {
+    generation: "refused",
+    root: "",
+    dirtyPath: () => "",
+    poisonedPath: () => "",
+    arm: () => {
+      throw refused();
+    },
+    disarm: () => {},
+    poison: () => {},
+    poisonProject: () => {},
+    projectPoisonGeneration: () => "unknown",
+    clearProjectPoison: () => {
+      throw refused();
+    },
+    clearLeftovers: () => 0,
+    leftoverIdsOf: () => undefined,
+    clearPostReboot: () => {
+      throw refused();
+    },
+    check: () => "unverified",
+    retryPostReboot: () => 0,
+    postRebootPending: () => 0,
+  };
+}
+
+// the records of this process (one generation per process), once the gate
+// ran; never throws
+function resolvedDurabilityRecords(): DurabilityRecords {
+  if (records == null) {
+    const g = persistRecordsGate();
+    let real: DurabilityRecords | undefined;
+    if (g.ok && g.root != null) {
+      try {
+        real = nodeDurabilityRecords(g.root);
+      } catch (err) {
+        logger.error("PERSIST ALERT (page): the durability records can't be set up (finding 028)", {
+          err: `${err}`,
+        });
+      }
+    }
+    if (real != null) {
+      records = real;
+      startPostRebootRetry(records);
+    } else {
+      records = refusingDurabilityRecords(g);
+    }
+  }
+  return records;
+}
+
+// The records of this process, LAZY (SA 4306 S3, ops0): getting them (the
+// persist module's init does) touches nothing; the gate runs at the first
+// operation or property read.
+let lazyRecords: DurabilityRecords | undefined;
+export function persistDurabilityRecords(): DurabilityRecords {
+  if (lazyRecords == null) {
+    const r = resolvedDurabilityRecords;
+    lazyRecords = {
+      get generation() {
+        return r().generation;
+      },
+      get root() {
+        return r().root;
+      },
+      dirtyPath: (id) => r().dirtyPath(id),
+      poisonedPath: (id) => r().poisonedPath(id),
+      arm: (id, owner) => r().arm(id, owner),
+      disarm: (id) => r().disarm(id),
+      poison: (id, info) => r().poison(id, info),
+      check: (id, owner) => r().check(id, owner),
+      poisonProject: (owner, info) => r().poisonProject(owner, info),
+      projectPoisonGeneration: (owner) => r().projectPoisonGeneration(owner),
+      clearProjectPoison: (owner) => r().clearProjectPoison(owner),
+      clearLeftovers: (id) => r().clearLeftovers(id),
+      leftoverIdsOf: (owner, max) => r().leftoverIdsOf(owner, max),
+      clearPostReboot: (id) => r().clearPostReboot(id),
+      retryPostReboot: () => r().retryPostReboot(),
+      postRebootPending: () => r().postRebootPending(),
+    };
+  }
+  return lazyRecords;
+}
+
+// ---------------------------------------------------------------------------
+// Start-up preconditions (028 B-3a, DESIGN §3.2.5 start-up rule, §3.2.1 SA
+// T3, vanta R1 / N-3; the TWO host-wide start-up refusals, Q9).  Checked once
+// per process.  If one fails, DISK-stream service is refused (ephemeral
+// streams still run), with a clear error code and a page.
+// - the records root: the gate (persist-records-root, ALT-D2), the SAME
+//   cached result the records were built from (persistRecordsGate);
+// - the NOFILE soft limit must cover SQLite's fds for every stream (db, -wal,
+//   -shm) plus our short-lived barrier fds: >= 3 x MAX_GLOBAL + margin.
+export const MIN_NOFILE = 3 * 10_000 + 1024;
+
+export function checkNofile(
+  readLimits: () => string = () => fs.readFileSync("/proc/self/limits", "utf8"),
+  min: number = MIN_NOFILE,
+): string | undefined {
+  let text: string;
+  try {
+    text = readLimits();
+  } catch {
+    return undefined; // no /proc (not Linux): nothing to check
+  }
+  const m = /^Max open files\s+(\S+)\s+(\S+)/m.exec(text);
+  if (m == null) return "NOFILE: can't parse /proc/self/limits";
+  const soft = m[1] === "unlimited" ? Infinity : Number(m[1]);
+  if (!(soft >= min)) {
+    return `NOFILE soft limit ${m[1]} is below ${min} (3 fds per stream x 10,000 streams + margin)`;
+  }
+  return undefined;
+}
+
+type StartupResult = {
+  ok: boolean;
+  reason?: string;
+  overrides?: string[];
+  records?: ReturnType<typeof recordsDiagnostics>;
+};
+// A start-up check with its NOFILE minimum, cached once per instance.  The
+// production wiring (persist.ts) uses persistStartupCheck, the instance
+// with MIN_NOFILE.  Only the test setup builds another instance (ops0's
+// NOFILE ruling, 11-18: this project's hard limit is 8192), and passes it
+// to the context explicitly; no env var, config or global lowers it.
+export function makePersistStartupCheck(
+  nofileMinimum: number,
+): (() => StartupResult) & { reset: () => void } {
+  let cached: StartupResult | undefined;
+  const check = () => {
+    if (cached == null) {
+      const g = persistRecordsGate();
+      // the records this process actually uses: refusing ones refuse here too
+      const refusing = persistDurabilityRecords().generation === "refused";
+      const reason = !g.ok
+        ? `durability records root refused (${g.code}): ${g.reason}`
+        : refusing
+          ? "durability records can't be set up"
+          : checkNofile(undefined, nofileMinimum);
+      cached = {
+        ok: reason == null,
+        ...(reason == null ? {} : { reason }),
+        overrides: [...g.overrides],
+        records: recordsDiagnostics(g),
+      };
+      if (reason != null) {
+        logger.error(
+          "PERSIST ALERT (page): disk-backed persist streams are refused on this host until fixed (finding 028)",
+          { reason },
+        );
+      }
+    }
+    return cached;
+  };
+  check.reset = () => {
+    cached = undefined;
+  };
+  return check;
+}
+
+const productionStartupCheck = makePersistStartupCheck(MIN_NOFILE);
+export function persistStartupCheck(): StartupResult {
+  return productionStartupCheck();
+}
+
+// tests only: the start-up result is evaluated again (the gate and the
+// records are kept: the context holds them)
+export function resetPersistStartupCheckForTests(): void {
+  productionStartupCheck.reset();
+}
+
+// tests only: a new gate and new records at the next use (the caller
+// re-installs the records in the context if it needs them there)
+export function resetPersistRecordsGateForTests(): void {
+  productionStartupCheck.reset();
+  gate = undefined;
+  records = undefined;
+}

@@ -4,6 +4,7 @@ design r3, §4.2-§4.4): its conditions, the seed, and the msg ids that tell an
 open copy which of its pending patches were included.
 */
 
+import { testDurabilityContext } from "./test-durability";
 import { PersistentStream } from "./storage";
 import { initContext, syncFiles } from "./context";
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
@@ -20,6 +21,7 @@ const LIMIT_ENV = [
 
 beforeAll(() => {
   initContext({
+    ...testDurabilityContext(),
     sqlite: { DatabaseSync },
     compress: (data) => data,
     decompress: (data) => data,

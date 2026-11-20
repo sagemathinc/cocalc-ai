@@ -1,3 +1,43 @@
+// finding 028 (AS-B2-SYNC-OWNER): a production open registers its owner through
+// the persist server (prepareDurableOpen); a test that constructs a disk
+// stream directly counts as "host" (no project scope).  The refusal's own
+// tests unset it.
+require("@cocalc/conat/persist/context").setUnregisteredStreamOwnerForTests(
+  () => "host",
+);
+
+// finding 028: in the persist, sync and core suites, every disk-stream
+// connection runs under the statement guard (conat/persist/test-durability):
+// a write outside a transaction throws, so the whole suite passing shows there
+// is no unarmed autocommit.  Their start-up check is the test-only one with
+// a lower NOFILE minimum (ops0's NOFILE ruling, 11-18: test/persist-nofile-hook).
+{
+  const testPath = expect.getState().testPath ?? "";
+  if (/\/conat\/(test\/(persist|sync|sync-doc|core)\/|persist-)/.test(testPath)) {
+    const persist = require("../conat/persist");
+    const { persistContextOptions } = persist;
+    // the write counter's own tests run raw autocommits on purpose, to test
+    // the counter
+    const guarded = !testPath.endsWith("/write-rate.test.ts");
+    const {
+      guardedWriteCounter,
+    } = require("@cocalc/conat/persist/test-durability");
+    require("./persist-nofile-hook").installTestPersistStartupCheck({
+      persist,
+      durability: require("../conat/persist-durability"),
+      context: require("@cocalc/conat/persist/context"),
+      extra: guarded
+        ? {
+            writeCounter: guardedWriteCounter(
+              persistContextOptions.writeCounter,
+              persistContextOptions.durability,
+            ),
+          }
+        : {},
+    });
+  }
+}
+
 const CLEANUP_DISCONNECT_RE =
   /socket has been disconnected|socket is disconnected|once: .* not emitted before "closed"|connection closed/i;
 

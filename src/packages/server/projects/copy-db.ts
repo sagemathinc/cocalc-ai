@@ -136,6 +136,9 @@ export type ProjectCopyKey = {
 export type ProjectCopyInsert = ProjectCopyKey & {
   op_id?: string;
   snapshot_id: string;
+  // True only if this copy made the backup snapshot_id itself.  Only such
+  // snapshots are ever deleted when the copy finishes.
+  snapshot_created: boolean;
   options?: any;
   exact?: boolean;
   expires_at: Date;
@@ -215,6 +218,20 @@ async function createCopySchema(): Promise<void> {
   await pool().query(
     "ALTER TABLE project_copies ADD COLUMN IF NOT EXISTS exact BOOLEAN NOT NULL DEFAULT FALSE",
   );
+  // NULL (rows written before this column existed) means "not created".
+  await pool().query(
+    "ALTER TABLE project_copies ADD COLUMN IF NOT EXISTS snapshot_created BOOLEAN",
+  );
+  // A row here means cleanup decided to delete this backup snapshot and may
+  // have done so; no copy may start using it again.
+  await pool().query(`
+    CREATE TABLE IF NOT EXISTS project_copy_snapshot_claims (
+      src_project_id UUID NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      claimed_at TIMESTAMPTZ DEFAULT now(),
+      PRIMARY KEY (src_project_id, snapshot_id)
+    )
+  `);
   await pool().query(
     "CREATE INDEX IF NOT EXISTS project_copies_status_idx ON project_copies(status)",
   );
@@ -238,28 +255,245 @@ async function createCopySchema(): Promise<void> {
   );
 }
 
-async function countActiveSnapshotRefs(snapshot_id: string): Promise<number> {
-  const { rows } = await pool().query(
-    `
-      SELECT COUNT(*) AS count
-      FROM project_copies
-      WHERE snapshot_id=$1
-        AND status = ANY($2::text[])
-    `,
-    [snapshot_id, ACTIVE_STATUSES],
-  );
-  return Number(rows[0]?.count ?? 0);
+type CopyDb = {
+  query: (
+    sql: string,
+    params?: any[],
+  ) => Promise<{ rows: any[]; rowCount?: number | null }>;
+};
+
+/** The snapshot was claimed for deletion; the copy must use another backup. */
+export class CopySnapshotUnavailableError extends Error {
+  constructor(readonly snapshot_id: string) {
+    super(
+      `backup snapshot ${snapshot_id} is being removed; use another backup`,
+    );
+    this.name = "CopySnapshotUnavailableError";
+  }
 }
 
+let copySnapshotLockTimeoutMs = 60_000;
+
+/** Tests only: how long to wait for a snapshot's lock. */
+export function setCopySnapshotLockTimeoutForTests(ms: number): void {
+  copySnapshotLockTimeoutMs = ms;
+}
+
+export class CopySnapshotLockTimeoutError extends Error {
+  constructor(readonly what: string) {
+    super(`timed out waiting for the lock on ${what}`);
+    this.name = "CopySnapshotLockTimeoutError";
+  }
+}
+
+// Queueing a copy of a backup snapshot and deciding to delete that snapshot
+// are serialized per source project and snapshot.  The locks are session
+// advisory locks on one connection checked out for the whole operation;
+// everything decided under them runs on that connection, and no transaction
+// stays open across host calls.  They only order live callers: Postgres drops
+// session locks with the connection, so crash safety comes from the durable
+// cleanup claim, not from the locks.
+type LockSession = { db: CopyDb; poisoned: boolean };
+
+async function withLockSession<T>(
+  fn: (session: LockSession) => Promise<T>,
+): Promise<T> {
+  const client = await pool().connect();
+  const session: LockSession = { db: client, poisoned: false };
+  try {
+    return await fn(session);
+  } finally {
+    // A connection whose locks were not all confirmed released is closed,
+    // never returned to the pool.
+    client.release(session.poisoned ? true : undefined);
+  }
+}
+
+async function withSessionLock<T>(
+  session: LockSession,
+  key: string,
+  label: string,
+  fn: (db: CopyDb) => Promise<T>,
+): Promise<T> {
+  // Bounded wait, so a stuck holder can't block copies forever.
+  const deadline = Date.now() + copySnapshotLockTimeoutMs;
+  let delay = 20;
+  while (true) {
+    let locked: boolean;
+    try {
+      const { rows } = await session.db.query(
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+        [key],
+      );
+      locked = rows[0]?.locked === true;
+    } catch (err) {
+      session.poisoned = true;
+      throw err;
+    }
+    if (locked) break;
+    if (Date.now() >= deadline) {
+      throw new CopySnapshotLockTimeoutError(label);
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(500, delay * 2);
+  }
+  try {
+    return await fn(session.db);
+  } finally {
+    let unlocked = false;
+    try {
+      const { rows } = await session.db.query(
+        "SELECT pg_advisory_unlock(hashtext($1)) AS unlocked",
+        [key],
+      );
+      unlocked = (rows[0]?.unlocked ?? rows[0]?.pg_advisory_unlock) === true;
+    } catch (err) {
+      logger.warn("advisory unlock failed", { label, err: `${err}` });
+    }
+    if (!unlocked) session.poisoned = true;
+  }
+}
+
+// Lock order: a copy row's lock (requeues only) is always taken before any
+// snapshot lock, and at most one snapshot lock is held at a time, all on the
+// same connection, so these locks can't deadlock or need a second connection.
+async function withCopySnapshotLock<T>(
+  session: LockSession | undefined,
+  {
+    src_project_id,
+    snapshot_id,
+  }: { src_project_id: string; snapshot_id: string },
+  fn: (db: CopyDb) => Promise<T>,
+): Promise<T> {
+  const lock = async (s: LockSession) =>
+    await withSessionLock(
+      s,
+      `project-copy-snapshot:${src_project_id}:${snapshot_id}`,
+      `backup snapshot ${snapshot_id}`,
+      fn,
+    );
+  return session ? await lock(session) : await withLockSession(lock);
+}
+
+function copyRowLockKey(row: {
+  op_id?: string | null;
+  src_project_id: string;
+  src_path: string;
+  dest_project_id: string;
+  dest_path: string;
+}): string {
+  return `project-copy-row:${JSON.stringify([
+    row.op_id ?? null,
+    row.src_project_id,
+    row.src_path,
+    row.dest_project_id,
+    row.dest_path,
+  ])}`;
+}
+
+async function assertSnapshotNotClaimed(
+  db: CopyDb,
+  src_project_id: string,
+  snapshot_id: string,
+): Promise<void> {
+  const { rows } = await db.query(
+    `SELECT 1 FROM project_copy_snapshot_claims
+      WHERE src_project_id=$1 AND snapshot_id=$2`,
+    [src_project_id, snapshot_id],
+  );
+  if (rows.length > 0) {
+    throw new CopySnapshotUnavailableError(snapshot_id);
+  }
+}
+
+async function snapshotRefs(
+  db: CopyDb,
+  src_project_id: string,
+  snapshot_id: string,
+): Promise<{
+  total: number;
+  active: number;
+  notCreated: number;
+}> {
+  const { rows } = await db.query(
+    `
+      SELECT COUNT(*) AS total,
+             COUNT(*) FILTER (WHERE status = ANY($3::text[])) AS active,
+             COUNT(*) FILTER (WHERE snapshot_created IS NOT TRUE) AS not_created
+      FROM project_copies
+      WHERE src_project_id=$1 AND snapshot_id=$2
+    `,
+    [src_project_id, snapshot_id, ACTIVE_STATUSES],
+  );
+  return {
+    total: Number(rows[0]?.total ?? 0),
+    active: Number(rows[0]?.active ?? 0),
+    notCreated: Number(rows[0]?.not_created ?? 0),
+  };
+}
+
+// Delete a copy's backup snapshot once no copy needs it, but ONLY if every
+// copy that ever referenced it made that snapshot itself.  A reused backup
+// (any backup of the source project, e.g. one its owner made), a snapshot
+// given by the caller, or a row written before the flag existed is never
+// deleted.  The decision and a durable claim are made under the snapshot's
+// lock before the host is asked to delete; the claim is never removed, since
+// a failed or lost response may still have deleted the snapshot.
 async function maybeCleanupSnapshot({
   src_project_id,
   snapshot_id,
+  replacedCreated = false,
+  session,
 }: {
   src_project_id: string;
   snapshot_id: string;
+  // The caller's lock session, if it already holds a copy row's lock.
+  session?: LockSession;
+  // The caller made this snapshot and no row of its own counts it (a requeue
+  // replaced that row, or the copy failed before queueing one).
+  replacedCreated?: boolean;
 }): Promise<void> {
-  const activeCount = await countActiveSnapshotRefs(snapshot_id);
-  if (activeCount > 0) return;
+  let claimed: boolean;
+  try {
+    claimed = await withCopySnapshotLock(
+      session,
+      { src_project_id, snapshot_id },
+      async (db) => {
+        const refs = await snapshotRefs(db, src_project_id, snapshot_id);
+        if (
+          refs.active > 0 ||
+          (refs.total === 0 && !replacedCreated) ||
+          refs.notCreated > 0
+        ) {
+          logger.debug("snapshot cleanup skipped", {
+            src_project_id,
+            snapshot_id,
+            ...refs,
+          });
+          return false;
+        }
+        const { rows } = await db.query(
+          `INSERT INTO project_copy_snapshot_claims (src_project_id, snapshot_id)
+           VALUES ($1, $2)
+           ON CONFLICT (src_project_id, snapshot_id) DO NOTHING
+           RETURNING 1`,
+          [src_project_id, snapshot_id],
+        );
+        // An existing claim means another cleanup already asked for deletion.
+        return rows.length > 0;
+      },
+    );
+  } catch (err) {
+    // Without the lock nothing is decided: the snapshot is kept, possibly
+    // leaked, and never deleted unlocked.
+    logger.warn("snapshot cleanup skipped: lock unavailable", {
+      src_project_id,
+      snapshot_id,
+      err: `${err}`,
+    });
+    return;
+  }
+  if (!claimed) return;
   try {
     await (
       await getProjectFileServerClient({ project_id: src_project_id })
@@ -274,6 +508,23 @@ async function maybeCleanupSnapshot({
       err: `${err}`,
     });
   }
+}
+
+/** Clean up a backup the caller made for a copy that then failed: deleted only
+ * if no copy row still needs it and every row referencing it made it. */
+export async function releaseCreatedCopySnapshot({
+  src_project_id,
+  snapshot_id,
+}: {
+  src_project_id: string;
+  snapshot_id: string;
+}): Promise<void> {
+  await ensureCopySchema();
+  await maybeCleanupSnapshot({
+    src_project_id,
+    snapshot_id,
+    replacedCreated: true,
+  });
 }
 
 export async function expireCopies(): Promise<ProjectCopyRow[]> {
@@ -316,6 +567,24 @@ export async function upsertCopyRow(
   row: ProjectCopyInsert,
 ): Promise<ProjectCopyRow> {
   await ensureCopySchema();
+  // Requeues of the same row are serialized for the whole change, including
+  // the cleanup of the snapshot it replaces; under that, the new and the
+  // replaced snapshot are locked one after the other, never together.
+  return await withLockSession(
+    async (session) =>
+      await withSessionLock(
+        session,
+        copyRowLockKey(row),
+        "a copy row",
+        async () => await upsertCopyRowLocked(session, row),
+      ),
+  );
+}
+
+async function upsertCopyRowLocked(
+  session: LockSession,
+  row: ProjectCopyInsert,
+): Promise<ProjectCopyRow> {
   const {
     src_project_id,
     src_path,
@@ -323,58 +592,73 @@ export async function upsertCopyRow(
     dest_path,
     op_id,
     snapshot_id,
+    snapshot_created,
     options,
     exact = false,
     expires_at,
   } = row;
-  const existing = await pool().query<{ snapshot_id: string }>(
-    `
-      SELECT snapshot_id
-      FROM project_copies
-      WHERE op_id IS NOT DISTINCT FROM $1
-        AND src_project_id=$2
-        AND src_path=$3
-        AND dest_project_id=$4
-        AND dest_path=$5
-    `,
-    [op_id ?? null, src_project_id, src_path, dest_project_id, dest_path],
+  const { prevSnapshot, prevCreated, updated } = await withCopySnapshotLock(
+    session,
+    { src_project_id, snapshot_id },
+    async (db) => {
+      await assertSnapshotNotClaimed(db, src_project_id, snapshot_id);
+      const existing = await db.query(
+        `
+          SELECT snapshot_id, snapshot_created
+          FROM project_copies
+          WHERE op_id IS NOT DISTINCT FROM $1
+            AND src_project_id=$2
+            AND src_path=$3
+            AND dest_project_id=$4
+            AND dest_path=$5
+        `,
+        [op_id ?? null, src_project_id, src_path, dest_project_id, dest_path],
+      );
+      const { rows } = await db.query(
+        `
+          INSERT INTO project_copies
+            (src_project_id, src_path, dest_project_id, dest_path, op_id, snapshot_id, snapshot_created, options, exact, status, attempt, last_attempt_at, expires_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$10,$7,$8,'queued',0,NULL,$9)
+          ON CONFLICT (op_id, src_project_id, src_path, dest_project_id, dest_path) DO UPDATE
+            SET op_id=EXCLUDED.op_id,
+                snapshot_id=EXCLUDED.snapshot_id,
+                snapshot_created=EXCLUDED.snapshot_created,
+                options=EXCLUDED.options,
+                exact=EXCLUDED.exact,
+                status='queued',
+                last_error=NULL,
+                attempt=0,
+                last_attempt_at=NULL,
+                updated_at=now(),
+                expires_at=EXCLUDED.expires_at
+          RETURNING *
+        `,
+        [
+          src_project_id,
+          src_path,
+          dest_project_id,
+          dest_path,
+          op_id ?? null,
+          snapshot_id,
+          options ?? null,
+          exact,
+          expires_at,
+          snapshot_created === true,
+        ],
+      );
+      return {
+        prevSnapshot: existing.rows[0]?.snapshot_id as string | undefined,
+        prevCreated: existing.rows[0]?.snapshot_created === true,
+        updated: rows[0] as ProjectCopyRow,
+      };
+    },
   );
-  const prevSnapshot = existing.rows[0]?.snapshot_id;
-  const { rows } = await pool().query(
-    `
-      INSERT INTO project_copies
-        (src_project_id, src_path, dest_project_id, dest_path, op_id, snapshot_id, options, exact, status, attempt, last_attempt_at, expires_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'queued',0,NULL,$9)
-      ON CONFLICT (op_id, src_project_id, src_path, dest_project_id, dest_path) DO UPDATE
-        SET op_id=EXCLUDED.op_id,
-            snapshot_id=EXCLUDED.snapshot_id,
-            options=EXCLUDED.options,
-            exact=EXCLUDED.exact,
-            status='queued',
-            last_error=NULL,
-            attempt=0,
-            last_attempt_at=NULL,
-            updated_at=now(),
-            expires_at=EXCLUDED.expires_at
-      RETURNING *
-    `,
-    [
-      src_project_id,
-      src_path,
-      dest_project_id,
-      dest_path,
-      op_id ?? null,
-      snapshot_id,
-      options ?? null,
-      exact,
-      expires_at,
-    ],
-  );
-  const updated = rows[0] as ProjectCopyRow;
   if (prevSnapshot && prevSnapshot !== snapshot_id) {
     await maybeCleanupSnapshot({
       src_project_id,
       snapshot_id: prevSnapshot,
+      replacedCreated: prevCreated,
+      session,
     });
   }
   return updated;
@@ -391,31 +675,40 @@ export async function insertCopyRowIfMissing(
     dest_path,
     op_id,
     snapshot_id,
+    snapshot_created,
     options,
     exact = false,
     expires_at,
   } = row;
-  const { rows } = await pool().query(
-    `
-      INSERT INTO project_copies
-        (src_project_id, src_path, dest_project_id, dest_path, op_id, snapshot_id, options, exact, status, attempt, last_attempt_at, expires_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'queued',0,NULL,$9)
-      ON CONFLICT (op_id, src_project_id, src_path, dest_project_id, dest_path) DO NOTHING
-      RETURNING *
-    `,
-    [
-      src_project_id,
-      src_path,
-      dest_project_id,
-      dest_path,
-      op_id ?? null,
-      snapshot_id,
-      options ?? null,
-      exact,
-      expires_at,
-    ],
+  return await withCopySnapshotLock(
+    undefined,
+    { src_project_id, snapshot_id },
+    async (db) => {
+      await assertSnapshotNotClaimed(db, src_project_id, snapshot_id);
+      const { rows } = await db.query(
+        `
+          INSERT INTO project_copies
+            (src_project_id, src_path, dest_project_id, dest_path, op_id, snapshot_id, snapshot_created, options, exact, status, attempt, last_attempt_at, expires_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$10,$7,$8,'queued',0,NULL,$9)
+          ON CONFLICT (op_id, src_project_id, src_path, dest_project_id, dest_path) DO NOTHING
+          RETURNING *
+        `,
+        [
+          src_project_id,
+          src_path,
+          dest_project_id,
+          dest_path,
+          op_id ?? null,
+          snapshot_id,
+          options ?? null,
+          exact,
+          expires_at,
+          snapshot_created === true,
+        ],
+      );
+      return rows[0] as ProjectCopyRow | undefined;
+    },
   );
-  return rows[0] as ProjectCopyRow | undefined;
 }
 
 export async function listCopiesForProject({

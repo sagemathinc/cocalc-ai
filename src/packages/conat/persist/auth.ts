@@ -1,4 +1,4 @@
-import { SERVICE } from "./util";
+import { SERVICE } from "./subject";
 import { ConatError } from "@cocalc/conat/core/client";
 import { posix } from "path";
 

@@ -113,6 +113,21 @@ async function sha256File(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
+// The persist's records marker (copy B) and its migration flag (028 ALT-D2,
+// design note v8 rule 7) are never backed up: a restore must not bring back
+// an old copy (the persist then refuses until a ruled recovery), and an
+// import into a new bay must start without them.
+export const PERSIST_RECORDS_STATE_EXCLUDES = new Set([
+  ".cocalc-persist-state/records-marker.json",
+  ".cocalc-persist-state/records-migrated.json",
+]);
+
+function excludedFromMirror(relativePath: string): boolean {
+  return [...PERSIST_RECORDS_STATE_EXCLUDES].some(
+    (name) => relativePath === name || relativePath.endsWith(`/${name}`),
+  );
+}
+
 async function listSourceFiles(sourceDir: string): Promise<string[]> {
   const files: string[] = [];
   async function visit(dir: string): Promise<void> {
@@ -125,7 +140,8 @@ async function listSourceFiles(sourceDir: string): Promise<string[]> {
       } else if (
         entry.isFile() &&
         !entry.name.endsWith(".db-wal") &&
-        !entry.name.endsWith(".db-shm")
+        !entry.name.endsWith(".db-shm") &&
+        !excludedFromMirror(relative(sourceDir, path))
       ) {
         files.push(relative(sourceDir, path));
       }

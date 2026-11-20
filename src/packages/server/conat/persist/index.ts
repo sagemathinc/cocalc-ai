@@ -2,6 +2,8 @@ import { loadConatConfiguration } from "../configuration";
 import {
   initPersistServer,
   initLoadBalancer,
+  installPersistExitGuard,
+  installPersistSignalFlush,
 } from "@cocalc/backend/conat/persist";
 import { conatPersistCount } from "@cocalc/backend/data";
 import {
@@ -49,6 +51,10 @@ export function getConatPersistSqliteDiagnostics() {
 }
 
 export async function initConatPersist() {
+  // 028 E-1: a natural exit must not close (and checkpoint) the disk streams
+  installPersistExitGuard();
+  // 028 B-3a: a signal commits the queued writes, then ends as before
+  installPersistSignalFlush();
   logger.debug("initPersistServer: sqlite3 stream persistence", {
     conatPersistCount,
   });

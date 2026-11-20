@@ -163,6 +163,8 @@ export interface ProjectCopyRow {
   dest_path: string;
   op_id: string | null;
   snapshot_id: string;
+  // True only if this copy made the backup itself (NULL on older rows).
+  snapshot_created?: boolean | null;
   options: CopyOptions | null;
   exact: boolean;
   status: ProjectCopyState;

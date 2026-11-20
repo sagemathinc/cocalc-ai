@@ -22,6 +22,7 @@ import {
   archiveProjectStorage,
   FinalArchiveBackupPendingError,
   ProjectArchiveStorageError,
+  recoverManualArchiveFreezes,
 } from "./archive";
 import { resolveArchiveLifecycleAccountStatuses } from "./archive-lifecycle-accounts";
 import {
@@ -1331,6 +1332,15 @@ export async function runProjectArchiveLifecycleOnce(): Promise<ProjectArchiveLi
     logger.warn("failed manual archive jobs that never finished", {
       job_ids: stuck,
     });
+  }
+  // Then recover the freezes such jobs (and other failed manual archives)
+  // may still hold.
+  const recovered = await recoverManualArchiveFreezes().catch((err) => {
+    logger.warn("manual archive freeze recovery failed", { err: `${err}` });
+    return [];
+  });
+  if (recovered.length > 0) {
+    logger.warn("recovered manual archive freezes", { recovered });
   }
   const recoverable = await listRecoverableProjectArchiveLifecycleJobs(
     config.batchLimit,

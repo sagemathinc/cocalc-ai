@@ -483,6 +483,46 @@ describe("test isAllowed for hub", () => {
     }
   });
 
+  it("lets only a bay call the seed's deletion backup configuration", async () => {
+    // It returns repository credentials: no account, project, host or plain
+    // hub connection may publish to it, only a bay with an active credential.
+    const { hostConnectionSubject } =
+      await import("@cocalc/conat/inter-bay/api");
+    const subject = hostConnectionSubject({
+      dest_bay: "bay-0",
+      method: "get-seed-backup-config-for-deletion",
+    });
+    expect(subject).toBe(
+      "bay.bay-0.rpc.host-connection.get-seed-backup-config-for-deletion",
+    );
+    const previous = process.env.COCALC_CLUSTER_ROLE;
+    process.env.COCALC_CLUSTER_ROLE = "seed";
+    try {
+      for (const user of [
+        { account_id: "11111111-1111-4111-8111-111111111111" },
+        { project_id: "22222222-2222-4222-8222-222222222222" },
+        { host_id: "33333333-3333-4333-8333-333333333333" },
+        { hub_id: "hub" },
+      ]) {
+        expect(
+          await isAllowed({ user: user as any, type: "pub", subject }),
+        ).toBe(false);
+      }
+      const bay = {
+        hub_id: "bay:bay-1",
+        cluster_id: "test-cluster",
+        bay_id: "bay-1",
+        bay_credential_id: "credential-1",
+      };
+      expect(await isAllowed({ user: bay, type: "pub", subject })).toBe(true);
+      isBayCredentialUserActiveMock.mockResolvedValueOnce(false);
+      expect(await isAllowed({ user: bay, type: "pub", subject })).toBe(false);
+    } finally {
+      if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;
+      else process.env.COCALC_CLUSTER_ROLE = previous;
+    }
+  });
+
   it("only accepts protected cluster forwarding with a live stamped bay", async () => {
     const previousRole = process.env.COCALC_CLUSTER_ROLE;
     const previousCluster = process.env.COCALC_CLUSTER_ID;

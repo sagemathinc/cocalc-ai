@@ -12,7 +12,10 @@ import {
   init as createConatServer,
   type ConatServer,
 } from "@cocalc/conat/core/server";
-import { server as createPersistServer } from "@cocalc/backend/conat/persist";
+import {
+  server as createPersistServer,
+  installPersistExitGuard,
+} from "@cocalc/backend/conat/persist";
 import { type Client } from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
 import { once } from "@cocalc/util/async-utils";
@@ -172,6 +175,8 @@ export async function main(opts?: {
   initApp({ app, conatClient, AUTH_TOKEN, isHttps, hostname });
 
   logger.debug("create persist server");
+  // 028 E-1: a natural exit must not close (and checkpoint) the disk streams
+  installPersistExitGuard();
   persistServer = createPersistServer({ client: conatClient });
 
   logger.debug("start project services");
