@@ -225,6 +225,9 @@ prune_container_runtimes() {
 }
 
 start_services() {
+  # The hub does not inherit `docker run -e` variables; pass on the supported
+  # ones (#1619). daemon-reload below picks up the drop-in.
+  /usr/local/sbin/cocalc-star-docker-hub-env
   systemctl daemon-reload
   systemctl enable caddy cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host >/dev/null
   systemctl restart caddy cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host

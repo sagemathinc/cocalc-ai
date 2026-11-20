@@ -186,13 +186,21 @@ let maintenanceStarted = false;
 export function frontendAssetMonitoringEnabled({
   configured = process.env.COCALC_FRONTEND_ASSET_MONITORING,
   nodeEnv = process.env.NODE_ENV,
+  setupProfile = process.env.COCALC_SETUP_PROFILE,
 }: {
   configured?: string;
   nodeEnv?: string;
+  setupProfile?: string;
 } = {}): boolean {
   const value = `${configured ?? ""}`.trim().toLowerCase();
   if (value === "true") return true;
   if (value === "false") return false;
+  // Only the bay release script (bay-bootstrap-release.sh) writes the
+  // retained-release history manifest. CoCalc Star installs never have it, so
+  // the check could only report a missing file there. Star is recognized by its
+  // setup profile, never by the manifest's absence: a bay whose release left
+  // the manifest out must still alert.
+  if (`${setupProfile ?? ""}`.trim().toLowerCase() === "star") return false;
   // Dev upgrades do not create the retained-release history manifest. Keep
   // their missing manifest from paging admins. Packaged bay workers currently
   // leave NODE_ENV unset, so unknown/unset environments retain monitoring.
@@ -238,6 +246,7 @@ export function startFrontendAssetHealthMaintenance({
   if (!frontendAssetMonitoringEnabled()) {
     logger.info("frontend asset health maintenance disabled", {
       node_env: process.env.NODE_ENV,
+      setup_profile: process.env.COCALC_SETUP_PROFILE,
       configured: process.env.COCALC_FRONTEND_ASSET_MONITORING,
     });
     return;

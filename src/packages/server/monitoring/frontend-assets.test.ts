@@ -25,6 +25,42 @@ test("disables frontend asset paging in development and test by default", () => 
   ).toBe(false);
 });
 
+test("CoCalc Star does not check the bay-only asset history by default (#1619)", () => {
+  // Star never has frontend-build-history.json, so the check could only
+  // report a missing file.
+  expect(
+    frontendAssetMonitoringEnabled({
+      nodeEnv: "production",
+      setupProfile: "star",
+    }),
+  ).toBe(false);
+  expect(
+    frontendAssetMonitoringEnabled({ nodeEnv: "", setupProfile: " Star " }),
+  ).toBe(false);
+  // An explicit setting still wins on Star.
+  expect(
+    frontendAssetMonitoringEnabled({
+      nodeEnv: "production",
+      setupProfile: "star",
+      configured: "true",
+    }),
+  ).toBe(true);
+  // A bay (no Star profile) keeps the check, so a release that left the
+  // history file out still alerts.
+  expect(
+    frontendAssetMonitoringEnabled({ nodeEnv: "", setupProfile: "" }),
+  ).toBe(true);
+  expect(
+    frontendAssetMonitoringEnabled({ nodeEnv: "", setupProfile: undefined }),
+  ).toBe(true);
+  expect(
+    frontendAssetMonitoringEnabled({
+      nodeEnv: "production",
+      setupProfile: "plus",
+    }),
+  ).toBe(true);
+});
+
 test("parses current and previous safe content-addressed assets", () => {
   expect(
     parseFrontendAssetHistory({

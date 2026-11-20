@@ -197,6 +197,7 @@ make_context() {
   cp "$SCRIPT_DIR/Dockerfile" "$context/Dockerfile"
   cp "$SCRIPT_DIR/cocalc-star-docker-preflight.sh" "$context/cocalc-star-docker-preflight.sh"
   cp "$SCRIPT_DIR/cocalc-star-docker-init.sh" "$context/cocalc-star-docker-init.sh"
+  cp "$SCRIPT_DIR/cocalc-star-docker-hub-env.sh" "$context/cocalc-star-docker-hub-env.sh"
   cp "$SCRIPT_DIR/cocalc-star-docker-entrypoint.sh" "$context/cocalc-star-docker-entrypoint.sh"
   cp "$SCRIPT_DIR/cocalc-star-docker-init.service" "$context/cocalc-star-docker-init.service"
   cp "$SCRIPT_DIR/cocalc-star-podman.apparmor" "$context/cocalc-star-podman.apparmor"

@@ -91,6 +91,7 @@ COPY cocalc-star-release.tar.gz /usr/local/share/cocalc-star-docker/cocalc-star-
 COPY cocalc-star-rootfs-cache.tar.gz /usr/local/share/cocalc-star-docker/cocalc-star-rootfs-cache.tar.gz
 COPY cocalc-star-docker-preflight.sh /usr/local/sbin/cocalc-star-docker-preflight
 COPY cocalc-star-docker-init.sh /usr/local/sbin/cocalc-star-docker-init
+COPY cocalc-star-docker-hub-env.sh /usr/local/sbin/cocalc-star-docker-hub-env
 COPY cocalc-star-docker-entrypoint.sh /usr/local/sbin/cocalc-star-docker-entrypoint
 COPY cocalc-star-docker-init.service /etc/systemd/system/cocalc-star-docker-init.service
 COPY cocalc-star-podman.apparmor /etc/apparmor.d/cocalc-star-podman
@@ -98,6 +99,7 @@ COPY cocalc-star-podman.apparmor /etc/apparmor.d/cocalc-star-podman
 RUN chmod 0755 \
     /usr/local/sbin/cocalc-star-docker-preflight \
     /usr/local/sbin/cocalc-star-docker-init \
+    /usr/local/sbin/cocalc-star-docker-hub-env \
     /usr/local/sbin/cocalc-star-docker-entrypoint \
   && printf '%s\n' "${COCALC_STAR_RELEASE_ID}" >/usr/local/share/cocalc-star-docker/release-id \
   && ln -s /opt/cocalc-star/source/src/scripts/star/star.sh /usr/local/bin/star \
