@@ -47,7 +47,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261112-r21"
+HELPER_SCHEMA_VERSION = "20261120-r22"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
