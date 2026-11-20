@@ -304,6 +304,22 @@ export function poisonedStreamPaths(): string[] {
 // stays here).
 const liveDiskConnections = new Set<PersistentStream>();
 
+// A connection's prepare/exec are replaced by closures over its stream
+// (refuseWhenPoisoned) and over the write counter's cached statements
+// (backend/conat/persist-write-rate).  node:sqlite keeps a database alive from
+// native code while any of its statements is, so a closed database that
+// still holds those closures is never collected, and neither is the stream,
+// with everything it references: the bay-0 hub leak of 2026-11-19.  Once the
+// connection is closed they have nothing left to guard or count.
+function detachConnectionWrappers(db: Database | undefined): void {
+  if (db == null) return;
+  for (const key of ["prepare", "exec"]) {
+    if (Object.prototype.hasOwnProperty.call(db, key)) {
+      delete (db as any)[key];
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fault phases (028 B-3a, DESIGN §7).  Production code only ever calls this
 // no-op callback; it has no reset capability.  The STAGING fault-test build
@@ -2579,6 +2595,7 @@ export class PersistentStream extends EventEmitter {
     // closed: everything it committed and checkpointed is on disk
     liveDiskConnections.delete(this);
     this.releaseArm();
+    detachConnectionWrappers(this.db);
     return true;
   };
 
