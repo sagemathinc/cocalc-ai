@@ -19,6 +19,9 @@ DigestInfo length. Tests preserve valid signatures with absent or NULL
 parameters, reject extra nested elements, and exercise Lite's self-signed
 certificate generation. The workspace patch also covers Expo's Forge copies.
 
+The patch is carried forward unchanged to node-forge 1.4.3 (November 2026):
+`lib/rsa.js` is identical in 1.4.2 and 1.4.3, so 1.4.3 still lacks this check.
+
 ## braces 3.0.3
 
 Mitigates stack exhaustion from deeply nested string patterns,
@@ -33,6 +36,18 @@ throws `SyntaxError`, like the existing input-length validation. Callers still
 must handle invalid patterns; this is not a general sandbox for untrusted
 globs or arbitrary caller-supplied ASTs. Tests cover ordinary expansion, both
 recursive modes, mixed groups, unclosed groups, literals, and boundary depths.
+
+## depcheck 1.4.7
+
+Compatibility patch, not a security fix. The minimatch ReDoS advisory
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) covers
+every minimatch 7.x through 11.0.0, so the workspace override moves
+depcheck's `minimatch@^7.4.6` to 11.0.1. depcheck 1.4.7 (the latest release as
+of November 2026) calls minimatch's default export, which minimatch 11 no longer
+provides. The patch changes those two calls, in `dist/check.js` and
+`dist/special/gulp-load-plugins.js`, to the named `minimatch` export, and
+changes nothing else. Drop it when a depcheck release supports minimatch 11 or
+when the override is removed.
 
 ## Scanner status and follow-up
 
