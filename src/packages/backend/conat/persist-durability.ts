@@ -23,6 +23,7 @@ import { data, syncFiles } from "@cocalc/backend/data";
 import { ownerOfLocalPath } from "@cocalc/conat/persist/util";
 import { isSqliteSyncError } from "@cocalc/conat/persist/storage";
 import { spawn } from "node:child_process";
+import { DATABASE_SYNC_SOURCE, DatabaseSync } from "@cocalc/backend/sqlite";
 import {
   evaluateRecordsGate,
   writeAllSync,
@@ -197,21 +198,43 @@ function startPostRebootRetry(r: DurabilityRecords): void {
 // A full PRAGMA integrity_check of a closed database in a child process
 // (never on the persist main thread), at most one at a time per host, at most
 // 10 minutes (§3.2.6, §3.2.9).  The child exits with process.exit, so its
-// connection is never closed (a close would checkpoint).
+// connection is never closed (a close would checkpoint).  Its DatabaseSync is
+// @cocalc/backend/sqlite's (node:sqlite's own under Node), so it also runs
+// under Bun (CoCalc Plus on Bun).  It reads exactly {"path": ...} on stdin,
+// as the compact worker does, and refuses any other input.
 export const INTEGRITY_CHECK_TIMEOUT_MS = 10 * 60_000;
-const INTEGRITY_CHECK_SOURCE = String.raw`
-const { DatabaseSync } = require("node:sqlite");
-let out;
-try {
-  const db = new DatabaseSync(process.argv[1]);
-  db.exec("PRAGMA busy_timeout=5000");
-  const rows = db.prepare("PRAGMA integrity_check").all();
-  out = { ok: rows.length === 1 && Object.values(rows[0])[0] === "ok", rows: rows.length };
-} catch (err) {
-  out = { ok: false, error: String(err && err.message || err).slice(0, 200) };
+export const INTEGRITY_CHECK_SOURCE = String.raw`
+const DatabaseSync = ${DATABASE_SYNC_SOURCE};
+function report(out) {
+  process.stdout.write(JSON.stringify(out) + String.fromCharCode(10));
+  process.exit(0);
 }
-process.stdout.write(JSON.stringify(out) + String.fromCharCode(10));
-process.exit(0);
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => (input += chunk));
+process.stdin.on("end", () => {
+  let path;
+  try {
+    const msg = JSON.parse(input);
+    if (
+      msg != null && typeof msg === "object" && !Array.isArray(msg) &&
+      Object.keys(msg).length === 1 && typeof msg.path === "string" && msg.path
+    ) {
+      path = msg.path;
+    }
+  } catch {}
+  if (path == null) report({ ok: false, error: "expected exactly {path}" });
+  let out;
+  try {
+    const db = new DatabaseSync(path);
+    db.exec("PRAGMA busy_timeout=5000");
+    const rows = db.prepare("PRAGMA integrity_check").all();
+    out = { ok: rows.length === 1 && Object.values(rows[0])[0] === "ok", rows: rows.length };
+  } catch (err) {
+    out = { ok: false, error: String(err && err.message || err).slice(0, 200) };
+  }
+  report(out);
+});
 `;
 let integrityQueue: Promise<unknown> = Promise.resolve();
 export function integrityCheckClosedDatabase(
@@ -224,9 +247,20 @@ export function integrityCheckClosedDatabase(
       let stderr = "";
       const child = spawn(
         process.execPath,
-        ["-e", INTEGRITY_CHECK_SOURCE, dbPath],
-        { shell: false, env: {}, cwd: "/", stdio: ["ignore", "pipe", "pipe"] },
+        ["-e", INTEGRITY_CHECK_SOURCE],
+        {
+          shell: false,
+          // Under Bun, process.execPath may be a compiled executable (the
+          // CoCalc Plus launcher); BUN_BE_BUN=1 makes it act as bun, so -e
+          // works.  Nothing else from this process's environment is passed.
+          env: process.versions.bun ? { BUN_BE_BUN: "1" } : {},
+          cwd: "/",
+          stdio: ["pipe", "pipe", "pipe"],
+        },
       );
+      // (a child that exits before reading its input is reported below)
+      child.stdin.on("error", () => {});
+      child.stdin.end(JSON.stringify({ path: dbPath }));
       const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
       child.stdout.on("data", (d) => {
         if (stdout.length < 4096) stdout += d.toString();
@@ -418,7 +452,7 @@ export function withMaintenanceConnection<T>(
   dbPath: string,
   busyTimeoutMs: number,
   fn: (db: any) => T,
-  open: (path: string) => any = (path) => new (require("node:sqlite").DatabaseSync)(path),
+  open: (path: string) => any = (path) => new DatabaseSync(path),
   onCheckpoint?: (row: unknown) => void,
 ): T {
   const db = open(dbPath); // a failure here: nothing was opened, nothing written
