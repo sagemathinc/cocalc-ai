@@ -321,6 +321,71 @@ describe("localHarnessEnv", () => {
       "COCALC_PROJECT_ID",
     ]);
   });
+
+  it("adds the CLI's endpoint and scoped agent token only as named keys", () => {
+    const base = {
+      PATH: "/usr/bin",
+      CONAT_SERVER: "http://localhost:30000",
+      COCALC_LITE_ACP_WORKER_CONAT_PASSWORD: "worker-password",
+      COCALC_LITE_ACP_WORKER: "1",
+      COCALC_AGENT_TOKEN: "inherited-token",
+      COCALC_API_URL: "http://inherited",
+      COCALC_SOME_FUTURE_SECRET: "internal",
+      MASTER_CONAT_SERVER: "http://localhost:30000",
+    };
+    const context = {
+      projectId: PROJECT,
+      accountId: ACCOUNT,
+      path: "a.chat",
+      threadId: "t1",
+      extra: {},
+    };
+    const env = localHarnessEnv({
+      ...context,
+      base,
+      cliAuth: { apiUrl: "http://localhost:9100", token: "scoped-token" },
+    });
+    // The resolved values, not the inherited ones.
+    expect(env.COCALC_API_URL).toBe("http://localhost:9100");
+    expect(env.COCALC_AGENT_TOKEN).toBe("scoped-token");
+    expect(env.COCALC_BEARER_TOKEN).toBe(env.COCALC_AGENT_TOKEN);
+    for (const key of [
+      "CONAT_SERVER",
+      "COCALC_LITE_ACP_WORKER_CONAT_PASSWORD",
+      "COCALC_LITE_ACP_WORKER",
+      "COCALC_SOME_FUTURE_SECRET",
+      "MASTER_CONAT_SERVER",
+    ]) {
+      expect(env[key]).toBeUndefined();
+    }
+    const values = Object.values(env);
+    expect(values).not.toContain("worker-password");
+    expect(values).not.toContain("inherited-token");
+    expect(
+      Object.keys(env)
+        .filter((key) => key.startsWith("COCALC_"))
+        .sort(),
+    ).toEqual([
+      "COCALC_ACCOUNT_ID",
+      "COCALC_AGENT_TOKEN",
+      "COCALC_API_URL",
+      "COCALC_BEARER_TOKEN",
+      "COCALC_CLI_AGENT_MODE",
+      "COCALC_CODEX_CHAT_PATH",
+      "COCALC_CODEX_THREAD_ID",
+      "COCALC_PROJECT_ID",
+    ]);
+
+    // Without a token, neither token key is set.
+    const noToken = localHarnessEnv({
+      ...context,
+      base,
+      cliAuth: { apiUrl: "http://localhost:9100", token: " " },
+    });
+    expect(noToken.COCALC_AGENT_TOKEN).toBeUndefined();
+    expect(noToken.COCALC_BEARER_TOKEN).toBeUndefined();
+    expect(noToken.COCALC_API_URL).toBe("http://localhost:9100");
+  });
 });
 
 describe("installLiteHarnessLauncher", () => {

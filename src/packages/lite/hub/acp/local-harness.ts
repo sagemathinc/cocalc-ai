@@ -296,7 +296,10 @@ function isInternalEnvKey(key: string): boolean {
  * - Without CoCalc's internal settings and credentials (see
  *   INTERNAL_ENV_PREFIXES and INTERNAL_ENV_KEYS).
  * - Plus, explicitly: the CoCalc CLI's location, this conversation's context,
- *   and the launch command's own settings (`extra`).
+ *   the launch command's own settings (`extra`), and the CLI's endpoint and
+ *   scoped agent credential (`cliAuth`, resolved as for Codex turns:
+ *   COCALC_API_URL, and COCALC_AGENT_TOKEN = COCALC_BEARER_TOKEN). The
+ *   worker's own Conat password is never passed.
  */
 export function localHarnessEnv({
   base = process.env,
@@ -305,6 +308,7 @@ export function localHarnessEnv({
   path: chatPath,
   threadId,
   extra,
+  cliAuth,
 }: {
   base?: NodeJS.ProcessEnv;
   projectId: string;
@@ -312,6 +316,7 @@ export function localHarnessEnv({
   path: string;
   threadId: string;
   extra: NodeJS.ProcessEnv;
+  cliAuth?: { apiUrl?: string; token?: string };
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(base)) {
@@ -329,6 +334,13 @@ export function localHarnessEnv({
     COCALC_CODEX_THREAD_ID: threadId,
     COCALC_CLI_AGENT_MODE: "1",
   });
+  const apiUrl = `${cliAuth?.apiUrl ?? ""}`.trim();
+  if (apiUrl) env.COCALC_API_URL = apiUrl;
+  const token = `${cliAuth?.token ?? ""}`.trim();
+  if (token) {
+    env.COCALC_AGENT_TOKEN = token;
+    env.COCALC_BEARER_TOKEN = token;
+  }
   return env;
 }
 
@@ -404,6 +416,12 @@ export const launchLocalHarness: HarnessLaunchFactory = async (
     profile,
     binding.credential.mode,
   );
+  // Loaded here, not at the top: it reaches the hub API.
+  const { resolveLocalAgentCliAuth } = await import("./runtime-env");
+  const cliAuth = await resolveLocalAgentCliAuth({
+    projectId: binding.projectId,
+    accountId: binding.accountId,
+  });
   const child = spawn(command.executable, command.args, {
     cwd: profile.cwd,
     env: localHarnessEnv({
@@ -412,6 +430,7 @@ export const launchLocalHarness: HarnessLaunchFactory = async (
       path: conversation.path,
       threadId: conversation.threadId,
       extra: command.env,
+      cliAuth,
     }),
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
