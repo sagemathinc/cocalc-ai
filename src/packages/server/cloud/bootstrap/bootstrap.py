@@ -10641,7 +10641,9 @@ class NormalizeRefused(ValueError):
     """A stable SECURITY_DENY line; detail names a path inside the image only."""
 
     def __init__(self, code, rel, reason):
-        super().__init__(f"SECURITY_DENY code={code} detail={rel}: {reason}")
+        # ascii() escapes newlines and control bytes in image names, so
+        # the line stays one record.
+        super().__init__(f"SECURITY_DENY code={code} detail={ascii(rel)[1:-1]}: {reason}")
         self.code = code
 
 
@@ -10825,9 +10827,10 @@ def image_remove_tree(tree, parentfd, name, rel, depth=0):
     os.rmdir(name, dir_fd=parentfd)
 
 
-def image_replace_with_symlink(tree, rel, target):
+def image_replace_with_symlink(tree, rel, target, owner):
     """ln -snf target rel, where rel's parent resolves inside the tree and
-    rel itself is never followed."""
+    rel itself is never followed.  A host-root link ends with owner (as
+    own_root_links does where the parent is not itself a symlink)."""
     parent, name = image_split(rel)
     parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
     try:
@@ -10835,13 +10838,19 @@ def image_replace_with_symlink(tree, rel, target):
             info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
         except FileNotFoundError:
             info = None
-        if info is not None and stat.S_ISLNK(info.st_mode) and os.readlink(name, dir_fd=parentfd) == target:
-            return
-        if info is not None and stat.S_ISDIR(info.st_mode):
-            image_remove_tree(tree, parentfd, name, rel)
-        elif info is not None:
-            os.unlink(name, dir_fd=parentfd)
-        os.symlink(target, name, dir_fd=parentfd)
+        if not (info is not None and stat.S_ISLNK(info.st_mode) and os.readlink(name, dir_fd=parentfd) == target):
+            if info is not None and stat.S_ISDIR(info.st_mode):
+                image_remove_tree(tree, parentfd, name, rel)
+            elif info is not None:
+                os.unlink(name, dir_fd=parentfd)
+            os.symlink(target, name, dir_fd=parentfd)
+        fd = image_open_child(parentfd, name, O_PATH | os.O_NOFOLLOW, rel)
+        try:
+            link = image_check(tree, fd, rel, stat.S_IFLNK)
+            if link.st_uid == 0 or link.st_gid == 0:
+                set_pinned_owner(tree, fd, link, rel, *owner)
+        finally:
+            os.close(fd)
     finally:
         os.close(parentfd)
 
@@ -10966,6 +10975,14 @@ def image_claim_inode(tree, info, rel):
 
 
 def set_pinned_owner(tree, fd, info, rel, uid, gid):
+    # Fresh at the change: the link count, owner and mode the claim and the
+    # chown act on are read from the pinned fd now, not when it was opened.
+    # (A writer racing after this check is outside the model: nothing but
+    # this helper writes an image tree while it is being normalized.)
+    fresh = os.fstat(fd)
+    if (fresh.st_dev, fresh.st_ino, stat.S_IFMT(fresh.st_mode)) != (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)):
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "changed during the walk")
+    info = fresh
     if (info.st_uid, info.st_gid) == (uid, gid) or not image_claim_inode(tree, info, rel):
         return
     fchown_pinned(fd, uid, gid)
@@ -11034,6 +11051,7 @@ def remap_image_ids(tree, uid_ranges, gid_ranges, ownership_source, runtime_id=2
     map_gid = rootfs_id_mapper(gid_ranges, runtime_id, ownership_source)
     if tree.links is None:
         inventory_image_links(tree)
+    tree.changed = set()
 
     def remap(fd, info, rel):
         set_pinned_owner(tree, fd, info, rel, map_uid(info.st_uid), map_gid(info.st_gid))
@@ -11057,6 +11075,7 @@ def normalize_apt_state(tree, owner):
 
     if tree.links is None:
         inventory_image_links(tree)
+    tree.changed = set()
     for rel in APT_STATE_TREES:
         parent, name = image_split(rel)
         try:
@@ -11096,8 +11115,9 @@ def normalize_image_layout(tree, owner):
         image_ensure_dir(tree, rel, owner)
     for rel in ("tmp", "var/tmp"):
         image_chmod_dir(tree, rel, 0o1777)
-    image_replace_with_symlink(tree, "var/run", "/run")
-    image_replace_with_symlink(tree, "etc/mtab", "/proc/mounts")
+    tree.changed = set()
+    image_replace_with_symlink(tree, "var/run", "/run", owner)
+    image_replace_with_symlink(tree, "etc/mtab", "/proc/mounts", owner)
     image_empty_file(tree, "run/podman-init", 0o755, owner)
     image_empty_file(tree, "run/.containerenv", 0o644, owner)
 
@@ -11106,9 +11126,11 @@ def normalize_image_tree(tree, ownership_source, skip_bridge, read_id_maps, owne
     """Everything normalize-rootfs does to the tree as host root, in order.
     Returns the probe result the caller prints."""
     result = image_probe(tree)
+    # Before any change, on both paths: every multiply linked nondirectory
+    # has all its links inside the tree.
+    inventory_image_links(tree)
     if not skip_bridge:
         uid_ranges, gid_ranges = read_id_maps()
-        inventory_image_links(tree)
         remap_image_ids(tree, uid_ranges, gid_ranges, ownership_source)
     normalize_image_layout(tree, owner)
     if not skip_bridge and result["package_manager"] == "apt-get":

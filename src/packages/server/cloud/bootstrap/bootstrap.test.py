@@ -2398,6 +2398,111 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             self.assertTrue(all(path == str(root) or path.startswith(f"{root}/") for path in paths))
             self.assert_sentinel(outside)
 
+    def test_skip_path_inventories_before_any_change(self) -> None:
+        # review B1: a correct var/run link hard linked outside the image is
+        # refused on the skip path too, before anything is changed.
+        owner = (os.getuid(), os.getgid())
+        for rel in ("var/run", "etc/mtab"):
+            with self.subTest(rel=rel), self.image_tree() as (namespace, tree, root, outside):
+                self.normalize_fixture(root)
+                chowns = []
+                namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append(fd)
+                (root / "var").mkdir(exist_ok=True)
+                (root / rel).symlink_to("/run" if rel == "var/run" else "/proc/mounts")
+                os.link(root / rel, outside / "link", follow_symlinks=False)
+                maps = lambda: self.fail("the skip path reads no id map")
+                self.assert_refused(namespace, lambda: namespace["normalize_image_tree"](tree, "keep-id", True, maps, owner))
+                self.assertEqual(chowns, [])
+                self.assertFalse((root / "home").exists())
+                self.assertEqual(os.lstat(outside / "link").st_nlink, 2)
+
+    def test_apt_hardlink_ends_with_the_container_root_after_the_remap(self) -> None:
+        # review B2: the remap and the apt pass each claim inodes for
+        # themselves, so an internally linked apt file ends with the apt owner.
+        with self.image_tree() as (namespace, tree, root, _outside):
+            self.normalize_fixture(root)
+            lists = root / "var" / "lib" / "apt" / "lists"
+            lists.mkdir(parents=True)
+            (lists / "Release").write_text("x")
+            os.link(lists / "Release", root / "etc" / "Release")
+            owners = {}
+
+            def fchown_pinned(fd, uid, gid):
+                owners[os.fstat(fd).st_ino] = (uid, gid)
+
+            namespace["fchown_pinned"] = fchown_pinned
+            uid, gid = os.getuid(), os.getgid()
+            maps = lambda: ([(0, uid, 1), (1, 231072, 65536)], [(0, gid, 1), (1, 231072, 65536)])
+            # Distinct from where the remap puts the test user (231072), so
+            # only the apt pass can produce it.
+            container = (231999, 231999)
+            result = namespace["normalize_image_tree"](tree, "keep-id", False, maps, container)
+            self.assertEqual(result["package_manager"], "apt-get")
+            self.assertEqual(owners[(lists / "Release").stat().st_ino], container)
+            self.assertEqual(owners[lists.stat().st_ino], container)
+
+    def test_link_count_is_read_again_at_the_change(self) -> None:
+        # review B3: a link made after the walk opened the entry, but before
+        # the change, is caught by the fresh fstat on the pinned fd.
+        with self.image_tree() as (namespace, tree, root, outside):
+            (root / "etc").mkdir()
+            target = root / "etc" / "shadow"
+            target.write_text("x")
+            namespace["inventory_image_links"](tree)
+            chowns = []
+            namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append(os.readlink(f"/proc/self/fd/{fd}"))
+            real_fstat = os.fstat
+            state = {"linked": False}
+
+            def fstat(fd):
+                info = real_fstat(fd)
+                if not state["linked"] and info.st_ino == target.stat().st_ino:
+                    # The walk's check saw nlink 1; link it outside right after.
+                    state["linked"] = True
+                    os.link(target, outside / "shadow")
+                return info
+
+            ranges = [(0, os.getuid(), 1), (1, 231072, 65536)]
+            gids = [(0, os.getgid(), 1), (1, 231072, 65536)]
+            with mock.patch.object(namespace["os"], "fstat", side_effect=fstat):
+                self.assert_refused(namespace, lambda: namespace["remap_image_ids"](tree, ranges, gids, "keep-id"))
+            self.assertTrue(state["linked"])
+            self.assertNotIn(str(target), chowns)
+
+    def test_refusal_lines_escape_image_names(self) -> None:
+        # review S1: an image file name cannot forge a second record line.
+        namespace = self.helper_namespace()
+        error = namespace["NormalizeRefused"]("normalize-image-path-refused", "a\nSECURITY_DENY code=x\x01\\", "hard linked")
+        self.assertEqual(str(error).count("\n"), 0)
+        self.assertEqual(str(error), "SECURITY_DENY code=normalize-image-path-refused detail=a\\nSECURITY_DENY code=x\\x01\\\\: hard linked")
+
+    def test_links_under_a_symlinked_parent_go_to_the_container_root(self) -> None:
+        # review S2: etc and var may be links inside the image; the links made
+        # there are owned through their pinned fd, not left to own_root_links.
+        with self.image_tree() as (namespace, tree, root, _outside):
+            (root / "private" / "etc").mkdir(parents=True)
+            (root / "private" / "var").mkdir(parents=True)
+            (root / "etc").symlink_to("/private/etc")
+            (root / "var").symlink_to("private/var")
+            chowns = []
+            namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append((os.readlink(f"/proc/self/fd/{fd}"), uid, gid))
+            real_fstat = os.fstat
+
+            def fstat(fd):
+                # A test user cannot make host-root links: report them as root's.
+                info = real_fstat(fd)
+                if stat.S_ISLNK(info.st_mode):
+                    values = list(info)
+                    values[4] = values[5] = 0
+                    return os.stat_result(values)
+                return info
+
+            with mock.patch.object(namespace["os"], "fstat", side_effect=fstat):
+                namespace["normalize_image_layout"](tree, (231072, 231072))
+            self.assertEqual(os.readlink(root / "private" / "etc" / "mtab"), "/proc/mounts")
+            self.assertIn((str(root / "private" / "etc" / "mtab"), 231072, 231072), chowns)
+            self.assertIn((str(root / "private" / "var" / "run"), 231072, 231072), chowns)
+
     def test_rustic_rejects_executable_profile_configuration(self) -> None:
         run_rustic = self.helper_namespace()["run_rustic"]
         with tempfile.TemporaryDirectory() as tmpdir:
