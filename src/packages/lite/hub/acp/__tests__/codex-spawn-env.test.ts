@@ -12,8 +12,7 @@
  * probes a local HTTP endpoint that checks the bearer token, once with its
  * environment and once with both token variables removed.
  *
- * Only the credential and payment lookups are mocked (and the hub API, which
- * is not reached because a token is already set). Limits: this does not run a
+ * Only the credential and payment lookups are mocked. Limits: this does not run a
  * real Codex binary, and the probe is a local test endpoint, not a CoCalc hub.
  */
 
@@ -48,7 +47,6 @@ jest.mock("../../codex-payment", () => ({
     "account-api-key": "synthetic-dummy-key-not-a-credential",
   }),
 }));
-jest.mock("../../api", () => ({ hubApi: {} }));
 
 const INTERNAL = {
   CONAT_SERVER: "http://127.0.0.1:1",
