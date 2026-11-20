@@ -8,6 +8,7 @@
 // are the sidebar's pins; "Shared with me" lists agents other people
 // registered in projects you collaborate on.
 
+import { lite } from "@cocalc/frontend/lite";
 import { SetConnectorsModal } from "./cli-connectors-bulk";
 import { useEnabledCliConnectors } from "./cli-connectors-store";
 import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
@@ -169,7 +170,8 @@ export function AgentsOverview(props: Props) {
   const search = useListQuery();
   const [sort, setSort] = useState<Sort>("recent");
   const [group, setGroup] = useState<Group>("none");
-  const shared = useSharedAgents(active);
+  // CoCalc Plus has no other people, so nothing is shared with you there.
+  const shared = useSharedAgents(active && !lite);
   const payments = useAgentPayments(active);
   // Phones: two-line rows and compact controls.
   const narrow = !!Grid.useBreakpoint().xs;
@@ -571,30 +573,38 @@ export function AgentsOverview(props: Props) {
               label: `Mine (${mineItems.length})`,
               children: tab === "mine" ? collection : null,
             },
-            {
-              key: "shared",
-              label: `Shared with me${shared.loading && !shared.agents.length ? "" : ` (${sharedItems.length})`}`,
-              children:
-                tab === "shared" ? (
-                  <>
-                    {shared.error && (
-                      <Alert role="alert" type="error" title={shared.error} />
-                    )}
-                    {shared.unavailable_bays > 0 && (
-                      <Alert
-                        type="warning"
-                        title="Some projects could not be reached; this list may be incomplete."
-                      />
-                    )}
-                    <Typography.Paragraph type="secondary">
-                      Agents other people registered in projects you share. Any
-                      collaborator can open and message them; turns you start
-                      use your own credentials.
-                    </Typography.Paragraph>
-                    {collection}
-                  </>
-                ) : null,
-            },
+            ...(lite
+              ? []
+              : [
+                  {
+                    key: "shared",
+                    label: `Shared with me${shared.loading && !shared.agents.length ? "" : ` (${sharedItems.length})`}`,
+                    children:
+                      tab === "shared" ? (
+                        <>
+                          {shared.error && (
+                            <Alert
+                              role="alert"
+                              type="error"
+                              title={shared.error}
+                            />
+                          )}
+                          {shared.unavailable_bays > 0 && (
+                            <Alert
+                              type="warning"
+                              title="Some projects could not be reached; this list may be incomplete."
+                            />
+                          )}
+                          <Typography.Paragraph type="secondary">
+                            Agents other people registered in projects you
+                            share. Any collaborator can open and message them;
+                            turns you start use your own credentials.
+                          </Typography.Paragraph>
+                          {collection}
+                        </>
+                      ) : null,
+                  },
+                ]),
           ]}
         />
       </div>

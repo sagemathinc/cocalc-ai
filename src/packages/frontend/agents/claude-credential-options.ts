@@ -4,6 +4,8 @@
  */
 
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
+import { lite } from "@cocalc/frontend/lite";
+import { LITE_CLAUDE_LABEL } from "@cocalc/frontend/chat/lite-claude";
 import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import {
   ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
@@ -92,6 +94,9 @@ export function newAgentClaudeCredentialOptions(
   compact = false,
   membership = false,
 ): { value: string; label: string }[] {
+  // CoCalc Plus: Claude Code runs with this computer's own sign-in, the only
+  // credential there (lite/hub/acp/local-harness.ts).
+  if (lite) return [{ value: "project-secret", label: LITE_CLAUDE_LABEL }];
   const { subscriptions, apiKeys } = activeClaudeCredentials(credentials);
   return [
     ...subscriptions.map((row) => ({

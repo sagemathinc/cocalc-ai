@@ -8,6 +8,8 @@
 // The choices live on the server (account home bay); see
 // chat/payment-selection-store.
 
+import { lite } from "@cocalc/frontend/lite";
+import { LITE_CLAUDE_LABEL } from "@cocalc/frontend/chat/lite-claude";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -194,7 +196,8 @@ export function selectionLabel(
       ? `Default (${selectionLabel(fallback, payments)})`
       : "Default";
   }
-  if (selection.mode === "project-secret") return "Project secret";
+  if (selection.mode === "project-secret")
+    return lite ? LITE_CLAUDE_LABEL : "Project secret";
   if (selection.mode === "membership") return "CoCalc Membership";
   if (selection.mode === "subscription-pool") return CLAUDE_POOL_LABEL;
   return credentialLabel(payments.credentials, selection.credential_id);
@@ -315,21 +318,31 @@ export function SetPaymentModal({
       label: c.isDefault ? `${c.label} (current default)` : c.label,
     })),
   ];
-  const claudeOptions = [
-    { value: KEEP, label: "Leave unchanged" },
-    { value: FOLLOW, label: "Follow my default credential" },
-    ...(claudeCredentials.some((c) => c.mode === "account-subscription")
-      ? [{ value: POOL, label: CLAUDE_POOL_OPTION_LABEL }]
-      : []),
-    ...claudeCredentials.map((c) => ({
-      value: `${c.mode}:${c.id}`,
-      label: c.label,
-    })),
-    ...(membership
-      ? [{ value: "membership", label: siteFundedClaudeLabel() }]
-      : []),
-    { value: "project-secret", label: "Project secret (ANTHROPIC_API_KEY)" },
-  ];
+  // CoCalc Plus: Claude Code runs with this computer's own sign-in, the only
+  // credential there.
+  const claudeOptions = lite
+    ? [
+        { value: KEEP, label: "Leave unchanged" },
+        { value: "project-secret", label: LITE_CLAUDE_LABEL },
+      ]
+    : [
+        { value: KEEP, label: "Leave unchanged" },
+        { value: FOLLOW, label: "Follow my default credential" },
+        ...(claudeCredentials.some((c) => c.mode === "account-subscription")
+          ? [{ value: POOL, label: CLAUDE_POOL_OPTION_LABEL }]
+          : []),
+        ...claudeCredentials.map((c) => ({
+          value: `${c.mode}:${c.id}`,
+          label: c.label,
+        })),
+        ...(membership
+          ? [{ value: "membership", label: siteFundedClaudeLabel() }]
+          : []),
+        {
+          value: "project-secret",
+          label: "Project secret (ANTHROPIC_API_KEY)",
+        },
+      ];
 
   function codexSelection(value: string): CodexPaymentSelection | null {
     if (value === FOLLOW) return null;

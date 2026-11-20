@@ -1554,6 +1554,8 @@ function NewAgentPanel({
   // no ANTHROPIC_API_KEY secret in the project (read from the server, since
   // the form's copy may still be loading).
   async function claudeConnectionMissing(target: string): Promise<boolean> {
+    // CoCalc Plus uses this computer's own Claude Code sign-in.
+    if (lite) return false;
     if (claudeCredential.mode !== "project-secret") return false;
     if (
       anthropicCredentials.some(
@@ -2434,7 +2436,8 @@ function NewAgentPanel({
             </Button>
           </div>
         )}
-        {!isFirstRun && (
+        {/* No other people in CoCalc Plus. */}
+        {!isFirstRun && !lite && (
           <NewAgentPeople
             participants={participants}
             onChange={setParticipants}
@@ -3452,12 +3455,17 @@ function AgentWorkspace({
                     },
                   ]
                 : []),
-              {
-                key: "workspace-collaborators",
-                label: sharing ?? "Collaborators",
-                icon: <Icon name="users" />,
-                onClick: () => openProject("settings", "people"),
-              },
+              // No other people in CoCalc Plus.
+              ...(lite
+                ? []
+                : [
+                    {
+                      key: "workspace-collaborators",
+                      label: sharing ?? "Collaborators",
+                      icon: <Icon name="users" />,
+                      onClick: () => openProject("settings", "people"),
+                    },
+                  ]),
               {
                 key: "workspace-controls",
                 icon: <Icon name="sliders" />,
@@ -4665,11 +4673,11 @@ export function MyAgentsWorkspacePage({
   function overviewActions(agent: NamedAgent) {
     const hidden = agentOrganization.groups.hidden.includes(agent);
     return [
-      { key: "share", label: "Share with people…" },
+      ...(lite ? [] : [{ key: "share", label: "Share with people…" }]),
       { key: "artifacts", label: "Show artifacts" },
       { key: "copy", label: "Copy agent…" },
       { key: "fresh", label: "Start fresh conversation…" },
-      { key: "access", label: "Collaborator access…" },
+      ...(lite ? [] : [{ key: "access", label: "Collaborator access…" }]),
       hidden
         ? { key: "show", label: "Show in sidebar" }
         : { key: "hide", label: "Hide from sidebar" },
@@ -4829,11 +4837,15 @@ export function MyAgentsWorkspacePage({
           trigger={["click"]}
           menu={{
             items: [
-              {
-                key: "share",
-                icon: <Icon name="user-plus" />,
-                label: "Share with people…",
-              },
+              ...(lite
+                ? []
+                : [
+                    {
+                      key: "share",
+                      icon: <Icon name="user-plus" />,
+                      label: "Share with people…",
+                    },
+                  ]),
               {
                 key: "copy",
                 icon: <Icon name="copy" />,
@@ -4844,11 +4856,15 @@ export function MyAgentsWorkspacePage({
                 label: "Start fresh conversation…",
                 icon: <Icon name="plus-circle" />,
               },
-              {
-                key: "access",
-                label: "Collaborator access…",
-                icon: <Icon name="users" />,
-              },
+              ...(lite
+                ? []
+                : [
+                    {
+                      key: "access",
+                      label: "Collaborator access…",
+                      icon: <Icon name="users" />,
+                    },
+                  ]),
               {
                 key: hidden ? "show" : "hide",
                 icon: <Icon name={hidden ? "eye" : "eye-slash"} />,

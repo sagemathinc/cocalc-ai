@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { lite } from "@cocalc/frontend/lite";
 import {
   CLAUDE_POOL_LABEL,
   CLAUDE_POOL_OPTION_LABEL,
@@ -133,7 +134,9 @@ export function NewAgentClaudeControls({
       : newAgentClaudeCredentialValue(credential);
   // Only known-missing setup is onboarding. Unknown metadata or configured
   // credentials must retain the normal discovery/error path.
+  // CoCalc Plus has no connection to make: this computer's sign-in is used.
   const needsConnection =
+    !lite &&
     !!projectId &&
     validDirectory &&
     credentialsLoaded &&

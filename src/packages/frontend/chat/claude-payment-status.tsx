@@ -29,10 +29,8 @@ import {
 } from "./claude-subscription-sharing";
 import { lite } from "@cocalc/frontend/lite";
 
-/** CoCalc Plus: Claude Code runs with the computer's own sign-in. */
-export const LITE_CLAUDE_LABEL = "This computer's Claude sign-in";
-export const LITE_CLAUDE_DESCRIPTION =
-  "Claude Code runs on this computer with its own sign-in: the account or API key that `claude` uses in your terminal. Usage counts against that Claude plan or key.";
+import { LITE_CLAUDE_DESCRIPTION, LITE_CLAUDE_LABEL } from "./lite-claude";
+export { LITE_CLAUDE_DESCRIPTION, LITE_CLAUDE_LABEL };
 
 const CLAUDE_CREDENTIALS_EVENT = "cocalc:claude-credentials";
 const CLAUDE_CREDENTIALS_MAX_AGE_MS = 60_000;

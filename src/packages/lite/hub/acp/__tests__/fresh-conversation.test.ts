@@ -123,3 +123,43 @@ test("fresh configuration preserves appearance and settings but not session or g
   expect(next.acp_goal).toBeUndefined();
   expect(old.acp_config?.sessionId).toBe("provider-session");
 });
+
+test("a Claude (ACP harness) agent's fresh conversation keeps its runtime, not its session", () => {
+  const agent_runtime = {
+    version: 1,
+    kind: "acp",
+    profile: {
+      version: 2,
+      kind: "acp",
+      id: "claude-code",
+      revision: "0.93.0",
+      cwd: "/work",
+      executionPolicy: "full-access",
+      credentialMode: "project-managed",
+    },
+    settings: { configOptions: [{ id: "model", value: "opus" }] },
+  } as any;
+  const old = buildThreadConfigRecord({
+    thread_id: "old",
+    updated_by: "human",
+    name: "Claude",
+    agent_kind: "acp",
+    agent_runtime,
+    agent_session_id: "claude-session",
+  });
+  const next = freshThreadConfig(old, "new", "human");
+  expect(next.agent_runtime).toEqual(agent_runtime);
+  expect(next.agent_session_id).toBeUndefined();
+  // A Codex thread still has none.
+  expect(
+    freshThreadConfig(
+      buildThreadConfigRecord({
+        thread_id: "codex",
+        updated_by: "human",
+        agent_kind: "acp",
+      }),
+      "new",
+      "human",
+    ).agent_runtime,
+  ).toBeUndefined();
+});
