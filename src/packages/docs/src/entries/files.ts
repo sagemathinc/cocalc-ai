@@ -278,8 +278,10 @@ export const FILES_ENTRIES: DocsEntry[] = [
     lastReviewed: "2026-09-07",
     slug: "files/git",
     status: "ready",
+    searchKeywords:
+      "Git GitHub connector gh repository clone pull request agent credentials code review",
     summary:
-      "Use Git for repository history alongside TimeTravel for file-focused recovery.",
+      "Use Git and GitHub with agents, review commits, and keep repository history alongside TimeTravel.",
     title: "Use Git",
   },
 ];
