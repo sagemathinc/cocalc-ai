@@ -19,6 +19,7 @@ export type {
 } from "./adapters";
 
 export { EchoAgent, echoAgent } from "./echo";
+export { agentBaseEnv } from "./agent-env";
 export { assertSameTurnPrincipal } from "./turn-principal";
 export {
   CODEX_ACP_RECOVERY_ERROR_CODE,

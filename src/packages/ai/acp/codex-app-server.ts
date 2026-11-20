@@ -1,3 +1,4 @@
+import { standaloneAppServerEnv } from "./agent-env";
 import { randomUUID } from "node:crypto";
 import { siteFundedTurnUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import {
@@ -2056,14 +2057,9 @@ async function spawnStandaloneAppServer(
     "--listen",
     "stdio://",
   ];
-  const HOME = process.env.COCALC_ORIGINAL_HOME ?? process.env.HOME;
   const proc = spawn(cmd, args, {
     cwd: opts.cwd,
-    env: {
-      ...process.env,
-      ...(env ?? {}),
-      ...(HOME ? { HOME } : {}),
-    },
+    env: standaloneAppServerEnv(env),
     stdio: ["pipe", "pipe", "pipe"],
   });
   logger.debug("codex app-server: spawning", {
