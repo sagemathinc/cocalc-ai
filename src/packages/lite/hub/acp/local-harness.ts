@@ -107,7 +107,8 @@ export function resolveClaudeExecutable({
   const explicit = `${env.COCALC_CLAUDE_BIN ?? ""}`.trim();
   if (explicit) return isFile(explicit) ? explicit : undefined;
   const pathApi = platform === "win32" ? path.win32 : path.posix;
-  const names = platform === "win32" ? ["claude.exe", "claude.cmd"] : ["claude"];
+  const names =
+    platform === "win32" ? ["claude.exe", "claude.cmd"] : ["claude"];
   const dirs = `${env.PATH ?? ""}`
     .split(platform === "win32" ? ";" : ":")
     .filter(Boolean);
@@ -175,7 +176,9 @@ export function claudeVersionWarning(
 
 const versionCache = new Map<string, Promise<string | undefined>>();
 
-function installedClaudeVersion(executable: string): Promise<string | undefined> {
+function installedClaudeVersion(
+  executable: string,
+): Promise<string | undefined> {
   let mtime = 0;
   try {
     mtime = statSync(executable).mtimeMs;
@@ -193,7 +196,11 @@ function installedClaudeVersion(executable: string): Promise<string | undefined>
   return version;
 }
 
-type LocalCommand = { executable: string; args: string[]; env: NodeJS.ProcessEnv };
+type LocalCommand = {
+  executable: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+};
 
 /** What to run for a harness profile and credential, without starting it. */
 export async function resolveLocalHarnessCommand(
@@ -249,16 +256,48 @@ export async function resolveLocalHarnessCommand(
   };
 }
 
-const IDENTITY_ENV_KEYS = [
-  "COCALC_AGENT_IDENTITY_FILE",
-  "COCALC_AGENT_MENTION_REFERENCES_FILE",
-  "COCALC_CODEX_MESSAGE_DATE",
-  "COCALC_CODEX_TURN_ID",
-  "COCALC_BROWSER_ID",
+// The worker that launches the harness runs with CoCalc's own settings and
+// internal credentials (CONAT_SERVER, COCALC_LITE_ACP_WORKER_CONAT_PASSWORD,
+// ...). The agent, and any project-configured ACP executable, must not inherit
+// them: every key with one of these prefixes is dropped, so a new internal key
+// is excluded by default.
+const INTERNAL_ENV_PREFIXES = [
+  "COCALC_",
+  "CONAT_",
+  "MASTER_CONAT_",
+  "DEBUG",
+  "SMC_",
 ];
+// Internal settings without one of those prefixes.
+const INTERNAL_ENV_KEYS = new Set([
+  "DATA",
+  "BASE_URL",
+  "PORT",
+  "HUB_PORT",
+  "NODE_OPTIONS",
+]);
+// CoCalc keys that are added back: where the CoCalc CLI is (paths, not
+// credentials). The conversation's context is set explicitly below.
+const COCALC_PASSTHROUGH_KEYS = ["COCALC_CLI_BIN", "COCALC_CLI_CMD"];
 
-/** The harness's environment: the user's own (as in their terminal) plus the
- * CoCalc CLI context of this conversation. */
+function isInternalEnvKey(key: string): boolean {
+  return (
+    INTERNAL_ENV_KEYS.has(key) ||
+    INTERNAL_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+}
+
+/**
+ * The harness's environment.
+ *
+ * - The user's own environment, as in their terminal: PATH, HOME, USER, SHELL,
+ *   LANG and LC_*, TERM, proxy settings, and the user's own model or provider
+ *   settings (e.g. ANTHROPIC_API_KEY, which their `claude` may read).
+ * - Without CoCalc's internal settings and credentials (see
+ *   INTERNAL_ENV_PREFIXES and INTERNAL_ENV_KEYS).
+ * - Plus, explicitly: the CoCalc CLI's location, this conversation's context,
+ *   and the launch command's own settings (`extra`).
+ */
 export function localHarnessEnv({
   base = process.env,
   projectId,
@@ -274,8 +313,14 @@ export function localHarnessEnv({
   threadId: string;
   extra: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base };
-  for (const key of IDENTITY_ENV_KEYS) delete env[key];
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (value != null && !isInternalEnvKey(key)) env[key] = value;
+  }
+  for (const key of COCALC_PASSTHROUGH_KEYS) {
+    const value = base[key];
+    if (value) env[key] = value;
+  }
   if (base.COCALC_ORIGINAL_HOME) env.HOME = base.COCALC_ORIGINAL_HOME;
   Object.assign(env, extra, {
     COCALC_PROJECT_ID: projectId,

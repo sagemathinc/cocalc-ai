@@ -254,6 +254,73 @@ describe("localHarnessEnv", () => {
     expect(env.COCALC_AGENT_IDENTITY_FILE).toBeUndefined();
     expect(env.COCALC_CODEX_TURN_ID).toBeUndefined();
   });
+
+  it("never passes on the worker's internal settings or credentials", () => {
+    const user = {
+      PATH: "/usr/local/bin:/usr/bin",
+      HOME: "/home/u",
+      USER: "u",
+      SHELL: "/bin/zsh",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "en_US.UTF-8",
+      TERM: "xterm-256color",
+      HTTPS_PROXY: "http://proxy:3128",
+      no_proxy: "localhost",
+      ANTHROPIC_API_KEY: "the user's own key",
+    };
+    const env = localHarnessEnv({
+      base: {
+        ...user,
+        CONAT_SERVER: "http://localhost:30000",
+        COCALC_LITE_ACP_WORKER_CONAT_PASSWORD: "internal",
+        COCALC_LITE_ACP_WORKER: "1",
+        COCALC_AGENT_TOKEN: "internal",
+        COCALC_BEARER_TOKEN: "internal",
+        COCALC_API_URL: "http://localhost:9100",
+        COCALC_SOME_FUTURE_SECRET: "internal",
+        MASTER_CONAT_SERVER: "http://localhost:30000",
+        DATA: "/data",
+        DEBUG_FILE: "/data/log",
+        COCALC_CLI_BIN: "/opt/cocalc/bin/cocalc",
+      },
+      projectId: PROJECT,
+      accountId: ACCOUNT,
+      path: "a.chat",
+      threadId: "t1",
+      extra: { CLAUDE_CODE_EXECUTABLE: "/bin/claude" },
+    });
+    for (const key of [
+      "CONAT_SERVER",
+      "COCALC_LITE_ACP_WORKER_CONAT_PASSWORD",
+      "COCALC_LITE_ACP_WORKER",
+      "COCALC_AGENT_TOKEN",
+      "COCALC_BEARER_TOKEN",
+      "COCALC_API_URL",
+      "COCALC_SOME_FUTURE_SECRET",
+      "MASTER_CONAT_SERVER",
+      "DATA",
+      "DEBUG_FILE",
+    ]) {
+      expect(env[key]).toBeUndefined();
+    }
+    expect(Object.values(env)).not.toContain("internal");
+    // The user's own environment is kept as is.
+    expect(env).toMatchObject(user);
+    // Only these CoCalc keys are set: the CLI's location and this
+    // conversation's context.
+    expect(
+      Object.keys(env)
+        .filter((key) => key.startsWith("COCALC_"))
+        .sort(),
+    ).toEqual([
+      "COCALC_ACCOUNT_ID",
+      "COCALC_CLI_AGENT_MODE",
+      "COCALC_CLI_BIN",
+      "COCALC_CODEX_CHAT_PATH",
+      "COCALC_CODEX_THREAD_ID",
+      "COCALC_PROJECT_ID",
+    ]);
+  });
 });
 
 describe("installLiteHarnessLauncher", () => {
@@ -387,9 +454,7 @@ describe("stopTree", () => {
     exited = true;
     resolve();
     await stopping;
-    expect(run.mock.calls).toEqual([
-      ["taskkill", ["/pid", "42", "/T", "/F"]],
-    ]);
+    expect(run.mock.calls).toEqual([["taskkill", ["/pid", "42", "/T", "/F"]]]);
   });
 
   it("on POSIX, signals only the process group, then sweeps it", async () => {
