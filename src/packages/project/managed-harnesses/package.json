@@ -8,5 +8,11 @@
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "0.93.0"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": {
+      "hono": "4.13.16",
+      "@hono/node-server": "2.1.6"
+    }
   }
 }

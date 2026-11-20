@@ -19,6 +19,9 @@ DigestInfo length. Tests preserve valid signatures with absent or NULL
 parameters, reject extra nested elements, and exercise Lite's self-signed
 certificate generation. The workspace patch also covers Expo's Forge copies.
 
+The patch is carried forward unchanged to node-forge 1.4.3 (November 2026):
+`lib/rsa.js` is identical in 1.4.2 and 1.4.3, so 1.4.3 still lacks this check.
+
 ## braces 3.0.3
 
 Mitigates stack exhaustion from deeply nested string patterns,
