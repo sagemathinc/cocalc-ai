@@ -10209,7 +10209,13 @@ def restore_project_confined(rootfd, destfd, profile_fd, program, delete, uid, g
         )
         if status != 0:
             raise subprocess.CalledProcessError(status, program[:1])
-        merge = [*CONFINED_RSYNC, *(["--delete"] if delete else []), "--", "/staging/", "/home/"]
+        # Finding 015 on the confined path: the rustic step restores into an
+        # EMPTY staging directory, so the merge is the only place an existing
+        # file could be trusted by size and modification time (both are easy
+        # to keep while changing the bytes).  --checksum compares content and
+        # still leaves identical files in place; --ignore-times would rewrite
+        # every file.
+        merge = [*CONFINED_RSYNC, "--checksum", *(["--delete"] if delete else []), "--", "/staging/", "/home/"]
         status = confined(
             merge,
             [(stagefd, "/staging", False), (destfd, "/home", True)],

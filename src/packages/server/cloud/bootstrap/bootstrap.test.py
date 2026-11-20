@@ -933,6 +933,85 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
 
         return confined
 
+    def real_rsync_confined(self, calls, staged, stamp):
+        """Like fake_confined, but the merge runs the REAL rsync with the
+        helper's argv on the bound directories (/staging/ and /home/ mapped to
+        them), so rsync's own skip rules are what the test sees.  The restore
+        step writes `staged` into staging with mtime `stamp`.  --super is
+        dropped when not root: without it rsync does not try the chowns a
+        test user cannot do; it does not change which files are transferred."""
+
+        def confined(argv, binds, **kwargs):
+            calls.append((argv, [(target, writable) for _fd, target, writable in binds], kwargs))
+            paths = {target: os.readlink(f"/proc/self/fd/{fd}") for fd, target, _w in binds}
+            if argv[0].endswith("rsync"):
+                mapped = []
+                for arg in argv:
+                    if arg == "/staging/":
+                        arg = paths["/staging"] + "/"
+                    elif arg == "/home/":
+                        arg = paths["/home"] + "/"
+                    if arg == "--super" and os.geteuid() != 0:
+                        continue
+                    mapped.append(arg)
+                result = subprocess.run(mapped, capture_output=True, text=True, check=False)
+                if result.returncode != 0 and "not supported" in result.stderr:
+                    self.skipTest(f"rsync -A/-X not supported here: {result.stderr.strip()[:200]}")
+                return result.returncode
+            for name, data in staged.items():
+                target = Path(paths["/staging"], name)
+                target.write_bytes(data)
+                os.utime(target, (stamp, stamp))
+            return 0
+
+        return confined
+
+    def test_restore_merge_compares_content_not_size_and_mtime(self) -> None:
+        """Finding 015 on the confined restore path (port of #86 onto the
+        release line): the staging -> home merge uses --checksum.  An existing
+        file with the snapshot's size and mtime but other bytes is
+        OVERWRITTEN; an identical file is left in place (same inode), which
+        --ignore-times would not do."""
+        if not os.path.exists("/usr/bin/rsync"):
+            self.skipTest("needs /usr/bin/rsync")
+        namespace = self.helper_namespace()
+        restore = namespace["restore_project_confined"]
+        stamp = 1_700_000_000
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            (home / "changed").write_bytes(b"old-bytes")
+            (home / "same").write_bytes(b"same-bytes")
+            for name in ("changed", "same"):
+                os.utime(home / name, (stamp, stamp))
+            same_inode = (home / "same").stat().st_ino
+            profile = root / "profile.toml"
+            profile.write_text("", encoding="utf-8")
+            # Same size and mtime as the existing files; only "changed" has other bytes.
+            staged = {"changed": b"new-bytes", "same": b"same-bytes"}
+            self.assertEqual(len(staged["changed"]), len(b"old-bytes"))
+            calls = []
+            rootfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            destfd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+            profile_fd = os.open(profile, os.O_RDONLY)
+            try:
+                restore(
+                    rootfd, destfd, profile_fd, ["/usr/bin/rustic", "restore"], False,
+                    os.getuid(), os.getgid(), None,
+                    confined=self.real_rsync_confined(calls, staged, stamp),
+                )
+            finally:
+                for fd in (rootfd, destfd, profile_fd):
+                    os.close(fd)
+            merge = calls[-1][0]
+            self.assertIn("--checksum", merge)
+            self.assertNotIn("--ignore-times", merge)
+            self.assertEqual((home / "changed").read_bytes(), b"new-bytes")
+            self.assertEqual((home / "same").read_bytes(), b"same-bytes")
+            self.assertEqual((home / "same").stat().st_ino, same_inode)
+            self.assertEqual(list((root / ".cocalc-confined-restore").iterdir()), [])
+
     def test_confined_jail_has_no_host_proc_and_minimal_etc(self) -> None:
         namespace = self.helper_namespace()
         plan = namespace["confined_mount_plan"](
@@ -2137,7 +2216,10 @@ secret_access_key = "secret"
             )
             self.assertEqual(restore_binds, [("/staging", True), ("/profile.toml", False)])
             self.assertFalse(restore_kwargs.get("setfcap", False))
-            self.assertEqual(merge, ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids", "--", "/staging/", "/home/"])
+            self.assertEqual(
+                merge,
+                ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids", "--checksum", "--", "/staging/", "/home/"],
+            )
             self.assertEqual(merge_binds, [("/staging", False), ("/home", True)])
             self.assertTrue(merge_kwargs["tolerate_skips"])
             self.assertEqual((source / "restored").read_text(encoding="utf-8"), "restored\n")
