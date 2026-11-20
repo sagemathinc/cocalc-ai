@@ -226,8 +226,11 @@ prune_container_runtimes() {
 
 start_services() {
   # The hub does not inherit `docker run -e` variables; pass on the supported
-  # ones (#1619). daemon-reload below picks up the drop-in.
-  /usr/local/sbin/cocalc-star-docker-hub-env
+  # ones (#1619). daemon-reload below picks up the drop-in. A failure here must
+  # not keep the hub from starting.
+  if ! /usr/local/sbin/cocalc-star-docker-hub-env; then
+    log "warning: could not pass docker -e settings to the hub; starting it without them"
+  fi
   systemctl daemon-reload
   systemctl enable caddy cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host >/dev/null
   systemctl restart caddy cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host

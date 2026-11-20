@@ -84,6 +84,9 @@ jobs:
 
       - uses: actions/checkout@v5
 
+      - name: Test the image's helper scripts
+        run: bash src/scripts/star/docker-preview/test-hub-env.sh
+
       - name: install pnpm
         uses: pnpm/action-setup@v6
         with:
