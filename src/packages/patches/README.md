@@ -37,6 +37,18 @@ must handle invalid patterns; this is not a general sandbox for untrusted
 globs or arbitrary caller-supplied ASTs. Tests cover ordinary expansion, both
 recursive modes, mixed groups, unclosed groups, literals, and boundary depths.
 
+## depcheck 1.4.7
+
+Compatibility patch, not a security fix. The minimatch ReDoS advisory
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) covers
+every minimatch 7.x through 11.0.0, so the workspace override moves
+depcheck's `minimatch@^7.4.6` to 11.0.1. depcheck 1.4.7 (the latest release as
+of November 2026) calls minimatch's default export, which minimatch 11 no longer
+provides. The patch changes those two calls, in `dist/check.js` and
+`dist/special/gulp-load-plugins.js`, to the named `minimatch` export, and
+changes nothing else. Drop it when a depcheck release supports minimatch 11 or
+when the override is removed.
+
 ## Scanner status and follow-up
 
 Version-only scanners still flag patched Forge 1.4.0 and braces 3.0.3. Keep

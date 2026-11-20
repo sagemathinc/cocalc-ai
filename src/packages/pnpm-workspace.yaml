@@ -124,6 +124,7 @@ patchedDependencies:
   slate-react@0.124.0: patches/slate-react@0.124.0.patch
   node-forge@1.4.3: patches/node-forge@1.4.3.patch
   braces@3.0.3: patches/braces@3.0.3.patch
+  depcheck@1.4.7: patches/depcheck@1.4.7.patch
 
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:

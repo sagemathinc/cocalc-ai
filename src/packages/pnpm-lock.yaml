@@ -91,6 +91,7 @@ patchedDependencies:
   '@rc-component/tabs@1.7.0': 3545851304665e492072e9f07920574f7dbccd16fab7e709bc7fa6482d032c46
   braces@3.0.3: 8c2d073bc9c6f98fa3e96543388e1e2e7ea8c76b32b381b57eef9b7fe32fdfc0
   codemirror@5.65.20: 4ad13d7e47bf077e8a10b59454b70fa6b415f1085ffd53c965a7ab9f17213b59
+  depcheck@1.4.7: 291b27fe2512bdb4146341ef6a8b51adc858071170c4868c94c53b4e4c83fb8a
   dropzone@5.9.3: be96936e7311bf6c69b2316841bc586344ec9388ef93ff008eebe8aabac14b25
   fs-ext@2.1.1: 8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b
   node-forge@1.4.3: 6983a5cd849a87d4512b4c56904c0ee344f371d64a3b87be8cd0eae733904625
@@ -234,7 +235,7 @@ importers:
         version: 5.0.1
       depcheck:
         specifier: ^1.4.7
-        version: 1.4.7
+        version: 1.4.7(patch_hash=291b27fe2512bdb4146341ef6a8b51adc858071170c4868c94c53b4e4c83fb8a)
       jest:
         specifier: ^30.0.5
         version: 30.4.2(@types/node@22.20.1)(ts-node@10.9.2(@types/node@22.20.1)(@typescript/typescript6@6.0.2))
@@ -17990,7 +17991,7 @@ snapshots:
 
   delayed-stream@1.0.0: {}
 
-  depcheck@1.4.7:
+  depcheck@1.4.7(patch_hash=291b27fe2512bdb4146341ef6a8b51adc858071170c4868c94c53b4e4c83fb8a):
     dependencies:
       '@babel/parser': 7.29.8
       '@babel/traverse': 7.29.8
