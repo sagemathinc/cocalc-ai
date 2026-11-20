@@ -8,6 +8,7 @@ import {
   type CodexProjectSpawner,
 } from "@cocalc/ai/acp";
 import { CODEX_APP_SERVER_FEATURE_ARGS } from "@cocalc/util/ai/codex";
+import { codexAppServerEnv } from "./acp/agent-env";
 import {
   getLiteCredential,
   getLiteCliApiKey,
@@ -67,15 +68,7 @@ export const spawnLiteCodexAppServer: NonNullable<
     "stdio://",
   ];
   const codexHome = resolveLiteCodexHome();
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...opts.env,
-    CODEX_HOME: codexHome,
-    COCALC_CODEX_HOME: codexHome,
-  };
-  delete env.OPENAI_API_KEY;
-  if (process.env.COCALC_ORIGINAL_HOME)
-    env.HOME = process.env.COCALC_ORIGINAL_HOME;
+  const env = codexAppServerEnv({ extra: opts.env, codexHome });
   if (credential && opts.touchReason !== false)
     touchLiteCredential(owner, credential.id);
   const proc = spawn(cmd, args, {

@@ -25,6 +25,7 @@ import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import type { AcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import { getHarnessLauncher, setHarnessLauncher } from "./harness-runtime";
 import type { HarnessLaunchFactory } from "./harness-runtime";
+import { agentBaseEnv } from "./agent-env";
 
 const logger = getLogger("lite:hub:acp:local-harness");
 
@@ -256,45 +257,14 @@ export async function resolveLocalHarnessCommand(
   };
 }
 
-// The worker that launches the harness runs with CoCalc's own settings and
-// internal credentials (CONAT_SERVER, COCALC_LITE_ACP_WORKER_CONAT_PASSWORD,
-// ...). The agent, and any project-configured ACP executable, must not inherit
-// them: every key with one of these prefixes is dropped, so a new internal key
-// is excluded by default.
-const INTERNAL_ENV_PREFIXES = [
-  "COCALC_",
-  "CONAT_",
-  "MASTER_CONAT_",
-  "DEBUG",
-  "SMC_",
-];
-// Internal settings without one of those prefixes.
-const INTERNAL_ENV_KEYS = new Set([
-  "DATA",
-  "BASE_URL",
-  "PORT",
-  "HUB_PORT",
-  "NODE_OPTIONS",
-]);
-// CoCalc keys that are added back: where the CoCalc CLI is (paths, not
-// credentials). The conversation's context is set explicitly below.
-const COCALC_PASSTHROUGH_KEYS = ["COCALC_CLI_BIN", "COCALC_CLI_CMD"];
-
-function isInternalEnvKey(key: string): boolean {
-  return (
-    INTERNAL_ENV_KEYS.has(key) ||
-    INTERNAL_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
-  );
-}
-
 /**
  * The harness's environment.
  *
  * - The user's own environment, as in their terminal: PATH, HOME, USER, SHELL,
  *   LANG and LC_*, TERM, proxy settings, and the user's own model or provider
  *   settings (e.g. ANTHROPIC_API_KEY, which their `claude` may read).
- * - Without CoCalc's internal settings and credentials (see
- *   INTERNAL_ENV_PREFIXES and INTERNAL_ENV_KEYS).
+ * - Without CoCalc's internal settings and credentials (see agentBaseEnv
+ *   in ./agent-env).
  * - Plus, explicitly: the CoCalc CLI's location, this conversation's context,
  *   the launch command's own settings (`extra`), and the CLI's endpoint and
  *   scoped agent credential (`cliAuth`, resolved as for Codex turns:
@@ -318,15 +288,7 @@ export function localHarnessEnv({
   extra: NodeJS.ProcessEnv;
   cliAuth?: { apiUrl?: string; token?: string };
 }): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(base)) {
-    if (value != null && !isInternalEnvKey(key)) env[key] = value;
-  }
-  for (const key of COCALC_PASSTHROUGH_KEYS) {
-    const value = base[key];
-    if (value) env[key] = value;
-  }
-  if (base.COCALC_ORIGINAL_HOME) env.HOME = base.COCALC_ORIGINAL_HOME;
+  const env = agentBaseEnv(base);
   Object.assign(env, extra, {
     COCALC_PROJECT_ID: projectId,
     COCALC_ACCOUNT_ID: accountId,
