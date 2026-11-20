@@ -33,6 +33,7 @@ import {
   forkCodexAppServerSession,
   getCodexAppServerAccountStatus,
   setCodexProjectSpawner,
+  setCodexRateLimitRecorder,
 } from "..";
 import { AppServerClient, readLinesBackward } from "../codex-app-server";
 
@@ -6989,6 +6990,89 @@ describe("CodexAppServerAgent", () => {
       "account/rateLimits/read",
     ]);
   });
+
+  it.each([
+    ["a subscription turn", "00000000-0000-4000-8000-0000000000c1", 1],
+    ["a turn without a subscription", undefined, 0],
+  ])(
+    "passes the plan limits Codex reports during %s to the recorder",
+    async (_label, credentialId, calls) => {
+      const recorder = jest.fn();
+      setCodexRateLimitRecorder(recorder);
+      const rateLimits = {
+        rateLimits: {
+          primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1 },
+        },
+      };
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, { thread: { id: "thr-rl-1" } });
+            break;
+          case "turn/start":
+            fake.sendResponse(message.id, { turn: { id: "turn-rl-1" } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: "turn-rl-1", status: "inProgress" },
+              });
+              fake.sendNotification("account/rateLimits/updated", rateLimits);
+              fake.sendNotification("turn/completed", {
+                turn: { id: "turn-rl-1", status: "completed" },
+              });
+            });
+            break;
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected codex exec spawn");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: proc as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+          authSource: credentialId ? "subscription" : "site-api-key",
+          ...(credentialId ? { credentialId } : {}),
+        }),
+      });
+      const agent = new CodexAppServerAgent();
+      try {
+        await agent.evaluate({
+          project_id: "00000000-0000-4000-8000-000000000000",
+          account_id: "00000000-0000-4000-8000-000000000001",
+          prompt: "say hello",
+          stream: async () => {},
+          chat: {
+            path: "root/demo.chat",
+            project_id: "00000000-0000-4000-8000-000000000000",
+          } as any,
+          config: {
+            workingDirectory: "/tmp/project",
+            model: "gpt-5.4",
+          } as any,
+        });
+        expect(recorder).toHaveBeenCalledTimes(calls);
+        if (calls)
+          expect(recorder).toHaveBeenCalledWith({
+            projectId: "00000000-0000-4000-8000-000000000000",
+            accountId: "00000000-0000-4000-8000-000000000001",
+            credentialId,
+            rateLimits,
+          });
+      } finally {
+        setCodexRateLimitRecorder(undefined);
+        await agent.dispose();
+      }
+    },
+  );
 
   it("reports site-key usage for app-server turns", async () => {
     const checkAllowed = jest.fn(async () => ({ allowed: true }));

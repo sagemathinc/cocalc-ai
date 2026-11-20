@@ -828,6 +828,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
+  "hosts.recordCodexSubscriptionUsage": {
+    decision: "fresh-auth-not-required",
+    reason: TELEMETRY_ONLY,
+  },
   "hosts.reserveSiteFundedCodexTurn": {
     decision: "fresh-auth-not-required",
     reason: "host-authenticated bounded site-funded Codex admission",

@@ -29,7 +29,11 @@ import {
   setHarnessRateLimitRecorder,
   setHarnessLauncher,
 } from "@cocalc/lite/hub/acp/harness-runtime";
-import { recordHarnessRateLimit } from "./acp/claude-subscription-usage";
+import {
+  recordCodexRateLimits,
+  recordHarnessRateLimit,
+} from "./acp/claude-subscription-usage";
+import { setCodexRateLimitRecorder } from "@cocalc/ai/acp";
 import { launchHarnessInProject } from "./acp/harness-launcher";
 import { validateHarnessAuthority } from "./acp/harness-authority";
 import {
@@ -150,6 +154,7 @@ function configureProjectHostAcpRuntime(): void {
   setHarnessLauncher(launchHarnessInProject);
   setHarnessAuthorityValidator(validateHarnessAuthority);
   setHarnessRateLimitRecorder(recordHarnessRateLimit);
+  setCodexRateLimitRecorder(recordCodexRateLimits);
   initCodexSiteKeyGovernor();
   initCodexAttachmentBlobReader();
   initCodexGeneratedImageBlobWriter();
