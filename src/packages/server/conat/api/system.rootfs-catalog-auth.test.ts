@@ -395,4 +395,42 @@ describe("RootFS catalog dangerous-session auth", () => {
     });
     expect(setProjectRootfsImageWithRollbackMock).not.toHaveBeenCalled();
   });
+
+  it("gates RootFS image selection with the caller's exact image and catalog id", async () => {
+    const { setProjectRootfsImage } = await import("./system");
+
+    await setProjectRootfsImage({
+      account_id: ACCOUNT_ID,
+      project_id: "project-1",
+      image: "docker.io/example/official:latest",
+      image_id: "official-example",
+    });
+
+    expect(assertCanSelectProjectRootfsImageMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      image: "docker.io/example/official:latest",
+      image_id: "official-example",
+    });
+  });
+
+  it("writes no RootFS state locally or remotely when the selection gate refuses", async () => {
+    assertCanSelectProjectRootfsImageMock.mockRejectedValue(
+      new Error(
+        "arbitrary remote OCI root filesystem images are disabled for non-admin accounts",
+      ),
+    );
+    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-2", epoch: 8 });
+    const { setProjectRootfsImage } = await import("./system");
+
+    await expect(
+      setProjectRootfsImage({
+        account_id: ACCOUNT_ID,
+        project_id: "project-1",
+        image: "docker.io/attacker/anything:latest",
+        image_id: "official-example",
+      }),
+    ).rejects.toThrow("disabled for non-admin accounts");
+    expect(remoteSetRootfsImageMock).not.toHaveBeenCalled();
+    expect(setProjectRootfsImageWithRollbackMock).not.toHaveBeenCalled();
+  });
 });

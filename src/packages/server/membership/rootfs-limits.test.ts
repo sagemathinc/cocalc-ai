@@ -39,25 +39,33 @@ describe("rootfs membership limits", () => {
         size_bytes: number;
       }
     | undefined;
-  let trusted = false;
-  let scanEntry:
-    | {
-        image_id: string;
-        release_id: string | null;
-        official: boolean | null;
-        scan_status: string | null;
-        scan_tool: string | null;
-        scanned_at: Date | null;
-        scan_summary: any;
-      }
-    | undefined;
+  type CatalogRow = {
+    image_id: string;
+    runtime_image: string | null;
+    release_id: string | null;
+    official?: boolean;
+    prepull?: boolean;
+    deleted?: boolean;
+    blocked?: boolean;
+    scan_status?: string | null;
+    scan_tool?: string | null;
+    scanned_at?: Date | null;
+    scan_summary?: any;
+  };
+  let catalog: CatalogRow[] = [];
+
+  const officialRow: CatalogRow = {
+    image_id: "official-example",
+    runtime_image: "docker.io/example/official:latest",
+    release_id: "release-official",
+    official: true,
+  };
 
   beforeEach(() => {
     jest.resetModules();
     usage = { count: 0, total_storage_bytes: 0 };
     existing = undefined;
-    trusted = false;
-    scanEntry = undefined;
+    catalog = [];
     isAdminMock = jest.fn(async () => false);
     centralLogMock = jest.fn(async () => undefined);
     resolveMembershipForAccountMock = jest.fn(async () => ({
@@ -71,7 +79,7 @@ describe("rootfs membership limits", () => {
         rootfs_oci_images: false,
       },
     }));
-    queryMock = jest.fn(async (sql: string) => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("COUNT(*) AS count")) {
         return {
           rows: [
@@ -82,24 +90,29 @@ describe("rootfs membership limits", () => {
           ],
         };
       }
-      if (sql.includes("WHERE img.image_id=$1")) {
-        return { rows: existing ? [existing] : [] };
-      }
-      if (sql.includes("COALESCE(official, false) OR COALESCE(prepull")) {
+      if (sql.includes("AS prepull")) {
+        // catalog identity lookup: by image_id, or by runtime_image list
+        const rows = catalog.filter((row) =>
+          sql.includes("img.image_id=$1")
+            ? row.image_id === params?.[0]
+            : (params?.[0] as string[]).includes(`${row.runtime_image}`),
+        );
         return {
-          rows: trusted
-            ? [
-                {
-                  release_id: "release-official",
-                  runtime_image: "docker.io/example/official:latest",
-                  trusted: true,
-                },
-              ]
-            : [],
+          rows: rows.map((row) => ({
+            scan_status: null,
+            scan_tool: null,
+            scanned_at: null,
+            scan_summary: null,
+            ...row,
+            official: row.official === true,
+            prepull: row.prepull === true,
+            deleted: row.deleted === true,
+            blocked: row.blocked === true,
+          })),
         };
       }
-      if (sql.includes("rel.scan_status")) {
-        return { rows: scanEntry ? [scanEntry] : [] };
+      if (sql.includes("WHERE img.image_id=$1")) {
+        return { rows: existing ? [existing] : [] };
       }
       return { rows: [] };
     });
@@ -316,7 +329,7 @@ describe("rootfs membership limits", () => {
       "arbitrary remote OCI root filesystem images are disabled",
     );
 
-    trusted = true;
+    catalog = [officialRow];
     await expect(
       assertCanSelectProjectRootfsImage({
         account_id,
@@ -324,28 +337,215 @@ describe("rootfs membership limits", () => {
         image_id: "official-example",
       }),
     ).resolves.toBeUndefined();
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "docker.io/example/official:latest",
+      }),
+    ).resolves.toBeUndefined();
   });
 
-  it("allows ordinary users to select official images with unresolved critical scan findings", async () => {
-    scanEntry = {
-      image_id: "official-example",
-      release_id: "release-1",
-      official: true,
-      scan_status: "findings",
-      scan_tool: "trivy",
-      scanned_at: new Date("2026-05-17T00:00:00Z"),
-      scan_summary: {
-        status: "findings",
-        tool: "trivy",
-        severity_counts: {
-          critical: 1,
-          high: 0,
-          medium: 0,
-          low: 0,
-          unknown: 0,
-        },
+  it("refuses arbitrary OCI images for non-admins even when the tier enables rootfs_oci_images", async () => {
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "pro",
+      source: "subscription",
+      entitlements: {},
+      effective_limits: {
+        rootfs_count: 250,
+        rootfs_total_storage_gb: 250,
+        rootfs_max_storage_gb: 30,
+        rootfs_oci_images: true,
       },
-    };
+    });
+    const { assertCanSelectProjectRootfsImage, assertCanCreateOrUpdateRootfs } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "docker.io/library/ubuntu:latest",
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled for non-admin accounts",
+    );
+    await expect(
+      assertCanCreateOrUpdateRootfs({
+        account_id,
+        image: "docker.io/library/ubuntu:latest",
+        image_id: "my-entry",
+        operation: "save",
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled for non-admin accounts",
+    );
+    expect(centralLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "rootfs_quota_denied",
+        value: expect.objectContaining({ limit: "rootfs_oci_images" }),
+      }),
+    );
+  });
+
+  it("refuses a forged image_id that names a different trusted image", async () => {
+    catalog = [officialRow];
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "docker.io/attacker/anything:latest",
+        image_id: "official-example",
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled",
+    );
+  });
+
+  it("refuses a pair whose image is trusted under a different catalog id", async () => {
+    catalog = [
+      officialRow,
+      {
+        image_id: "other-official",
+        runtime_image: "docker.io/example/other:latest",
+        release_id: "release-other",
+        official: true,
+      },
+    ];
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "docker.io/example/official:latest",
+        image_id: "other-official",
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled",
+    );
+  });
+
+  it.each([
+    ["deleted", { deleted: true }],
+    ["blocked", { blocked: true }],
+    ["not official or prepulled", { official: false, prepull: false }],
+    ["without a release", { release_id: null }],
+    ["with a blank release", { release_id: "  " }],
+  ])("refuses a catalog row that is %s", async (_label, patch) => {
+    catalog = [{ ...officialRow, ...patch }];
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "docker.io/example/official:latest",
+        image_id: "official-example",
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled",
+    );
+  });
+
+  it("accepts a released prepulled image and normalizes the image name", async () => {
+    catalog = [
+      {
+        image_id: "prepulled",
+        runtime_image: "docker.io/example/prepulled:1",
+        release_id: "release-prepulled",
+        official: false,
+        prepull: true,
+      },
+    ];
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "example/prepulled:1",
+        image_id: "prepulled",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("binds a managed image named with a catalog id to that id's live row", async () => {
+    catalog = [
+      {
+        image_id: "managed-entry",
+        runtime_image: "cocalc.local/rootfs/abc",
+        release_id: "release-managed",
+      },
+    ];
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "cocalc.local/rootfs/abc",
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "cocalc.local/rootfs/abc",
+        image_id: "managed-entry",
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "cocalc.local/rootfs/other",
+        image_id: "managed-entry",
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled",
+    );
+    catalog = [{ ...catalog[0], blocked: true }];
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "cocalc.local/rootfs/abc",
+        image_id: "managed-entry",
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled",
+    );
+  });
+
+  it("lets admins select arbitrary OCI images", async () => {
+    isAdminMock.mockResolvedValue(true);
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "docker.io/library/ubuntu:latest",
+        image_id: "official-example",
+      }),
+    ).resolves.toBeUndefined();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  const scannedOfficialManaged: CatalogRow = {
+    image_id: "official-example",
+    runtime_image: "cocalc.local/rootfs/official",
+    release_id: "release-1",
+    official: true,
+    scan_status: "findings",
+    scan_tool: "trivy",
+    scanned_at: new Date("2026-05-17T00:00:00Z"),
+    scan_summary: {
+      status: "findings",
+      tool: "trivy",
+      severity_counts: {
+        critical: 1,
+        high: 0,
+        medium: 0,
+        low: 0,
+        unknown: 0,
+      },
+    },
+  };
+
+  it("allows ordinary users to select official images with unresolved critical scan findings", async () => {
+    catalog = [scannedOfficialManaged];
     const { assertCanSelectProjectRootfsImage } =
       await import("./rootfs-limits");
     await expect(
@@ -362,21 +562,26 @@ describe("rootfs membership limits", () => {
     );
   });
 
+  it("binds scan policy to the row matching the requested image", async () => {
+    catalog = [scannedOfficialManaged];
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    // The supplied id belongs to a different image, so no row is bound: the
+    // scan policy of the other row is not consulted, and admission refuses.
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "docker.io/attacker/anything:latest",
+        image_id: "official-example",
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled",
+    );
+  });
+
   it("does not apply official scan blocking to admins", async () => {
     isAdminMock.mockResolvedValue(true);
-    scanEntry = {
-      image_id: "official-example",
-      release_id: "release-1",
-      official: true,
-      scan_status: "findings",
-      scan_tool: "trivy",
-      scanned_at: new Date("2026-05-17T00:00:00Z"),
-      scan_summary: {
-        status: "findings",
-        tool: "trivy",
-        severity_counts: { critical: 1 },
-      },
-    };
+    catalog = [scannedOfficialManaged];
     const { assertCanSelectProjectRootfsImage } =
       await import("./rootfs-limits");
     await expect(

@@ -12,6 +12,7 @@ import { resolveMembershipForAccount } from "./resolve";
 import { humanSize } from "@cocalc/util/misc";
 import {
   isManagedRootfsImageName,
+  normalizeRootfsImageName,
   type RootfsScanSummary,
 } from "@cocalc/util/rootfs-images";
 import { evaluateRootfsScanSelection } from "@cocalc/util/rootfs-scan";
@@ -202,6 +203,80 @@ async function loadExistingRootfs({
   };
 }
 
+type CatalogIdentityRow = {
+  image_id: string;
+  runtime_image: string | null;
+  release_id: string | null;
+  official: boolean;
+  prepull: boolean;
+  deleted: boolean;
+  blocked: boolean;
+  scan_status: string | null;
+  scan_tool: string | null;
+  scanned_at: Date | null;
+  scan_summary: RootfsScanSummary | null;
+};
+
+function sameRootfsImage(a: string | null | undefined, b: string): boolean {
+  const left = normalizeRootfsImageName(`${a ?? ""}`);
+  return left.length > 0 && left === normalizeRootfsImageName(b);
+}
+
+// Load the catalog rows that could describe the requested image. When the
+// caller names a catalog id, only that id's rows are considered; otherwise rows
+// are looked up by runtime image. Callers must then bind each row to BOTH the
+// requested image and the supplied id (boundCatalogRows): a supplied id never
+// vouches for a different image, and an image never borrows another row's id.
+async function loadCatalogIdentityRows({
+  image,
+  image_id,
+}: {
+  image: string;
+  image_id?: string;
+}): Promise<CatalogIdentityRow[]> {
+  const id = `${image_id ?? ""}`.trim();
+  const runtimeImage = `${image ?? ""}`.trim();
+  if (!id && !runtimeImage) return [];
+  const where = id ? "img.image_id=$1" : "img.runtime_image = ANY($1::text[])";
+  const param = id
+    ? id
+    : Array.from(
+        new Set([runtimeImage, normalizeRootfsImageName(runtimeImage)]),
+      ).filter(Boolean);
+  const { rows } = await getPool().query<CatalogIdentityRow>(
+    `SELECT img.image_id,
+            img.runtime_image,
+            img.release_id,
+            COALESCE(img.official, false) AS official,
+            COALESCE(img.prepull, false) AS prepull,
+            COALESCE(img.deleted, false) AS deleted,
+            COALESCE(img.blocked, false) AS blocked,
+            rel.scan_status,
+            rel.scan_tool,
+            rel.scanned_at,
+            rel.scan_summary
+       FROM rootfs_images AS img
+       LEFT JOIN rootfs_releases AS rel ON rel.release_id = img.release_id
+      WHERE ${where}
+      ORDER BY COALESCE(img.official, false) DESC,
+               img.updated DESC
+      LIMIT 50`,
+    [param],
+  );
+  return rows;
+}
+
+function boundCatalogRows(
+  rows: CatalogIdentityRow[],
+  { image, image_id }: { image: string; image_id?: string },
+): CatalogIdentityRow[] {
+  const id = `${image_id ?? ""}`.trim();
+  return rows.filter(
+    (row) =>
+      sameRootfsImage(row.runtime_image, image) && (!id || row.image_id === id),
+  );
+}
+
 async function catalogImageIsTrusted({
   image,
   image_id,
@@ -209,40 +284,27 @@ async function catalogImageIsTrusted({
   image: string;
   image_id?: string;
 }): Promise<boolean> {
-  if (isManagedRootfsImageName(image)) {
+  const id = `${image_id ?? ""}`.trim();
+  if (isManagedRootfsImageName(image) && !id) {
     return true;
   }
-  const pool = getPool();
-  const params: string[] = [];
-  const clauses: string[] = [];
-  const id = `${image_id ?? ""}`.trim();
-  if (id) {
-    params.push(id);
-    clauses.push(`image_id=$${params.length}`);
-  }
-  if (image) {
-    params.push(image);
-    clauses.push(`runtime_image=$${params.length}`);
-  }
-  if (!clauses.length) return false;
-  const { rows } = await pool.query<{
-    release_id: string | null;
-    runtime_image: string;
-    trusted: boolean;
-  }>(
-    `SELECT release_id,
-            runtime_image,
-            COALESCE(official, false) OR COALESCE(prepull, false) AS trusted
-       FROM rootfs_images
-      WHERE (${clauses.join(" OR ")})
-        AND COALESCE(deleted, false)=false
-        AND COALESCE(blocked, false)=false
-      ORDER BY trusted DESC
-      LIMIT 1`,
-    params,
+  const rows = boundCatalogRows(
+    await loadCatalogIdentityRows({ image, image_id: id }),
+    { image, image_id: id },
   );
-  const row = rows[0];
-  return row?.trusted === true && !!`${row.release_id ?? ""}`.trim();
+  if (isManagedRootfsImageName(image)) {
+    // A managed image named together with a catalog id must be that id's
+    // image, and that catalog row must still be live.
+    return rows.some((row) => !row.deleted && !row.blocked);
+  }
+  // One and the same row must be live, released and official or prepulled.
+  return rows.some(
+    (row) =>
+      !row.deleted &&
+      !row.blocked &&
+      (row.official || row.prepull) &&
+      !!`${row.release_id ?? ""}`.trim(),
+  );
 }
 
 async function assertRootfsScanSelectionAllowed({
@@ -256,45 +318,13 @@ async function assertRootfsScanSelectionAllowed({
   image_id?: string;
   operation: RootfsQuotaOperation;
 }) {
-  const pool = getPool();
-  const params: string[] = [];
-  const clauses: string[] = [];
   const id = `${image_id ?? ""}`.trim();
-  if (id) {
-    params.push(id);
-    clauses.push(`img.image_id=$${params.length}`);
-  }
-  if (image) {
-    params.push(image);
-    clauses.push(`img.runtime_image=$${params.length}`);
-  }
-  if (!clauses.length) return;
-  const { rows } = await pool.query<{
-    image_id: string;
-    release_id: string | null;
-    official: boolean | null;
-    scan_status: string | null;
-    scan_tool: string | null;
-    scanned_at: Date | null;
-    scan_summary: RootfsScanSummary | null;
-  }>(
-    `SELECT img.image_id,
-            img.release_id,
-            COALESCE(img.official, false) AS official,
-            rel.scan_status,
-            rel.scan_tool,
-            rel.scanned_at,
-            rel.scan_summary
-       FROM rootfs_images AS img
-       LEFT JOIN rootfs_releases AS rel ON rel.release_id = img.release_id
-      WHERE (${clauses.join(" OR ")})
-        AND COALESCE(img.deleted, false)=false
-      ORDER BY COALESCE(img.official, false) DESC,
-               img.updated DESC
-      LIMIT 1`,
-    params,
-  );
-  const row = rows[0];
+  // Scan policy binds to the same catalog identity as admission: only a row
+  // matching the requested image (and the supplied id, if any) counts.
+  const row = boundCatalogRows(
+    await loadCatalogIdentityRows({ image, image_id: id }),
+    { image, image_id: id },
+  ).find((candidate) => !candidate.deleted);
   if (!row?.official) return;
   const summary: RootfsScanSummary | undefined =
     row.scan_status || row.scan_tool || row.scanned_at || row.scan_summary
@@ -325,28 +355,29 @@ async function assertRootfsScanSelectionAllowed({
   throw new Error(reason);
 }
 
+// Site security policy: accounts that are not admins may only use trusted
+// catalog images (official or prepulled, released, not deleted or blocked) and
+// managed RootFS images. Arbitrary remote OCI references are refused for them
+// even when a membership tier or override sets usage_limits.rootfs_oci_images;
+// that entitlement is intentionally ignored here. Do not restore it without a
+// security review. Admins never reach this function: both callers return early
+// for admins.
 async function assertRemoteOciAllowed({
   account_id,
   image,
   image_id,
   operation,
-  resolution,
 }: {
   account_id: string;
   image: string;
   image_id?: string;
   operation: RootfsQuotaOperation;
-  resolution: MembershipResolution;
 }) {
   if (await catalogImageIsTrusted({ image, image_id })) {
     return;
   }
-  const limits = getEffectiveMembershipUsageLimits(resolution);
-  if (limits.rootfs_oci_images === true) {
-    return;
-  }
   const reason =
-    "arbitrary remote OCI root filesystem images are disabled for this membership tier";
+    "arbitrary remote OCI root filesystem images are disabled for non-admin accounts";
   await recordRootfsQuotaDenial({
     account_id,
     operation,
@@ -355,16 +386,13 @@ async function assertRemoteOciAllowed({
     image_id,
     reason,
   });
-  throw new Error(
-    `${reason}; choose an official/managed RootFS image or upgrade membership`,
-  );
+  throw new Error(`${reason}; choose an official or managed RootFS image`);
 }
 
 export async function assertCanSelectProjectRootfsImage({
   account_id,
   image,
   image_id,
-  resolution,
 }: {
   account_id: string;
   image: string;
@@ -386,7 +414,6 @@ export async function assertCanSelectProjectRootfsImage({
     image: trimmed,
     image_id,
     operation: "select-project-image",
-    resolution: resolution ?? (await resolveMembershipForAccount(account_id)),
   });
 }
 
@@ -415,12 +442,12 @@ export async function assertCanCreateOrUpdateRootfs({
   const limits = getEffectiveMembershipUsageLimits(effectiveResolution);
   const trimmedImage = `${image ?? ""}`.trim();
   if (trimmedImage && !isManagedRootfsImageName(trimmedImage)) {
+    // image_id here names the catalog entry being written, not a catalog
+    // identity the caller claims, so trust is decided by the image alone.
     await assertRemoteOciAllowed({
       account_id,
       image: trimmedImage,
-      image_id,
       operation,
-      resolution: effectiveResolution,
     });
   }
 
