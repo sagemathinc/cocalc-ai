@@ -36,19 +36,30 @@ describe("closed persist streams are collected (real write counter)", () => {
   for (const ephemeral of [true, false]) {
     it(`${ephemeral ? "ephemeral" : "disk"} streams`, async () => {
       const refs: WeakRef<object>[] = [];
+      let wrappedAfterClose = 0;
       for (let i = 0; i < 50; i++) {
         const stream = pstream({ path: join(dir, `s${i}`), ephemeral });
         stream.set(msg(`m${i}`));
         const db = (stream as any).db;
         stream.close();
-        expect(Object.prototype.hasOwnProperty.call(db, "prepare")).toBe(false);
+        if (Object.prototype.hasOwnProperty.call(db, "prepare")) {
+          wrappedAfterClose += 1;
+        }
         refs.push(new WeakRef(stream));
       }
       for (let i = 0; i < 10; i++) {
         gc();
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      expect(refs.filter((ref) => ref.deref() == null).length).toBeGreaterThanOrEqual(45);
+      // both are reported on a failure: how many were collected, and how many
+      // connections kept their wrappers after close
+      expect({
+        collected:
+          refs.filter((ref) => ref.deref() == null).length >= 45
+            ? "at least 45 of 50"
+            : refs.filter((ref) => ref.deref() == null).length,
+        wrappedAfterClose,
+      }).toEqual({ collected: "at least 45 of 50", wrappedAfterClose: 0 });
     });
   }
 });

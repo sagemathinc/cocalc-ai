@@ -101,8 +101,15 @@ test("a close that did not happen keeps the connection's wrappers", () => {
   });
   const db = (stream as any).db;
   (stream as any).poisoned = true;
-  stream.close();
-  expect(Object.prototype.hasOwnProperty.call(db, "prepare")).toBe(true);
-  expect(Object.prototype.hasOwnProperty.call(db, "exec")).toBe(true);
-  expect(() => db.prepare("SELECT 1")).toThrow("had a sync error");
+  try {
+    stream.close();
+    expect(Object.prototype.hasOwnProperty.call(db, "prepare")).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(db, "exec")).toBe(true);
+    expect(() => db.prepare("SELECT 1")).toThrow("had a sync error");
+  } finally {
+    // tear it down for real, so nothing of it stays open in this worker
+    (stream as any).poisoned = false;
+    stream.close();
+  }
+  expect(Object.prototype.hasOwnProperty.call(db, "prepare")).toBe(false);
 });
