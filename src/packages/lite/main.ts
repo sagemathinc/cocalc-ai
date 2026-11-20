@@ -18,6 +18,11 @@ import { setConatClient } from "@cocalc/conat/client";
 import { once } from "@cocalc/util/async-utils";
 import { setConatServer } from "@cocalc/backend/data";
 import { project_id } from "@cocalc/project/data";
+import {
+  captureEnv,
+  PRESERVED_COCALC_ENV_KEYS,
+  restoreEnv,
+} from "./preserved-env";
 import { initHttpServer, initApp } from "./http";
 import { localPathFileserver } from "@cocalc/backend/conat/files/local-path";
 import { createLiteJupyterFilesystemHandlers } from "./jupyter-ipynb";
@@ -27,6 +32,8 @@ import { hubApi, init as initHubApi } from "./hub/api";
 import { createLiteArtifactCatalog } from "./artifacts/service";
 import { LitePersonalLibrary } from "./artifacts/personal-library";
 import { init as initAcp } from "./hub/acp";
+import { installLiteHarnessLauncher } from "./hub/acp/local-harness";
+import { preferContainerExecutor } from "./hub/acp/workspace-root";
 import { initWatchdog, closeWatchdog } from "./watchdog";
 import {
   account_id,
@@ -48,36 +55,6 @@ const logger = getLogger("lite:main");
 
 export let conatServer: ConatServer | null = null;
 export let persistServer: any = null;
-
-const PRESERVED_COCALC_ENV_KEYS = [
-  "COCALC_ACP_MODE",
-  "COCALC_ACP_MOCK_SCRIPT",
-  "COCALC_ACP_MOCK_FILE",
-  "COCALC_ACP_EXECUTOR",
-  "COCALC_LITE_ACP_DETACHED_WORKER",
-  "COCALC_CODEX_BIN",
-  "COCALC_CODEX_HOME",
-  "COCALC_CLI_BIN",
-  "COCALC_CLI_CMD",
-  "COCALC_ENABLE_PROJECT_INFO",
-  "COCALC_WINDOWS_TERMINAL_SHELL",
-] as const;
-
-function captureEnv(keys: readonly string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const key of keys) {
-    const value = `${process.env[key] ?? ""}`.trim();
-    if (value) out[key] = value;
-  }
-  return out;
-}
-
-function restoreEnv(env: Record<string, string>) {
-  for (const key in env) {
-    const value = `${env[key] ?? ""}`.trim();
-    if (value) process.env[key] = value;
-  }
-}
 
 function resolveLiteCliBin(): string | undefined {
   const configured = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
@@ -261,6 +238,8 @@ export async function main(opts?: {
   process.once("exit", artifactCatalog.stop);
 
   logger.debug("start acp conat server");
+  // Claude Code and ACP agents run as local processes, like Codex here.
+  if (!preferContainerExecutor()) installLiteHarnessLauncher();
   await initAcp(conatClient);
 
   logger.debug("start watchdog");

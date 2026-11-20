@@ -41,7 +41,9 @@ import {
   onClaudeCredentialsChanged,
   setClaudeCredentials,
   useClaudePaymentLabel,
+  LITE_CLAUDE_DESCRIPTION,
 } from "./claude-payment-status";
+import { lite } from "@cocalc/frontend/lite";
 import {
   ClaudeConnectorPreference,
   claudeConnectorsAvailable,
@@ -857,12 +859,21 @@ function HarnessRuntimeSummaryContent({
       <details>
         <summary>How access, billing, and settings work</summary>
         <p>{HARNESS_LIMITATIONS}</p>
-        <p>
-          Full project access: CoCalc does not pause for per-tool approval.{" "}
-          {claude ? "Claude" : "The harness"} may run project commands and
-          change files during an admitted turn.
-        </p>
-        {claude && (
+        {lite ? (
+          <p>
+            {claude ? "Claude" : "The harness"} runs on your computer as you,
+            with access to your files and network. CoCalc does not pause for
+            per-tool approval: it may run commands and change files during a
+            turn.
+          </p>
+        ) : (
+          <p>
+            Full project access: CoCalc does not pause for per-tool approval.{" "}
+            {claude ? "Claude" : "The harness"} may run project commands and
+            change files during an admitted turn.
+          </p>
+        )}
+        {claude && !lite && (
           <p>
             Credential selection is private to your account. Project code and
             authorized Agent Network turns can consume the selected billing
@@ -871,7 +882,8 @@ function HarnessRuntimeSummaryContent({
         )}
         <p>
           Changes apply to the next submitted turn, not running or already
-          queued turns. Harness modes do not change container isolation.
+          queued turns.
+          {lite ? "" : " Harness modes do not change container isolation."}
         </p>
         <p>
           Loading options starts a temporary session with project access,
@@ -889,10 +901,16 @@ function HarnessRuntimeSummaryContent({
             >
               Payment
             </Typography.Text>
-            <ClaudeCredentialControl
-              projectId={projectId}
-              threadKey={threadKey}
-            />
+            {lite ? (
+              <Typography.Paragraph style={{ margin: 0 }}>
+                {LITE_CLAUDE_DESCRIPTION}
+              </Typography.Paragraph>
+            ) : (
+              <ClaudeCredentialControl
+                projectId={projectId}
+                threadKey={threadKey}
+              />
+            )}
           </section>
         )}
       {onSettings && (

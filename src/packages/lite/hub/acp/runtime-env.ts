@@ -134,6 +134,26 @@ async function resolveCodexRuntimeBearer({
   }
 }
 
+/**
+ * The CoCalc CLI's endpoint and its scoped agent credential for an agent turn
+ * that runs on this computer, by the same rules as for Codex turns.
+ */
+export async function resolveLocalAgentCliAuth({
+  projectId,
+  accountId,
+}: {
+  projectId: string;
+  accountId: string;
+}): Promise<{ apiUrl: string; token?: string }> {
+  return {
+    apiUrl: resolveCodexApiUrl({ useContainer: false }),
+    token: await resolveCodexRuntimeBearer({
+      request: { account_id: accountId } as AcpRequest,
+      projectId,
+    }),
+  };
+}
+
 export async function buildCodexRuntimeEnv({
   request,
   projectId,
