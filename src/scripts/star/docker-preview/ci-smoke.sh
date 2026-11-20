@@ -121,6 +121,13 @@ check() {
   fi
   log "HTTP on the published port"
   curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/"
+  # The hub turns off the bay-only frontend asset check on Star by this
+  # setting (#1619), so it must reach the hub process.
+  log "the hub runs with the Star setup profile"
+  $DOCKER exec "$NAME" sh -c '
+    p="$(systemctl show -p MainPID --value cocalc-star-hub.service)" &&
+      [ "${p:-0}" != 0 ] &&
+      tr "\0" "\n" <"/proc/$p/environ" | grep -qx COCALC_SETUP_PROFILE=star'
 }
 
 # The managed container runtime lives in the volume (see the entrypoint), and

@@ -128,6 +128,13 @@ have no disk quota and share the volume's space.
 | `COCALC_STAR_ACCESS_URL` |             | Override the URL printed in links entirely.                         |
 | `COCALC_STAR_BTRFS_SIZE` | `40G`       | Size of the project storage image, set on first boot.               |
 
+The hub runs as a systemd service inside the container and does not see other
+`-e` variables. These hub settings are passed on to it, on every start:
+
+| Variable                           | Default | Meaning                                                                                  |
+| ---------------------------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `COCALC_FRONTEND_ASSET_MONITORING` | `false` | `true` turns on the hourly check of frontend static assets (meant for bay deployments). |
+
 ## Troubleshooting
 
 ```sh
