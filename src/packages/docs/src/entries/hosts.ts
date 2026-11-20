@@ -32,12 +32,12 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
     noActionReason:
       "Decision guide; follow the linked setup workflow for the chosen compute route.",
     searchKeywords:
-      "research compute more RAM CPU cores GPU capacity machine type architecture region provider quota availability project host managed VM remote kernel",
+      "research compute notebooks jobs services agents more RAM CPU cores GPU capacity machine type architecture region provider quota availability project host managed VM remote kernel",
     slug: "hosts/choose-compute",
     status: "ready",
     summary:
       "Compare project hosts, managed VMs, and remote kernels, then check machine fit, availability, permissions, and readiness.",
-    title: "Choose compute for research",
+    title: "Choose compute",
   },
   {
     actions: [

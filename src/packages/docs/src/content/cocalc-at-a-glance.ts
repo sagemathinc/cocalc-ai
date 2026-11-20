@@ -30,7 +30,7 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
 - The work must persist across sessions, collaborators, reviews, and handoffs.
 - An agent needs to read or work across several of your projects.
 - A task needs more compute. Compare the options in
-  [Choose compute for research](/docs/hosts/choose-compute).
+  [Choose compute](/docs/hosts/choose-compute).
 
 ## When another tool fits better
 
