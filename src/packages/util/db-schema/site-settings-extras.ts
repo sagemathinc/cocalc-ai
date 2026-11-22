@@ -13,6 +13,7 @@ import { isEmpty } from "lodash";
 
 import { hasSiteFundedCodexPrice } from "@cocalc/util/ai/site-funded-codex-prices";
 import { EMAIL_LANE_BACKENDS } from "@cocalc/util/notification-email";
+import { scannerImageDigest } from "@cocalc/util/rootfs-scan";
 import {
   expire_time,
   isValidUUID,
@@ -890,9 +891,10 @@ export const EXTRAS: SettingsExtras = {
   },
   rootfs_scan_container_image: {
     name: "RootFS Scan: Trivy Container Image",
-    desc: "Pinned Trivy scanner container image used by project hosts for official RootFS vulnerability scans. Blank uses docker.io/aquasec/trivy:latest; production should use an internal image reference pinned by digest.",
+    desc: "Trivy scanner container image used by project hosts for RootFS vulnerability scans, pinned by digest (<image>@sha256:<digest>). A reference without a digest is refused. Blank uses the built-in pinned Trivy release.",
     default: "",
-    valid: () => true,
+    valid: (value: string) =>
+      !`${value ?? ""}`.trim() || scannerImageDigest(value) != null,
     to_val: to_trimmed_str,
     tags: ["RootFS", "Security", "Project Hosts"],
     group: "Compute / Project Hosts",

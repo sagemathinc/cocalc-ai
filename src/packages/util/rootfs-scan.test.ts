@@ -4,10 +4,16 @@
  */
 
 import {
+  DEFAULT_TRIVY_SCANNER_IMAGE,
+  ROOTFS_SCAN_ALLOW_UNPINNED_IMAGE_ENV,
+  allowUnpinnedScannerImage,
+  assertPinnedScannerImage,
   evaluateRootfsScanSelection,
   parseTrivyRootfsJsonReport,
   rootfsScanHasBlockingFindings,
+  scannerImageDigest,
 } from "./rootfs-scan";
+import { EXTRAS } from "./db-schema/site-settings-extras";
 
 const target = {
   release_id: "rel-1",
@@ -201,5 +207,74 @@ describe("rootfs scan selection policy", () => {
         policy: { now: new Date("2026-05-17T00:00:00.000Z") },
       }),
     ).toEqual({ allowed: true, reason: "allowed" });
+  });
+});
+
+describe("scanner image pinning", () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+
+  it("pins the default scanner image by digest", () => {
+    expect(scannerImageDigest(DEFAULT_TRIVY_SCANNER_IMAGE)).toBe(
+      "sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c",
+    );
+  });
+
+  it("reads the digest of a pinned reference only", () => {
+    expect(scannerImageDigest(`docker.io/aquasec/trivy:0.76.1@${digest}`)).toBe(
+      digest,
+    );
+    expect(scannerImageDigest(`registry.example/trivy@${digest}`)).toBe(digest);
+    for (const ref of [
+      "docker.io/aquasec/trivy:latest",
+      "docker.io/aquasec/trivy",
+      "trivy@sha256:short",
+      `trivy@sha256:${"A".repeat(64)}`,
+      `trivy@sha512:${"a".repeat(64)}`,
+      "",
+    ]) {
+      expect(scannerImageDigest(ref)).toBeUndefined();
+    }
+  });
+
+  it("fails closed on a tag-only image unless the development escape is set", () => {
+    expect(() =>
+      assertPinnedScannerImage("docker.io/aquasec/trivy:latest", {
+        allowUnpinned: false,
+      }),
+    ).toThrow("not pinned by digest");
+    expect(() => assertPinnedScannerImage("", { allowUnpinned: true })).toThrow(
+      "must be specified",
+    );
+    expect(
+      assertPinnedScannerImage(` registry.example/trivy@${digest} `, {
+        allowUnpinned: false,
+      }),
+    ).toBe(`registry.example/trivy@${digest}`);
+    expect(
+      assertPinnedScannerImage("localhost/trivy:dev", { allowUnpinned: true }),
+    ).toBe("localhost/trivy:dev");
+  });
+
+  it("only takes the escape when it is set to exactly 1", () => {
+    expect(allowUnpinnedScannerImage({})).toBe(false);
+    expect(
+      allowUnpinnedScannerImage({
+        [ROOTFS_SCAN_ALLOW_UNPINNED_IMAGE_ENV]: "true",
+      }),
+    ).toBe(false);
+    expect(
+      allowUnpinnedScannerImage({
+        [ROOTFS_SCAN_ALLOW_UNPINNED_IMAGE_ENV]: "1",
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts only a blank or digest-pinned site setting", () => {
+    const valid = EXTRAS.rootfs_scan_container_image.valid as (
+      value: string,
+    ) => boolean;
+    expect(valid("")).toBe(true);
+    expect(valid(`registry.example/trivy@${digest}`)).toBe(true);
+    expect(valid("docker.io/aquasec/trivy:latest")).toBe(false);
   });
 });

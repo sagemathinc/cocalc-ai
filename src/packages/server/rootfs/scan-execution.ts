@@ -21,6 +21,7 @@ import { getProjectRootfsStates } from "@cocalc/server/projects/rootfs-state";
 import {
   DEFAULT_TRIVY_CACHE_DIR,
   DEFAULT_TRIVY_SCANNER_IMAGE,
+  assertPinnedScannerImage,
   type RootfsProjectPreflightScanResult,
   type RootfsReleaseScanRun,
 } from "@cocalc/util/rootfs-scan";
@@ -87,6 +88,8 @@ export async function getRootfsScanConfig({
       "RootFS scan scanner image is not configured; set rootfs_scan_container_image, COCALC_ROOTFS_SCAN_TRIVY_IMAGE, or pass scanner_image",
     );
   }
+  // Fails closed: only an image pinned by digest is sent to a host.
+  assertPinnedScannerImage(image);
   if (!cache) {
     throw new Error(
       "RootFS scan Trivy cache directory is not configured; set rootfs_scan_trivy_cache_dir, COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR, or pass trivy_cache_dir",

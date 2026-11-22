@@ -47,7 +47,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261112-r21"
+HELPER_SCHEMA_VERSION = "20261120-r24"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -6370,6 +6370,83 @@ def prepare_dirs(cfg: BootstrapConfig) -> None:
     ensure_cocalc_state_root(cfg)
 
 
+IMAGE_CACHE_ROOT = Path("/mnt/cocalc/data/cache/images")
+IMAGE_ROOT_LINKS = (("etc", "mtab"), ("var", "run"))
+
+
+def open_pinned_directory(path: Path) -> int:
+    """Open an absolute directory one component at a time, never following
+    a symlink (a symlinked component raises)."""
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for part in path.parts[1:]:
+            nextfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            os.close(fd)
+            fd = nextfd
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def migrate_image_root_links(cfg: BootstrapConfig, cache_root: Path = IMAGE_CACHE_ROOT,
+                             subuid: Path = Path("/etc/subuid"), subgid: Path = Path("/etc/subgid")) -> int:
+    """Images normalized before the fix hold root-owned etc/mtab and
+    var/run links, which a confined copy cannot reproduce (it fails
+    closed).  Hand exactly those to the container root: per image, only
+    where each is a symlink owned by uid or gid 0, resolved without
+    following symlinks.  Nothing else is touched.  A few stat calls per
+    image, so it runs on every reconcile."""
+    try:
+        rootfd = open_pinned_directory(cache_root)
+    except FileNotFoundError:
+        return 0
+    except OSError as err:
+        log_line(cfg, f"bootstrap: not migrating image links: {cache_root}: {err}")
+        return 0
+    owner = []
+    for path in (subuid, subgid):
+        _raw, entries = parse_subid_entries(path)
+        starts = sorted(start for name, start, _length in entries if name == cfg.ssh_user)
+        if not starts:
+            os.close(rootfd)
+            log_line(cfg, f"bootstrap: not migrating image links: no {path} entry for {cfg.ssh_user}")
+            return 0
+        owner.append(starts[0])
+    changed = 0
+    try:
+        for image in os.listdir(rootfd):
+            if image.startswith("."):
+                continue
+            try:
+                imagefd = os.open(image, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=rootfd)
+            except OSError:
+                continue
+            try:
+                for parent, name in IMAGE_ROOT_LINKS:
+                    try:
+                        parentfd = os.open(parent, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=imagefd)
+                    except OSError:
+                        continue
+                    try:
+                        info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+                        if stat.S_ISLNK(info.st_mode) and (info.st_uid == 0 or info.st_gid == 0):
+                            os.chown(name, owner[0], owner[1], dir_fd=parentfd, follow_symlinks=False)
+                            changed += 1
+                    except OSError as err:
+                        if err.errno != errno.ENOENT:
+                            log_line(cfg, f"bootstrap: image link {image}/{parent}/{name}: {err}")
+                    finally:
+                        os.close(parentfd)
+            finally:
+                os.close(imagefd)
+    finally:
+        os.close(rootfd)
+    if changed:
+        log_line(cfg, f"bootstrap: handed {changed} root-owned image links to the container root")
+    return changed
+
+
 def ensure_cocalc_state_root(cfg: BootstrapConfig) -> None:
     """Root-owned and not writable by others: root scripts keep state in
     /var/lib/cocalc and mount the loop image from it by name, so the runtime
@@ -8369,7 +8446,7 @@ SECRET_ROOTS = {"/var/lib/cocalc/star/project-host/0/secrets/rustic"}
 # images only take truncate, and only to create a new one.
 GENERIC_ONLY_PATHS = {"/var/lib/cocalc": ({"btrfs.img", "cocalc.img"}, {"truncate"})}
 CREATE_ONLY_ROOTS = {"/var/lib/cocalc"}
-GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets",)}
+GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets", ".cocalc-confined-restore")}
 # The data filesystem's root stays root-owned: BEES and the R1 project-root
 # hardening rely on it, so no generic verb may change it.
 GENERIC_FIXED_ROOTS = {"/mnt/cocalc"}
@@ -8445,6 +8522,8 @@ RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
 RESOLVE_BENEATH = 0x08
 RESOLVE_FLAGS = RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH
+RESOLVE_NO_XDEV = 0x01
+RESOLVE_IN_ROOT = 0x10
 O_PATH = getattr(os, "O_PATH", 0o10000000)
 LIBC = ctypes.CDLL(None, use_errno=True)
 
@@ -8466,11 +8545,11 @@ def validate_relative(path, *, allow_root=False):
         fail(f"path must stay beneath root: {path!r}")
 
 
-def openat2(dirfd, path, flags, mode=0):
+def openat2(dirfd, path, flags, mode=0, resolve=RESOLVE_FLAGS):
     encoded = os.fsencode(path)
     if b"\0" in encoded:
         fail("path contains NUL")
-    how = OpenHow(flags=flags, mode=mode, resolve=RESOLVE_FLAGS)
+    how = OpenHow(flags=flags, mode=mode, resolve=resolve)
     result = LIBC.syscall(
         SYS_OPENAT2,
         ctypes.c_int(dirfd),
@@ -8768,9 +8847,12 @@ def write_private_rustic_profile(
     return path
 
 
+RUSTIC_CANDIDATES = ("/usr/local/libexec/cocalc-rustic",)
+
+
 def select_privileged_rustic_binary(candidates=None):
     require_root_ownership = candidates is None
-    candidates = candidates or ("/usr/local/libexec/cocalc-rustic",)
+    candidates = candidates or RUSTIC_CANDIDATES
     for candidate in candidates:
         try:
             info = os.stat(candidate)
@@ -9215,6 +9297,1029 @@ def run_scan_oversized_files(argv, allowed_roots=ALLOWED_ROOTS):
     print(json.dumps(report, ensure_ascii=True, separators=(",", ":")))
 
 
+# Restores and tree copies write content that cocalc-host controls (its own
+# backup repositories and trees), so they never run as real root.  A
+# confined child sees only a private mount namespace (a tmpfs root with the
+# read-only system binds below and the pinned work directories, but no host
+# /proc), and runs as the runtime user in a user namespace that maps the
+# runtime ids and their subordinate extents to themselves and leaves uid 0
+# unmapped.  It keeps only the capabilities below.  Root writes the id maps
+# itself (newuidmap would check them against root's own subordinate ids).
+CONFINED_RUN_DIR = "/run/cocalc-confined"
+CONFINED_CAPS = (0, 1, 2, 3, 4)  # CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER FSETID
+CAP_SETFCAP = 31
+CONFINED_SYSTEM_DIRS = ("/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32")
+CONFINED_ETC_FILES = ("passwd", "group", "nsswitch.conf", "hosts", "host.conf", "gai.conf", "resolv.conf", "ld.so.cache")
+CONFINED_ETC_DIRS = ("ssl",)
+CONFINED_DEVICES = ("null", "zero", "urandom")
+CONFINED_WORK_TARGETS = {"/staging", "/home", "/src", "/dest"}
+CONFINED_PROFILE_TARGET = "/profile.toml"
+CONFINED_RSYNC = ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids"]
+# cp writes regular files through existing destination symlinks, so reflink
+# copies run confined too.  Across the jail's two bind mounts FICLONE gives
+# EXDEV and cp falls back to copy_file_range, which btrfs still clones.
+CONFINED_CP = ["/usr/bin/cp", "-a", "--reflink=auto", "--remove-destination"]
+CONFINED_ENV = {
+    "HOME": "/tmp",
+    "LANG": "C.UTF-8",
+    "PATH": "/usr/bin:/bin",
+    "RUSTIC_PROGRESS_INTERVAL": "1s",
+    "SSL_CERT_DIR": "/etc/ssl/certs",
+    "TMPDIR": "/tmp",
+}
+# rsync exit 23 ("partial transfer") is tolerated for project restores only
+# when every error is one the confinement causes on purpose: an entry owned
+# by an unmapped id (uid 0), a device node, or a host-global file capability.
+# Such entries are suspicious in project trees, so the caller logs them.
+CONFINED_SKIP_PATTERNS = (
+    re.compile(r'^rsync: \[[a-z]+\] chown ".*" failed: Invalid argument \(22\)$'),
+    re.compile(r'^rsync: \[[a-z]+\] send_files failed to open ".*": Permission denied \(13\)$'),
+    re.compile(r'^rsync: \[[a-z]+\] mknod ".*" failed: Operation not permitted \(1\)$'),
+    re.compile(r'^rsync: \[[a-z]+\] rsync_xal_set: lsetxattr\(".*","security\.capability"\) failed: (Operation not permitted \(1\)|Invalid argument \(22\))$'),
+)
+CONFINED_PARTIAL_LINE = re.compile(r"^rsync error: some files/attrs were not transferred .*\(code 23\).*$")
+CONFINED_SKIPPED_MARKER = "COCALC_CONFINED_SKIPPED_ENTRIES"
+MS_RDONLY = 1
+MS_NOSUID = 2
+MS_NODEV = 4
+MS_NOEXEC = 8
+MS_REMOUNT = 32
+MS_BIND = 4096
+MS_REC = 16384
+MS_PRIVATE = 1 << 18
+CLONE_NEWNS = 0x00020000
+CLONE_NEWPID = 0x20000000
+# The jail's own procfs (Rustic needs /proc/self/exe): a fresh instance for
+# the child's PID namespace, showing only the jail's processes and none of
+# the system files.
+CONFINED_PROC_OPTIONS = "hidepid=invisible,subset=pid"
+# The new mount API (same numbers on x86_64 and arm64).  The pinned work
+# directories were opened in the host mount namespace, and a classic bind
+# from another namespace fails with EINVAL; a detached clone (open_tree)
+# taken before unshare can be attached inside the new one (move_mount).
+# pivot_root has no glibc wrapper and an arch-specific number.
+SYS_PIVOT_ROOT = {"x86_64": 155, "aarch64": 41}
+MNT_DETACH = 2
+SYS_OPEN_TREE = 428
+SYS_MOVE_MOUNT = 429
+SYS_MOUNT_SETATTR = 442
+OPEN_TREE_CLONE = 1
+AT_EMPTY_PATH = 0x1000
+AT_FDCWD = -100
+MOVE_MOUNT_F_EMPTY_PATH = 0x4
+MOUNT_ATTR_RDONLY = 0x1
+MOUNT_ATTR_NOSUID = 0x2
+MOUNT_ATTR_NODEV = 0x4
+MOUNT_ATTR_NOEXEC = 0x8
+# No symlink is followed in any path walk on the work directories (copies
+# still read and create links as links): a second layer under the jail.
+MOUNT_ATTR_NOSYMFOLLOW = 0x00200000
+CLONE_NEWUSER = 0x10000000
+PR_SET_KEEPCAPS = 8
+PR_CAPBSET_DROP = 24
+PR_SET_NO_NEW_PRIVS = 38
+PR_CAP_AMBIENT = 47
+PR_CAP_AMBIENT_RAISE = 2
+PR_CAP_AMBIENT_CLEAR_ALL = 4
+LINUX_CAPABILITY_VERSION_3 = 0x20080522
+
+
+class CapHeader(ctypes.Structure):
+    _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+
+
+class CapData(ctypes.Structure):
+    _fields_ = [
+        ("effective", ctypes.c_uint32),
+        ("permitted", ctypes.c_uint32),
+        ("inheritable", ctypes.c_uint32),
+    ]
+
+
+def libc_check(result, what):
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"{what}: {os.strerror(error)}")
+
+
+def confined_id_maps(user=RUNTIME_USER, subid_files=SUBID_FILES):
+    """Identity uid and gid maps: the runtime ids and their subordinate
+    extents, each mapped to itself.  Never 0, never overlapping."""
+    uid, gid = runtime_user_ids(user)
+    maps = []
+    for own, path in ((uid, subid_files[0]), (gid, subid_files[1])):
+        extents = sorted({(own, 1), *subordinate_ranges(path, user, uid)})
+        for start, count in extents:
+            if start <= 0 or count <= 0 or start + count > 2**32 - 1:
+                fail(f"invalid id extent {start}:{count}")
+        for (a, n), (b, _m) in zip(extents, extents[1:]):
+            if a + n > b:
+                fail("overlapping id extents")
+        maps.append("".join(f"{start} {start} {count}\n" for start, count in extents))
+    return uid, gid, maps[0], maps[1]
+
+
+def confined_mount_plan(jail, binds, executable_dirs, path_exists=os.path.lexists,
+                        is_link=os.path.islink, read_link=os.readlink, real_path=os.path.realpath):
+    """The mounts that make up the jail, in order: (kind, source, target,
+    flags).  kind is tmpfs, bind (then remounted with flags), mkdir, file
+    (an empty mountpoint), or symlink (source is the link text)."""
+    plan = [("tmpfs", "tmpfs", jail, MS_NOSUID | MS_NODEV, "mode=0755,size=16m")]
+    system = MS_RDONLY | MS_NOSUID | MS_NODEV
+    for path in CONFINED_SYSTEM_DIRS:
+        if not path_exists(path):
+            continue
+        if is_link(path):
+            plan.append(("symlink", read_link(path), jail + path, 0, None))
+        else:
+            plan.append(("mkdir", None, jail + path, 0, None))
+            plan.append(("bind", path, jail + path, system, None))
+    plan.append(("mkdir", None, jail + "/etc", 0, None))
+    for name in CONFINED_ETC_FILES:
+        source = "/etc/" + name
+        if path_exists(source):
+            plan.append(("file", None, f"{jail}/etc/{name}", 0, None))
+            # resolv.conf is often a link into /run: bind its target only.
+            plan.append(("bind", real_path(source), f"{jail}/etc/{name}", system, None))
+    for name in CONFINED_ETC_DIRS:
+        if path_exists("/etc/" + name):
+            plan.append(("mkdir", None, f"{jail}/etc/{name}", 0, None))
+            plan.append(("bind", "/etc/" + name, f"{jail}/etc/{name}", system, None))
+    plan.append(("mkdir", None, jail + "/dev", 0, None))
+    for name in CONFINED_DEVICES:
+        plan.append(("file", None, f"{jail}/dev/{name}", 0, None))
+        plan.append(("bind", "/dev/" + name, f"{jail}/dev/{name}", MS_NOSUID | MS_NOEXEC, None))
+    plan.append(("mkdir", None, jail + "/proc", 0, None))
+    plan.append(("proc", "proc", jail + "/proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, CONFINED_PROC_OPTIONS))
+    plan.append(("mkdir", None, jail + "/tmp", 0, None))
+    plan.append(("tmpfs", "tmpfs", jail + "/tmp", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=1777,size=256m"))
+    for path in executable_dirs:
+        plan.append(("mkdirs", None, jail + path, 0, None))
+        plan.append(("bind", path, jail + path, MS_RDONLY | MS_NOSUID | MS_NODEV, None))
+    for fd, target, writable in binds:
+        if target == CONFINED_PROFILE_TARGET:
+            plan.append(("file", None, jail + target, 0, None))
+        else:
+            plan.append(("mkdir", None, jail + target, 0, None))
+        flags = MS_NOSUID | MS_NODEV | MS_NOEXEC | (0 if writable else MS_RDONLY)
+        # source is the pinned fd itself: never re-resolved by path.
+        plan.append(("tree", fd, jail + target, flags, None))
+    return plan
+
+
+def confined_mount(source, target, fstype, flags, data=None):
+    encode = lambda value: None if value is None else os.fsencode(value)
+    libc_check(
+        LIBC.mount(encode(source), encode(target), encode(fstype), ctypes.c_ulong(flags), encode(data)),
+        f"mount {target}",
+    )
+
+
+class MountAttr(ctypes.Structure):
+    _fields_ = [
+        ("attr_set", ctypes.c_uint64),
+        ("attr_clr", ctypes.c_uint64),
+        ("propagation", ctypes.c_uint64),
+        ("userns_fd", ctypes.c_uint64),
+    ]
+
+
+def clone_pinned_trees(plan):
+    """Before unshare: a detached, non-recursive clone of each pinned work
+    directory, with its mount flags already set.  Returns {plan index:
+    tree fd}, so one pinned fd may be bound at several targets."""
+    trees = {}
+    for index, (kind, source, _target, flags, _data) in enumerate(plan):
+        if kind != "tree":
+            continue
+        tree = LIBC.syscall(
+            SYS_OPEN_TREE, ctypes.c_int(source), b"",
+            ctypes.c_uint(OPEN_TREE_CLONE | os.O_CLOEXEC | AT_EMPTY_PATH),
+        )
+        if tree < 0:
+            error = ctypes.get_errno()
+            raise OSError(error, f"open_tree: {os.strerror(error)}")
+        attr = MountAttr(
+            (MOUNT_ATTR_NOSUID if flags & MS_NOSUID else 0)
+            | (MOUNT_ATTR_NODEV if flags & MS_NODEV else 0)
+            | (MOUNT_ATTR_NOEXEC if flags & MS_NOEXEC else 0)
+            | (MOUNT_ATTR_RDONLY if flags & MS_RDONLY else 0)
+            | MOUNT_ATTR_NOSYMFOLLOW,
+            0, 0, 0,
+        )
+        libc_check(
+            LIBC.syscall(SYS_MOUNT_SETATTR, ctypes.c_int(tree), b"", ctypes.c_uint(AT_EMPTY_PATH),
+                         ctypes.byref(attr), ctypes.c_size_t(ctypes.sizeof(attr))),
+            "mount_setattr",
+        )
+        trees[index] = tree
+    return trees
+
+
+def build_jail(plan, trees=None):
+    confined_mount(None, "/", None, MS_REC | MS_PRIVATE)
+    for index, (kind, source, target, flags, data) in enumerate(plan):
+        if kind == "tmpfs":
+            confined_mount(source, target, "tmpfs", flags, data)
+        elif kind == "proc":
+            confined_mount(source, target, "proc", flags, data)
+        elif kind == "mkdir":
+            os.mkdir(target, 0o755)
+        elif kind == "mkdirs":
+            os.makedirs(target, 0o755, exist_ok=True)
+        elif kind == "file":
+            os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o644))
+        elif kind == "symlink":
+            os.symlink(source, target)
+        elif kind == "bind":
+            confined_mount(source, target, None, MS_BIND)
+            confined_mount(None, target, None, MS_REMOUNT | MS_BIND | flags)
+        elif kind == "tree":
+            tree = trees.pop(index)
+            try:
+                libc_check(
+                    LIBC.syscall(SYS_MOVE_MOUNT, ctypes.c_int(tree), b"", ctypes.c_int(AT_FDCWD),
+                                 os.fsencode(target), ctypes.c_uint(MOVE_MOUNT_F_EMPTY_PATH)),
+                    f"move_mount {target}",
+                )
+            finally:
+                os.close(tree)
+            # A clone may share the source's peer group: never propagate.
+            confined_mount(None, target, None, MS_PRIVATE)
+
+
+def enter_jail(jail):
+    """Make the jail the mount namespace's root (pivot_root, not chroot:
+    the kernel refuses CLONE_NEWUSER from a chroot), then detach the old
+    root, so no host mount is left in the namespace."""
+    number = SYS_PIVOT_ROOT.get(os.uname().machine)
+    if number is None:
+        fail(f"pivot_root: unsupported machine {os.uname().machine}")
+    os.mkdir(os.path.join(jail, ".old"), 0o700)
+    os.chdir(jail)
+    libc_check(LIBC.syscall(number, b".", b".old"), "pivot_root")
+    os.chdir("/")
+    libc_check(LIBC.umount2(b"/.old", MNT_DETACH), "detach old root")
+    os.rmdir("/.old")
+
+
+def confined_drop(uid, gid, caps, last_cap):
+    libc_check(LIBC.prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0), "keepcaps")
+    os.setresgid(gid, gid, gid)
+    os.setresuid(uid, uid, uid)
+    last = last_cap
+    for cap in range(last + 1):
+        if cap not in caps:
+            libc_check(LIBC.prctl(PR_CAPBSET_DROP, cap, 0, 0, 0), f"bounding drop {cap}")
+    mask = sum(1 << cap for cap in caps)
+    header = CapHeader(LINUX_CAPABILITY_VERSION_3, 0)
+    data = (CapData * 2)(CapData(mask, mask, mask), CapData(0, 0, 0))
+    libc_check(LIBC.capset(ctypes.byref(header), data), "capset")
+    libc_check(LIBC.prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0), "ambient clear")
+    for cap in caps:
+        libc_check(LIBC.prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, cap, 0, 0), f"ambient {cap}")
+    libc_check(LIBC.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), "no_new_privs")
+
+
+def parse_confined_spec(text, rustic_candidates=None):
+    spec = json.loads(text)
+    if set(spec) != {"argv", "binds", "setfcap", "tolerate_skips"}:
+        fail("invalid confined spec")
+    argv, binds = spec["argv"], spec["binds"]
+    if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
+        fail("invalid confined argv")
+    allowed_programs = {CONFINED_RSYNC[0], CONFINED_CP[0], *(rustic_candidates or RUSTIC_CANDIDATES)}
+    if argv[0] == CONFINED_EXEC_PATH:
+        # Only the capability walker, with its fixed arguments.
+        if len(argv) != 4 or argv[1:3] != [IMAGE_CAPS_WALK, "--rootid"] or not re.fullmatch(r"[1-9][0-9]{0,9}", argv[3]):
+            fail("only the image capability walker may run the helper confined")
+    elif argv[0] not in allowed_programs:
+        fail(f"program is not allowed in confinement: {argv[0]!r}")
+    targets = set()
+    parsed = []
+    for bind in binds:
+        fd, target, writable = bind
+        if (
+            not isinstance(fd, int)
+            or fd < 3
+            or target not in CONFINED_WORK_TARGETS | {CONFINED_PROFILE_TARGET}
+            or target in targets
+            or not isinstance(writable, bool)
+            or (target == CONFINED_PROFILE_TARGET and writable)
+        ):
+            fail("invalid confined bind")
+        targets.add(target)
+        parsed.append((fd, target, writable))
+    if not isinstance(spec["setfcap"], bool) or not isinstance(spec["tolerate_skips"], bool):
+        fail("invalid confined spec")
+    return argv, parsed, spec["setfcap"], spec["tolerate_skips"]
+
+
+class ConfinedErrors:
+    """Classifies rsync's stderr as it streams, every line, no cap.  Exit 23
+    is tolerable only if every rsync error line was a deliberate confinement
+    skip, there was at least one, and rsync ended with its partial-transfer
+    line."""
+
+    def __init__(self):
+        self.skipped = 0
+        self.unexpected = False
+        self.partial = False
+
+    def feed(self, line):
+        line = line.rstrip("\n")
+        if not line.startswith("rsync"):
+            return
+        if CONFINED_PARTIAL_LINE.match(line):
+            self.partial = True
+        elif any(pattern.match(line) for pattern in CONFINED_SKIP_PATTERNS):
+            self.skipped += 1
+        else:
+            self.unexpected = True
+
+    def tolerable(self):
+        return not self.unexpected and self.skipped > 0 and self.partial
+
+
+def classify_confined_errors(lines):
+    """Return (tolerable, skipped) for rsync stderr lines (see ConfinedErrors)."""
+    errors = ConfinedErrors()
+    for line in lines:
+        errors.feed(line)
+    return errors.tolerable(), errors.skipped
+
+
+def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candidates=None):
+    """_confined-exec SPEC: run SPEC's program confined (see above).  Started
+    by run_confined through run_supervised, which owns the deadline."""
+    if len(argv) != 2:
+        fail("usage: _confined-exec SPEC")
+    program_argv, binds, setfcap, tolerate_skips = parse_confined_spec(argv[1], rustic_candidates)
+    uid, gid, uid_map, gid_map = id_maps or confined_id_maps()
+    caps = CONFINED_CAPS + ((CAP_SETFCAP,) if setfcap else ())
+    program_dir = os.path.dirname(program_argv[0])
+    executable_dirs = (
+        []
+        if any(program_dir == top or program_dir.startswith(top + "/") for top in CONFINED_SYSTEM_DIRS)
+        else [program_dir]
+    )
+    ensure_private_root_directory(run_dir, 0, 0o700)
+    jail = tempfile.mkdtemp(prefix="jail-", dir=run_dir)
+    plan = confined_mount_plan(jail, binds, executable_dirs)
+    ready_r, ready_w = os.pipe()
+    go_r, go_w = os.pipe()
+    err_r, err_w = os.pipe()
+    # The child is PID 1 of a new PID namespace (its procfs shows only the
+    # jail); this helper stays outside, keeps its real pid for the id maps,
+    # and supervises it directly.  PID 1 cannot ignore SIGKILL from here.
+    os.unshare(CLONE_NEWPID)
+    pid = os.fork()
+    if pid == 0:
+        step = "setup"
+        try:
+            os.close(ready_r)
+            os.close(go_w)
+            os.close(err_r)
+            os.dup2(err_w, 2)
+            step = "setgroups"
+            os.setgroups([])
+            step = "pinned trees"
+            trees = clone_pinned_trees(plan)
+            step = "mount namespace"
+            os.unshare(CLONE_NEWNS)
+            step = "jail"
+            build_jail(plan, trees)
+            # The pinned fds point into the host mount namespace; once bound
+            # they are not needed, and kept open they would lead back to the
+            # host tree after pivot_root.
+            # Read while the host /proc is still visible (the jail's procfs
+            # has no /proc/sys).
+            with open("/proc/sys/kernel/cap_last_cap") as handle:
+                last_cap = int(handle.read())
+            keep = {0, 1, 2, ready_w, go_r}
+            for name in os.listdir("/proc/self/fd"):
+                if int(name) not in keep:
+                    try:
+                        os.close(int(name))
+                    except OSError:
+                        pass
+            step = "pivot root"
+            enter_jail(jail)
+            step = "user namespace"
+            os.unshare(CLONE_NEWUSER)
+            os.write(ready_w, b"1")
+            if os.read(go_r, 1) != b"1":
+                os._exit(125)
+            step = "drop"
+            confined_drop(uid, gid, caps, last_cap)
+            step = "exec"
+            os.execve(program_argv[0], program_argv, CONFINED_ENV)
+        except BaseException as err:
+            os.write(2, f"SECURITY_DENY code=confined-{step.replace(' ', '-')} detail={err}\n".encode())
+            os._exit(126)
+    os.close(ready_w)
+    os.close(go_r)
+    os.close(err_w)
+    status = None
+    try:
+        try:
+            if os.read(ready_r, 1) == b"1":
+                with open(f"/proc/{pid}/setgroups", "w") as f:
+                    f.write("deny")
+                with open(f"/proc/{pid}/uid_map", "w") as f:
+                    f.write(uid_map)
+                with open(f"/proc/{pid}/gid_map", "w") as f:
+                    f.write(gid_map)
+                os.write(go_w, b"1")
+        finally:
+            os.close(go_w)
+            os.close(ready_r)
+        errors = ConfinedErrors()
+        with os.fdopen(err_r, "r", errors="replace") as stream:
+            for line in stream:
+                sys.stderr.write(line)
+                errors.feed(line)
+        sys.stderr.flush()
+        _pid, status = os.waitpid(pid, 0)
+    finally:
+        if status is None:
+            # Stopped (deadline, caller gone, signal): the child is PID 1 of
+            # its namespace and ignores SIGTERM, so kill it, which ends
+            # every process in the namespace.
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            os.waitpid(pid, 0)
+        try:
+            os.rmdir(jail)
+        except OSError:
+            if status is not None:
+                raise  # only after a clean run; never mask the original error
+    code = os.waitstatus_to_exitcode(status)
+    if code == 23 and tolerate_skips and errors.tolerable():
+        print(f"{CONFINED_SKIPPED_MARKER} count={errors.skipped}", file=sys.stderr, flush=True)
+        return 0
+    return code
+
+
+CONFINED_EXEC_PATH = "/usr/local/libexec/cocalc-runtime-storage-path-helper"
+
+
+def run_confined(program_argv, binds, *, deadline, setfcap=False, tolerate_skips=False, exec_path=CONFINED_EXEC_PATH):
+    """Run program_argv confined, binding each (fd, target, writable)."""
+    spec = json.dumps(
+        {
+            "argv": program_argv,
+            "binds": [[fd, target, writable] for fd, target, writable in binds],
+            "setfcap": setfcap,
+            "tolerate_skips": tolerate_skips,
+        }
+    )
+    return run_supervised(
+        [exec_path, "_confined-exec", spec],
+        deadline=deadline,
+        pass_fds=tuple(fd for fd, _target, _writable in binds),
+        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+    )
+
+
+# normalize-rootfs (re)creates these links as root; in a container tree they
+# belong to the container root.  A confined copy cannot recreate a uid-0
+# owner and fails closed, so they are handed to the container root first.
+ROOT_OWNED_IMAGE_LINKS = (("etc", "mtab"), ("var", "run"))
+
+
+def container_root_ids(user=RUNTIME_USER, subid_files=SUBID_FILES):
+    uid, gid = runtime_user_ids(user)
+    uids = sorted(subordinate_ranges(subid_files[0], user, uid))
+    gids = sorted(subordinate_ranges(subid_files[1], user, gid))
+    if not uids or not gids:
+        fail("the runtime user has no subordinate ids")
+    return uids[0][0], gids[0][0]
+
+
+def own_root_links(treefd, owner):
+    """lchown etc/mtab and var/run beneath the pinned tree to owner, only
+    where each is a symlink owned by uid or gid 0.  Their parents are
+    resolved without following symlinks; nothing else is touched.  Returns
+    how many links changed."""
+    changed = 0
+    for parent, name in ROOT_OWNED_IMAGE_LINKS:
+        try:
+            parentfd = openat2(treefd, parent, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        except OSError:
+            continue
+        try:
+            info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode) and (info.st_uid == 0 or info.st_gid == 0):
+                os.chown(name, *owner, dir_fd=parentfd, follow_symlinks=False)
+                changed += 1
+        except FileNotFoundError:
+            pass
+        finally:
+            os.close(parentfd)
+    return changed
+
+
+# File capabilities in image trees (finding 014).  Image extraction ran as
+# root and kept host-global (v2) capabilities, which are effective when the
+# host runs the file.  Each image is walked once, confined with SETFCAP over
+# a writable bind (see run_confined): v1/v2 become v3 rooted at the container
+# root, keeping the permitted, inheritable and effective bits; v3 rooted at
+# the container root is kept; any other rootid is removed, never re-rooted.
+VFS_CAP_REVISION_MASK = 0xFF000000
+VFS_CAP_FLAGS_EFFECTIVE = 0x000001
+VFS_CAP_SIZES = {0x01000000: 12, 0x02000000: 20, 0x03000000: 24}
+VFS_CAP_REVISION_3 = 0x03000000
+IMAGE_CAPS_VERSION = 1
+IMAGE_CAPS_WALK = "_image-caps-walk"
+IMAGE_CAPS_TARGET = "/dest"
+IMAGE_CAPS_STATE = "/var/lib/cocalc/image-caps.json"
+IMAGE_CAPS_STATE_MAX_BYTES = 4 * 1024 * 1024
+IMAGE_CAPS_STATE_MAX_IMAGES = 20000
+BTRFS_IOC_GET_SUBVOL_INFO = (2 << 30) | (504 << 16) | (0x94 << 8) | 60
+
+
+def parse_file_capability(value):
+    """(revision, flags, (p0, i0, p1, i1), rootid or None); strict."""
+    if len(value) < 4:
+        fail("malformed file capability")
+    magic = struct.unpack_from("<I", value)[0]
+    revision = magic & VFS_CAP_REVISION_MASK
+    flags = magic & ~VFS_CAP_REVISION_MASK
+    if revision not in VFS_CAP_SIZES or len(value) != VFS_CAP_SIZES[revision]:
+        fail("malformed file capability")
+    if flags & ~VFS_CAP_FLAGS_EFFECTIVE:
+        fail("file capability has unknown flags")
+    if revision == 0x01000000:
+        p0, i0 = struct.unpack_from("<II", value, 4)
+        return revision, flags, (p0, i0, 0, 0), None
+    words = struct.unpack_from("<IIII", value, 4)
+    rootid = struct.unpack_from("<I", value, 20)[0] if revision == VFS_CAP_REVISION_3 else None
+    return revision, flags, words, rootid
+
+
+def v3_file_capability(flags, words, rootid):
+    return struct.pack("<IIIIII", VFS_CAP_REVISION_3 | flags, *words, rootid)
+
+
+def image_caps_walk(top, rootid):
+    """Inside the confinement: convert or remove the capabilities beneath
+    top (see above).  Regular files only; any traversal error, malformed
+    value or unexpected errno fails the walk."""
+    counts = {"converted": 0, "kept": 0, "stripped": 0}
+
+    def raise_error(err):
+        raise err
+
+    for _dirpath, _dirnames, filenames, dirfd in os.fwalk(top, follow_symlinks=False, onerror=raise_error):
+        for name in filenames:
+            info = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dirfd)
+            try:
+                opened = os.fstat(fd)
+                if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    fail(f"file changed during the capability walk: {name!r}")
+                try:
+                    value = os.getxattr(fd, "security.capability")
+                except OSError as err:
+                    if err.errno == errno.ENODATA:
+                        continue
+                    if err.errno == errno.EOVERFLOW:
+                        # Rooted outside this namespace: not ours to keep.
+                        os.removexattr(fd, "security.capability")
+                        counts["stripped"] += 1
+                        continue
+                    raise
+                revision, flags, words, current = parse_file_capability(value)
+                if revision == VFS_CAP_REVISION_3 and current == rootid:
+                    counts["kept"] += 1
+                elif revision == VFS_CAP_REVISION_3:
+                    os.removexattr(fd, "security.capability")
+                    counts["stripped"] += 1
+                else:
+                    os.setxattr(fd, "security.capability", v3_file_capability(flags, words, rootid))
+                    counts["converted"] += 1
+            finally:
+                os.close(fd)
+    return counts
+
+
+def run_image_caps_walk_entry(argv):
+    """The confined walker's entry point: exactly
+    _image-caps-walk --rootid N, always on /dest."""
+    if len(argv) != 3 or argv[:2] != [IMAGE_CAPS_WALK, "--rootid"] or not re.fullmatch(r"[1-9][0-9]{0,9}", argv[2]):
+        fail("usage: _image-caps-walk --rootid N")
+    counts = image_caps_walk(IMAGE_CAPS_TARGET, int(argv[2]))
+    print(json.dumps(counts, sort_keys=True), flush=True)
+    return 0
+
+
+def image_identity(fd):
+    """A key for an image root that survives remounts: a btrfs subvolume
+    root is named by its UUID (subvolume roots all have inode 256 and their
+    device numbers are reassigned); anything else by device, inode and
+    ctime.  After a walk only root extraction could add a host-global
+    capability again, and normalize-rootfs then forces a walk."""
+    info = os.fstat(fd)
+    if info.st_ino == BTRFS_FIRST_FREE_OBJECTID:
+        # ioctl needs a real fd; the pinned one may be O_PATH.
+        realfd = os.open(f"/proc/self/fd/{fd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            args = bytearray(504)
+            try:
+                fcntl.ioctl(realfd, BTRFS_IOC_GET_SUBVOL_INFO, args)
+            except OSError as err:
+                # Only "not btrfs" may fall back to the inode key.
+                if err.errno != errno.ENOTTY:
+                    raise
+            else:
+                uuid = bytes(args[296:312]).hex()
+                if uuid == "0" * 32:
+                    fail("btrfs subvolume without a UUID")
+                return f"subvol:{uuid}"
+        finally:
+            os.close(realfd)
+    return f"inode:{info.st_dev}:{info.st_ino}:{info.st_ctime_ns}"
+
+
+def read_image_caps_state(path=IMAGE_CAPS_STATE):
+    """{identity: version}; anything unreadable or malformed counts as
+    empty (images are walked again, never skipped)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:  # missing, or a symlink (O_NOFOLLOW)
+        return {}
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077 \
+                or info.st_size > IMAGE_CAPS_STATE_MAX_BYTES:
+            return {}
+        data = os.read(fd, IMAGE_CAPS_STATE_MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    try:
+        state = json.loads(data)
+    except ValueError:
+        return {}
+    images = state.get("images") if isinstance(state, dict) else None
+    if not isinstance(images, dict) or len(images) > IMAGE_CAPS_STATE_MAX_IMAGES:
+        return {}
+    return {
+        key: value
+        for key, value in images.items()
+        if isinstance(key, str) and len(key) <= 128 and isinstance(value, int)
+    }
+
+
+def write_image_caps_state(images, path=IMAGE_CAPS_STATE):
+    directory, name = os.path.split(path)
+    data = json.dumps({"images": images}, sort_keys=True).encode()
+    for _attempt in range(16):
+        temp = f".{name}.{os.urandom(8).hex()}"
+        try:
+            fd = os.open(os.path.join(directory, temp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        except FileExistsError:
+            continue
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(os.path.join(directory, temp), path)
+        dirfd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(dirfd)
+        finally:
+            os.close(dirfd)
+        return
+    fail("could not write the image capability state")
+
+
+def subvolume_readonly(treefd):
+    if os.fstat(treefd).st_ino != BTRFS_FIRST_FREE_OBJECTID:
+        return False
+    fd = os.open(f"/proc/self/fd/{treefd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        flags = bytearray(8)
+        try:
+            fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_GETFLAGS, flags)
+        except OSError:
+            return False
+        return bool(struct.unpack("<Q", flags)[0] & BTRFS_SUBVOL_RDONLY)
+    finally:
+        os.close(fd)
+
+
+def set_subvolume_readonly(treefd, readonly):
+    fd = os.open(f"/proc/self/fd/{treefd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        flags = bytearray(8)
+        fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_GETFLAGS, flags)
+        value = struct.unpack("<Q", flags)[0]
+        value = value | BTRFS_SUBVOL_RDONLY if readonly else value & ~BTRFS_SUBVOL_RDONLY
+        fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_SETFLAGS, bytearray(struct.pack("<Q", value)))
+    finally:
+        os.close(fd)
+
+
+# normalize-rootfs before helper schema 20261120-r23 created apt's partial
+# dirs (and a missing lists or archives) as host root, after the ownership
+# bridge (the root cause found with finding 093).  An unmapped owner's 0700
+# dir cannot be read by the confined walk, so exactly these dirs, while
+# still 0:0, go to the container root first, which is the owner the step
+# meant them to have.
+HOST_ROOT_APT_REPAIRS = (
+    "var/lib/apt/lists",
+    "var/lib/apt/lists/partial",
+    "var/lib/apt/lists/auxfiles",
+    "var/cache/apt/archives",
+    "var/cache/apt/archives/partial",
+)
+
+
+def repair_host_root_apt_dirs(treefd, owner=None):
+    """Give the allowlisted apt dirs that are real directories owned 0:0 on
+    the tree's device to the container root.  No symlink is followed and no
+    mount crossed; anything else, their contents included, is left to the
+    walk, which fails closed on what it cannot read.  Returns the relative
+    paths changed."""
+    dev = os.fstat(treefd).st_dev
+    repaired = []
+    for rel in HOST_ROOT_APT_REPAIRS:
+        try:
+            fd = openat2(
+                treefd,
+                rel,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                resolve=RESOLVE_FLAGS | RESOLVE_NO_XDEV,
+            )
+        except OSError:
+            continue  # absent, a symlink on the way, not a directory, a mount
+        try:
+            info = os.fstat(fd)
+            if info.st_dev != dev or (info.st_uid, info.st_gid) != (0, 0):
+                continue
+            if owner is None:
+                owner = container_root_ids()
+            if 0 in owner:
+                fail("the container root must not be host root")
+            os.fchown(fd, *owner)
+            repaired.append(rel)
+        finally:
+            os.close(fd)
+    return repaired
+
+
+def image_caps_preflight(treefd, *, deadline, state_path=IMAGE_CAPS_STATE, confined=None, rootid=None, force=False):
+    """Walk an image root once (see image_caps_walk) unless its identity is
+    stamped for this version; stamp the identity read again from the same
+    pinned fd after a successful walk.  Returns the walk's outcome, or
+    "stamped"."""
+    confined = confined or run_confined
+    lockfd = os.open(state_path + ".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(lockfd, fcntl.LOCK_EX)
+        if not force and read_image_caps_state(state_path).get(image_identity(treefd)) == IMAGE_CAPS_VERSION:
+            return "stamped"
+        rootid = rootid or container_root_ids()[0]
+        # A read-only subvolume is made writable for the walk only.
+        readonly = subvolume_readonly(treefd)
+        if readonly:
+            set_subvolume_readonly(treefd, False)
+        try:
+            repaired = repair_host_root_apt_dirs(treefd)
+            status = confined(
+                [CONFINED_EXEC_PATH, IMAGE_CAPS_WALK, "--rootid", str(rootid)],
+                [(treefd, IMAGE_CAPS_TARGET, True)],
+                deadline=deadline,
+                setfcap=True,
+            )
+        finally:
+            if readonly:
+                set_subvolume_readonly(treefd, True)
+        if status != 0:
+            raise subprocess.CalledProcessError(status, [IMAGE_CAPS_WALK])
+        images = read_image_caps_state(state_path)
+        key = image_identity(treefd)
+        images.pop(key, None)
+        images[key] = IMAGE_CAPS_VERSION
+        # Oldest first out: entries for deleted images age out, and a new
+        # image is always stamped (an evicted one is just walked again).
+        if len(images) > IMAGE_CAPS_STATE_MAX_IMAGES:
+            images = dict(list(images.items())[-IMAGE_CAPS_STATE_MAX_IMAGES:])
+        write_image_caps_state(images, state_path)
+        if repaired:
+            return "walked; repaired host-root apt dirs: " + ", ".join(repaired)
+        return "walked"
+    finally:
+        os.close(lockfd)
+
+
+IMAGE_CACHE_RELATIVE = "data/cache/images"
+
+
+def open_image_cache(cache_root, cache_relative):
+    rootfd = open_root(cache_root, {cache_root})
+    try:
+        return openat2(rootfd, cache_relative, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+
+
+def run_image_caps_preflight(argv, cache_root="/mnt/cocalc", cache_relative=IMAGE_CACHE_RELATIVE, preflight=None):
+    """image-caps-preflight --root /mnt/cocalc --path data/cache/images/NAME:
+    an image workflow's explicit preflight of one image root.  Only image
+    roots directly in the pinned image cache: a host-global capability
+    anywhere else (a project home) is evidence of a crafted restore
+    (finding 011) to investigate, and the runtime user must not be able to
+    convert it away."""
+    values, _flags = parse_named_options(argv, "image-caps-preflight", {"--root", "--path"}, {"--root", "--path"})
+    prefix = cache_relative + "/"
+    name = values["path"][len(prefix):] if values["path"].startswith(prefix) else ""
+    if values["root"] != cache_root or not name or "/" in name or name in (".", ".."):
+        fail("image-caps-preflight only takes an image root in the image cache")
+    preflight = preflight or image_caps_preflight
+    cachefd = open_image_cache(cache_root, cache_relative)
+    try:
+        treefd = openat2(cachefd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    finally:
+        os.close(cachefd)
+    try:
+        outcome = preflight(treefd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS)
+    finally:
+        os.close(treefd)
+    print(json.dumps({"image_caps": outcome}), flush=True)
+    return 0
+
+
+def run_migrate_image_caps(argv, cache_root="/mnt/cocalc", cache_relative=IMAGE_CACHE_RELATIVE, preflight=None):
+    """migrate-image-caps: preflight every image under the pinned image
+    cache (a one-off after rollout; stamped images are skipped).  Reports
+    each entry.  Only regular metadata files are skipped; an entry that
+    cannot be examined, opened or walked, one that vanished during the pass,
+    or any other type (a symlink) counts as failed (exit 1): the cache is
+    writable by the runtime user, so a pass that met any of these is rerun."""
+    if argv != ["migrate-image-caps"]:
+        fail("usage: migrate-image-caps")
+    preflight = preflight or image_caps_preflight
+    cachefd = open_image_cache(cache_root, cache_relative)
+    failed = 0
+
+    def report(name, outcome):
+        print(json.dumps({"image": name, "image_caps": outcome}), flush=True)
+
+    try:
+        for name in sorted(os.listdir(cachefd)):
+            try:
+                info = os.stat(name, dir_fd=cachefd, follow_symlinks=False)
+            except FileNotFoundError:
+                failed += 1
+                report(name, "vanished")
+                continue
+            except OSError as err:
+                failed += 1
+                report(name, f"failed: {err}")
+                continue
+            if stat.S_ISREG(info.st_mode):
+                continue  # metadata files (.<image>.json)
+            if not stat.S_ISDIR(info.st_mode):
+                failed += 1
+                report(name, "failed: not a directory")
+                continue
+            try:
+                treefd = openat2(cachefd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+            except FileNotFoundError:
+                failed += 1
+                report(name, "vanished")
+                continue
+            except OSError as err:
+                failed += 1
+                report(name, f"failed: {err}")
+                continue
+            try:
+                outcome = preflight(treefd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS)
+            except (OSError, ValueError, subprocess.CalledProcessError) as err:
+                failed += 1
+                outcome = f"failed: {err}"
+            finally:
+                os.close(treefd)
+            report(name, outcome)
+    finally:
+        os.close(cachefd)
+    return 1 if failed else 0
+
+
+def make_staging_directory(parentfd, prefix, uid, gid):
+    """A fresh, empty directory for the confined runtime user: created by
+    root beneath a pinned parent, then handed to the runtime user."""
+    for _attempt in range(16):
+        name = f"{prefix}{os.urandom(8).hex()}"
+        try:
+            os.mkdir(name, 0o700, dir_fd=parentfd)
+        except FileExistsError:
+            continue
+        fd = openat2(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        os.fchown(fd, uid, gid)
+        return name, fd
+    fail("could not create a staging directory")
+
+
+# Project restores stage here, beneath the data root and on the same
+# filesystem; generic verbs never reach it (GENERIC_PROTECTED_PATHS).
+RESTORE_STAGING_DIR = ".cocalc-confined-restore"
+
+
+def open_restore_staging_parent(rootfd):
+    try:
+        os.mkdir(RESTORE_STAGING_DIR, 0o711, dir_fd=rootfd)
+    except FileExistsError:
+        pass
+    fd = openat2(rootfd, RESTORE_STAGING_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    info = os.fstat(fd)
+    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o022:
+        os.close(fd)
+        fail("unsafe restore staging directory")
+    return fd
+
+
+def restore_project_confined(rootfd, destfd, profile_fd, program, delete, uid, gid, deadline,
+                             confined=None):
+    """Restore into a fresh staging directory, then merge it into the
+    destination with rsync, both confined.  The destination is the pinned
+    directory itself, so no symlink in it or above it leaves the jail."""
+    confined = confined or run_confined
+    parentfd = open_restore_staging_parent(rootfd)
+    name, stagefd = make_staging_directory(parentfd, "restore-", uid, gid)
+    try:
+        status = confined(
+            program,
+            [(stagefd, "/staging", True), (profile_fd, CONFINED_PROFILE_TARGET, False)],
+            deadline=deadline,
+        )
+        if status != 0:
+            raise subprocess.CalledProcessError(status, program[:1])
+        # Finding 015 on the confined path: the rustic step restores into an
+        # EMPTY staging directory, so the merge is the only place an existing
+        # file could be trusted by size and modification time (both are easy
+        # to keep while changing the bytes).  --checksum compares content and
+        # still leaves identical files in place; --ignore-times would rewrite
+        # every file.
+        merge = [*CONFINED_RSYNC, "--checksum", *(["--delete"] if delete else []), "--", "/staging/", "/home/"]
+        status = confined(
+            merge,
+            [(stagefd, "/staging", False), (destfd, "/home", True)],
+            deadline=deadline,
+            tolerate_skips=True,
+        )
+        if status != 0:
+            raise subprocess.CalledProcessError(status, merge[:1])
+    finally:
+        os.close(stagefd)
+        try:
+            remove_entry(parentfd, name, True, True)
+        finally:
+            os.close(parentfd)
+
+
+def restore_tree_confined(rootfd, path, profile_fd, program, uid, gid, deadline, confined=None):
+    """Whole-tree (RootFS) restore: confined into a fresh directory beside
+    the destination, which then replaces it.  File capabilities namespaced
+    to a mapped root (container images) are kept; host-global ones cannot be
+    written from the confinement."""
+    confined = confined or run_confined
+    parentfd, name = open_parent(rootfd, path)
+    stage_name, stagefd = make_staging_directory(parentfd, f".{name}.confined-", uid, gid)
+    try:
+        status = confined(
+            program,
+            [(stagefd, "/staging", True), (profile_fd, CONFINED_PROFILE_TARGET, False)],
+            deadline=deadline,
+            setfcap=True,
+        )
+        if status != 0:
+            raise subprocess.CalledProcessError(status, program[:1])
+        old = f".{name}.replaced-{os.urandom(8).hex()}"
+        try:
+            os.rename(name, old, src_dir_fd=parentfd, dst_dir_fd=parentfd)
+        except FileNotFoundError:
+            old = None
+        os.rename(stage_name, name, src_dir_fd=parentfd, dst_dir_fd=parentfd)
+        stage_name = None
+        if old is not None:
+            remove_entry(parentfd, old, True, True)
+    finally:
+        os.close(stagefd)
+        try:
+            if stage_name is not None:
+                remove_entry(parentfd, stage_name, True, True)
+        finally:
+            os.close(parentfd)
+
+
 def run_rustic(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -9222,6 +10327,7 @@ def run_rustic(
     profile_run_dir="/run/cocalc-rustic-profiles",
     profile_run_dir_uid=0,
     allow_loopback_rest=ALLOW_LOOPBACK_RUSTIC_REST,
+    confined=None,
 ):
     command, values = parse_rustic(argv)
     rootfd = open_root(values["root"], allowed_roots)
@@ -9336,18 +10442,36 @@ def run_rustic(
                 raise subprocess.CalledProcessError(status, base)
             return
 
-        # Restores into a tree that may already hold files: Rustic must read
-        # each one, not trust a matching size and modification time (both are
-        # easy to keep while changing the bytes).
-        restore = ["restore", "--verify-existing"]
-        if values["no-cache"]:
-            restore.append("--no-cache")
-        if values["delete"]:
-            restore.append("--delete")
-        restore.extend([values["snapshot"], f"/proc/self/fd/{datafd}"])
-        status = invoke(restore)
-        if status != 0:
-            raise subprocess.CalledProcessError(status, base)
+        # Restores never run as root and never write into an existing tree:
+        # Rustic restores confined into a fresh staging directory (it fails,
+        # and would follow symlinks, in a tree it did not create).
+        uid, gid = runtime_user_ids()
+        profile_fd = os.open(profile_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            # Readable by the confined runtime user only through the jail.
+            os.fchown(profile_fd, 0, gid)
+            os.fchmod(profile_fd, 0o640)
+            program = [
+                rustic,
+                "-P",
+                CONFINED_PROFILE_TARGET[: -len(".toml")],
+                "restore",
+                "--no-cache",
+                "--numeric-id",
+                values["snapshot"],
+                "/staging",
+            ]
+            if command == "rustic-project-restore":
+                restore_project_confined(
+                    rootfd, datafd, profile_fd, program, values["delete"], uid, gid, deadline,
+                    confined=confined,
+                )
+            else:
+                restore_tree_confined(
+                    rootfd, values["path"], profile_fd, program, uid, gid, deadline, confined=confined
+                )
+        finally:
+            os.close(profile_fd)
     finally:
         if profile_path is not None:
             os.unlink(profile_path)
@@ -9518,6 +10642,553 @@ def ensure_private_root_directory(path, required_uid=0, mode=0o700):
         fail(f"unsafe privileged runtime directory: {path}")
 
 
+# normalize-rootfs changes an image tree as host root (finding 093).  The
+# tree's content is the image's, so every path in it is resolved against the
+# pinned tree as its root (RESOLVE_IN_ROOT: absolute and ".." symlinks stay
+# inside), never across a mount, and each mutation goes through a pinned fd
+# whose type, device and link count were checked first.  A refusal fails the
+# normalize; nothing falls back to a path-based operation.
+RESOLVE_IMAGE = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV
+# One component beneath a held directory: no symlink is followed, no mount crossed.
+RESOLVE_WALK = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV
+IMAGE_RESOLVE_ATTEMPTS = 8
+IMAGE_WALK_MAX_DEPTH = 256
+AT_EMPTY_PATH = 0x1000
+AT_SYMLINK_NOFOLLOW = 0x100
+NORMALIZE_REFUSED = "normalize-image-path-refused"
+NORMALIZE_SHELLS = ("/bin/bash", "/bin/sh")
+NORMALIZE_PACKAGE_MANAGERS = (
+    ("apt-get", "debian"),
+    ("dnf", "rhel"),
+    ("microdnf", "rhel"),
+    ("yum", "rhel"),
+    ("zypper", "sles"),
+)
+NORMALIZE_CA_PATHS = (
+    ("etc/ssl/certs", stat.S_IFDIR),
+    ("etc/ssl/cert.pem", stat.S_IFREG),
+    ("etc/pki/tls/certs/ca-bundle.crt", stat.S_IFREG),
+    ("etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", stat.S_IFREG),
+    ("etc/ssl/ca-bundle.pem", stat.S_IFREG),
+)
+NORMALIZE_GLIBC_PATHS = (
+    "lib64/ld-linux-x86-64.so.2",
+    "lib/x86_64-linux-gnu/libc.so.6",
+    "lib/ld-linux-aarch64.so.1",
+    "lib64/ld-linux-aarch64.so.1",
+    "lib/aarch64-linux-gnu/libc.so.6",
+)
+APT_STATE_TREES = ("var/lib/apt/lists", "var/cache/apt/archives")
+APT_STATE_DIRS = (
+    ("var/lib/apt/lists", 0o755),
+    ("var/lib/apt/lists/auxfiles", 0o755),
+    ("var/cache/apt/archives", 0o755),
+    ("var/lib/apt/lists/partial", 0o700),
+    ("var/cache/apt/archives/partial", 0o700),
+)
+
+
+class NormalizeRefused(ValueError):
+    """A stable SECURITY_DENY line; detail names a path inside the image only."""
+
+    def __init__(self, code, rel, reason):
+        # ascii() escapes newlines and control bytes in image names, so
+        # the line stays one record.
+        super().__init__(f"SECURITY_DENY code={code} detail={ascii(rel)[1:-1]}: {reason}")
+        self.code = code
+
+
+class NormalizePreflightFailed(Exception):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
+class ImageTree:
+    """The pinned image root: its device, and once inventoried, how many
+    links inside the tree each multiply linked nondirectory has."""
+
+    def __init__(self, fd):
+        self.fd = fd
+        self.dev = os.fstat(fd).st_dev
+        self.links = None
+        self.changed = set()
+
+
+def image_resolve(tree, rel, flags, mode=0):
+    """openat2 rel with the pinned tree as its root.  Missing paths raise
+    FileNotFoundError or NotADirectoryError; everything else refuses."""
+    for _attempt in range(IMAGE_RESOLVE_ATTEMPTS):
+        try:
+            return openat2(tree.fd, rel, flags | os.O_CLOEXEC, mode, resolve=RESOLVE_IMAGE)
+        except (FileNotFoundError, NotADirectoryError):
+            raise
+        except OSError as err:
+            if err.errno == errno.EAGAIN:
+                continue
+            if err.errno in (errno.ENOSYS, errno.EINVAL):
+                raise NormalizeRefused("normalize-openat2-unavailable", rel, os.strerror(err.errno)) from None
+            raise NormalizeRefused(NORMALIZE_REFUSED, rel, os.strerror(err.errno)) from None
+    raise NormalizeRefused(NORMALIZE_REFUSED, rel, "resolution kept racing")
+
+
+def image_check(tree, fd, rel, kind=None):
+    info = os.fstat(fd)
+    if info.st_dev != tree.dev:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "on another filesystem")
+    if kind is not None and stat.S_IFMT(info.st_mode) != kind:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "unexpected file type")
+    return info
+
+
+def image_open(tree, rel, flags, kind=None):
+    fd = image_resolve(tree, rel, flags)
+    try:
+        return fd, image_check(tree, fd, rel, kind)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def image_stat(tree, rel):
+    """What rel resolves to inside the tree (symlinks followed inside it), or None."""
+    try:
+        fd, info = image_open(tree, rel, O_PATH)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    os.close(fd)
+    return info
+
+
+def image_executable(tree, rel):
+    info = image_stat(tree, rel)
+    return info is not None and stat.S_ISREG(info.st_mode) and bool(info.st_mode & 0o111)
+
+
+def image_probe(tree):
+    """The facts the old shell probes read, resolved inside the image."""
+    shell = next((path for path in NORMALIZE_SHELLS if image_executable(tree, path.lstrip("/"))), None)
+    if shell is None:
+        raise NormalizeRefused("rootfs-shell-missing", ".", "no executable bin/bash or bin/sh")
+    sudo_present = image_executable(tree, "usr/bin/sudo") or image_executable(tree, "bin/sudo")
+    ca_present = False
+    for rel, kind in NORMALIZE_CA_PATHS:
+        info = image_stat(tree, rel)
+        if info is not None and stat.S_IFMT(info.st_mode) == kind:
+            ca_present = True
+            break
+    distro_family, package_manager = "unknown", "none"
+    for name, family in NORMALIZE_PACKAGE_MANAGERS:
+        if image_executable(tree, f"usr/bin/{name}") or image_executable(tree, f"bin/{name}"):
+            distro_family, package_manager = family, name
+            break
+    if not any(image_stat(tree, rel) is not None for rel in NORMALIZE_GLIBC_PATHS):
+        raise NormalizePreflightFailed("rootfs preflight failed: glibc is required", 43)
+    if (not sudo_present or not ca_present) and package_manager == "none":
+        raise NormalizePreflightFailed(
+            "rootfs preflight failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled",
+            44,
+        )
+    return {
+        "ok": True,
+        "distro_family": distro_family,
+        "package_manager": package_manager,
+        "shell": shell,
+        "glibc": True,
+        "sudo_present": sudo_present,
+        "ca_certificates_present": ca_present,
+    }
+
+
+def fchown_pinned(fd, uid, gid):
+    """Change the owner of exactly the inode fd pins (O_PATH fds included;
+    a symlink itself, never its target)."""
+    if LIBC.fchownat(ctypes.c_int(fd), b"", ctypes.c_uint(uid), ctypes.c_uint(gid), AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def chmod_pinned(fd, mode):
+    # The magic link names the pinned inode, which is never a symlink here.
+    os.chmod(f"/proc/self/fd/{fd}", mode)
+
+
+def image_split(rel):
+    parent, _, name = rel.rpartition("/")
+    return parent or ".", name
+
+
+def image_ensure_dir(tree, rel, owner, mode=0o755):
+    """mkdir -p inside the image.  Existing components resolve inside the
+    tree; only a directory created here is given owner and mode."""
+    parts = rel.split("/")
+    for index in range(len(parts)):
+        sub = "/".join(parts[: index + 1])
+        try:
+            fd, _info = image_open(tree, sub, O_PATH | os.O_DIRECTORY, stat.S_IFDIR)
+            os.close(fd)
+            continue
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+        parent, name = image_split(sub)
+        parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+        try:
+            try:
+                os.mkdir(name, 0o700, dir_fd=parentfd)
+            except FileExistsError:
+                # A dangling symlink or a non-directory is in the way.
+                raise NormalizeRefused(NORMALIZE_REFUSED, sub, "not a directory") from None
+            fd = image_open_child(parentfd, name, os.O_RDONLY | os.O_DIRECTORY, sub)
+            try:
+                image_check(tree, fd, sub, stat.S_IFDIR)
+                fchown_pinned(fd, *owner)
+                os.fchmod(fd, mode)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(parentfd)
+
+
+def image_chmod_dir(tree, rel, mode):
+    """chmod an existing directory resolved inside the tree; absent is fine."""
+    try:
+        fd, _info = image_open(tree, rel, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    try:
+        os.fchmod(fd, mode)
+    finally:
+        os.close(fd)
+
+
+def image_remove_tree(tree, parentfd, name, rel, depth=0):
+    if depth > IMAGE_WALK_MAX_DEPTH:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "too deep")
+    fd = image_open_child(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK, rel)
+    try:
+        image_check(tree, fd, rel, stat.S_IFDIR)
+        for child in os.listdir(fd):
+            info = os.stat(child, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                image_remove_tree(tree, fd, child, f"{rel}/{child}", depth + 1)
+            else:
+                os.unlink(child, dir_fd=fd)
+    finally:
+        os.close(fd)
+    os.rmdir(name, dir_fd=parentfd)
+
+
+def image_replace_with_symlink(tree, rel, target, owner):
+    """ln -snf target rel, where rel's parent resolves inside the tree and
+    rel itself is never followed.  A host-root link ends with owner (as
+    own_root_links does where the parent is not itself a symlink)."""
+    parent, name = image_split(rel)
+    parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+    try:
+        try:
+            info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+        except FileNotFoundError:
+            info = None
+        if not (info is not None and stat.S_ISLNK(info.st_mode) and os.readlink(name, dir_fd=parentfd) == target):
+            if info is not None and stat.S_ISDIR(info.st_mode):
+                image_remove_tree(tree, parentfd, name, rel)
+            elif info is not None:
+                os.unlink(name, dir_fd=parentfd)
+            os.symlink(target, name, dir_fd=parentfd)
+        fd = image_open_child(parentfd, name, O_PATH | os.O_NOFOLLOW, rel)
+        try:
+            link = image_check(tree, fd, rel, stat.S_IFLNK)
+            if link.st_uid == 0 or link.st_gid == 0:
+                set_pinned_owner(tree, fd, link, rel, *owner)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parentfd)
+
+
+def image_empty_file(tree, rel, mode, owner):
+    """The equivalent of ': >rel; chmod mode rel' without truncating anything
+    before it is known to be a singly linked regular file in the tree."""
+    parent, name = image_split(rel)
+    parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+    try:
+        try:
+            pathfd = image_open_child(parentfd, name, O_PATH | os.O_NOFOLLOW, rel)
+        except FileNotFoundError:
+            fd = image_open_child(parentfd, name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, rel, mode)
+            try:
+                image_check(tree, fd, rel, stat.S_IFREG)
+                fchown_pinned(fd, *owner)
+                os.fchmod(fd, mode)
+            finally:
+                os.close(fd)
+            return
+        try:
+            info = image_check(tree, pathfd, rel, stat.S_IFREG)
+            if info.st_size == 0 and stat.S_IMODE(info.st_mode) == mode:
+                return
+            if info.st_nlink != 1:
+                raise NormalizeRefused(NORMALIZE_REFUSED, rel, "hard linked")
+            fd = os.open(f"/proc/self/fd/{pathfd}", os.O_WRONLY | os.O_NOCTTY | os.O_CLOEXEC)
+        finally:
+            os.close(pathfd)
+        try:
+            again = os.fstat(fd)
+            if (again.st_dev, again.st_ino) != (info.st_dev, info.st_ino) or again.st_nlink != 1:
+                raise NormalizeRefused(NORMALIZE_REFUSED, rel, "changed while opening")
+            os.ftruncate(fd, 0)
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parentfd)
+
+
+def walk_image_tree(tree, dirfd, rel, visit, depth=0):
+    """Visit every entry beneath the held directory dirfd.  Each entry is
+    opened without following it, beneath dirfd, on the tree's device, and
+    must still be the inode lstat saw; visit gets that pinned fd."""
+    if depth > IMAGE_WALK_MAX_DEPTH:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "too deep")
+    for name in os.listdir(dirfd):
+        child = name if rel == "." else f"{rel}/{name}"
+        seen = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+        if seen.st_dev != tree.dev:
+            raise NormalizeRefused(NORMALIZE_REFUSED, child, "on another filesystem")
+        directory = stat.S_ISDIR(seen.st_mode)
+        flags = (os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK) if directory else (O_PATH | os.O_NOFOLLOW)
+        try:
+            fd = image_open_child(dirfd, name, flags, child)
+        except FileNotFoundError:
+            raise NormalizeRefused(NORMALIZE_REFUSED, child, "changed during the walk") from None
+        try:
+            info = image_check(tree, fd, child, stat.S_IFMT(seen.st_mode))
+            if info.st_ino != seen.st_ino:
+                raise NormalizeRefused(NORMALIZE_REFUSED, child, "changed during the walk")
+            visit(fd, info, child)
+            if directory:
+                walk_image_tree(tree, fd, child, visit, depth + 1)
+        finally:
+            os.close(fd)
+
+
+def image_open_child(parentfd, name, flags, rel, mode=0):
+    """One component beneath a held directory; a missing one raises
+    FileNotFoundError, anything else refuses."""
+    try:
+        return openat2(parentfd, name, flags | os.O_CLOEXEC, mode, resolve=RESOLVE_WALK)
+    except FileNotFoundError:
+        raise
+    except OSError as err:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, os.strerror(err.errno)) from None
+
+
+def image_open_root(tree):
+    fd, _info = image_open(tree, ".", os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+    return fd
+
+
+def inventory_image_links(tree):
+    """Count each multiply linked nondirectory's links inside the tree.  A
+    link count above that means a link outside it: refuse before any change."""
+    seen = {}
+    nlinks = {}
+
+    def count(_fd, info, _rel):
+        if not stat.S_ISDIR(info.st_mode) and info.st_nlink > 1:
+            key = (info.st_dev, info.st_ino)
+            seen[key] = seen.get(key, 0) + 1
+            nlinks[key] = info.st_nlink
+
+    rootfd = image_open_root(tree)
+    try:
+        walk_image_tree(tree, rootfd, ".", count)
+    finally:
+        os.close(rootfd)
+    for key, links in seen.items():
+        if nlinks[key] != links:
+            raise NormalizeRefused(NORMALIZE_REFUSED, ".", "a file is hard linked outside the image")
+    tree.links = seen
+
+
+def image_claim_inode(tree, info, rel):
+    """True when this pinned inode should be changed now: once per inode,
+    and a multiply linked one only while all its links are in the tree."""
+    if stat.S_ISDIR(info.st_mode) or info.st_nlink == 1:
+        return True
+    key = (info.st_dev, info.st_ino)
+    if tree.links is None or tree.links.get(key) != info.st_nlink:
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "hard linked outside the image")
+    if key in tree.changed:
+        return False
+    tree.changed.add(key)
+    return True
+
+
+def set_pinned_owner(tree, fd, info, rel, uid, gid):
+    # Fresh at the change: the link count, owner and mode the claim and the
+    # chown act on are read from the pinned fd now, not when it was opened.
+    # (A writer racing after this check is outside the model: nothing but
+    # this helper writes an image tree while it is being normalized.)
+    fresh = os.fstat(fd)
+    if (fresh.st_dev, fresh.st_ino, stat.S_IFMT(fresh.st_mode)) != (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)):
+        raise NormalizeRefused(NORMALIZE_REFUSED, rel, "changed during the walk")
+    info = fresh
+    if (info.st_uid, info.st_gid) == (uid, gid) or not image_claim_inode(tree, info, rel):
+        return
+    fchown_pinned(fd, uid, gid)
+    # chown clears setuid/setgid; put them back as the old remap did.
+    if not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o6000:
+        chmod_pinned(fd, stat.S_IMODE(info.st_mode))
+
+
+def parse_id_map(text):
+    ranges = []
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            fail("unexpected rootless podman id map")
+        ranges.append(tuple(int(part) for part in parts))
+    if not ranges:
+        fail("missing rootless podman id map")
+    return ranges
+
+
+def rootfs_id_mapper(ranges, runtime_id, ownership_source):
+    """The old to-canonical pass followed by its to-host pass, as one
+    function of an inode's current id (both passes were per inode)."""
+    if ownership_source not in ("keep-id", "oci-extract"):
+        fail("unsupported RootFS ownership source")
+
+    def host_to_intermediate(identifier):
+        for ns_start, host_start, length in ranges:
+            if host_start <= identifier < host_start + length:
+                return ns_start + (identifier - host_start)
+        return None
+
+    def intermediate_to_host(identifier):
+        for ns_start, host_start, length in ranges:
+            if ns_start <= identifier < ns_start + length:
+                return host_start + (identifier - ns_start)
+        fail(f"id {identifier} is not covered by the rootless podman map; the host subuid/subgid allocation is too small for this image")
+
+    def to_canonical(identifier):
+        intermediate = host_to_intermediate(identifier)
+        if intermediate is None or ownership_source == "oci-extract":
+            return identifier if intermediate is None else intermediate
+        if intermediate == 0:
+            return runtime_id
+        if 0 < intermediate <= runtime_id:
+            return intermediate - 1
+        return intermediate
+
+    def to_host(identifier):
+        intermediate = host_to_intermediate(identifier)
+        if intermediate is None:
+            intermediate = identifier
+        if intermediate < runtime_id:
+            intermediate += 1
+        elif intermediate == runtime_id:
+            intermediate = 0
+        return intermediate_to_host(intermediate)
+
+    return lambda identifier: to_host(to_canonical(identifier))
+
+
+def remap_image_ids(tree, uid_ranges, gid_ranges, ownership_source, runtime_id=2001):
+    map_uid = rootfs_id_mapper(uid_ranges, runtime_id, ownership_source)
+    map_gid = rootfs_id_mapper(gid_ranges, runtime_id, ownership_source)
+    if tree.links is None:
+        inventory_image_links(tree)
+    tree.changed = set()
+
+    def remap(fd, info, rel):
+        set_pinned_owner(tree, fd, info, rel, map_uid(info.st_uid), map_gid(info.st_gid))
+
+    rootfd = image_open_root(tree)
+    try:
+        remap(rootfd, os.fstat(rootfd), ".")
+        walk_image_tree(tree, rootfd, ".", remap)
+    finally:
+        os.close(rootfd)
+
+
+def normalize_apt_state(tree, owner):
+    """The apt state trees go to the container root, then the partial dirs
+    apt needs exist with the modes apt expects."""
+
+    def own(fd, info, rel):
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
+            raise NormalizeRefused(NORMALIZE_REFUSED, rel, "special file in apt state")
+        set_pinned_owner(tree, fd, info, rel, *owner)
+
+    if tree.links is None:
+        inventory_image_links(tree)
+    tree.changed = set()
+    for rel in APT_STATE_TREES:
+        parent, name = image_split(rel)
+        try:
+            parentfd, _info = image_open(tree, parent, os.O_RDONLY | os.O_DIRECTORY, stat.S_IFDIR)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        try:
+            try:
+                info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(info.st_mode):
+                continue
+            try:
+                fd = image_open_child(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK, rel)
+            except FileNotFoundError:
+                raise NormalizeRefused(NORMALIZE_REFUSED, rel, "changed during the walk") from None
+            try:
+                top = image_check(tree, fd, rel, stat.S_IFDIR)
+                if top.st_ino != info.st_ino:
+                    raise NormalizeRefused(NORMALIZE_REFUSED, rel, "changed during the walk")
+                own(fd, top, rel)
+                walk_image_tree(tree, fd, rel, own)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(parentfd)
+    for rel, _mode in APT_STATE_DIRS:
+        image_ensure_dir(tree, rel, owner)
+    for rel, mode in APT_STATE_DIRS:
+        image_chmod_dir(tree, rel, mode)
+
+
+def normalize_image_layout(tree, owner):
+    """The directories, links and marker files every project image needs."""
+    for rel in ("home", "home/user", "tmp", "var/tmp", "run", "etc", "var"):
+        image_ensure_dir(tree, rel, owner)
+    for rel in ("tmp", "var/tmp"):
+        image_chmod_dir(tree, rel, 0o1777)
+    tree.changed = set()
+    image_replace_with_symlink(tree, "var/run", "/run", owner)
+    image_replace_with_symlink(tree, "etc/mtab", "/proc/mounts", owner)
+    image_empty_file(tree, "run/podman-init", 0o755, owner)
+    image_empty_file(tree, "run/.containerenv", 0o644, owner)
+
+
+def normalize_image_tree(tree, ownership_source, skip_bridge, read_id_maps, owner):
+    """Everything normalize-rootfs does to the tree as host root, in order.
+    Returns the probe result the caller prints."""
+    result = image_probe(tree)
+    # Before any change, on both paths: every multiply linked nondirectory
+    # has all its links inside the tree.
+    inventory_image_links(tree)
+    if not skip_bridge:
+        uid_ranges, gid_ranges = read_id_maps()
+        remap_image_ids(tree, uid_ranges, gid_ranges, ownership_source)
+    normalize_image_layout(tree, owner)
+    if not skip_bridge and result["package_manager"] == "apt-get":
+        normalize_apt_state(tree, owner)
+    return result
+
+
 def run_normalize_rootfs(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -9564,16 +11235,46 @@ def run_normalize_rootfs(
             stdin=subprocess.DEVNULL,
         )
         mounted = True
-        args = [
-            "/usr/local/sbin/cocalc-runtime-storage",
-            "_normalize-rootfs-anchored",
-            "--ownership-source",
-            ownership_source,
-        ]
-        if "--skip-ownership-bridge" in flags:
-            args.append("--skip-ownership-bridge")
-        args.extend(["--podman-user", podman_user, mountpoint])
-        subprocess.run(args, check=True, stdin=subprocess.DEVNULL)
+        wrapper = "/usr/local/sbin/cocalc-runtime-storage"
+        skip_bridge = "--skip-ownership-bridge" in flags
+
+        def read_id_maps():
+            maps = []
+            for kind in ("uid", "gid"):
+                output = subprocess.run(
+                    [wrapper, "_normalize-rootfs-idmap", "--podman-user", podman_user, kind],
+                    check=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    text=True,
+                ).stdout
+                maps.append(parse_id_map(output))
+            return maps
+
+        owner = container_root_ids()
+        if 0 in owner:
+            fail("the container root must not be host root")
+        result = normalize_image_tree(ImageTree(datafd), ownership_source, skip_bridge, read_id_maps, owner)
+        if not skip_bridge:
+            # Setuid helpers and sudo go back to the container root inside a
+            # rootless container, where host paths cannot be reached.
+            subprocess.run(
+                [
+                    wrapper,
+                    "_normalize-rootfs-setid",
+                    "--podman-user",
+                    podman_user,
+                    "--shell",
+                    result["shell"],
+                    mountpoint,
+                ],
+                check=True,
+                stdin=subprocess.DEVNULL,
+            )
+        own_root_links(datafd, owner)
+        # A newly normalized image never keeps host-global capabilities.
+        image_caps_preflight(datafd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS, force=True)
+        print(json.dumps(result, separators=(",", ":")), flush=True)
     finally:
         if mounted:
             subprocess.run(
@@ -10504,7 +12205,7 @@ def run_pin_exec(argv, allowed_roots=ALLOWED_ROOTS, wrapper=STORAGE_WRAPPER):
         os.close(fd)
 
 
-def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
+def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None, confined=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
     if argv and argv[0] == "scan-changed-since":
@@ -10566,7 +12267,12 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
         elif command in ("copy-tree-preserve", "copy-tree-reflink"):
             dest_rootfd = open_root(values["dest-root"], generic_roots)
             try:
+                created = False
                 if values["dest"] != ".":
+                    try:
+                        os.stat(values["dest"], dir_fd=dest_rootfd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        created = True
                     mkdir_beneath(dest_rootfd, values["dest"], True, 0o755)
                 sourcefd = openat2(
                     rootfd,
@@ -10582,29 +12288,34 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
                     source = f"/proc/self/fd/{sourcefd}"
                     dest = f"/proc/self/fd/{destfd}"
                     if command == "copy-tree-preserve":
-                        args = [
-                            "/usr/bin/rsync",
-                            "-aAX",
-                            "--numeric-ids",
-                            "--",
-                            f"{source}/",
-                            f"{dest}/",
-                        ]
-                    else:
-                        args = [
-                            "/bin/cp",
-                            "-a",
-                            "--reflink=auto",
-                            "--",
-                            f"{source}/.",
-                            f"{dest}/",
-                        ]
-                    subprocess.run(
-                        args,
-                        pass_fds=(sourcefd, destfd),
-                        check=True,
-                        stdin=subprocess.DEVNULL,
+                        # Owners, modes and namespaced file capabilities are
+                        # kept, confined (see run_confined); a tree of the
+                        # runtime user's cannot become root's.
+                        uid, gid = runtime_user_ids()
+                        if created:
+                            # destfd is O_PATH: chown through its magic link.
+                            os.chown(dest, uid, gid)
+                        status = (confined or run_confined)(
+                            [*CONFINED_RSYNC, "--", "/src/", "/dest/"],
+                            [(sourcefd, "/src", False), (destfd, "/dest", True)],
+                            deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS,
+                            setfcap=True,
+                        )
+                        if status != 0:
+                            raise subprocess.CalledProcessError(status, CONFINED_RSYNC[:1])
+                        return
+                    # copy-tree-reflink: confined as well (see CONFINED_CP).
+                    uid, gid = runtime_user_ids()
+                    if created:
+                        os.chown(dest, uid, gid)
+                    status = (confined or run_confined)(
+                        [*CONFINED_CP, "--", "/src/.", "/dest/"],
+                        [(sourcefd, "/src", False), (destfd, "/dest", True)],
+                        deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS,
+                        setfcap=True,
                     )
+                    if status != 0:
+                        raise subprocess.CalledProcessError(status, CONFINED_CP[:1])
                 finally:
                     os.close(sourcefd)
                     os.close(destfd)
@@ -10636,6 +12347,15 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
 
 def main(argv=None, allowed_roots=ALLOWED_ROOTS):
     if os.geteuid() != 0:
+        # The capability walker runs confined as the runtime user; nothing
+        # else runs without root.
+        walker = sys.argv[1:] if argv is None else argv
+        if walker and walker[0] == IMAGE_CAPS_WALK:
+            try:
+                return run_image_caps_walk_entry(walker)
+            except (OSError, ValueError) as err:
+                print(f"SECURITY_DENY code=image-caps-walk-failed detail={err}", file=sys.stderr)
+                return 2
         print("cocalc runtime storage path helper must run as root", file=sys.stderr)
         return 1
     # sudo relays these; turning them into exceptions lets supervised
@@ -10651,8 +12371,20 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
             return run_mkfs_btrfs(argv)
         if argv and argv[0] == "pin-exec":
             return run_pin_exec(argv, allowed_roots)
+        if argv and argv[0] == "image-caps-preflight":
+            return run_image_caps_preflight(argv)
+        if argv and argv[0] == "migrate-image-caps":
+            return run_migrate_image_caps(argv)
+        if argv and argv[0] == "_confined-exec":
+            return run_confined_exec(argv)
         run(argv, allowed_roots)
         return 0
+    except NormalizeRefused as err:
+        print(err, file=sys.stderr)
+        return 2
+    except NormalizePreflightFailed as err:
+        print(err, file=sys.stderr)
+        return err.status
     except (OSError, ValueError, subprocess.CalledProcessError) as err:
         print(f"SECURITY_DENY code=path-helper-failed detail={err}", file=sys.stderr)
         return 2
@@ -14507,38 +16239,31 @@ PY
     fi
     exec /usr/local/libexec/cocalc-runtime-storage-path-helper "${helper_args[@]}"
     ;;
-  _normalize-rootfs-anchored)
-    skip_ownership_bridge=false
-    ownership_source="keep-id"
-    podman_user=""
-    while [ "$#" -gt 0 ]; do
-      case "$1" in
-        --skip-ownership-bridge)
-          skip_ownership_bridge=true
-          shift
-          ;;
-        --ownership-source)
-          [ "$#" -ge 2 ] || deny "rootfs-anchored-args-invalid" "ownership-source"
-          ownership_source="$2"
-          shift 2
-          ;;
-        --podman-user)
-          [ "$#" -ge 2 ] || deny "rootfs-anchored-args-invalid" "podman-user"
-          podman_user="$2"
-          shift 2
-          ;;
-        --)
-          shift
-          break
-          ;;
-        -*) deny "rootfs-anchored-args-invalid" "$1" ;;
-        *) break ;;
-      esac
-    done
-    if [ "$#" -ne 1 ] || [ "$podman_user" != "$RUNTIME_USER" ]; then
-      deny "rootfs-anchored-args-invalid" "$*"
+  _normalize-rootfs-idmap)
+    # The rootless Podman id map normalize-rootfs remaps an image with
+    # (finding 093: the image itself is changed by the path helper, by fd).
+    if [ "$#" -ne 3 ] || [ "$1" != "--podman-user" ] || [ "$2" != "$RUNTIME_USER" ]; then
+      deny "rootfs-idmap-args-invalid" "$*"
     fi
-    rootfs="$1"
+    case "$3" in
+      uid|gid) ;;
+      *) deny "rootfs-idmap-args-invalid" "$3" ;;
+    esac
+    run_rootfs_podman_as_user "$2" unshare cat "/proc/self/${3}_map"
+    ;;
+  _normalize-rootfs-setid)
+    # Setuid helpers and sudo go to the container root inside a rootless
+    # container over the helper's private bind mount of the image.
+    if [ "$#" -ne 5 ] || [ "$1" != "--podman-user" ] || [ "$2" != "$RUNTIME_USER" ] || [ "$3" != "--shell" ]; then
+      deny "rootfs-setid-args-invalid" "$*"
+    fi
+    podman_user="$2"
+    shell_path="$4"
+    rootfs="$5"
+    case "$shell_path" in
+      /bin/bash|/bin/sh) ;;
+      *) deny "rootfs-setid-args-invalid" "$shell_path" ;;
+    esac
     case "$rootfs" in
       /run/cocalc-rootfs-normalize/rootfs-*) ;;
       *) deny "rootfs-anchored-path-invalid" "$rootfs" ;;
@@ -14554,150 +16279,6 @@ PY
        [ "$((8#$runtime_dir_mode & 022))" -ne 0 ]; then
       deny "rootfs-anchored-owner-invalid" "$rootfs"
     fi
-    case "$ownership_source" in
-      keep-id|oci-extract) ;;
-      *) deny "rootfs-ownership-source-invalid" "$ownership_source" ;;
-    esac
-    unset COCALC_ROOTFS_OWNERSHIP_SOURCE COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE
-    shell_path=""
-    if [ -x "$rootfs/bin/bash" ]; then
-      shell_path="/bin/bash"
-    elif [ -x "$rootfs/bin/sh" ]; then
-      shell_path="/bin/sh"
-    else
-      deny "rootfs-shell-missing" "$rootfs"
-    fi
-    fail() {
-      echo "$1" >&2
-      exit "${2:-1}"
-    }
-    case "$ownership_source" in
-      keep-id|oci-extract)
-        ;;
-      *)
-        fail "rootfs preflight failed: unsupported ownership source '$ownership_source'" 78
-        ;;
-    esac
-    remap_rootfs_ids_script="$(mktemp)"
-    rewrite_uid_map_file="$(mktemp)"
-    rewrite_gid_map_file="$(mktemp)"
-    cat >"$remap_rootfs_ids_script" <<'EOF_COCALC_REWRITE_ROOTFS_IDS'
-#!/usr/bin/env python3
-import os
-import stat
-import sys
-
-mode = sys.argv[1]
-rootfs = sys.argv[2]
-runtime_uid = int(sys.argv[3])
-runtime_gid = int(sys.argv[4])
-uid_map_path = sys.argv[5]
-gid_map_path = sys.argv[6]
-ownership_source = sys.argv[7]
-
-def parse_map(path: str) -> list[tuple[int, int, int]]:
-    ranges: list[tuple[int, int, int]] = []
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            parts = line.split()
-            if len(parts) != 3:
-                continue
-            ranges.append((int(parts[0]), int(parts[1]), int(parts[2])))
-    if not ranges:
-        raise RuntimeError(f"missing uid/gid map in {path}")
-    return ranges
-
-uid_ranges = parse_map(uid_map_path)
-gid_ranges = parse_map(gid_map_path)
-
-def map_keep_id(identifier: int, runtime_id: int) -> int:
-    if identifier < 0:
-        return identifier
-    if identifier < runtime_id:
-        return identifier + 1
-    if identifier == runtime_id:
-        return 0
-    return identifier
-
-def reverse_keep_id(identifier: int, runtime_id: int) -> int:
-    if identifier < 0:
-        return identifier
-    if identifier == 0:
-        return runtime_id
-    if 0 < identifier <= runtime_id:
-        return identifier - 1
-    return identifier
-
-def host_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
-    for ns_start, host_start, length in ranges:
-        if host_start <= identifier < host_start + length:
-            return ns_start + (identifier - host_start)
-    raise RuntimeError(
-        f"id {identifier} is not covered by the current rootless podman host map; the host subuid/subgid allocation is too small for this image"
-    )
-
-def extracted_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
-    try:
-        return host_to_intermediate(identifier, ranges)
-    except RuntimeError:
-        return identifier
-
-def intermediate_to_host(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
-    for ns_start, host_start, length in ranges:
-        if ns_start <= identifier < ns_start + length:
-            return host_start + (identifier - ns_start)
-    raise RuntimeError(
-        f"id {identifier} is not covered by the rootless podman map; the host subuid/subgid allocation is too small for this image"
-    )
-
-def current_host_to_canonical(identifier: int, ranges: list[tuple[int, int, int]], runtime_id: int) -> int:
-    try:
-        intermediate = host_to_intermediate(identifier, ranges)
-    except RuntimeError:
-        return identifier
-    if ownership_source == "oci-extract":
-        return intermediate
-    if ownership_source != "keep-id":
-        raise RuntimeError(f"unknown ownership source {ownership_source}")
-    return reverse_keep_id(intermediate, runtime_id)
-
-def remap(path: str) -> None:
-    st = os.lstat(path)
-    if mode == "to-canonical":
-        mapped_uid = current_host_to_canonical(st.st_uid, uid_ranges, runtime_uid)
-        mapped_gid = current_host_to_canonical(st.st_gid, gid_ranges, runtime_gid)
-    elif mode == "to-host":
-        mapped_uid = intermediate_to_host(
-            map_keep_id(extracted_to_intermediate(st.st_uid, uid_ranges), runtime_uid),
-            uid_ranges,
-        )
-        mapped_gid = intermediate_to_host(
-            map_keep_id(extracted_to_intermediate(st.st_gid, gid_ranges), runtime_gid),
-            gid_ranges,
-        )
-    else:
-        raise RuntimeError(f"unknown remap mode: {mode}")
-    if mapped_uid == st.st_uid and mapped_gid == st.st_gid:
-        pass
-    else:
-        file_mode = stat.S_IMODE(st.st_mode)
-        os.lchown(path, mapped_uid, mapped_gid)
-        if not stat.S_ISLNK(st.st_mode) and (st.st_mode & 0o6000):
-            os.chmod(path, file_mode, follow_symlinks=False)
-    if stat.S_ISDIR(st.st_mode):
-        with os.scandir(path) as entries:
-            for entry in entries:
-                remap(entry.path)
-
-remap(rootfs)
-EOF_COCALC_REWRITE_ROOTFS_IDS
-chmod 0755 "$remap_rootfs_ids_script"
-    cleanup_rewrite_script() {
-      rm -f "$remap_rootfs_ids_script"
-      rm -f "$rewrite_uid_map_file"
-      rm -f "$rewrite_gid_map_file"
-    }
-    trap cleanup_rewrite_script EXIT
     fix_setid_runtime_helpers_script="$(cat <<'EOF_COCALC_FIX_SETID_RUNTIME_HELPERS'
 set -euo pipefail
 runtime_uid="${COCALC_RUNTIME_UID:?}"
@@ -14726,131 +16307,19 @@ if [ -d /etc/sudoers.d ]; then
 fi
 EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
 )"
-    normalize_runtime_package_state_rootfs() {
-      case "$package_manager" in
-        apt-get)
-          root_owner_uid="$(stat -c '%u' "$rootfs/etc")"
-          root_owner_gid="$(stat -c '%g' "$rootfs/etc")"
-          for dir in \
-            "$rootfs/var/lib/apt/lists" \
-            "$rootfs/var/cache/apt/archives"
-          do
-            [ -d "$dir" ] || continue
-            chown -R "$root_owner_uid:$root_owner_gid" "$dir"
-          done
-          mkdir -p \
-            "$rootfs/var/lib/apt/lists/partial" \
-            "$rootfs/var/lib/apt/lists/auxfiles" \
-            "$rootfs/var/cache/apt/archives/partial"
-          chmod 0755 \
-            "$rootfs/var/lib/apt/lists" \
-            "$rootfs/var/lib/apt/lists/auxfiles" \
-            "$rootfs/var/cache/apt/archives" || true
-          chmod 0700 \
-            "$rootfs/var/lib/apt/lists/partial" \
-            "$rootfs/var/cache/apt/archives/partial" || true
-          ;;
-      esac
-    }
-    has_ca_certificates_rootfs() {
-      [ -d "$rootfs/etc/ssl/certs" ] || \
-        [ -f "$rootfs/etc/ssl/cert.pem" ] || \
-        [ -f "$rootfs/etc/pki/tls/certs/ca-bundle.crt" ] || \
-        [ -f "$rootfs/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem" ] || \
-        [ -f "$rootfs/etc/ssl/ca-bundle.pem" ]
-    }
-    sudo_present=false
-    if [ -x "$rootfs/usr/bin/sudo" ] || [ -x "$rootfs/bin/sudo" ]; then
-      sudo_present=true
-    fi
-    ca_certificates_present=false
-    if has_ca_certificates_rootfs; then
-      ca_certificates_present=true
-    fi
-    distro_family="unknown"
-    package_manager="none"
-    if [ -x "$rootfs/usr/bin/apt-get" ] || [ -x "$rootfs/bin/apt-get" ]; then
-      distro_family="debian"
-      package_manager="apt-get"
-    elif [ -x "$rootfs/usr/bin/dnf" ] || [ -x "$rootfs/bin/dnf" ]; then
-      distro_family="rhel"
-      package_manager="dnf"
-    elif [ -x "$rootfs/usr/bin/microdnf" ] || [ -x "$rootfs/bin/microdnf" ]; then
-      distro_family="rhel"
-      package_manager="microdnf"
-    elif [ -x "$rootfs/usr/bin/yum" ] || [ -x "$rootfs/bin/yum" ]; then
-      distro_family="rhel"
-      package_manager="yum"
-    elif [ -x "$rootfs/usr/bin/zypper" ] || [ -x "$rootfs/bin/zypper" ]; then
-      distro_family="sles"
-      package_manager="zypper"
-    fi
-    if [ ! -e "$rootfs/lib64/ld-linux-x86-64.so.2" ] && \
-       [ ! -e "$rootfs/lib/x86_64-linux-gnu/libc.so.6" ] && \
-       [ ! -e "$rootfs/lib/ld-linux-aarch64.so.1" ] && \
-       [ ! -e "$rootfs/lib64/ld-linux-aarch64.so.1" ] && \
-       [ ! -e "$rootfs/lib/aarch64-linux-gnu/libc.so.6" ]; then
-      fail "rootfs preflight failed: glibc is required" 43
-    fi
-    if [ "$sudo_present" = false ] || [ "$ca_certificates_present" = false ]; then
-      if [ "$package_manager" = "none" ]; then
-        fail "rootfs preflight failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled" 44
-      fi
-    fi
-    mkdir -p "$rootfs/home" "$rootfs/home/user" "$rootfs/tmp" "$rootfs/var/tmp" "$rootfs/run" "$rootfs/etc" "$rootfs/var"
-    chmod 1777 "$rootfs/tmp" "$rootfs/var/tmp" || true
-    if [ -e "$rootfs/var/run" ] && [ ! -L "$rootfs/var/run" ]; then
-      rm -rf "$rootfs/var/run"
-    fi
-    ln -snf /run "$rootfs/var/run"
-    if [ -e "$rootfs/etc/mtab" ] && [ ! -L "$rootfs/etc/mtab" ]; then
-      rm -f "$rootfs/etc/mtab"
-    fi
-    ln -snf /proc/mounts "$rootfs/etc/mtab"
-    : >"$rootfs/run/podman-init"
-    chmod 0755 "$rootfs/run/podman-init" || true
-    : >"$rootfs/run/.containerenv"
-    chmod 0644 "$rootfs/run/.containerenv" || true
-    if [ "$skip_ownership_bridge" = false ]; then
-      run_rootfs_podman_as_user "$podman_user" \
-        unshare cat /proc/self/uid_map >"$rewrite_uid_map_file"
-      run_rootfs_podman_as_user "$podman_user" \
-        unshare cat /proc/self/gid_map >"$rewrite_gid_map_file"
-      /usr/bin/python3 "$remap_rootfs_ids_script" \
-        "to-canonical" \
-        "$rootfs" \
-        "2001" \
-        "2001" \
-        "$rewrite_uid_map_file" \
-        "$rewrite_gid_map_file" \
-        "$ownership_source"
-      /usr/bin/python3 "$remap_rootfs_ids_script" \
-        "to-host" \
-        "$rootfs" \
-        "2001" \
-        "2001" \
-        "$rewrite_uid_map_file" \
-        "$rewrite_gid_map_file" \
-        "$ownership_source"
-      normalize_runtime_package_state_rootfs
-      run_rootfs_podman_as_user "$podman_user" \
-        run --rm --network host \
-          --userns=keep-id:uid=2001,gid=2001 \
-          --user 0:0 \
-          --workdir / \
-          -e HOME=/root \
-          -e USER=root \
-          -e LOGNAME=root \
-          -e COCALC_RUNTIME_UID=2001 \
-          -e COCALC_RUNTIME_GID=2001 \
-          --security-opt label=disable \
-          --rootfs "$rootfs" "$shell_path" -lc \
-          "$fix_setid_runtime_helpers_script" >/dev/null
-    fi
-    normalize_result="$(printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","glibc":true,"sudo_present":%s,"ca_certificates_present":%s}\n' \
-      "$distro_family" "$package_manager" "$shell_path" "$sudo_present" "$ca_certificates_present")"
-    printf '%s\n' "$normalize_result"
-    exit 0
+    run_rootfs_podman_as_user "$podman_user" \
+      run --rm --network host \
+        --userns=keep-id:uid=2001,gid=2001 \
+        --user 0:0 \
+        --workdir / \
+        -e HOME=/root \
+        -e USER=root \
+        -e LOGNAME=root \
+        -e COCALC_RUNTIME_UID=2001 \
+        -e COCALC_RUNTIME_GID=2001 \
+        --security-opt label=disable \
+        --rootfs "$rootfs" "$shell_path" -lc \
+        "$fix_setid_runtime_helpers_script" >/dev/null
     ;;
   rootfs-rustic-backup)
     if [ "$#" -lt 3 ]; then
@@ -15267,6 +16736,29 @@ PY' bash "$tree"
     enter_pinned_tree "$1"
     tree="."
     exec /bin/bash -lc 'set -euo pipefail; tar --sort=name --mtime='"'"'UTC 1970-01-01'"'"' --numeric-owner --owner=0 --group=0 --format=posix --acls --xattrs --xattrs-include='"'"'*'"'"' -cf - -C "$1" . | sha256sum | awk '"'"'{print $1}'"'"'' bash "$tree"
+    ;;
+  image-caps-preflight)
+    # One image root: convert or remove its file capabilities (finding 014).
+    # Image roots in the image cache only, never project homes: a
+    # host-global capability there is incident evidence (finding 011).
+    if [ "$#" -ne 1 ]; then
+      deny "image-caps-preflight-args-invalid" "$*"
+    fi
+    case "$1" in
+      /mnt/cocalc/data/cache/images/*/*|/mnt/cocalc/data/cache/images/.|/mnt/cocalc/data/cache/images/..)
+        deny "image-caps-preflight-not-an-image" "$1" ;;
+      /mnt/cocalc/data/cache/images/?*) ;;
+      *) deny "image-caps-preflight-not-an-image" "$1" ;;
+    esac
+    require_allowed_path_parts "$1"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper image-caps-preflight --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL"
+    ;;
+  migrate-image-caps)
+    # The one-off pass over the whole image cache, at idle priority.
+    if [ "$#" -ne 0 ]; then
+      deny "migrate-image-caps-args-invalid" "$*"
+    fi
+    exec /usr/bin/nice -n 19 /usr/bin/ionice -c3 /usr/local/libexec/cocalc-runtime-storage-path-helper migrate-image-caps
     ;;
   du-bytes|_du-bytes-pinned)
     if [ "$#" -ne 1 ]; then
@@ -20101,6 +21593,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
+        migrate_image_root_links(cfg)
         reconcile_storage_and_containment(cfg)
         ensure_subuids(cfg)
         ensure_runtime_user_manager(cfg)
@@ -20189,6 +21682,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         configure_kernel_sysctl_hardening(cfg)
         disable_root_podman_units(cfg)
         install_privileged_wrappers(cfg)
+        migrate_image_root_links(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)
         configure_runtime_sudoers(cfg)

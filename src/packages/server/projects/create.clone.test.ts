@@ -64,26 +64,48 @@ function isRootfsScanSelectionQuery(sql: string): boolean {
   );
 }
 
+// Catalog rows known to these tests. The membership gate binds a selection to
+// one catalog row by image_id AND runtime image, so each row carries its image.
+const KNOWN_CATALOG_IMAGES: Record<string, string> = {
+  "official-cocalc-base": "cocalc.local/rootfs/base",
+  [STAR_ROOTFS_IMAGE_ID]: STAR_ROOTFS_IMAGE,
+  [CATALOG_ROOTFS_IMAGE_ID]: CATALOG_ROOTFS_IMAGE,
+};
+
 function rootfsScanAllowedRows({
   image_id = "official-cocalc-base",
   release_id = null,
+  sql = "",
+  params = [],
 }: {
   image_id?: string;
   release_id?: string | null;
+  sql?: string;
+  params?: any[];
 } = {}) {
-  return {
-    rows: [
-      {
-        image_id,
-        release_id,
-        official: true,
-        scan_status: null,
-        scan_tool: null,
-        scanned_at: null,
-        scan_summary: null,
-      },
-    ],
-  };
+  let rows = Object.entries(KNOWN_CATALOG_IMAGES).map(
+    ([id, runtime_image]) => ({
+      image_id: id,
+      runtime_image,
+      release_id: id === image_id ? release_id : null,
+      official: true,
+      prepull: false,
+      deleted: false,
+      blocked: false,
+      scan_status: null,
+      scan_tool: null,
+      scanned_at: null,
+      scan_summary: null,
+    }),
+  );
+  if (sql.includes("img.image_id=$1")) {
+    rows = rows.filter((row) => row.image_id === params[0]);
+  } else if (Array.isArray(params[0])) {
+    rows = rows.filter((row) => params[0].includes(row.runtime_image));
+  } else {
+    rows = rows.filter((row) => row.image_id === image_id);
+  }
+  return { rows };
 }
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -418,7 +440,7 @@ describe("projects.createProject clone routing", () => {
         return { rows: [] };
       }
       if (isRootfsScanSelectionQuery(sql)) {
-        return rootfsScanAllowedRows();
+        return rootfsScanAllowedRows({ sql, params });
       }
       if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
         expect(params).toEqual([HOST_ID]);
@@ -801,6 +823,26 @@ describe("projects.createProject clone routing", () => {
     );
   });
 
+  it("refuses a non-admin create that pairs an arbitrary OCI image with a borrowed catalog id", async () => {
+    const createProject = (await import("./create")).default;
+
+    await expect(
+      createProject({
+        title: "Forged catalog id",
+        description: "desc",
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+        rootfs_image: "docker.io/attacker/anything:latest",
+        rootfs_image_id: CATALOG_ROOTFS_IMAGE_ID,
+        start: false,
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled for non-admin accounts",
+    );
+    expect(initializeProjectRootfsStatesMock).not.toHaveBeenCalled();
+    expect(hostControlCreateProjectMock).not.toHaveBeenCalled();
+  });
+
   it("resolves a managed rootfs image id to the runtime image during project creation", async () => {
     const createProject = (await import("./create")).default;
 
@@ -997,7 +1039,11 @@ describe("projects.createProject clone routing", () => {
         return { rows: [{ runtime_image: STAR_ROOTFS_IMAGE }] };
       }
       if (isRootfsScanSelectionQuery(sql)) {
-        return rootfsScanAllowedRows({ image_id: STAR_ROOTFS_IMAGE_ID });
+        return rootfsScanAllowedRows({
+          image_id: STAR_ROOTFS_IMAGE_ID,
+          sql,
+          params,
+        });
       }
       if (sql.startsWith("INSERT INTO projects ")) {
         insertedProjectId = params[0];
@@ -1061,7 +1107,7 @@ describe("projects.createProject clone routing", () => {
         return { rows: [{ count: "0" }] };
       }
       if (isRootfsScanSelectionQuery(sql)) {
-        return rootfsScanAllowedRows();
+        return rootfsScanAllowedRows({ sql, params });
       }
       if (sql.startsWith("INSERT INTO projects ")) {
         insertedProjectId = params[0];
@@ -1403,7 +1449,11 @@ describe("projects.createProject clone routing", () => {
           return { rowCount: 1 };
         }
         if (isRootfsScanSelectionQuery(sql)) {
-          return rootfsScanAllowedRows({ image_id: "official-cocalc-base" });
+          return rootfsScanAllowedRows({
+            image_id: "official-cocalc-base",
+            sql,
+            params,
+          });
         }
         if (
           sql.includes("SELECT release_id") &&

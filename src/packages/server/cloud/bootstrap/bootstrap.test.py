@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import contextlib
+import errno
 import fcntl
 import io
+import functools
 import hashlib
 import inspect
 import json
@@ -12,10 +14,12 @@ import re
 import shutil
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
 import tarfile
+import threading
 import time
 import unittest
 from collections import namedtuple
@@ -912,8 +916,1124 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_rustic(["rustic-project-backup", *common, "--host", "project-1", "--no-cache"])
 
+    def fake_confined(self, calls):
+        """Stand-in for run_confined: records each call and does its work on
+        the bound directories (/src -> /dest, /staging -> /home)."""
+
+        def confined(argv, binds, **kwargs):
+            calls.append((argv, [(target, writable) for _fd, target, writable in binds], kwargs))
+            paths = {target: os.readlink(f"/proc/self/fd/{fd}") for fd, target, _w in binds}
+            if argv[0].endswith(("rsync", "/cp")):
+                source = paths.get("/src") or paths["/staging"]
+                dest = paths.get("/dest") or paths["/home"]
+                shutil.copytree(source, dest, symlinks=True, dirs_exist_ok=True)
+            else:
+                Path(paths["/staging"], "restored").write_text("restored\n", encoding="utf-8")
+            return 0
+
+        return confined
+
+    def real_rsync_confined(self, calls, staged, stamp):
+        """Like fake_confined, but the merge runs the REAL rsync with the
+        helper's argv on the bound directories (/staging/ and /home/ mapped to
+        them), so rsync's own skip rules are what the test sees.  The restore
+        step writes `staged` into staging with mtime `stamp`.  --super is
+        dropped when not root: without it rsync does not try the chowns a
+        test user cannot do; it does not change which files are transferred."""
+
+        def confined(argv, binds, **kwargs):
+            calls.append((argv, [(target, writable) for _fd, target, writable in binds], kwargs))
+            paths = {target: os.readlink(f"/proc/self/fd/{fd}") for fd, target, _w in binds}
+            if argv[0].endswith("rsync"):
+                mapped = []
+                for arg in argv:
+                    if arg == "/staging/":
+                        arg = paths["/staging"] + "/"
+                    elif arg == "/home/":
+                        arg = paths["/home"] + "/"
+                    if arg == "--super" and os.geteuid() != 0:
+                        continue
+                    mapped.append(arg)
+                result = subprocess.run(mapped, capture_output=True, text=True, check=False)
+                if result.returncode != 0 and "not supported" in result.stderr:
+                    self.skipTest(f"rsync -A/-X not supported here: {result.stderr.strip()[:200]}")
+                return result.returncode
+            for name, data in staged.items():
+                target = Path(paths["/staging"], name)
+                target.write_bytes(data)
+                os.utime(target, (stamp, stamp))
+            return 0
+
+        return confined
+
+    def test_restore_merge_compares_content_not_size_and_mtime(self) -> None:
+        """Finding 015 on the confined restore path (port of #86 onto the
+        release line): the staging -> home merge uses --checksum.  An existing
+        file with the snapshot's size and mtime but other bytes is
+        OVERWRITTEN; an identical file is left in place (same inode), which
+        --ignore-times would not do."""
+        if not os.path.exists("/usr/bin/rsync"):
+            self.skipTest("needs /usr/bin/rsync")
+        namespace = self.helper_namespace()
+        restore = namespace["restore_project_confined"]
+        stamp = 1_700_000_000
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            (home / "changed").write_bytes(b"old-bytes")
+            (home / "same").write_bytes(b"same-bytes")
+            for name in ("changed", "same"):
+                os.utime(home / name, (stamp, stamp))
+            same_inode = (home / "same").stat().st_ino
+            profile = root / "profile.toml"
+            profile.write_text("", encoding="utf-8")
+            # Same size and mtime as the existing files; only "changed" has other bytes.
+            staged = {"changed": b"new-bytes", "same": b"same-bytes"}
+            self.assertEqual(len(staged["changed"]), len(b"old-bytes"))
+            calls = []
+            rootfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            destfd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+            profile_fd = os.open(profile, os.O_RDONLY)
+            try:
+                restore(
+                    rootfd, destfd, profile_fd, ["/usr/bin/rustic", "restore"], False,
+                    os.getuid(), os.getgid(), None,
+                    confined=self.real_rsync_confined(calls, staged, stamp),
+                )
+            finally:
+                for fd in (rootfd, destfd, profile_fd):
+                    os.close(fd)
+            merge = calls[-1][0]
+            self.assertIn("--checksum", merge)
+            self.assertNotIn("--ignore-times", merge)
+            self.assertEqual((home / "changed").read_bytes(), b"new-bytes")
+            self.assertEqual((home / "same").read_bytes(), b"same-bytes")
+            self.assertEqual((home / "same").stat().st_ino, same_inode)
+            self.assertEqual(list((root / ".cocalc-confined-restore").iterdir()), [])
+
+    def test_confined_jail_has_no_host_proc_and_minimal_etc(self) -> None:
+        namespace = self.helper_namespace()
+        plan = namespace["confined_mount_plan"](
+            "/run/cocalc-confined/jail-x",
+            [(5, "/staging", True), (6, "/home", True), (7, "/profile.toml", False)],
+            [],
+            path_exists=lambda path: path != "/libx32",
+            is_link=lambda path: path in ("/bin", "/sbin", "/lib", "/lib64"),
+            read_link=lambda path: "usr" + path,
+            real_path=lambda path: "/run/systemd/resolve/stub-resolv.conf" if path.endswith("resolv.conf") else path,
+        )
+        jail = "/run/cocalc-confined/jail-x"
+        sources = [source for kind, source, _t, _f, _d in plan if kind == "bind"]
+        targets = [target[len(jail):] for _k, _s, target, _f, _d in plan]
+        # Nothing from the host's /proc but the pinned fds themselves, and
+        # no /etc/cocalc, /run, /var or /mnt.
+        self.assertFalse([s for s in sources if s.startswith("/proc/") and not s.startswith("/proc/self/fd/")])
+        # /proc is the jail's own procfs instance, never the host's.
+        proc = [entry for entry in plan if entry[2] == jail + "/proc"]
+        self.assertEqual(proc, [("mkdir", None, jail + "/proc", 0, None),
+                                ("proc", "proc", jail + "/proc", 2 | 4 | 8, "hidepid=invisible,subset=pid")])
+        for source in sources:
+            self.assertFalse(source.startswith(("/etc/cocalc", "/var", "/mnt", "/home")), source)
+        self.assertEqual(
+            [s for s in sources if s.startswith("/run")], ["/run/systemd/resolve/stub-resolv.conf"]
+        )
+        etc = sorted({t for t in targets if t.startswith("/etc/")})
+        self.assertEqual(
+            etc,
+            sorted(["/etc/" + name for name in namespace["CONFINED_ETC_FILES"]] + ["/etc/ssl"]),
+        )
+        self.assertEqual(sorted({t for t in targets if t.startswith("/dev/")}), ["/dev/null", "/dev/urandom", "/dev/zero"])
+        flags = {target[len(jail):]: f for kind, _s, target, f, _d in plan if kind in ("bind", "tree")}
+        # The pinned work dirs are attached from their fds (detached clones
+        # taken before unshare), never bound by path.
+        trees = {target[len(jail):]: source for kind, source, target, _f, _d in plan if kind == "tree"}
+        self.assertEqual(trees, {"/staging": 5, "/home": 6, "/profile.toml": 7})
+        MS_RDONLY, MS_NOSUID, MS_NODEV, MS_NOEXEC = 1, 2, 4, 8
+        for target in ("/staging", "/home"):
+            self.assertEqual(flags[target], MS_NOSUID | MS_NODEV | MS_NOEXEC)
+        self.assertEqual(flags["/profile.toml"], MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RDONLY)
+        self.assertEqual(flags["/usr"], MS_RDONLY | MS_NOSUID | MS_NODEV)
+        # usr-merged links are recreated, not bound.
+        self.assertIn(("symlink", "usr/bin", jail + "/bin", 0, None), plan)
+        self.assertEqual(plan[0][0], "tmpfs")
+
+    @unittest.skipUnless(
+        os.geteuid() == 0 and os.environ.get("COCALC_TEST_CONFINED") == "1",
+        "needs real root and COCALC_TEST_CONFINED=1 (builds a real jail)",
+    )
+    def test_confined_exec_builds_a_real_jail(self) -> None:
+        # Real unshare, open_tree/move_mount, chroot and user namespace: the
+        # mocked tests above cannot catch kernel-level failures.
+        namespace = self.helper_namespace()
+        run_exec = namespace["run_confined_exec"]
+        uid = gid = int(os.environ.get("COCALC_TEST_CONFINED_UID", "2000"))
+        id_maps = (uid, gid, f"{uid} {uid} 1\n", f"{gid} {gid} 1\n")
+        with tempfile.TemporaryDirectory(dir=os.environ.get("COCALC_TEST_CONFINED_DIR")) as tmpdir:
+            base = Path(tmpdir)
+            os.chmod(base, 0o711)
+            run_dir = base / "run"
+            src = base / "src"
+            src.mkdir()
+            (src / "a").write_text("a\n", encoding="utf-8")
+            os.symlink("/etc/passwd", src / "link")
+            victim = base / "victim"
+            victim.write_text("original\n", encoding="utf-8")
+            victim.chmod(0o600)
+            profile = base / "profile.toml"
+            profile.write_text("[repository]\n", encoding="utf-8")
+            os.chown(profile, 0, gid)
+            profile.chmod(0o640)
+            for path in (src, src / "a"):
+                os.chown(path, uid, gid)
+            os.lchown(src / "link", uid, gid)
+
+            def fresh(name):
+                path = base / name
+                path.mkdir()
+                os.chown(path, uid, gid)
+                return path
+
+            def spec(argv, binds):
+                return json.dumps({"argv": argv, "binds": binds, "setfcap": False, "tolerate_skips": False})
+
+            def run(argv, binds, on_child=None):
+                # In a forked child, as the helper runs it: unshare(NEWPID)
+                # changes where every later fork of the caller goes.
+                child = os.fork()
+                if child == 0:
+                    code = 70
+                    try:
+                        signal.signal(signal.SIGTERM, namespace["raise_on_signal"])
+                        code = run_exec(["_confined-exec", spec(argv, binds)], run_dir=str(run_dir), id_maps=id_maps)
+                    finally:
+                        os._exit(code if 0 <= code < 256 else 71)
+                if on_child is not None:
+                    on_child(child)
+                _pid, status = os.waitpid(child, 0)
+                return os.waitstatus_to_exitcode(status)
+
+            srcfd = os.open(src, os.O_PATH | os.O_DIRECTORY)
+            proffd = os.open(profile, os.O_RDONLY)
+            try:
+                # 1. rsync: a rw dir, a ro dir and the ro profile file.
+                dest = fresh("dest")
+                os.symlink(str(victim), dest / "a")  # a host path: must not be followed
+                os.lchown(dest / "a", uid, gid)
+                destfd = os.open(dest, os.O_PATH | os.O_DIRECTORY)
+                code = run(["/usr/bin/rsync", "-a", "--", "/src/", "/dest/"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True], [proffd, "/profile.toml", False]])
+                os.close(destfd)
+                self.assertEqual(code, 0)
+                self.assertEqual((dest / "a").read_text(encoding="utf-8"), "a\n")
+                self.assertEqual(os.readlink(dest / "link"), "/etc/passwd")
+                self.assertEqual(victim.read_text(encoding="utf-8"), "original\n")
+                # 2. cp -a --reflink=auto --remove-destination.
+                dest2 = fresh("dest2")
+                destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
+                code = run(["/usr/bin/cp", "-a", "--reflink=auto", "--remove-destination", "--", "/src/.", "/dest/"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True]])
+                os.close(destfd)
+                self.assertEqual(code, 0)
+                self.assertEqual((dest2 / "a").read_text(encoding="utf-8"), "a\n")
+                # 3. A read-only bind refuses writes.
+                destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
+                code = run(["/usr/bin/rsync", "-a", "--", "/dest/", "/src/sub/"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True]])
+                os.close(destfd)
+                self.assertNotEqual(code, 0)
+                self.assertFalse((src / "sub").exists())
+                # 3b. The host tree is detached (pivot_root): no /proc, no /mnt,
+                # no old root left in the namespace.
+                # (/proc is the jail's own procfs now; 3c checks it.)
+                for host_path in ("/mnt/", "/run/", "/.old/", "/etc/cocalc/"):
+                    destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
+                    code = run(["/usr/bin/rsync", "-a", "--", host_path, "/dest/host/"],
+                               [[srcfd, "/src", False], [destfd, "/dest", True]])
+                    os.close(destfd)
+                    with self.subTest(host_path=host_path):
+                        self.assertNotEqual(code, 0)
+                        # rsync may create the destination before it finds
+                        # the source missing; nothing may arrive in it.
+                        host = dest2 / "host"
+                        self.assertTrue(not host.exists() or list(host.iterdir()) == [])
+                        if host.exists():
+                            host.rmdir()
+                # 3c. The jail's own procfs: /proc/1/root is the jail, no host
+                # pid or /proc/sys; Rustic (it needs /proc/self/exe) runs.
+                destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
+                code = run(["/usr/bin/rsync", "-a", "--", "/proc/1/root/src/a", "/dest/via-proc"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True]])
+                self.assertEqual(code, 0)
+                self.assertEqual((dest2 / "via-proc").read_text(encoding="utf-8"), "a\n")
+                for host_path in (f"/proc/{os.getpid()}/cmdline", "/proc/sys/kernel/osrelease", "/proc/kcore"):
+                    code = run(["/usr/bin/rsync", "-a", "--", host_path, "/dest/leak"],
+                               [[srcfd, "/src", False], [destfd, "/dest", True]])
+                    with self.subTest(host_path=host_path):
+                        self.assertNotEqual(code, 0)
+                        self.assertFalse((dest2 / "leak").exists())
+                os.close(destfd)
+                rustic = namespace["RUSTIC_CANDIDATES"][0]
+                if os.path.exists(rustic):
+                    self.assertEqual(run([rustic, "--version"], [[srcfd, "/src", False]]), 0)
+                # 3d. A stopped helper kills the jail: its PID 1 ignores SIGTERM,
+                # and the helper's cleanup sends SIGKILL.
+                os.mkfifo(src / "block")
+                os.chown(src / "block", uid, gid)
+                dest4 = fresh("dest4")
+                destfd = os.open(dest4, os.O_PATH | os.O_DIRECTORY)
+                jailed = {}
+
+                def stop_helper(helper_pid):
+                    for _ in range(100):
+                        for entry in os.listdir("/proc"):
+                            if entry.isdigit():
+                                try:
+                                    if b"/src/block" in Path(f"/proc/{entry}/cmdline").read_bytes():
+                                        jailed["pid"] = int(entry)
+                                except OSError:
+                                    pass
+                        if jailed:
+                            break
+                        time.sleep(0.05)
+                    os.kill(helper_pid, signal.SIGTERM)
+
+                code = run(["/usr/bin/cp", "--copy-contents", "--", "/src/block", "/dest/out"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True]], on_child=stop_helper)
+                os.close(destfd)
+                self.assertNotEqual(code, 0)
+                self.assertIn("pid", jailed)
+                for _ in range(50):
+                    if not os.path.exists(f"/proc/{jailed['pid']}"):
+                        break
+                    time.sleep(0.1)
+                self.assertFalse(os.path.exists(f"/proc/{jailed['pid']}"))
+                (src / "block").unlink()
+                # 4. While the confined program runs: no host fds, the runtime
+                # uid, only the 5 capabilities, no_new_privs.
+                os.mkfifo(src / "fifo")
+                os.chown(src / "fifo", uid, gid)
+                dest3 = fresh("dest3")
+                destfd = os.open(dest3, os.O_PATH | os.O_DIRECTORY)
+                result = {}
+                runner = threading.Thread(target=lambda: result.setdefault("code", run(
+                    ["/usr/bin/cp", "--copy-contents", "--", "/src/fifo", "/dest/out"],
+                    [[srcfd, "/src", False], [destfd, "/dest", True]])))
+                runner.start()
+                pid = None
+                for _ in range(100):
+                    for entry in os.listdir("/proc"):
+                        if entry.isdigit():
+                            try:
+                                if b"/src/fifo" in Path(f"/proc/{entry}/cmdline").read_bytes():
+                                    pid = int(entry)
+                            except OSError:
+                                pass
+                    if pid:
+                        break
+                    time.sleep(0.05)
+                self.assertIsNotNone(pid)
+                status = Path(f"/proc/{pid}/status").read_text()
+                fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+                self.assertEqual(fields["Uid"].split()[0], str(uid))
+                self.assertEqual(int(fields["CapEff"].strip(), 16), 0x1F)
+                self.assertEqual(int(fields["CapBnd"].strip(), 16), 0x1F)
+                self.assertEqual(fields["NoNewPrivs"].strip(), "1")
+                self.assertEqual(sorted(int(fd) for fd in os.listdir(f"/proc/{pid}/fd")), [0, 1, 2])
+                # The old root is detached: a host-only sentinel is not
+                # reachable through the child's root, nor is /.old.
+                sentinel = base / "host-sentinel"
+                sentinel.write_text("host\n", encoding="utf-8")
+                self.assertFalse(os.path.lexists(f"/proc/{pid}/root{sentinel}"))
+                self.assertFalse(os.path.lexists(f"/proc/{pid}/root/.old"))
+                self.assertFalse(os.path.lexists(f"/proc/{pid}/root/mnt"))
+                self.assertTrue(os.path.isdir(f"/proc/{pid}/root/src"))
+                with open(src / "fifo", "w") as writer:
+                    writer.write("through the fifo\n")
+                runner.join(30)
+                os.close(destfd)
+                self.assertEqual(result.get("code"), 0)
+                self.assertEqual((dest3 / "out").read_text(encoding="utf-8"), "through the fifo\n")
+                self.assertEqual(os.listdir(run_dir), [])
+            finally:
+                os.close(srcfd)
+                os.close(proffd)
+
+    def test_root_owned_image_links_go_to_the_container_root(self) -> None:
+        namespace = self.helper_namespace()
+        own_root_links = namespace["own_root_links"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree = Path(tmpdir) / "tree"
+            (tree / "etc").mkdir(parents=True)
+            (tree / "var").mkdir()
+            os.symlink("/proc/mounts", tree / "etc" / "mtab")
+            os.symlink("/run", tree / "var" / "run")
+            outside = Path(tmpdir) / "outside"
+            outside.mkdir()
+            os.symlink("x", outside / "run")
+            chowns = []
+            real_stat = os.stat
+
+            def fake_stat(path, *args, **kwargs):
+                # Pretend the links are root's (a test user cannot make that).
+                info = real_stat(path, *args, **kwargs)
+                if not kwargs.get("follow_symlinks", True) and stat.S_ISLNK(info.st_mode):
+                    values = list(info)
+                    values[4] = values[5] = 0
+                    return os.stat_result(values)
+                return info
+
+            def fake_chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
+                chowns.append((os.readlink(f"/proc/self/fd/{dir_fd}"), path, uid, gid, follow_symlinks))
+
+            fd = os.open(tree, os.O_PATH | os.O_DIRECTORY)
+            try:
+                with mock.patch.object(namespace["os"], "stat", side_effect=fake_stat), \
+                        mock.patch.object(namespace["os"], "chown", side_effect=fake_chown):
+                    self.assertEqual(own_root_links(fd, (231072, 231072)), 2)
+                    self.assertEqual(
+                        sorted(chowns),
+                        [(f"{tree}/etc", "mtab", 231072, 231072, False), (f"{tree}/var", "run", 231072, 231072, False)],
+                    )
+                    # A symlinked parent is never followed; a non-link is left alone.
+                    chowns.clear()
+                    os.unlink(tree / "etc" / "mtab")
+                    (tree / "etc" / "mtab").write_text("x")
+                    (tree / "var" / "run").unlink()
+                    (tree / "var").rmdir()
+                    os.symlink(outside, tree / "var")
+                    self.assertEqual(own_root_links(fd, (231072, 231072)), 0)
+                    self.assertEqual(chowns, [])
+            finally:
+                os.close(fd)
+
+    def test_one_pinned_fd_may_be_bound_twice(self) -> None:
+        namespace = self.helper_namespace()
+        plan = namespace["confined_mount_plan"]("/jail", [(5, "/src", False), (5, "/dest", True)], [])
+        calls = []
+
+        class FakeLibc:
+            def syscall(self, number, *args):
+                calls.append(number)
+                return 100 + len(calls) if number == namespace["SYS_OPEN_TREE"] else 0
+
+        namespace["LIBC"] = FakeLibc()
+        trees = namespace["clone_pinned_trees"](plan)
+        tree_entries = [i for i, entry in enumerate(plan) if entry[0] == "tree"]
+        self.assertEqual(sorted(trees), tree_entries)
+        self.assertEqual(len(set(trees.values())), 2)
+
+    def test_file_capabilities_parse_strictly_and_convert_exactly(self) -> None:
+        namespace = self.helper_namespace()
+        parse = namespace["parse_file_capability"]
+        v3 = namespace["v3_file_capability"]
+        v2 = struct.pack("<IIIII", 0x02000001, 0x1000, 0x2, 0x1, 0x4)
+        self.assertEqual(parse(v2), (0x02000000, 1, (0x1000, 0x2, 0x1, 0x4), None))
+        converted = v3(1, (0x1000, 0x2, 0x1, 0x4), 231072)
+        self.assertEqual(converted, struct.pack("<IIIIII", 0x03000001, 0x1000, 0x2, 0x1, 0x4, 231072))
+        self.assertEqual(parse(converted), (0x03000000, 1, (0x1000, 0x2, 0x1, 0x4), 231072))
+        v1 = struct.pack("<III", 0x01000000, 0x80, 0)
+        self.assertEqual(parse(v1), (0x01000000, 0, (0x80, 0, 0, 0), None))
+        for bad in (b"", b"\x01\x02", v2[:-1], v2 + b"\0", struct.pack("<IIIII", 0x02000003, 1, 0, 0, 0),
+                    struct.pack("<IIIII", 0x04000000, 1, 0, 0, 0), converted[:-4]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse(bad)
+
+    def test_image_caps_walk_converts_keeps_and_strips(self) -> None:
+        namespace = self.helper_namespace()
+        walk = namespace["image_caps_walk"]
+        v2 = struct.pack("<IIIII", 0x02000001, 1 << 12, 0, 0, 0)
+        mine = struct.pack("<IIIIII", 0x03000001, 1 << 13, 0, 0, 0, 231072)
+        other = struct.pack("<IIIIII", 0x03000001, 1 << 13, 0, 0, 0, 2000)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            top = Path(tmpdir) / "image"
+            (top / "usr" / "bin").mkdir(parents=True)
+            names = {"v2": v2, "mine": mine, "other": other, "plain": None, "foreign": "EOVERFLOW"}
+            for name in names:
+                (top / "usr" / "bin" / name).write_text(name)
+            os.symlink("v2", top / "usr" / "bin" / "link")
+            os.mkfifo(top / "usr" / "bin" / "fifo")
+            xattrs = {}
+            for name, value in names.items():
+                xattrs[(top / "usr" / "bin" / name).stat().st_ino] = value
+            writes = []
+
+            def ino(fd):
+                return os.fstat(fd).st_ino
+
+            def getxattr(fd, attr, *args, **kwargs):
+                self.assertEqual(attr, "security.capability")
+                value = xattrs.get(ino(fd))
+                if value is None:
+                    raise OSError(errno.ENODATA, "no data")
+                if value == "EOVERFLOW":
+                    raise OSError(errno.EOVERFLOW, "overflow")
+                return value
+
+            def setxattr(fd, attr, value, *args, **kwargs):
+                writes.append(("set", Path(os.readlink(f"/proc/self/fd/{fd}")).name, value))
+
+            def removexattr(fd, attr, *args, **kwargs):
+                writes.append(("remove", Path(os.readlink(f"/proc/self/fd/{fd}")).name, None))
+
+            with mock.patch.object(namespace["os"], "getxattr", side_effect=getxattr), \
+                    mock.patch.object(namespace["os"], "setxattr", side_effect=setxattr), \
+                    mock.patch.object(namespace["os"], "removexattr", side_effect=removexattr):
+                counts = walk(str(top), 231072)
+            self.assertEqual(counts, {"converted": 1, "kept": 1, "stripped": 2})
+            self.assertEqual(
+                sorted(writes),
+                [("remove", "foreign", None), ("remove", "other", None),
+                 ("set", "v2", struct.pack("<IIIIII", 0x03000001, 1 << 12, 0, 0, 0, 231072))],
+            )
+            # A malformed value or any other error fails the walk.
+            xattrs[(top / "usr" / "bin" / "plain").stat().st_ino] = b"\x02\x00"
+            with mock.patch.object(namespace["os"], "getxattr", side_effect=getxattr), \
+                    mock.patch.object(namespace["os"], "setxattr"), mock.patch.object(namespace["os"], "removexattr"):
+                with self.assertRaises(ValueError):
+                    walk(str(top), 231072)
+            # Traversal errors are raised, not skipped.
+            (top / "locked").mkdir()
+            (top / "locked").chmod(0)
+            try:
+                if os.geteuid() != 0:
+                    with mock.patch.object(namespace["os"], "getxattr", side_effect=OSError(errno.ENODATA, "x")):
+                        with self.assertRaises(PermissionError):
+                            walk(str(top), 231072)
+            finally:
+                (top / "locked").chmod(0o755)
+
+    @unittest.skipUnless(os.environ.get("COCALC_TEST_BTRFS_DIR"), "needs a btrfs directory")
+    def test_image_identity_names_subvolumes_by_uuid(self) -> None:
+        namespace = self.helper_namespace()
+        identity = namespace["image_identity"]
+        with tempfile.TemporaryDirectory(dir=os.environ["COCALC_TEST_BTRFS_DIR"]) as tmpdir:
+            root = str(Path(tmpdir).resolve())
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                for name in ("a", "b"):
+                    namespace["run_btrfs"](["subvolume", "create", f"{root}/{name}"], roots=(root,))
+            os.mkdir(f"{root}/plain")
+            fds = {name: os.open(f"{root}/{name}", os.O_PATH | os.O_DIRECTORY) for name in ("a", "b", "plain")}
+            try:
+                a, b, plain = (identity(fds[name]) for name in ("a", "b", "plain"))
+                # Subvolume roots all have inode 256 and reusable st_dev
+                # values: they are told apart by UUID.
+                self.assertTrue(a.startswith("subvol:") and b.startswith("subvol:"))
+                self.assertNotEqual(a.split(":")[1], b.split(":")[1])
+                self.assertTrue(plain.startswith("inode:"))
+                self.assertEqual(identity(fds["a"]), a)  # stable
+            finally:
+                for fd in fds.values():
+                    os.close(fd)
+
+    @unittest.skipUnless(
+        os.geteuid() == 0 and os.environ.get("COCALC_TEST_CONFINED") == "1",
+        "needs real root and COCALC_TEST_CONFINED=1 (runs the walker confined)",
+    )
+    def test_image_caps_walker_in_a_real_jail(self) -> None:
+        namespace = self.helper_namespace()
+        uid = int(os.environ.get("COCALC_TEST_CONFINED_UID", "2000"))
+        container = int(os.environ.get("COCALC_TEST_CONTAINER_ROOT", "231072"))
+        id_maps = (uid, uid, f"{uid} {uid} 1\n{container} {container} 65536\n", f"{uid} {uid} 1\n{container} {container} 65536\n")
+        with tempfile.TemporaryDirectory(dir=os.environ.get("COCALC_TEST_CONFINED_DIR")) as tmpdir:
+            image = Path(tmpdir) / "image"
+            (image / "usr" / "bin").mkdir(parents=True)
+            for path in (image, image / "usr", image / "usr" / "bin"):
+                os.chown(path, container, container)
+            v2 = struct.pack("<IIIII", 0x02000001, 1 << 12, 0, 0, 0)  # cap_net_admin=ep, host-global
+            foreign = struct.pack("<IIIIII", 0x03000001, 1 << 13, 0, 0, 0, container + 1000)
+            for name, value in (("helper", v2), ("foreign", foreign), ("plain", None)):
+                path = image / "usr" / "bin" / name
+                shutil.copy("/bin/true", path)
+                os.chown(path, container, container)
+                if value is not None:
+                    os.setxattr(path, "security.capability", value)
+            fd = os.open(image, os.O_PATH | os.O_DIRECTORY)
+            spec = json.dumps({
+                "argv": ["/usr/local/libexec/cocalc-runtime-storage-path-helper", "_image-caps-walk", "--rootid", str(container)],
+                "binds": [[fd, "/dest", True]], "setfcap": True, "tolerate_skips": False,
+            })
+            child = os.fork()  # unshare(NEWPID) changes later forks of the caller
+            if child == 0:
+                code = 70
+                try:
+                    code = namespace["run_confined_exec"](["_confined-exec", spec], run_dir=f"{tmpdir}/run", id_maps=id_maps)
+                finally:
+                    os._exit(code if 0 <= code < 256 else 71)
+            os.close(fd)
+            _pid, status = os.waitpid(child, 0)
+            code = os.waitstatus_to_exitcode(status)
+            self.assertEqual(code, 0)
+            converted = os.getxattr(image / "usr" / "bin" / "helper", "security.capability")
+            self.assertEqual(converted, struct.pack("<IIIIII", 0x03000001, 1 << 12, 0, 0, 0, container))
+            with self.assertRaises(OSError):
+                os.getxattr(image / "usr" / "bin" / "foreign", "security.capability")
+
+    @unittest.skipUnless(
+        os.geteuid() == 0 and os.environ.get("COCALC_TEST_CONFINED") == "1",
+        "needs real root and COCALC_TEST_CONFINED=1 (runs the walker and copies confined)",
+    )
+    def test_unmapped_owners_in_a_real_jail(self) -> None:
+        # Host 0 is not mapped in the jail: the walk and the confined copies
+        # must fail closed on it, never skip it, and pass once the repair has
+        # given the known host-root apt dirs to the container root.
+        namespace = self.helper_namespace()
+        uid = int(os.environ.get("COCALC_TEST_CONFINED_UID", "2000"))
+        container = int(os.environ.get("COCALC_TEST_CONTAINER_ROOT", "231072"))
+        id_map = f"{uid} {uid} 1\n{container} {container} 65536\n"
+        id_maps = (uid, uid, id_map, id_map)
+        v2 = struct.pack("<IIIII", 0x02000001, 1 << 12, 0, 0, 0)  # cap_net_admin=ep, host-global
+        converted = struct.pack("<IIIIII", 0x03000001, 1 << 12, 0, 0, 0, container)
+        walker = ["/usr/local/libexec/cocalc-runtime-storage-path-helper", "_image-caps-walk", "--rootid", str(container)]
+        with tempfile.TemporaryDirectory(dir=os.environ.get("COCALC_TEST_CONFINED_DIR")) as tmpdir:
+            base = Path(tmpdir)
+            os.chmod(base, 0o711)
+
+            def run(argv, binds, setfcap=True):
+                spec = json.dumps({"argv": argv, "binds": binds, "setfcap": setfcap, "tolerate_skips": False})
+                child = os.fork()
+                if child == 0:
+                    code = 70
+                    try:
+                        code = namespace["run_confined_exec"](["_confined-exec", spec], run_dir=f"{tmpdir}/run", id_maps=id_maps)
+                    finally:
+                        os._exit(code if 0 <= code < 256 else 71)
+                _pid, status = os.waitpid(child, 0)
+                return os.waitstatus_to_exitcode(status)
+
+            def image(name):
+                root = base / name
+                (root / "usr" / "bin").mkdir(parents=True)
+                for path in (root, root / "usr", root / "usr" / "bin"):
+                    os.chown(path, container, container)
+                return root
+
+            def capped(path, owner):
+                shutil.copy("/bin/true", path)
+                os.chown(path, owner, owner)
+                os.setxattr(path, "security.capability", v2)
+
+            def walk(root):
+                fd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+                try:
+                    return run(walker, [[fd, "/dest", True]])
+                finally:
+                    os.close(fd)
+
+            def copy(root, argv):
+                dest = base / f"dest-{len(os.listdir(base))}"
+                dest.mkdir()
+                os.chown(dest, uid, uid)
+                srcfd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+                destfd = os.open(dest, os.O_PATH | os.O_DIRECTORY)
+                try:
+                    return run([*argv, "--", "/src/" if "rsync" in argv[0] else "/src/.", "/dest/"],
+                               [[srcfd, "/src", False], [destfd, "/dest", True]])
+                finally:
+                    os.close(srcfd)
+                    os.close(destfd)
+
+            # 1. A 0700 dir in the container range is read and converted.
+            sealed = image("sealed")
+            (sealed / "usr" / "lib" / "private").mkdir(parents=True)
+            os.chown(sealed / "usr" / "lib", container, container)
+            os.chown(sealed / "usr" / "lib" / "private", container, container)
+            os.chmod(sealed / "usr" / "lib" / "private", 0o700)
+            capped(sealed / "usr" / "lib" / "private" / "helper", container)
+            self.assertEqual(walk(sealed), 0)
+            self.assertEqual(os.getxattr(sealed / "usr" / "lib" / "private" / "helper", "security.capability"), converted)
+
+            # 2. The #205 shape: apt's partial dirs left 0:0 0700 by an old normalize.
+            apt = image("apt")
+            lists = apt / "var" / "lib" / "apt" / "lists"
+            lists.mkdir(parents=True)
+            for path in (apt / "var", apt / "var" / "lib", apt / "var" / "lib" / "apt", lists):
+                os.chown(path, container, container)
+            (lists / "partial").mkdir()
+            os.chown(lists / "partial", 0, 0)
+            os.chmod(lists / "partial", 0o700)
+            capped(apt / "usr" / "bin" / "helper", container)
+            self.assertNotEqual(walk(apt), 0)
+            for argv in (namespace["CONFINED_RSYNC"], namespace["CONFINED_CP"]):
+                with self.subTest(copy=argv[0], repaired=False):
+                    self.assertNotEqual(copy(apt, argv), 0)
+            fd = os.open(apt, os.O_PATH | os.O_DIRECTORY)
+            try:
+                self.assertEqual(namespace["repair_host_root_apt_dirs"](fd, owner=(container, container)), ["var/lib/apt/lists/partial"])
+            finally:
+                os.close(fd)
+            info = os.stat(lists / "partial")
+            self.assertEqual((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)), (container, container, 0o700))
+            self.assertEqual(walk(apt), 0)
+            self.assertEqual(os.getxattr(apt / "usr" / "bin" / "helper", "security.capability"), converted)
+            for argv in (namespace["CONFINED_RSYNC"], namespace["CONFINED_CP"]):
+                with self.subTest(copy=argv[0], repaired=True):
+                    self.assertEqual(copy(apt, argv), 0)
+
+            # 3. A READABLE host-root file with a host-global cap: getxattr may
+            # work, but the cap cannot be rewritten on an unmapped inode, so the
+            # walk fails (the image stays unstamped) and the repair leaves it.
+            readable = image("readable")
+            capped(readable / "usr" / "bin" / "rootcap", 0)
+            os.chmod(readable / "usr" / "bin" / "rootcap", 0o755)
+            self.assertNotEqual(walk(readable), 0)
+            self.assertEqual(os.getxattr(readable / "usr" / "bin" / "rootcap", "security.capability"), v2)
+            fd = os.open(readable, os.O_PATH | os.O_DIRECTORY)
+            try:
+                self.assertEqual(namespace["repair_host_root_apt_dirs"](fd, owner=(container, container)), [])
+            finally:
+                os.close(fd)
+            self.assertEqual(os.stat(readable / "usr" / "bin" / "rootcap").st_uid, 0)
+
+    def test_image_caps_state_is_validated_and_written_atomically(self) -> None:
+        namespace = self.helper_namespace()
+        read, write = namespace["read_image_caps_state"], namespace["write_image_caps_state"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "image-caps.json")
+            self.assertEqual(read(path), {})
+            write({"subvol:ab:7": 1}, path)
+            self.assertEqual(read(path), {"subvol:ab:7": 1})
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+            self.assertEqual(sorted(os.listdir(tmpdir)), ["image-caps.json"])
+            os.chmod(path, 0o644)
+            self.assertEqual(read(path), {})  # not private: ignored, images re-walked
+            os.chmod(path, 0o600)
+            for bad in (b"not json", b'{"images": []}', b'{"images": {"k": "1"}}', b"{}"):
+                Path(path).write_bytes(bad)
+                os.chmod(path, 0o600)
+                with self.subTest(bad=bad):
+                    self.assertEqual(read(path), {})
+            os.unlink(path)
+            os.symlink("/etc/passwd", path)
+            self.assertEqual(read(path), {})  # never followed
+
+    def test_image_caps_preflight_stamps_only_after_a_good_walk(self) -> None:
+        namespace = self.helper_namespace()
+        preflight = namespace["image_caps_preflight"]
+        # pre-walk, post-walk, then the second call, then a new unstamped image.
+        identities = iter(["inode:1:2:3", "inode:1:2:4", "inode:1:2:4", "inode:9:9:9"])
+        namespace["image_identity"] = lambda _fd: next(identities)
+        namespace["subvolume_readonly"] = lambda _fd: False
+        namespace["repair_host_root_apt_dirs"] = lambda _fd: []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = str(Path(tmpdir) / "image-caps.json")
+            calls = []
+
+            def confined(argv, binds, **kwargs):
+                calls.append((argv, [(t, w) for _fd, t, w in binds], kwargs))
+                return 0
+
+            self.assertEqual(preflight(3, deadline=0, state_path=state, confined=confined, rootid=231072), "walked")
+            self.assertEqual(calls, [(["/usr/local/libexec/cocalc-runtime-storage-path-helper", "_image-caps-walk",
+                                       "--rootid", "231072"], [("/dest", True)], {"deadline": 0, "setfcap": True})])
+            # Stamped with the identity read after the walk.
+            self.assertEqual(namespace["read_image_caps_state"](state), {"inode:1:2:4": 1})
+            self.assertEqual(preflight(3, deadline=0, state_path=state, confined=confined, rootid=231072), "stamped")
+            self.assertEqual(len(calls), 1)
+            # A failed walk stamps nothing.
+            with self.assertRaises(subprocess.CalledProcessError):
+                preflight(3, deadline=0, state_path=state, confined=lambda *_a, **_k: 2, rootid=231072)
+            self.assertEqual(namespace["read_image_caps_state"](state), {"inode:1:2:4": 1})
+        # At the bound the oldest entries go; a new image is still stamped.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = str(Path(tmpdir) / "image-caps.json")
+            namespace["write_image_caps_state"]({f"inode:0:{i}:0": 1 for i in range(5)}, state)
+            namespace["IMAGE_CAPS_STATE_MAX_IMAGES"] = 5
+            namespace["image_identity"] = lambda _fd: "inode:9:9:9"
+            self.assertEqual(preflight(3, deadline=0, state_path=state, confined=lambda *_a, **_k: 0, rootid=231072), "walked")
+            images = namespace["read_image_caps_state"](state)
+            self.assertEqual(len(images), 5)
+            self.assertIn("inode:9:9:9", images)
+            self.assertNotIn("inode:0:0:0", images)
+
+    @contextmanager
+    def host_root_view(self, namespace, root: Path, owned_by_root):
+        """fstat reports 0:0 for the paths in owned_by_root (a test user
+        cannot create host-root files); fchown is recorded, not done."""
+        real_fstat = os.fstat
+        chowns = []
+
+        def fstat(fd):
+            info = real_fstat(fd)
+            try:
+                path = os.readlink(f"/proc/self/fd/{fd}")
+            except OSError:
+                return info
+            if path in {str(root / rel) for rel in owned_by_root}:
+                values = list(info)
+                values[4] = values[5] = 0
+                return os.stat_result(values)
+            return info
+
+        def fchown(fd, uid, gid):
+            chowns.append((os.path.relpath(os.readlink(f"/proc/self/fd/{fd}"), root), uid, gid))
+
+        with mock.patch.object(namespace["os"], "fstat", side_effect=fstat), \
+                mock.patch.object(namespace["os"], "fchown", side_effect=fchown):
+            yield chowns
+
+    def test_host_root_apt_dirs_are_repaired_exactly(self) -> None:
+        namespace = self.helper_namespace()
+        repair = namespace["repair_host_root_apt_dirs"]
+        allowlist = list(namespace["HOST_ROOT_APT_REPAIRS"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "image"
+            for rel in allowlist:
+                (root / rel).mkdir(parents=True, exist_ok=True)
+            (root / "var" / "cache" / "apt" / "archives" / "lock").write_text("")
+            everything = [*allowlist, "var/lib/apt", "var/cache/apt", "var/cache/apt/archives/lock"]
+            fd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+            try:
+                with self.host_root_view(namespace, root, everything) as chowns:
+                    self.assertEqual(repair(fd, owner=(231072, 231072)), allowlist)
+                # Only the allowlisted dirs; their parents and contents stay for the walk.
+                self.assertEqual(chowns, [(rel, 231072, 231072) for rel in allowlist])
+                # Exactly 0:0 only: a dir already in the container range is left alone.
+                with self.host_root_view(namespace, root, []) as chowns:
+                    self.assertEqual(repair(fd, owner=(231072, 231072)), [])
+                self.assertEqual(chowns, [])
+                with self.host_root_view(namespace, root, allowlist):
+                    with self.assertRaises(ValueError):
+                        repair(fd, owner=(0, 231072))
+            finally:
+                os.close(fd)
+
+    def test_host_root_apt_repair_never_follows_links(self) -> None:
+        namespace = self.helper_namespace()
+        repair = namespace["repair_host_root_apt_dirs"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "image"
+            outside = Path(tmpdir) / "outside"
+            (outside / "partial").mkdir(parents=True)
+            (root / "var" / "lib" / "apt").mkdir(parents=True)
+            (root / "var" / "lib" / "apt" / "lists").symlink_to(str(outside))
+            (root / "var" / "cache" / "apt").mkdir(parents=True)
+            (root / "var" / "cache" / "apt" / "archives").write_text("not a dir")
+            fd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+            try:
+                # Even with the link targets reported 0:0, nothing is followed.
+                view = [str(outside), str(outside / "partial")]
+                with self.host_root_view(namespace, root, view) as chowns:
+                    self.assertEqual(repair(fd, owner=(231072, 231072)), [])
+                self.assertEqual(chowns, [])
+            finally:
+                os.close(fd)
+
+    def test_image_caps_preflight_repairs_inside_the_writable_window(self) -> None:
+        namespace = self.helper_namespace()
+        preflight = namespace["image_caps_preflight"]
+        events = []
+        namespace["image_identity"] = lambda _fd: "inode:1:2:3"
+        namespace["subvolume_readonly"] = lambda _fd: True
+        namespace["set_subvolume_readonly"] = lambda _fd, readonly: events.append(("readonly", readonly))
+
+        def repair(_fd):
+            events.append(("repair",))
+            return ["var/lib/apt/lists/partial"]
+
+        namespace["repair_host_root_apt_dirs"] = repair
+
+        def confined(*_args, **_kwargs):
+            events.append(("walk",))
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = str(Path(tmpdir) / "image-caps.json")
+            outcome = preflight(3, deadline=0, state_path=state, confined=confined, rootid=231072)
+            self.assertEqual(outcome, "walked; repaired host-root apt dirs: var/lib/apt/lists/partial")
+            self.assertEqual(events, [("readonly", False), ("repair",), ("walk",), ("readonly", True)])
+            # A walk that fails after a repair still stamps nothing.
+            events.clear()
+            namespace["image_identity"] = lambda _fd: "inode:9:9:9"
+            with self.assertRaises(subprocess.CalledProcessError):
+                preflight(3, deadline=0, state_path=state, confined=lambda *_a, **_k: 2, rootid=231072)
+            self.assertEqual(events[-1], ("readonly", True))
+            self.assertEqual(namespace["read_image_caps_state"](state), {"inode:1:2:3": 1})
+
+    def test_image_caps_walker_is_the_only_confined_helper_entry(self) -> None:
+        namespace = self.helper_namespace()
+        parse = namespace["parse_confined_spec"]
+        helper = "/usr/local/libexec/cocalc-runtime-storage-path-helper"
+
+        def spec(argv):
+            return json.dumps({"argv": argv, "binds": [[5, "/dest", True]], "setfcap": True, "tolerate_skips": False})
+
+        self.assertEqual(parse(spec([helper, "_image-caps-walk", "--rootid", "231072"]))[0][1], "_image-caps-walk")
+        for argv in ([helper], [helper, "rm", "--root", "/mnt/cocalc"], [helper, "_image-caps-walk", "--rootid", "0"],
+                     [helper, "_image-caps-walk", "--rootid", "1", "/etc"], [helper, "_image-caps-walk", "/etc", "1"]):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                parse(spec(argv))
+        entry = namespace["run_image_caps_walk_entry"]
+        for argv in (["_image-caps-walk"], ["_image-caps-walk", "--rootid", "x"], ["_image-caps-walk", "--root", "/etc"]):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                entry(argv)
+        if os.geteuid() != 0:
+            self.assertEqual(namespace["main"](["rm", "--root", "/mnt/cocalc", "--path", "x"]), 1)
+
+    def test_migrate_image_caps_covers_each_image_and_reports_failures(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache = root / "data" / "cache" / "images"
+            for name in ("a", "b", ".a.json"):
+                (cache / name).mkdir(parents=True) if not name.endswith(".json") else (cache / name).write_text("{}")
+            os.symlink(root, cache / "link")
+            seen = []
+
+            def preflight(fd, **_kwargs):
+                name = Path(os.readlink(f"/proc/self/fd/{fd}")).name
+                seen.append(name)
+                if name == "b":
+                    raise subprocess.CalledProcessError(2, ["walk"])
+                return "walked"
+
+            (cache / ".partial").mkdir()  # dot-directories are walked too
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                code = namespace["run_migrate_image_caps"](["migrate-image-caps"], cache_root=str(root), preflight=preflight)
+            self.assertEqual(code, 1)
+            self.assertEqual(seen, [".partial", "a", "b"])
+            self.assertIn('"image": "b"', out.getvalue())
+            # An image that cannot be examined or opened fails the run; one
+            # that vanished mid-pass is reported, not counted.
+            seen.clear()
+            real_stat, real_openat2 = namespace["os"].stat, namespace["openat2"]
+
+            def broken_stat(name, *args, **kwargs):
+                if name == "a":
+                    raise PermissionError(errno.EACCES, "denied")
+                if name == ".partial":
+                    raise FileNotFoundError(errno.ENOENT, "gone")
+                return real_stat(name, *args, **kwargs)
+
+            def broken_openat2(dirfd, name, *args, **kwargs):
+                if name == "b":
+                    raise OSError(errno.EIO, "I/O error")
+                return real_openat2(dirfd, name, *args, **kwargs)
+
+            namespace["openat2"] = broken_openat2
+            with mock.patch.object(namespace["os"], "stat", side_effect=broken_stat), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                code = namespace["run_migrate_image_caps"](["migrate-image-caps"], cache_root=str(root),
+                                                           preflight=lambda fd, **_k: "walked")
+            namespace["openat2"] = real_openat2
+            reports = {r["image"]: r["image_caps"] for r in map(json.loads, out.getvalue().splitlines())}
+            self.assertEqual(code, 1)
+            self.assertTrue(reports["a"].startswith("failed:"))
+            self.assertTrue(reports["b"].startswith("failed:"))
+            self.assertEqual(reports[".partial"], "vanished")
+            self.assertTrue(reports["link"].startswith("failed:"))
+        # In isolation: a pass where an image vanished, or that met a
+        # symlinked entry, must be rerun (exit 1), not reported clean.
+        for setup in ("vanish", "symlink"):
+            with tempfile.TemporaryDirectory() as tmpdir, self.subTest(setup=setup):
+                root = Path(tmpdir)
+                cache = root / "data" / "cache" / "images"
+                cache.mkdir(parents=True)
+                (cache / ".ok.json").write_text("{}")
+                if setup == "vanish":
+                    (cache / "gone").mkdir()
+                    real_stat = namespace["os"].stat
+
+                    def vanishing(name, *args, **kwargs):
+                        if name == "gone":
+                            raise FileNotFoundError(errno.ENOENT, "gone")
+                        return real_stat(name, *args, **kwargs)
+
+                    patch = mock.patch.object(namespace["os"], "stat", side_effect=vanishing)
+                else:
+                    (cache / "elsewhere").symlink_to(root, target_is_directory=True)
+                    patch = contextlib.nullcontext()
+                with patch, mock.patch("sys.stdout", new_callable=io.StringIO):
+                    code = namespace["run_migrate_image_caps"](["migrate-image-caps"], cache_root=str(root),
+                                                               preflight=lambda fd, **_k: "walked")
+                self.assertEqual(code, 1)
+
+    def test_image_caps_preflight_only_takes_image_cache_roots(self) -> None:
+        namespace = self.helper_namespace()
+        run = namespace["run_image_caps_preflight"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "data" / "cache" / "images" / "ubuntu").mkdir(parents=True)
+            (root / "project-1").mkdir()
+            (root / "data" / "cache" / "images" / "home").symlink_to(root / "project-1", target_is_directory=True)
+            seen = []
+
+            def preflight(fd, **_kwargs):
+                seen.append(os.readlink(f"/proc/self/fd/{fd}"))
+                return "walked"
+
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                self.assertEqual(run(["image-caps-preflight", "--root", str(root), "--path", "data/cache/images/ubuntu"],
+                                     cache_root=str(root), preflight=preflight), 0)
+            self.assertEqual(seen, [str(root / "data" / "cache" / "images" / "ubuntu")])
+            for root_arg, path, error in [
+                (str(root), "project-1", ValueError),  # a project home: refused
+                (str(root), "data/cache/images", ValueError),
+                (str(root), "data/cache/images/ubuntu/usr", ValueError),
+                (str(root), "data/cache/images/..", ValueError),
+                (str(root), "data/cache/imagesX/ubuntu", ValueError),
+                ("/var/lib/cocalc", "data/cache/images/ubuntu", ValueError),
+                (str(root), "data/cache/images/home", OSError),  # symlinked entry never followed
+            ]:
+                with self.subTest(path=path), self.assertRaises(error):
+                    run(["image-caps-preflight", "--root", root_arg, "--path", path],
+                        cache_root=str(root), preflight=preflight)
+            self.assertEqual(len(seen), 1)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        branch = script.split("\n  image-caps-preflight)\n", 1)[1].split("\n    ;;\n", 1)[0]
+        self.assertIn("image-caps-preflight-not-an-image", branch)
+
+    def test_confined_spec_is_strict(self) -> None:
+        namespace = self.helper_namespace()
+        parse = namespace["parse_confined_spec"]
+        ok = {"argv": ["/usr/bin/rsync", "-a"], "binds": [[5, "/src", False], [6, "/dest", True]],
+              "setfcap": True, "tolerate_skips": False}
+        argv, binds, setfcap, tolerate = parse(json.dumps(ok))
+        self.assertEqual((argv[0], binds, setfcap, tolerate), ("/usr/bin/rsync", [(5, "/src", False), (6, "/dest", True)], True, False))
+        self.assertEqual(parse(json.dumps({**ok, "argv": ["/usr/local/libexec/cocalc-rustic", "restore"]}))[0][0],
+                         "/usr/local/libexec/cocalc-rustic")
+        self.assertEqual(parse(json.dumps({**ok, "argv": ["/usr/bin/cp", "-a"]}))[0][0], "/usr/bin/cp")
+        for bad in (
+            {**ok, "argv": ["/bin/sh", "-c", "id"]},
+            {**ok, "argv": ["/bin/cp", "-a"]},
+            {**ok, "argv": []},
+            {**ok, "binds": [[2, "/src", False]]},
+            {**ok, "binds": [[5, "/etc", False]]},
+            {**ok, "binds": [[5, "/src", False], [6, "/src", True]]},
+            {**ok, "binds": [[5, "/profile.toml", True]]},
+            {**ok, "binds": [[5, "/src", "yes"]]},
+            {**ok, "setfcap": 1},
+            {**ok, "extra": 1},
+        ):
+            with self.subTest(bad=bad), self.assertRaises((ValueError, TypeError)):
+                parse(json.dumps(bad))
+
+    def test_confined_id_maps_are_identity_without_root(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subuid = Path(tmpdir) / "subuid"
+            subgid = Path(tmpdir) / "subgid"
+            subuid.write_text("cocalc-host:231072:65536\ncocalc-host:327680:4128768\nother:100000:65536\n", encoding="utf-8")
+            subgid.write_text("cocalc-host:231072:65536\n", encoding="utf-8")
+            entry = mock.Mock(pw_uid=2000, pw_gid=2000)
+            with mock.patch.object(namespace["pwd"], "getpwnam", return_value=entry):
+                uid, gid, uid_map, gid_map = namespace["confined_id_maps"]("cocalc-host", (str(subuid), str(subgid)))
+                self.assertEqual((uid, gid), (2000, 2000))
+                self.assertEqual(uid_map, "2000 2000 1\n231072 231072 65536\n327680 327680 4128768\n")
+                self.assertEqual(gid_map, "2000 2000 1\n231072 231072 65536\n")
+                subuid.write_text("cocalc-host:231072:65536\ncocalc-host:231100:10\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "overlapping"):
+                    namespace["confined_id_maps"]("cocalc-host", (str(subuid), str(subgid)))
+                subuid.write_text("cocalc-host:0:65536\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "invalid id extent"):
+                    namespace["confined_id_maps"]("cocalc-host", (str(subuid), str(subgid)))
+
+    def test_confined_skips_are_tolerated_only_when_deliberate(self) -> None:
+        classify = self.helper_namespace()["classify_confined_errors"]
+        # Verbatim rsync 3.2.7 lines from the staging2 probe (finding 011).
+        skips = [
+            'rsync: [generator] chown "/home/fifo" failed: Invalid argument (22)\n',
+            'rsync: [generator] mknod "/home/nulldev" failed: Operation not permitted (1)\n',
+            'rsync: [sender] send_files failed to open "/staging/root-0600": Permission denied (13)\n',
+            'rsync: [receiver] rsync_xal_set: lsetxattr("/home/.cap-container.t3EnCO","security.capability") failed: Operation not permitted (1)\n',
+            'rsync: [receiver] rsync_xal_set: lsetxattr("/home/.cap-container.8E0Vqb","security.capability") failed: Invalid argument (22)\n',
+            'rsync: [receiver] chown "/home/.suid-root.7z6Zfz" failed: Invalid argument (22)\n',
+            "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1356) [sender=3.2.7]\n",
+        ]
+        self.assertEqual(classify(skips), (True, 6))
+        self.assertEqual(classify(["sending incremental file list\n", *skips]), (True, 6))
+        for other in (
+            'rsync: [receiver] write failed on "/home/big": No space left on device (28)\n',
+            'rsync: [receiver] rename "/home/.x.abc" -> "x": Permission denied (13)\n',
+            'rsync: [receiver] chown "/home/x" failed: Operation not permitted (1)\n',
+            'rsync: [receiver] rsync_xal_set: lsetxattr("/home/x","user.foo") failed: Operation not permitted (1)\n',
+            'rsync: [receiver] rsync_xal_set: lsetxattr("/home/x","trusted.overlay.opaque") failed: Operation not permitted (1)\n',
+        ):
+            with self.subTest(other=other):
+                self.assertFalse(classify([*skips[:2], other, skips[-1]])[0])
+        # Nothing to tolerate, or no terminal partial-transfer line: not clean.
+        self.assertEqual(classify([]), (False, 0))
+        self.assertFalse(classify(skips[:-1])[0])
+        self.assertFalse(classify([skips[-1]])[0])
+        # Every line counts, however many come first (no prefix cap).
+        many = [skips[0]] * 20000
+        late = 'rsync: [receiver] write failed on "/home/big": No space left on device (28)\n'
+        self.assertEqual(classify([*many, skips[-1]]), (True, 20000))
+        self.assertFalse(classify([*many, late, skips[-1]])[0])
+
+    def test_project_restore_cleans_staging_on_failure(self) -> None:
+        namespace = self.helper_namespace()
+        restore = namespace["restore_project_confined"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "home").mkdir()
+            rootfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            destfd = os.open(root / "home", os.O_PATH | os.O_DIRECTORY)
+            try:
+                for failing_step in (0, 1):
+                    calls = []
+
+                    def confined(argv, binds, **kwargs):
+                        calls.append(argv)
+                        return 23 if len(calls) - 1 == failing_step else 0
+
+                    with self.subTest(step=failing_step), self.assertRaises(subprocess.CalledProcessError):
+                        restore(rootfd, destfd, destfd, ["/usr/local/libexec/cocalc-rustic", "restore"], False,
+                                os.getuid(), os.getgid(), time.monotonic() + 60, confined=confined)
+                    self.assertEqual(len(calls), failing_step + 1)
+                    self.assertEqual(list((root / ".cocalc-confined-restore").iterdir()), [])
+                # A staging parent someone else could write is refused.
+                os.chmod(root / ".cocalc-confined-restore", 0o777)
+                with self.assertRaisesRegex(ValueError, "unsafe restore staging"):
+                    restore(rootfd, destfd, destfd, ["x"], False, os.getuid(), os.getgid(),
+                            time.monotonic() + 60, confined=lambda *_a, **_k: 0)
+            finally:
+                os.close(rootfd)
+                os.close(destfd)
+
+    def test_tree_restore_replaces_the_destination_only_on_success(self) -> None:
+        namespace = self.helper_namespace()
+        restore = namespace["restore_tree_confined"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "images" / "rootfs").mkdir(parents=True)
+            (root / "images" / "rootfs" / "old").write_text("old\n", encoding="utf-8")
+            rootfd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+            calls = []
+            try:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    restore(rootfd, "images/rootfs", 3, ["rustic"], os.getuid(), os.getgid(),
+                            time.monotonic() + 60, confined=lambda *_a, **_k: 1)
+                self.assertEqual(sorted(p.name for p in (root / "images").iterdir()), ["rootfs"])
+                self.assertTrue((root / "images" / "rootfs" / "old").exists())
+                restore(rootfd, "images/rootfs", 3, ["rustic"], os.getuid(), os.getgid(),
+                        time.monotonic() + 60, confined=self.fake_confined(calls))
+            finally:
+                os.close(rootfd)
+            self.assertEqual(sorted(p.name for p in (root / "images").iterdir()), ["rootfs"])
+            self.assertEqual(sorted(p.name for p in (root / "images" / "rootfs").iterdir()), ["restored"])
+            [(_argv, binds, kwargs)] = calls
+            self.assertEqual(binds, [("/staging", True), ("/profile.toml", False)])
+            self.assertTrue(kwargs["setfcap"])
+
+    def test_generic_verbs_never_reach_restore_staging(self) -> None:
+        namespace = self.helper_namespace()
+        check = namespace["check_generic_path"]
+        generic_roots = namespace["ALLOWED_ROOTS"] - namespace["SECRET_ROOTS"]
+        for command, path in (("rm", ".cocalc-confined-restore"), ("chown", ".cocalc-confined-restore/restore-1"),
+                              ("rename", ".cocalc-confined-restore/restore-1")):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                check("/mnt/cocalc", path, command, generic_roots)
+
     def test_tree_copy_uses_anchored_directories(self) -> None:
-        run = self.helper_run()
+        namespace = self.helper_namespace()
+        namespace["runtime_user_ids"] = lambda *_args: (os.getuid(), os.getgid())
+        # A copy never changes its source (the image link migration runs at
+        # reconcile and after normalize-rootfs, never on copy sources).
+        namespace["own_root_links"] = lambda *_args: self.fail("copy-tree changed its source")
+        calls = []
+        run = functools.partial(namespace["run"], confined=self.fake_confined(calls))
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "source"
@@ -921,7 +2041,6 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             reflink_dest = root / "reflink-dest"
             outside = root / "outside"
             source.mkdir()
-            preserve_dest.mkdir()
             outside.mkdir()
             (source / "marker").write_text("marker\n", encoding="utf-8")
 
@@ -958,6 +2077,16 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                 (preserve_dest / "marker").read_text(encoding="utf-8"),
                 "marker\n",
             )
+            # Both tree copies run confined, keeping namespaced file caps.
+            [(preserve, preserve_binds, preserve_kwargs), (reflink, reflink_binds, reflink_kwargs)] = calls
+            self.assertEqual(preserve, ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids", "--", "/src/", "/dest/"])
+            self.assertEqual(
+                reflink,
+                ["/usr/bin/cp", "-a", "--reflink=auto", "--remove-destination", "--", "/src/.", "/dest/"],
+            )
+            for binds, kwargs in ((preserve_binds, preserve_kwargs), (reflink_binds, reflink_kwargs)):
+                self.assertEqual(binds, [("/src", False), ("/dest", True)])
+                self.assertTrue(kwargs["setfcap"])
             self.assertEqual(
                 (reflink_dest / "marker").read_text(encoding="utf-8"),
                 "marker\n",
@@ -1059,60 +2188,541 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                     allowed_roots={str(root)},
                 )
 
+    def normalize_fixture(self, tree: Path) -> None:
+        """A minimal image a normalize accepts: bash, glibc, sudo, CA certs."""
+        (tree / "usr" / "bin").mkdir(parents=True)
+        for name in ("bash", "sudo", "apt-get"):
+            (tree / "usr" / "bin" / name).write_text("#!x\n")
+            (tree / "usr" / "bin" / name).chmod(0o755)
+        (tree / "bin").symlink_to("usr/bin")
+        (tree / "lib64").mkdir()
+        (tree / "lib64" / "ld-linux-x86-64.so.2").write_text("")
+        (tree / "etc" / "ssl" / "certs").mkdir(parents=True)
+
+    def normalize_argv(self, root: Path, *extra: str) -> list:
+        return [
+            "normalize-rootfs",
+            "--root",
+            str(root),
+            "--path",
+            "rootfs",
+            "--ownership-source",
+            "keep-id",
+            "--podman-user",
+            "cocalc-host",
+            *extra,
+        ]
+
     def test_normalize_rootfs_uses_private_bind_mount(self) -> None:
         namespace = self.helper_namespace()
+        namespace["container_root_ids"] = lambda *_args: (os.getuid(), os.getgid())
+        preflights = []
+        namespace["image_caps_preflight"] = lambda fd, **_kwargs: preflights.append(fd) or "walked"
+        chowns = []
+        namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append((uid, gid))
         run_normalize_rootfs = namespace["run_normalize_rootfs"]
+        uid_map = f"0 {os.getuid()} 1\n1 231072 65536\n"
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "rootfs").mkdir()
+            self.normalize_fixture(root / "rootfs")
             runtime_root = root / "run"
-            with mock.patch.object(namespace["subprocess"], "run") as run:
+
+            def fake_run(args, **kwargs):
+                if args[1] == "_normalize-rootfs-idmap":
+                    self.assertEqual(kwargs["stdout"], subprocess.PIPE)
+                    return subprocess.CompletedProcess(args, 0, stdout=uid_map)
+                return subprocess.CompletedProcess(args, 0)
+
+            stdout = io.StringIO()
+            with mock.patch.object(namespace["subprocess"], "run", side_effect=fake_run) as run, \
+                    contextlib.redirect_stdout(stdout):
                 run_normalize_rootfs(
-                    [
-                        "normalize-rootfs",
-                        "--root",
-                        str(root),
-                        "--path",
-                        "rootfs",
-                        "--ownership-source",
-                        "keep-id",
-                        "--podman-user",
-                        "cocalc-host",
-                    ],
+                    self.normalize_argv(root),
                     allowed_roots={str(root)},
                     runtime_root=str(runtime_root),
                     runtime_root_uid=os.getuid(),
                 )
             invocations = [call.args[0] for call in run.call_args_list]
             self.assertEqual(invocations[0][:2], ["/bin/mount", "--bind"])
+            wrapper = "/usr/local/sbin/cocalc-runtime-storage"
             self.assertEqual(
-                invocations[1][:2],
+                invocations[1:3],
                 [
-                    "/usr/local/sbin/cocalc-runtime-storage",
-                    "_normalize-rootfs-anchored",
+                    [wrapper, "_normalize-rootfs-idmap", "--podman-user", "cocalc-host", "uid"],
+                    [wrapper, "_normalize-rootfs-idmap", "--podman-user", "cocalc-host", "gid"],
                 ],
             )
-            self.assertEqual(invocations[2][:2], ["/bin/umount", "-l"])
+            self.assertEqual(
+                invocations[3][:6],
+                [wrapper, "_normalize-rootfs-setid", "--podman-user", "cocalc-host", "--shell", "/bin/bash"],
+            )
+            self.assertTrue(invocations[3][6].startswith(f"{runtime_root}/rootfs-"))
+            self.assertEqual(invocations[4][:2], ["/bin/umount", "-l"])
+            self.assertEqual(len(preflights), 1)
+            result = json.loads(stdout.getvalue().strip().splitlines()[-1])
+            self.assertEqual(
+                result,
+                {
+                    "ok": True,
+                    "distro_family": "debian",
+                    "package_manager": "apt-get",
+                    "shell": "/bin/bash",
+                    "glibc": True,
+                    "sudo_present": True,
+                    "ca_certificates_present": True,
+                },
+            )
+            tree = root / "rootfs"
+            self.assertTrue((tree / "var" / "lib" / "apt" / "lists" / "partial").is_dir())
+            self.assertEqual(stat.S_IMODE((tree / "var" / "cache" / "apt" / "archives" / "partial").stat().st_mode), 0o700)
+            self.assertEqual(os.readlink(tree / "var" / "run"), "/run")
+            self.assertEqual(stat.S_IMODE((tree / "tmp").stat().st_mode), 0o1777)
+            self.assertEqual(stat.S_IMODE((tree / "run" / "podman-init").stat().st_mode), 0o755)
+            # The test user's own files map through keep-id to the container root.
+            self.assertIn((231072, 231072), chowns)
 
-            (root / "rootfs").rmdir()
-            (root / "rootfs").symlink_to(root / "outside", target_is_directory=True)
-            with self.assertRaises(OSError):
+            # The skip path runs no Podman at all.
+            with mock.patch.object(namespace["subprocess"], "run", side_effect=fake_run) as run, \
+                    contextlib.redirect_stdout(io.StringIO()):
                 run_normalize_rootfs(
-                    [
-                        "normalize-rootfs",
-                        "--root",
-                        str(root),
-                        "--path",
-                        "rootfs",
-                        "--ownership-source",
-                        "keep-id",
-                        "--podman-user",
-                        "cocalc-host",
-                    ],
+                    self.normalize_argv(root, "--skip-ownership-bridge"),
                     allowed_roots={str(root)},
                     runtime_root=str(runtime_root),
                     runtime_root_uid=os.getuid(),
                 )
+            self.assertEqual(
+                [call.args[0][0] for call in run.call_args_list],
+                ["/bin/mount", "/bin/umount"],
+            )
+
+            shutil.rmtree(tree)
+            tree.symlink_to(root / "outside", target_is_directory=True)
+            with self.assertRaises(OSError):
+                run_normalize_rootfs(
+                    self.normalize_argv(root),
+                    allowed_roots={str(root)},
+                    runtime_root=str(runtime_root),
+                    runtime_root_uid=os.getuid(),
+                )
+
+    # Finding 093: normalize-rootfs changed image paths as host root by name,
+    # so an image's symlinks reached host files.  Every case below puts an
+    # image symlink at a host sentinel and checks the sentinel is untouched.
+
+    @contextmanager
+    def image_tree(self):
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree = Path(tmpdir) / "tree"
+            tree.mkdir()
+            outside = Path(tmpdir) / "outside"
+            outside.mkdir()
+            (outside / "secret").write_text("unchanged\n")
+            (outside / "secret").chmod(0o640)
+            fd = os.open(tree, os.O_PATH | os.O_DIRECTORY)
+            try:
+                yield namespace, namespace["ImageTree"](fd), tree, outside
+            finally:
+                os.close(fd)
+
+    def assert_sentinel(self, outside: Path) -> None:
+        secret = outside / "secret"
+        self.assertEqual(secret.read_text(), "unchanged\n")
+        self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o640)
+        self.assertEqual(sorted(os.listdir(outside)), ["secret"])
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o755)
+
+    def assert_refused(self, namespace, call, code="normalize-image-path-refused"):
+        with self.assertRaises(namespace["NormalizeRefused"]) as caught:
+            call()
+        self.assertEqual(caught.exception.code, code)
+        self.assertTrue(str(caught.exception).startswith(f"SECURITY_DENY code={code} detail="))
+        self.assertNotIn("/tmp", str(caught.exception))
+        return caught.exception
+
+    def test_image_paths_resolve_inside_the_image(self) -> None:
+        with self.image_tree() as (namespace, tree, root, outside):
+            owner = (os.getuid(), os.getgid())
+            (root / "var" / "home").mkdir(parents=True)
+            (root / "home").symlink_to("/var/home")
+            (root / "escape").symlink_to("../outside")
+            (root / "absolute").symlink_to(str(outside))
+            namespace["image_ensure_dir"](tree, "home/user", owner)
+            self.assertTrue((root / "var" / "home" / "user").is_dir())
+            self.assertIsNone(namespace["image_stat"](tree, "escape/secret"))
+            self.assertIsNone(namespace["image_stat"](tree, "absolute/secret"))
+            # Absolute and relative links that stay inside resolve as in a chroot.
+            (root / "etc").mkdir()
+            (root / "etc" / "os-release").write_text("x")
+            (root / "var" / "link").symlink_to("/etc/os-release")
+            self.assertTrue(stat.S_ISREG(namespace["image_stat"](tree, "var/link").st_mode))
+            for rel in ("escape", "absolute"):
+                self.assert_refused(namespace, lambda rel=rel: namespace["image_ensure_dir"](tree, f"{rel}/new", owner))
+            self.assert_sentinel(outside)
+
+    def test_image_resolution_fails_closed(self) -> None:
+        with self.image_tree() as (namespace, tree, _root, _outside):
+            calls = []
+
+            def raising(code):
+                def openat2(*args, **kwargs):
+                    calls.append(kwargs.get("resolve"))
+                    raise OSError(code, os.strerror(code))
+
+                return openat2
+
+            for code, expected in (
+                (errno.ENOSYS, "normalize-openat2-unavailable"),
+                (errno.EINVAL, "normalize-openat2-unavailable"),
+                (errno.EXDEV, "normalize-image-path-refused"),
+                (errno.ELOOP, "normalize-image-path-refused"),
+            ):
+                with mock.patch.dict(namespace, {"openat2": raising(code)}):
+                    self.assert_refused(namespace, lambda: namespace["image_stat"](tree, "etc"), expected)
+            calls.clear()
+            with mock.patch.dict(namespace, {"openat2": raising(errno.EAGAIN)}):
+                self.assert_refused(namespace, lambda: namespace["image_stat"](tree, "etc"))
+            self.assertEqual(len(calls), namespace["IMAGE_RESOLVE_ATTEMPTS"])
+            self.assertEqual(set(calls), {namespace["RESOLVE_IMAGE"]})
+            resolve = namespace["RESOLVE_IMAGE"]
+            self.assertEqual(resolve & namespace["RESOLVE_BENEATH"], 0)
+            self.assertEqual(resolve & 0x13, 0x13)
+
+    def test_image_entries_on_another_device_are_refused(self) -> None:
+        with self.image_tree() as (namespace, tree, root, _outside):
+            (root / "etc").mkdir()
+            tree.dev = tree.dev + 1
+            self.assert_refused(namespace, lambda: namespace["image_stat"](tree, "etc"))
+            self.assert_refused(namespace, lambda: namespace["inventory_image_links"](tree))
+
+    def test_image_layout_never_follows_image_links_to_the_host(self) -> None:
+        owner = (os.getuid(), os.getgid())
+        for case in ("tmp", "run", "var-run", "podman-init", "fifo", "hardlink", "etc"):
+            with self.subTest(case=case), self.image_tree() as (namespace, tree, root, outside):
+                layout = lambda: namespace["normalize_image_layout"](tree, owner)
+                (root / "run").mkdir()
+                (root / "var").mkdir()
+                if case == "tmp":
+                    (root / "tmp").symlink_to(str(outside))
+                    self.assert_refused(namespace, layout)
+                elif case == "run":
+                    shutil.rmtree(root / "run")
+                    (root / "run").symlink_to(str(outside))
+                    self.assert_refused(namespace, layout)
+                elif case == "etc":
+                    (root / "etc").symlink_to("../outside")
+                    self.assert_refused(namespace, layout)
+                elif case == "var-run":
+                    (root / "var" / "run").symlink_to(str(outside))
+                    layout()
+                    self.assertEqual(os.readlink(root / "var" / "run"), "/run")
+                elif case == "podman-init":
+                    (root / "run" / "podman-init").symlink_to(str(outside / "secret"))
+                    self.assert_refused(namespace, layout)
+                elif case == "fifo":
+                    os.mkfifo(root / "run" / "podman-init")
+                    self.assert_refused(namespace, layout)
+                elif case == "hardlink":
+                    os.link(outside / "secret", root / "run" / "podman-init")
+                    self.assert_refused(namespace, layout)
+                    self.assertEqual((outside / "secret").stat().st_nlink, 2)
+                self.assert_sentinel(outside)
+
+    def test_image_layout_creates_and_empties_marker_files(self) -> None:
+        owner = (os.getuid(), os.getgid())
+        with self.image_tree() as (namespace, tree, root, _outside):
+            (root / "var" / "run" / "sub").mkdir(parents=True)
+            (root / "var" / "run" / "sub" / "pid").write_text("1")
+            (root / "etc").mkdir()
+            (root / "etc" / "mtab").write_text("old")
+            (root / "run").mkdir()
+            (root / "run" / ".containerenv").write_text("engine=x\n")
+            (root / "var" / "tmp").mkdir()
+            (root / "tmp").symlink_to("var/tmp")
+            namespace["normalize_image_layout"](tree, owner)
+            self.assertEqual(os.readlink(root / "var" / "run"), "/run")
+            self.assertEqual(os.readlink(root / "etc" / "mtab"), "/proc/mounts")
+            self.assertEqual((root / "run" / ".containerenv").read_bytes(), b"")
+            self.assertEqual(stat.S_IMODE((root / "run" / ".containerenv").stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE((root / "run" / "podman-init").stat().st_mode), 0o755)
+            # tmp -> var/tmp resolves inside the image; the target gets the mode.
+            self.assertEqual(stat.S_IMODE((root / "var" / "tmp").stat().st_mode), 0o1777)
+            self.assertTrue((root / "home" / "user").is_dir())
+            # An empty marker with the right mode is left alone, even if linked.
+            os.link(root / "run" / "podman-init", root / "podman-init-copy")
+            namespace["normalize_image_layout"](tree, owner)
+            self.assertEqual((root / "run" / "podman-init").stat().st_nlink, 2)
+
+    def test_apt_state_stays_inside_the_image(self) -> None:
+        owner = (os.getuid(), os.getgid())
+        for case in ("apt-link", "lists-link", "fifo", "external-hardlink"):
+            with self.subTest(case=case), self.image_tree() as (namespace, tree, root, outside):
+                chowns = []
+                namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append(os.readlink(f"/proc/self/fd/{fd}"))
+                (root / "var" / "lib").mkdir(parents=True)
+                (root / "var" / "cache" / "apt").mkdir(parents=True)
+                if case == "apt-link":
+                    (root / "var" / "lib" / "apt").symlink_to(str(outside))
+                    self.assert_refused(namespace, lambda: namespace["normalize_apt_state"](tree, (1, 1)))
+                elif case == "lists-link":
+                    (root / "var" / "lib" / "apt").mkdir()
+                    (root / "var" / "lib" / "apt" / "lists").symlink_to("../../../../outside")
+                    self.assert_refused(namespace, lambda: namespace["normalize_apt_state"](tree, (1, 1)))
+                elif case == "fifo":
+                    (root / "var" / "lib" / "apt" / "lists").mkdir(parents=True)
+                    os.mkfifo(root / "var" / "lib" / "apt" / "lists" / "pipe")
+                    self.assert_refused(namespace, lambda: namespace["normalize_apt_state"](tree, (1, 1)))
+                elif case == "external-hardlink":
+                    (root / "var" / "lib" / "apt" / "lists").mkdir(parents=True)
+                    os.link(outside / "secret", root / "var" / "lib" / "apt" / "lists" / "Release")
+                    self.assert_refused(namespace, lambda: namespace["inventory_image_links"](tree))
+                    self.assert_refused(namespace, lambda: namespace["normalize_apt_state"](tree, (1, 1)))
+                self.assertEqual([path for path in chowns if not path.startswith(str(root))], [])
+                if case != "fifo":
+                    self.assertEqual(chowns, [])
+                self.assert_sentinel(outside)
+
+    def test_apt_state_changes_each_inode_once(self) -> None:
+        with self.image_tree() as (namespace, tree, root, _outside):
+            chowns = []
+            namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append(os.readlink(f"/proc/self/fd/{fd}"))
+            lists = root / "var" / "lib" / "apt" / "lists"
+            lists.mkdir(parents=True)
+            (root / "etc").mkdir()
+            (lists / "a").write_text("x")
+            os.link(lists / "a", root / "etc" / "b")
+            (lists / "link").symlink_to("/etc/passwd")
+            namespace["inventory_image_links"](tree)
+            namespace["normalize_apt_state"](tree, (1, 1))
+            self.assertEqual(chowns.count(str(lists / "a")), 1)
+            # The symlink itself is changed through its pinned fd, never its target.
+            self.assertIn(str(lists / "link"), chowns)
+            self.assertTrue((lists / "auxfiles").is_dir())
+            self.assertEqual(stat.S_IMODE((lists / "partial").stat().st_mode), 0o700)
+            # A link added after the inventory is caught before the change.
+            chowns.clear()
+            tree.changed.clear()
+            os.link(lists / "a", root / "c")
+            self.assert_refused(namespace, lambda: namespace["normalize_apt_state"](tree, (1, 1)))
+
+    def test_image_walk_refuses_a_swapped_entry(self) -> None:
+        with self.image_tree() as (namespace, tree, root, _outside):
+            (root / "etc").mkdir()
+            (root / "etc" / "passwd").write_text("x")
+            real_stat = os.stat
+
+            def swapped(path, *args, **kwargs):
+                info = real_stat(path, *args, **kwargs)
+                if path == "passwd" and not kwargs.get("follow_symlinks", True):
+                    values = list(info)
+                    values[1] += 1
+                    return os.stat_result(values)
+                return info
+
+            with mock.patch.object(namespace["os"], "stat", side_effect=swapped):
+                error = self.assert_refused(namespace, lambda: namespace["inventory_image_links"](tree))
+            self.assertIn("etc/passwd", str(error))
+
+    def test_image_probe_resolves_links_inside_the_image(self) -> None:
+        with self.image_tree() as (namespace, tree, root, _outside):
+            self.normalize_fixture(root)
+            (root / "bin").unlink()
+            (root / "bin").symlink_to("/usr/bin")
+            (root / "lib64" / "ld-linux-x86-64.so.2").unlink()
+            (root / "lib" / "x86_64-linux-gnu").mkdir(parents=True)
+            (root / "lib" / "x86_64-linux-gnu" / "ld.so").write_text("")
+            (root / "lib64" / "ld-linux-x86-64.so.2").symlink_to("/lib/x86_64-linux-gnu/ld.so")
+            result = namespace["image_probe"](tree)
+            self.assertEqual(result["shell"], "/bin/bash")
+            self.assertEqual(result["package_manager"], "apt-get")
+            # A link to a host path that exists only on the host is not glibc.
+            (root / "lib64" / "ld-linux-x86-64.so.2").unlink()
+            (root / "lib64" / "ld-linux-x86-64.so.2").symlink_to("/proc/self/exe")
+            with self.assertRaises(namespace["NormalizePreflightFailed"]) as caught:
+                namespace["image_probe"](tree)
+            self.assertEqual(caught.exception.status, 43)
+            shutil.rmtree(root / "usr")
+            self.assert_refused(namespace, lambda: namespace["image_probe"](tree), "rootfs-shell-missing")
+
+    def test_remap_matches_the_old_two_pass_rewrite(self) -> None:
+        namespace = self.helper_namespace()
+        ranges = [(0, 2001, 1), (1, 231072, 65536)]
+
+        # The removed script's two passes, verbatim in effect.
+        def old(identifier, source, runtime_id=2001):
+            def h2i(x):
+                for ns, host, length in ranges:
+                    if host <= x < host + length:
+                        return ns + (x - host)
+                raise RuntimeError("uncovered")
+
+            def i2h(x):
+                for ns, host, length in ranges:
+                    if ns <= x < ns + length:
+                        return host + (x - ns)
+                raise RuntimeError("uncovered")
+
+            try:
+                intermediate = h2i(identifier)
+                if source == "oci-extract":
+                    canonical = intermediate
+                elif intermediate == 0:
+                    canonical = runtime_id
+                elif 0 < intermediate <= runtime_id:
+                    canonical = intermediate - 1
+                else:
+                    canonical = intermediate
+            except RuntimeError:
+                canonical = identifier
+            try:
+                x = h2i(canonical)
+            except RuntimeError:
+                x = canonical
+            x = x + 1 if x < runtime_id else (0 if x == runtime_id else x)
+            return i2h(x)
+
+        ids = [0, 1, 2, 999, 2000, 2001, 2002, 65535, 65536, 231071, 231072, 231073, 233073, 296607, 296608, 4294967294]
+        for source in ("keep-id", "oci-extract"):
+            mapper = namespace["rootfs_id_mapper"](ranges, 2001, source)
+            for identifier in ids:
+                with self.subTest(source=source, identifier=identifier):
+                    try:
+                        expected = old(identifier, source)
+                    except RuntimeError:
+                        with self.assertRaises(ValueError):
+                            mapper(identifier)
+                        continue
+                    self.assertEqual(mapper(identifier), expected)
+        self.assertEqual(namespace["rootfs_id_mapper"](ranges, 2001, "keep-id")(0), 231072)
+        with self.assertRaises(ValueError):
+            namespace["rootfs_id_mapper"](ranges, 2001, "other")
+        with self.assertRaises(ValueError):
+            namespace["parse_id_map"]("0 2001 1\n1 x 65536\n")
+
+    def test_remap_changes_pinned_inodes_inside_the_image(self) -> None:
+        with self.image_tree() as (namespace, tree, root, outside):
+            chowns = []
+            namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append((os.readlink(f"/proc/self/fd/{fd}"), uid, gid))
+            (root / "usr" / "bin").mkdir(parents=True)
+            (root / "usr" / "bin" / "tool").write_text("x")
+            os.link(root / "usr" / "bin" / "tool", root / "usr" / "bin" / "tool2")
+            (root / "escape").symlink_to(str(outside / "secret"))
+            os.mkfifo(root / "fifo")
+            ranges = [(0, os.getuid(), 1), (1, 231072, 65536)]
+            namespace["inventory_image_links"](tree)
+            namespace["remap_image_ids"](tree, ranges, [(0, os.getgid(), 1), (1, 231072, 65536)], "keep-id")
+            paths = [path for path, _uid, _gid in chowns]
+            self.assertEqual(len(paths), len(set(paths)))
+            self.assertEqual([p for p in paths if p.endswith("/tool") or p.endswith("/tool2")].__len__(), 1)
+            self.assertIn(str(root / "escape"), paths)
+            self.assertIn(str(root / "fifo"), paths)
+            self.assertTrue(all(path == str(root) or path.startswith(f"{root}/") for path in paths))
+            self.assert_sentinel(outside)
+
+    def test_skip_path_inventories_before_any_change(self) -> None:
+        # review B1: a correct var/run link hard linked outside the image is
+        # refused on the skip path too, before anything is changed.
+        owner = (os.getuid(), os.getgid())
+        for rel in ("var/run", "etc/mtab"):
+            with self.subTest(rel=rel), self.image_tree() as (namespace, tree, root, outside):
+                self.normalize_fixture(root)
+                chowns = []
+                namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append(fd)
+                (root / "var").mkdir(exist_ok=True)
+                (root / rel).symlink_to("/run" if rel == "var/run" else "/proc/mounts")
+                os.link(root / rel, outside / "link", follow_symlinks=False)
+                maps = lambda: self.fail("the skip path reads no id map")
+                self.assert_refused(namespace, lambda: namespace["normalize_image_tree"](tree, "keep-id", True, maps, owner))
+                self.assertEqual(chowns, [])
+                self.assertFalse((root / "home").exists())
+                self.assertEqual(os.lstat(outside / "link").st_nlink, 2)
+
+    def test_apt_hardlink_ends_with_the_container_root_after_the_remap(self) -> None:
+        # review B2: the remap and the apt pass each claim inodes for
+        # themselves, so an internally linked apt file ends with the apt owner.
+        with self.image_tree() as (namespace, tree, root, _outside):
+            self.normalize_fixture(root)
+            lists = root / "var" / "lib" / "apt" / "lists"
+            lists.mkdir(parents=True)
+            (lists / "Release").write_text("x")
+            os.link(lists / "Release", root / "etc" / "Release")
+            owners = {}
+
+            def fchown_pinned(fd, uid, gid):
+                owners[os.fstat(fd).st_ino] = (uid, gid)
+
+            namespace["fchown_pinned"] = fchown_pinned
+            uid, gid = os.getuid(), os.getgid()
+            maps = lambda: ([(0, uid, 1), (1, 231072, 65536)], [(0, gid, 1), (1, 231072, 65536)])
+            # Distinct from where the remap puts the test user (231072), so
+            # only the apt pass can produce it.
+            container = (231999, 231999)
+            result = namespace["normalize_image_tree"](tree, "keep-id", False, maps, container)
+            self.assertEqual(result["package_manager"], "apt-get")
+            self.assertEqual(owners[(lists / "Release").stat().st_ino], container)
+            self.assertEqual(owners[lists.stat().st_ino], container)
+
+    def test_link_count_is_read_again_at_the_change(self) -> None:
+        # review B3: a link made after the walk opened the entry, but before
+        # the change, is caught by the fresh fstat on the pinned fd.
+        with self.image_tree() as (namespace, tree, root, outside):
+            (root / "etc").mkdir()
+            target = root / "etc" / "shadow"
+            target.write_text("x")
+            namespace["inventory_image_links"](tree)
+            chowns = []
+            namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append(os.readlink(f"/proc/self/fd/{fd}"))
+            real_fstat = os.fstat
+            state = {"linked": False}
+
+            def fstat(fd):
+                info = real_fstat(fd)
+                if not state["linked"] and info.st_ino == target.stat().st_ino:
+                    # The walk's check saw nlink 1; link it outside right after.
+                    state["linked"] = True
+                    os.link(target, outside / "shadow")
+                return info
+
+            ranges = [(0, os.getuid(), 1), (1, 231072, 65536)]
+            gids = [(0, os.getgid(), 1), (1, 231072, 65536)]
+            with mock.patch.object(namespace["os"], "fstat", side_effect=fstat):
+                self.assert_refused(namespace, lambda: namespace["remap_image_ids"](tree, ranges, gids, "keep-id"))
+            self.assertTrue(state["linked"])
+            self.assertNotIn(str(target), chowns)
+
+    def test_refusal_lines_escape_image_names(self) -> None:
+        # review S1: an image file name cannot forge a second record line.
+        namespace = self.helper_namespace()
+        error = namespace["NormalizeRefused"]("normalize-image-path-refused", "a\nSECURITY_DENY code=x\x01\\", "hard linked")
+        self.assertEqual(str(error).count("\n"), 0)
+        self.assertEqual(str(error), "SECURITY_DENY code=normalize-image-path-refused detail=a\\nSECURITY_DENY code=x\\x01\\\\: hard linked")
+
+    def test_links_under_a_symlinked_parent_go_to_the_container_root(self) -> None:
+        # review S2: etc and var may be links inside the image; the links made
+        # there are owned through their pinned fd, not left to own_root_links.
+        with self.image_tree() as (namespace, tree, root, _outside):
+            (root / "private" / "etc").mkdir(parents=True)
+            (root / "private" / "var").mkdir(parents=True)
+            (root / "etc").symlink_to("/private/etc")
+            (root / "var").symlink_to("private/var")
+            chowns = []
+            namespace["fchown_pinned"] = lambda fd, uid, gid: chowns.append((os.readlink(f"/proc/self/fd/{fd}"), uid, gid))
+            real_fstat = os.fstat
+
+            def fstat(fd):
+                # A test user cannot make host-root links: report them as root's.
+                info = real_fstat(fd)
+                if stat.S_ISLNK(info.st_mode):
+                    values = list(info)
+                    values[4] = values[5] = 0
+                    return os.stat_result(values)
+                return info
+
+            with mock.patch.object(namespace["os"], "fstat", side_effect=fstat):
+                namespace["normalize_image_layout"](tree, (231072, 231072))
+            self.assertEqual(os.readlink(root / "private" / "etc" / "mtab"), "/proc/mounts")
+            self.assertIn((str(root / "private" / "etc" / "mtab"), 231072, 231072), chowns)
+            self.assertIn((str(root / "private" / "var" / "run"), 231072, 231072), chowns)
 
     def test_rustic_rejects_executable_profile_configuration(self) -> None:
         run_rustic = self.helper_namespace()["run_rustic"]
@@ -1214,7 +2824,9 @@ password = "audit-password"
                 )
 
     def test_rustic_uses_anchored_validated_profile_snapshot(self) -> None:
-        run_rustic = self.helper_namespace()["run_rustic"]
+        namespace = self.helper_namespace()
+        namespace["runtime_user_ids"] = lambda *_args: (os.getuid(), os.getgid())
+        run_rustic = namespace["run_rustic"]
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "source"
@@ -1274,29 +2886,43 @@ secret_access_key = "secret"
             )
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
-            run_rustic(
-                [
-                    "rustic-project-restore",
-                    "--root", str(root),
-                    "--path", "source",
-                    "--profile-root", str(root),
-                    "--profile-path", "profile.toml",
-                    "--snapshot", "backup-id:data",
-                    "--no-cache",
-                ],
-                allowed_roots={str(root)},
-                rustic_candidates=[str(fake_rustic)],
-                profile_run_dir=str(profile_run_dir),
-                profile_run_dir_uid=os.getuid(),
+            calls = []
+            # Root hands the profile to the runtime group; not as a test user.
+            with mock.patch.object(namespace["os"], "fchown"):
+                run_rustic(
+                    [
+                        "rustic-project-restore",
+                        "--root", str(root),
+                        "--path", "source",
+                        "--profile-root", str(root),
+                        "--profile-path", "profile.toml",
+                        "--snapshot", "backup-id:data",
+                        "--no-cache",
+                    ],
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(profile_run_dir),
+                    profile_run_dir_uid=os.getuid(),
+                    confined=self.fake_confined(calls),
+                )
+            # Restored confined into fresh staging, then merged into the
+            # pinned destination; the staging directory is gone.
+            (restore, restore_binds, restore_kwargs), (merge, merge_binds, merge_kwargs) = calls
+            self.assertEqual(
+                restore,
+                [str(fake_rustic), "-P", "/profile", "restore", "--no-cache", "--numeric-id",
+                 "backup-id:data", "/staging"],
             )
-            restore_args = invocation.read_text(encoding="utf-8").splitlines()
-            self.assertIn("restore", restore_args)
-            self.assertIn("--no-cache", restore_args)
-            # rustic rejects --cache-dir together with --no-cache
-            self.assertNotIn("--cache-dir", restore_args)
-            self.assertIn("backup-id:data", restore_args)
-            # Existing files are read, never trusted by size and mtime.
-            self.assertEqual(restore_args[restore_args.index("restore") + 1], "--verify-existing")
+            self.assertEqual(restore_binds, [("/staging", True), ("/profile.toml", False)])
+            self.assertFalse(restore_kwargs.get("setfcap", False))
+            self.assertEqual(
+                merge,
+                ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids", "--checksum", "--", "/staging/", "/home/"],
+            )
+            self.assertEqual(merge_binds, [("/staging", False), ("/home", True)])
+            self.assertTrue(merge_kwargs["tolerate_skips"])
+            self.assertEqual((source / "restored").read_text(encoding="utf-8"), "restored\n")
+            self.assertEqual(list((root / ".cocalc-confined-restore").iterdir()), [])
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
             outside = root / "outside-profile.toml"
@@ -4549,6 +6175,47 @@ class CocalcInstallRootTest(unittest.TestCase):
 
     def test_existing_host_install_migrates_only_parent(self) -> None:
         self.assert_install_root_migration(prepare=False)
+
+    def test_image_link_migration_touches_only_root_owned_links(self) -> None:
+        cfg = replace(make_cfg(str(self.base)), ssh_user="cocalc-host")
+        cache = self.base / "cache" / "images"
+        image = cache / "ubuntu"
+        (image / "etc").mkdir(parents=True)
+        (image / "var").mkdir()
+        os.symlink("/proc/mounts", image / "etc" / "mtab")
+        os.symlink("/run", image / "var" / "run")
+        (cache / ".ubuntu.json").write_text("{}")
+        other = cache / "planted"
+        other.mkdir()
+        os.symlink(self.base, other / "etc")  # a symlinked parent: never followed
+        subuid = self.base / "subuid"
+        subuid.write_text("cocalc-host:231072:65536\nother:100000:65536\n")
+        chowns = []
+        real_stat = os.stat
+
+        def fake_stat(path, *args, **kwargs):
+            info = real_stat(path, *args, **kwargs)
+            if not kwargs.get("follow_symlinks", True) and stat.S_ISLNK(info.st_mode):
+                values = list(info)
+                values[4] = values[5] = 0
+                return os.stat_result(values)
+            return info
+
+        def fake_chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
+            chowns.append((os.readlink(f"/proc/self/fd/{dir_fd}"), path, uid, gid, follow_symlinks))
+
+        with mock.patch.object(bootstrap.os, "stat", side_effect=fake_stat), \
+                mock.patch.object(bootstrap.os, "chown", side_effect=fake_chown):
+            self.assertEqual(bootstrap.migrate_image_root_links(cfg, cache, subuid, subuid), 2)
+        self.assertEqual(
+            sorted(chowns),
+            [(f"{image}/etc", "mtab", 231072, 231072, False), (f"{image}/var", "run", 231072, 231072, False)],
+        )
+        # A symlinked cache root is refused outright.
+        link = self.base / "cache-link"
+        os.symlink(cache, link)
+        self.assertEqual(bootstrap.migrate_image_root_links(cfg, link, subuid, subuid), 0)
+        self.assertEqual(bootstrap.migrate_image_root_links(cfg, self.base / "missing", subuid, subuid), 0)
 
     def test_install_root_migration_rejects_symlink(self) -> None:
         elsewhere = self.base / "elsewhere"
@@ -8492,10 +10159,7 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
             self.assertIn('scratch_target_gib="${1:-}"', script)
             self.assertIn('blockdev --getsize64 "$scratch_parent"', script)
             self.assertIn("shared-scratch-grow-incomplete", script)
-            self.assertIn(
-                'unshare cat /proc/self/uid_map >"$rewrite_uid_map_file"',
-                script,
-            )
+            self.assertIn('unshare cat "/proc/self/${3}_map"', script)
             self.assertIn("run_rootfs_podman_as_user()", script)
             self.assertIn('CONTAINER_RUNTIME_REQUIRED="1"', script)
             self.assertIn(
@@ -8511,27 +10175,17 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
                 'bash -lc "cd ~ && /usr/bin/podman unshare', script
             )
             self.assertNotIn("/usr/bin/podman run --rm", script)
-            self.assertIn('"to-canonical"', script)
-            self.assertIn('"to-host"', script)
-            self.assertIn("reverse_keep_id", script)
-            self.assertIn('"2001"', script)
-            self.assertIn("sudo_present", script)
-            self.assertIn("ca_certificates_present", script)
-            self.assertIn(
-                "startup bootstrap requires sudo and CA certificates",
-                script,
-            )
-            self.assertIn('mkdir -p "$rootfs/home" "$rootfs/home/user"', script)
-            self.assertIn('ln -snf /proc/mounts "$rootfs/etc/mtab"', script)
-            self.assertIn("normalize_runtime_package_state_rootfs()", script)
-            self.assertIn('root_owner_uid="$(stat -c', script)
-            self.assertIn('"$rootfs/var/lib/apt/lists/partial"', script)
-            self.assertIn('"$rootfs/var/cache/apt/archives/partial"', script)
+            # Finding 093: the image is changed by the path helper through
+            # pinned fds; the wrapper keeps only the Podman steps.
+            self.assertIn("  _normalize-rootfs-idmap)", script)
+            self.assertIn("  _normalize-rootfs-setid)", script)
+            self.assertNotIn("_normalize-rootfs-anchored", script)
+            for host_path_op in ('"$rootfs/', "chown -R", "reverse_keep_id", "ln -snf"):
+                self.assertNotIn(host_path_op, script)
             self.assertIn('find "$dir" -xdev -type f', script)
             self.assertIn("COCALC_RUNTIME_UID", script)
             self.assertIn("--userns=keep-id:uid=2001,gid=2001", script)
-            self.assertIn(': >"$rootfs/run/podman-init"', script)
-            self.assertIn(': >"$rootfs/run/.containerenv"', script)
+            self.assertIn("startup bootstrap requires sudo and CA certificates", bootstrap.RUNTIME_STORAGE_PATH_HELPER)
             helper = captured[
                 "/usr/local/libexec/cocalc-runtime-storage-path-helper"
             ]
@@ -10974,6 +12628,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "configure_kernel_sysctl_hardening",
                 "ensure_cocalc_state_root",
                 "install_privileged_wrappers",
+                "migrate_image_root_links",
                 "install_privileged_tool_binaries",
                 "write_helpers",
                 "configure_runtime_sudoers",
@@ -11032,6 +12687,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "configure_btrfs_scrub",
                     "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
+                    "migrate_image_root_links",
                     "install_privileged_tool_binaries",
                     "write_helpers",
                     "configure_runtime_sudoers",
@@ -11059,7 +12715,7 @@ class BootstrapModesTest(unittest.TestCase):
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
-            "install_privileged_wrappers reconcile_storage_and_containment "
+            "install_privileged_wrappers migrate_image_root_links reconcile_storage_and_containment "
             "ensure_subuids ensure_runtime_user_manager configure_podman "
             "verify_runtime_user_contract write_env configure_runtime_shell_env "
             "setup_master_conat_token install_privileged_tool_binaries "
@@ -11132,7 +12788,7 @@ class BootstrapModesTest(unittest.TestCase):
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
-            "install_privileged_wrappers ensure_cocalc_mount setup_shared_scratch "
+            "install_privileged_wrappers migrate_image_root_links ensure_cocalc_mount setup_shared_scratch "
             "ensure_btrfs_data reconcile_bees_runtime_policy "
             "reconcile_project_io_policy reconcile_host_service_cgroup "
             "ensure_subuids ensure_runtime_user_manager configure_podman "
@@ -11679,6 +13335,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("ensure_cocalc_state_root", lambda _cfg: None)
             patch("install_btrfs_helper", lambda _cfg: None)
             patch("install_privileged_wrappers", lambda _cfg: None)
+            patch("migrate_image_root_links", lambda _cfg: 0)
             patch("reconcile_storage_and_containment", lambda _cfg: None)
             patch("reconcile_project_network_limits", lambda _cfg: None)
             patch("reconcile_project_io_policy", lambda _cfg: None)

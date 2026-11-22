@@ -19,7 +19,57 @@ export const ROOTFS_SCAN_SEVERITIES: RootfsScanSeverity[] = [
   "unknown",
 ];
 
-export const DEFAULT_TRIVY_SCANNER_IMAGE = "docker.io/aquasec/trivy:latest";
+// The Trivy scanner image, pinned by digest: a tag can be re-pointed by
+// whoever controls the registry (Docker Hub's aquasec/trivy tags, latest
+// included, served malicious images in March 2026).  This is the v0.76.1
+// multi-arch index; the same digest is published on Docker Hub and on
+// ghcr.io/aquasecurity/trivy.  To update: pick a release, check that both
+// registries publish the same index digest for its tag (and its signature),
+// then change it here and in the site setting.
+export const DEFAULT_TRIVY_SCANNER_IMAGE =
+  "docker.io/aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c";
+
+// Development only: allows a scanner image without a digest (e.g. a local
+// tag).  Never set on a production bay or host.
+export const ROOTFS_SCAN_ALLOW_UNPINNED_IMAGE_ENV =
+  "COCALC_ROOTFS_SCAN_ALLOW_UNPINNED_IMAGE";
+
+const DIGEST_SUFFIX = /@sha256:([0-9a-f]{64})$/;
+
+// The sha256 digest an image reference is pinned to ("sha256:<hex>"), or
+// undefined for a tag-only (or malformed) reference.
+export function scannerImageDigest(image: string): string | undefined {
+  const match = DIGEST_SUFFIX.exec(`${image ?? ""}`.trim());
+  return match ? `sha256:${match[1]}` : undefined;
+}
+
+export function allowUnpinnedScannerImage(
+  env: Record<string, string | undefined> = typeof process === "undefined"
+    ? {}
+    : process.env,
+): boolean {
+  return env[ROOTFS_SCAN_ALLOW_UNPINNED_IMAGE_ENV] === "1";
+}
+
+// The scanner image to run, which must be pinned by digest.  Fails closed:
+// a tag-only reference is refused unless the development-only escape is set.
+export function assertPinnedScannerImage(
+  image: string,
+  {
+    allowUnpinned = allowUnpinnedScannerImage(),
+  }: { allowUnpinned?: boolean } = {},
+): string {
+  const ref = `${image ?? ""}`.trim();
+  if (!ref) {
+    throw new Error("RootFS scanner image must be specified");
+  }
+  if (scannerImageDigest(ref) == null && !allowUnpinned) {
+    throw new Error(
+      `RootFS scanner image '${ref}' is not pinned by digest; use <image>@sha256:<digest> (only for development: ${ROOTFS_SCAN_ALLOW_UNPINNED_IMAGE_ENV}=1)`,
+    );
+  }
+  return ref;
+}
 export const DEFAULT_TRIVY_CACHE_DIR = "/mnt/cocalc/data/trivy-cache";
 
 const SEVERITY_RANK: Record<RootfsScanSeverity, number> = {
