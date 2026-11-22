@@ -562,6 +562,10 @@ Table({
       ...required("integer", "Agent writes this minute."),
       pg_default: "0",
     },
+    minute_deletes: {
+      ...required("integer", "Agent delete requests this minute."),
+      pg_default: "0",
+    },
     hour_start: { ...created("Start of the current one-hour window.") },
     hour_bytes: {
       ...required("number", "Bytes written by agents this hour."),

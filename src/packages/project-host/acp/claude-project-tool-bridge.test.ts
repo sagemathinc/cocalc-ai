@@ -427,6 +427,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "memory_read",
       "memory_write",
       "memory_delete",
+      "memory_prune",
       "request_user_input_async",
     ]);
     execute.mockImplementationOnce(async () => ({
@@ -577,6 +578,54 @@ test("trusted MCP helper executes only through the scoped project socket", async
     expect(execute.mock.calls.at(-1)?.[0]).toMatch(
       /memory delete 'verdict' --expect-revision '0123456789abcdef'$/,
     );
+    // Several notes are one request, as "<name> [revision]" lines on stdin.
+    execute.mockImplementationOnce(ok);
+    await request(41, "tools/call", {
+      name: "memory_delete",
+      arguments: {
+        notes: [
+          { name: "agent/old" },
+          { name: "verdict", expected_revision: "0123456789abcdef" },
+        ],
+      },
+    });
+    const batch = execute.mock.calls.at(-1)?.[0] as string;
+    expect(batch).toMatch(
+      /\| base64 -d \| .* project chat memory delete --stdin$/,
+    );
+    const lines = Buffer.from(/printf %s '([^']*)'/.exec(batch)![1], "base64")
+      .toString()
+      .split("\n");
+    expect(lines).toEqual(["agent/old", "verdict 0123456789abcdef"]);
+    execute.mockImplementationOnce(ok);
+    await request(42, "tools/call", {
+      name: "memory_prune",
+      arguments: { expiring_within: "14d", dry_run: true },
+    });
+    expect(execute.mock.calls.at(-1)?.[0]).toMatch(
+      /project chat memory prune --expiring-within '14d' --dry-run$/,
+    );
+    // Bad requests never reach the shell.
+    const beforeBad = execute.mock.calls.length;
+    for (const args of [
+      { name: "a", notes: [{ name: "b" }] },
+      { notes: [{ name: "a'; rm -rf ~; '" }] },
+      { notes: [] },
+    ]) {
+      const bad = await request(43, "tools/call", {
+        name: "memory_delete",
+        arguments: args,
+      });
+      expect(bad.result?.isError ?? !!bad.error).toBe(true);
+    }
+    for (const args of [{}, { unused_for: "30d; rm -rf ~" }]) {
+      const bad = await request(44, "tools/call", {
+        name: "memory_prune",
+        arguments: args,
+      });
+      expect(bad.result?.isError ?? !!bad.error).toBe(true);
+    }
+    expect(execute.mock.calls.length).toBe(beforeBad);
     const before = execute.mock.calls.length;
     const badExpiry = await request(40, "tools/call", {
       name: "memory_write",
@@ -694,7 +743,8 @@ test("trusted MCP helper executes only through the scoped project socket", async
       socket.on("end", () => resolve(response));
     });
     expect(unauthorized).toContain("Invalid project tool request");
-    expect(execute).toHaveBeenCalledTimes(11);
+    // Two of these are the batch delete and the prune above.
+    expect(execute).toHaveBeenCalledTimes(13);
   } finally {
     child.kill("SIGKILL");
     await bridge.close();

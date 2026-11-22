@@ -118,7 +118,8 @@ cocalc project chat memory list
 cocalc project chat memory search <words>
 cocalc project chat memory read <name>
 cocalc project chat memory write <name> --description "<one line>" --stdin
-cocalc project chat memory delete <name>
+cocalc project chat memory delete <name> [<name>...]
+cocalc project chat memory prune --expiring-within 14d --dry-run
 ```
 
 - Save only what stays useful: the user's decisions (with the date and the

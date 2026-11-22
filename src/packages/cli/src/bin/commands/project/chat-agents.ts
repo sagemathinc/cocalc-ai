@@ -954,30 +954,88 @@ function registerAgentMemoryCommands(chat: Command, deps: ProjectCommandDeps) {
       ),
     );
   memory
-    .command("delete <name>")
-    .description("delete a note that is wrong or no longer useful")
+    .command("delete [names...]")
+    .description(
+      `delete notes that are wrong or no longer useful: one, several (memory delete a b c, up to ${AGENT_MEMORY_LIMITS.maxDeleteBatch}), or one per line from --stdin as "<name> [revision]". Several notes are one request: each is deleted or reported on its own`,
+    )
     .option(
       "--expect-revision <revision>",
-      "the revision a read returned (required for a note another agent wrote)",
+      "with one name: the revision a read returned (required for a note another agent wrote)",
     )
-    .action(async (name: string, opts, cmd) =>
-      memoryRequest(
+    .option(
+      "--stdin",
+      'read the notes from standard input, one per line: "<name>" or "<name> <revision>"',
+    )
+    .action(async (names: string[], opts, cmd) => {
+      const notes: { name: string; expected_revision?: string }[] = names.map(
+        (name) => ({ name }),
+      );
+      if (opts.stdin)
+        for (const line of (await stdinText()).split("\n")) {
+          const [name, revision, ...rest] = line.trim().split(/\s+/);
+          if (!name) continue;
+          if (rest.length)
+            throw new Error(
+              `expected "<name> [revision]", got: ${line.trim()}`,
+            );
+          notes.push(
+            revision ? { name, expected_revision: revision } : { name },
+          );
+        }
+      if (notes.length === 0)
+        throw new Error("name at least one note to delete (or use --stdin)");
+      if (opts.expectRevision) {
+        if (notes.length !== 1)
+          throw new Error(
+            '--expect-revision goes with one name; for several, pass "<name> <revision>" lines on --stdin',
+          );
+        notes[0].expected_revision = opts.expectRevision;
+      }
+      // One note keeps the single-note request, which every hub understands.
+      await memoryRequest(
+        cmd,
+        notes.length === 1 && !opts.stdin
+          ? { action: "memory", op: "delete", ...notes[0] }
+          : { action: "memory", op: "delete-many", notes },
+        "project chat memory delete",
+      );
+    });
+  memory
+    .command("prune")
+    .description(
+      "delete notes in your own scope (agent/) that are about to expire or that nothing has read or changed for a while; run with --dry-run first to see the list. Chooses by stored expiry and last use, without reading the notes",
+    )
+    .option(
+      "--expiring-within <duration>",
+      "notes that expire within this long: 12h, 14d, ...",
+    )
+    .option(
+      "--unused-for <duration>",
+      "notes neither read nor changed for this long: 30d, ...",
+    )
+    .option("--dry-run", "list what would be deleted; delete nothing")
+    .action(async (opts, cmd) => {
+      if (!opts.expiringWithin && !opts.unusedFor)
+        throw new Error("give --expiring-within, --unused-for, or both");
+      await memoryRequest(
         cmd,
         {
           action: "memory",
-          op: "delete",
-          name,
-          ...(opts.expectRevision
-            ? { expected_revision: opts.expectRevision }
+          op: "prune",
+          ...(opts.expiringWithin
+            ? { expiring_within: opts.expiringWithin }
             : {}),
+          ...(opts.unusedFor ? { unused_for: opts.unusedFor } : {}),
+          ...(opts.dryRun ? { dry_run: true } : {}),
         },
-        "project chat memory delete",
-      ),
-    );
+        "project chat memory prune",
+      );
+    });
   memory
     .command("namespaces")
+    .alias("stats")
     .description(
-      "the namespaces this project sees, with descriptions, note counts and the limits",
+      "the namespaces this project sees, with descriptions, note counts and the limits (in a project only you are a member of, also the whole account's totals)",
     )
     .action(async (_opts, cmd) =>
       memoryRequest(

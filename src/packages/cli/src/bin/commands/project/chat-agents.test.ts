@@ -1211,3 +1211,92 @@ test("rpc inspect reaches an external member by account and installation", async
     transport.mock.restore();
   }
 });
+
+async function memoryRequests(args: string[]) {
+  const requests: unknown[] = [];
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: unknown) => {
+      requests.push(request);
+      return {};
+    },
+  );
+  try {
+    await program([]).parseAsync(["chat", "memory", ...args], {
+      from: "user",
+    });
+  } finally {
+    transport.mock.restore();
+  }
+  return requests;
+}
+
+test("memory delete: one name is a single delete, several are one delete-many", async () => {
+  assert.deepEqual(
+    await memoryRequests([
+      "delete",
+      "agent/a",
+      "--expect-revision",
+      "0123456789abcdef",
+    ]),
+    [
+      {
+        action: "memory",
+        op: "delete",
+        name: "agent/a",
+        expected_revision: "0123456789abcdef",
+      },
+    ],
+  );
+  assert.deepEqual(
+    await memoryRequests(["delete", "agent/a", "agent/b", "c"]),
+    [
+      {
+        action: "memory",
+        op: "delete-many",
+        notes: [{ name: "agent/a" }, { name: "agent/b" }, { name: "c" }],
+      },
+    ],
+  );
+  await assert.rejects(
+    memoryRequests([
+      "delete",
+      "a",
+      "b",
+      "--expect-revision",
+      "0123456789abcdef",
+    ]),
+    /--expect-revision goes with one name/,
+  );
+  await assert.rejects(memoryRequests(["delete"]), /name at least one note/);
+});
+
+test("memory prune sends its selectors and dry run; stats is namespaces", async () => {
+  assert.deepEqual(
+    await memoryRequests([
+      "prune",
+      "--expiring-within",
+      "14d",
+      "--unused-for",
+      "30d",
+      "--dry-run",
+    ]),
+    [
+      {
+        action: "memory",
+        op: "prune",
+        expiring_within: "14d",
+        unused_for: "30d",
+        dry_run: true,
+      },
+    ],
+  );
+  await assert.rejects(
+    memoryRequests(["prune"]),
+    /--expiring-within, --unused-for/,
+  );
+  assert.deepEqual(await memoryRequests(["stats"]), [
+    { action: "memory", op: "namespaces" },
+  ]);
+});

@@ -30,6 +30,7 @@ const tools: [string, Record<string, unknown>][] = [
   ["memory_read", { name: "notes" }],
   ["memory_write", { name: "notes", description: "notes", body: "new" }],
   ["memory_delete", { name: "notes" }],
+  ["memory_prune", { expiring_within: "14d", dry_run: true }],
 ];
 const ok: SandboxExecResult = {
   code: 0,

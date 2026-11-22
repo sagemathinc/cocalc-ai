@@ -27,6 +27,7 @@ import {
   agentMemoryMarkdown,
   agentMemoryNamespace,
   agentOfMemoryNamespace,
+  parseMemoryDuration,
   parseMemoryExpiry,
   buildMemoryIndex,
   memoryBytes,
@@ -54,7 +55,10 @@ import {
   type LegacyAgentMemoryRecord,
 } from "@cocalc/conat/agents/memory";
 import { isValidUUID } from "@cocalc/util/misc";
-import { chargeAgentMemoryUsage } from "./memory-limits";
+import {
+  chargeAgentMemoryUsage,
+  type AgentMemoryUsageKind,
+} from "./memory-limits";
 
 const logger = getLogger("agents:memory");
 
@@ -100,10 +104,16 @@ export type AgentMemoryDeps = {
     remove(account_id: string, db?: MemoryDb): Promise<void>;
   };
   assertWritable(db: MemoryDb, account_id: string): Promise<void>;
+  /**
+   * Whether the account is the project's only member. Only then do its
+   * agents see whole-account totals: in a shared project, what a turn
+   * reports can be seen by the project's other members. Absent means no.
+   */
+  soloProject?(account_id: string, project_id: string): Promise<boolean>;
   /** Rate limits for agent operations; the owner is never charged. */
   charge(
     account_id: string,
-    op: "read" | "write",
+    op: AgentMemoryUsageKind,
     bytes?: number,
   ): Promise<void>;
 };
@@ -163,6 +173,10 @@ export const defaultAgentMemoryDeps: AgentMemoryDeps = {
     }),
   charge: (account_id, op, bytes) =>
     chargeAgentMemoryUsage(account_id, op, bytes),
+  soloProject: async (account_id, project_id) => {
+    const { isSoloProject } = await import("./cocalc-connector-scope");
+    return await isSoloProject(account_id, project_id);
+  },
 };
 
 /** Identifies one note's content in the first version's record. */
@@ -672,9 +686,10 @@ export function createAgentMemory(
   }
 
   /**
-   * Room for a change. The namespace's own limit is reported in full; the
-   * account-wide limits count notes in namespaces this caller may not see,
-   * so agents get no numbers for those (the owner does).
+   * Room for a change, naming the limit that was reached. The account's
+   * agents all act for its owner, so they are told which account-wide limit
+   * it is; they still get no per-namespace numbers for namespaces their
+   * project does not see.
    */
   async function checkRoom(
     db: MemoryDb,
@@ -711,7 +726,11 @@ export function createAgentMemory(
     if (!accountFull) return;
     if (!owner)
       throw new Error(
-        "agent memory has no room for this note; the account owner can review and tidy it in Settings > AI",
+        `agent memory has no room for this note: the account reached its limit of ${
+          now.notes + add.accountNotes > AGENT_MEMORY_LIMITS.maxNotes
+            ? `${AGENT_MEMORY_LIMITS.maxNotes} notes`
+            : `${AGENT_MEMORY_LIMITS.maxAccountBytes / 1_000_000} MB`
+        }, which every namespace and every agent's own scope (agent/) count toward. Delete stale notes (several at once: memory delete a b c; your own scope: memory prune --expiring-within 14d --dry-run first), or the account owner can tidy it in Settings > AI`,
       );
     throw full(
       now.notes + add.accountNotes > AGENT_MEMORY_LIMITS.maxNotes
@@ -1099,13 +1118,18 @@ export function createAgentMemory(
       validateAgentMemoryRequest(request);
       if (!isValidUUID(project_id)) throw new Error("invalid project");
       const settings = await settingsOf(account_id);
-      const writes =
-        request.op === "write" ||
-        request.op === "delete" ||
-        request.op === "move";
+      // A batch (delete-many, prune) is one request; a dry run only reads.
+      const kind: AgentMemoryUsageKind =
+        request.op === "write" || request.op === "move"
+          ? "write"
+          : request.op === "delete" ||
+              request.op === "delete-many" ||
+              (request.op === "prune" && !request.dry_run)
+            ? "delete"
+            : "read";
       await deps.charge(
         account_id,
-        writes ? "write" : "read",
+        kind,
         request.op === "write"
           ? memoryBytes(request.description) + memoryBytes(request.body)
           : 0,
@@ -1160,6 +1184,56 @@ export function createAgentMemory(
       // Only the caller's own scope and shared notes are ever changed, and
       // memoryRef names the own scope agent/<name>.
       const shown = memoryRef;
+      // One note's deletion, under the account's lock: what delete and
+      // delete-many check. Throws, before changing anything, when the note
+      // cannot be deleted.
+      const deleteOne = async (
+        tx: MemoryDb,
+        now: { namespaces: AgentMemoryNamespace[]; visible: string[] },
+        name: string,
+        expected_revision: string | undefined,
+      ): Promise<{ name: string; namespace: string; deleted: true }> => {
+        const ref = parseMemoryRef(name);
+        const scoped = await scope(tx, ref);
+        if (scoped?.agent && scoped.namespace !== own)
+          throw readOnlyScope(scoped.agent);
+        // A missing note is an error, as for read and move, so it is not
+        // mistaken for a deletion.
+        const namespace =
+          scoped?.namespace ??
+          (await mustLocate(
+            tx,
+            account_id,
+            ref,
+            now.visible.filter((ns) => ns !== own),
+          ));
+        const existing = await liveNote(tx, account_id, namespace, ref.name);
+        const fullNames = now.namespaces.length > 0;
+        if (!existing) throw new Error(`no memory note named ${name}`);
+        if (expected_revision !== undefined)
+          await checkRevision(
+            account_id,
+            existing,
+            expected_revision,
+            shown(namespace, ref.name, fullNames),
+          );
+        else if (writtenByOther(existing, caller))
+          throw otherWriter(
+            shown(namespace, ref.name, fullNames),
+            existing,
+            caller,
+            "delete",
+          );
+        await tx.query(
+          "DELETE FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3",
+          [account_id, namespace, ref.name],
+        );
+        return {
+          name: shown(namespace, ref.name, fullNames),
+          namespace: namespace === own ? AGENT_MEMORY_AGENT_SCOPE : namespace,
+          deleted: true,
+        };
+      };
       switch (request.op) {
         case "list": {
           let namespaces = visible;
@@ -1256,8 +1330,26 @@ export function createAgentMemory(
           };
         }
         case "namespaces": {
-          const { counts } = await namespaceCounts(db, account_id);
+          const { counts, notes, bytes } = await namespaceCounts(
+            db,
+            account_id,
+          );
+          const agentScopeNotes = Object.entries(counts)
+            .filter(([ns]) => agentOfMemoryNamespace(ns) != null)
+            .reduce((sum, [, n]) => sum + n, 0);
+          // Whole-account totals count notes in namespaces this project does
+          // not see, so they are shown only where no one else can read the
+          // turn: a project whose only member is the account.
+          const solo =
+            (await deps.soloProject?.(account_id, project_id)) ?? false;
           return {
+            ...(solo
+              ? {
+                  account_notes: notes,
+                  account_bytes: bytes,
+                  agent_scope_notes: agentScopeNotes,
+                }
+              : {}),
             global_notes: counts[GLOBAL] ?? 0,
             ...(own
               ? {
@@ -1273,11 +1365,11 @@ export function createAgentMemory(
               projectNamespaces.length <= 1
                 ? (projectNamespaces[0]?.name ?? GLOBAL)
                 : undefined,
-            // Whole-account usage is not shown: it would count notes in
-            // namespaces this project does not see.
             limits: {
               account_notes: AGENT_MEMORY_LIMITS.maxNotes,
+              account_bytes: AGENT_MEMORY_LIMITS.maxAccountBytes,
               namespace_notes: AGENT_MEMORY_LIMITS.maxNotesPerNamespace,
+              agent_notes: AGENT_MEMORY_LIMITS.maxNotesPerAgent,
               description_bytes: AGENT_MEMORY_LIMITS.maxDescriptionBytes,
               body_bytes: AGENT_MEMORY_LIMITS.maxBodyBytes,
             },
@@ -1386,56 +1478,95 @@ export function createAgentMemory(
           });
         }
         case "delete": {
-          const ref = parseMemoryRef(request.name);
           return await transaction(account_id, async (tx) => {
             const now = await current(tx);
-            const scoped = await scope(tx, ref);
-            if (scoped?.agent && scoped.namespace !== own)
-              throw readOnlyScope(scoped.agent);
-            // A missing note is an error, as for read and move, so it is
-            // not mistaken for a deletion.
-            const namespace =
-              scoped?.namespace ??
-              (await mustLocate(
-                tx,
-                account_id,
-                ref,
-                now.visible.filter((ns) => ns !== own),
-              ));
-            const existing = await liveNote(
-              tx,
-              account_id,
-              namespace,
-              ref.name,
-            );
-            const fullNames = now.namespaces.length > 0;
-            if (!existing)
-              throw new Error(`no memory note named ${request.name}`);
-            if (request.expected_revision !== undefined)
-              await checkRevision(
-                account_id,
-                existing,
-                request.expected_revision,
-                shown(namespace, ref.name, fullNames),
-              );
-            else if (writtenByOther(existing, caller))
-              throw otherWriter(
-                shown(namespace, ref.name, fullNames),
-                existing,
-                caller,
-                "delete",
-              );
             await deps.assertWritable(tx, account_id);
-            await tx.query(
-              "DELETE FROM agent_memory_notes WHERE account_id=$1 AND namespace=$2 AND name=$3",
-              [account_id, namespace, ref.name],
+            return await deleteOne(
+              tx,
+              now,
+              request.name,
+              request.expected_revision,
             );
+          });
+        }
+        case "delete-many": {
+          return await transaction(account_id, async (tx) => {
+            const now = await current(tx);
+            await deps.assertWritable(tx, account_id);
+            // Each note is checked as a single delete would be; one that
+            // cannot be deleted is reported and does not stop the others.
+            const results: (
+              | { name: string; namespace: string; deleted: true }
+              | { name: string; error: string }
+            )[] = [];
+            for (const note of request.notes) {
+              try {
+                results.push(
+                  await deleteOne(tx, now, note.name, note.expected_revision),
+                );
+              } catch (err) {
+                results.push({
+                  name: note.name,
+                  error: `${(err as Error)?.message ?? err}`,
+                });
+              }
+            }
             return {
-              name: shown(namespace, ref.name, fullNames),
-              namespace:
-                namespace === own ? AGENT_MEMORY_AGENT_SCOPE : namespace,
-              deleted: true,
+              deleted: results.filter((r) => "deleted" in r).length,
+              failed: results.filter((r) => "error" in r).length,
+              results,
             };
+          });
+        }
+        case "prune": {
+          if (!own) throw noAgentScope();
+          const expiring =
+            request.expiring_within === undefined
+              ? null
+              : parseMemoryDuration(request.expiring_within, "expiring_within");
+          const unused =
+            request.unused_for === undefined
+              ? null
+              : parseMemoryDuration(request.unused_for, "unused_for");
+          // Only the caller's own scope. Chosen by stored expiry and last use,
+          // never by reading notes (a read would push their expiry out).
+          const selected = `account_id=$1 AND namespace=$2 AND ${LIVE} AND (
+              ($3::int IS NOT NULL AND expires_at IS NOT NULL AND ${ATTRIBUTED}
+                AND expires_at <= now() + make_interval(secs => $3::int))
+              OR ($4::int IS NOT NULL
+                AND GREATEST(updated_at, COALESCE(last_read_at, updated_at))
+                    <= now() - make_interval(secs => $4::int)))`;
+          const params = [account_id, own, expiring, unused];
+          if (request.dry_run) {
+            const { rows } = await db.query(
+              `SELECT ${NOTE_COLUMNS} FROM agent_memory_notes WHERE ${selected}
+                ORDER BY expires_at NULLS LAST, name`,
+              params,
+            );
+            const notes = await summaries(account_id, rows);
+            return {
+              dry_run: true,
+              would_delete: notes.length,
+              notes: notes.map((note) => ({
+                name: memoryRef(own, note.name, qualified),
+                description: note.description,
+                updated_at: note.updated_at,
+                last_read_at: note.last_read_at,
+                ...(note.expires_at ? { expires_at: note.expires_at } : {}),
+              })),
+            };
+          }
+          return await transaction(account_id, async (tx) => {
+            await current(tx);
+            await deps.assertWritable(tx, account_id);
+            const { rows } = await tx.query(
+              `DELETE FROM agent_memory_notes WHERE ${selected} RETURNING name`,
+              params,
+            );
+            const names = rows
+              .map((row) => memoryRef(own, row.name, qualified))
+              .sort();
+            return { deleted: names.length, notes: names };
           });
         }
         case "move": {

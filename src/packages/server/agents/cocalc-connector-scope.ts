@@ -9,7 +9,7 @@ import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project
 import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 
 /** Whether the account is the project's only member. Any doubt is "no". */
-async function isSoloProject(
+export async function isSoloProject(
   account_id: string,
   project_id: string,
 ): Promise<boolean> {

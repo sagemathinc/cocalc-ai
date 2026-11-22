@@ -41,7 +41,9 @@ cocalc project chat memory write <name> --description "<one line>" --stdin \
   [--expect-revision <revision>] [--expires 7d|never]
 cocalc project chat memory move <name> <namespace|global|agent> [--expect-revision <revision>]
 cocalc project chat memory delete <name> [--expect-revision <revision>]
-cocalc project chat memory namespaces
+cocalc project chat memory delete <name> <name>...   # or --stdin: "<name> [revision]" lines
+cocalc project chat memory prune --expiring-within 14d [--unused-for 30d] --dry-run
+cocalc project chat memory namespaces                # also: memory stats
 cocalc project chat memory export [--out notes.md]
 ```
 
@@ -52,8 +54,10 @@ cocalc project chat memory export [--out notes.md]
   the user's general preferences. In a project with namespaces, every name
   comes back in full (`global/name` too): use names as listed.
 - Memory keeps up to 2,000 notes, 500 per namespace (the global notes count
-  as one) and 100 in each agent's own scope; `namespaces` shows the counts and
-  limits. Move a lesson from your own scope to a namespace or global when it
+  as one) and 100 in each agent's own scope; every agent's own scope counts
+  toward the 2,000. `namespaces` (or `stats`) shows the counts and limits,
+  and in a project only the account's owner is in, the whole account's
+  totals. A "no room" error names the limit reached. Move a lesson from your own scope to a namespace or global when it
   is worth keeping for everyone: it then no longer expires.
 - `read` returns the note's `revision`. When updating a note other agents may
   change, pass it as `--expect-revision`: the write then fails instead of
@@ -114,5 +118,14 @@ it fills with notes of one area (for example durable review lessons, or
 deployment and support notes), suggest a separate namespace for that area to
 the owner: agents see the counts, the owner may not.
 `memory export --out notes.md` keeps a full copy first (search it with grep
-later). Never delete notes you have not read just to make room, nor another
+later). Never delete shared notes you have not read just to make room, nor another
 agent's note without passing the revision you read.
+
+**Deleting several notes.** Name them all in one `memory delete a b c` (up to
+100): that is one request against the account's rate limit, where one
+delete per note quickly reaches it when several agents tidy at once. Each
+note is deleted or reported on its own. For your own scope, `memory prune`
+picks notes by their stored expiry or last use without reading them (a read
+would keep them): run it with `--dry-run` first, check the list, then run it
+again without. Reads and exports keep working while writes are rate
+limited, and deletes have a budget of their own.

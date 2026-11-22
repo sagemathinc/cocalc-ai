@@ -53,6 +53,8 @@ export const AGENT_MEMORY_LIMITS = {
   agentInactiveDays: 90,
   /** The longest expiry a note can ask for, other than never. */
   maxTtlDays: 3650,
+  /** Notes one delete-many request names. */
+  maxDeleteBatch: 100,
 } as const;
 
 // The single encrypted record of the first version, read once to migrate.
@@ -125,6 +127,23 @@ export type AgentMemoryRequest =
       name: string;
       to: string;
       expected_revision?: string;
+    }
+  | {
+      action: "memory";
+      op: "delete-many";
+      /** Each is deleted or reported on its own; one request, one charge. */
+      notes: { name: string; expected_revision?: string }[];
+    }
+  | {
+      action: "memory";
+      op: "prune";
+      /** The caller's own scope only: notes due to expire within this long
+       * (`14d`, `12h`)... */
+      expiring_within?: string;
+      /** ...or neither read nor changed for this long. */
+      unused_for?: string;
+      /** List what would be deleted, without deleting or reading anything. */
+      dry_run?: boolean;
     }
   | { action: "memory"; op: "namespaces" }
   | { action: "memory"; op: "export"; namespace?: string };
@@ -325,6 +344,52 @@ export function memoryRef(
     : `${namespace}/${name}`;
 }
 
+/** `14d` or `12h` as seconds, for prune's selectors (never is not one). */
+export function parseMemoryDuration(value: unknown, what: string): number {
+  const match = typeof value === "string" ? TTL_RE.exec(value) : null;
+  const seconds = match
+    ? Number(match[1]) * (match[2] === "h" ? 3600 : 86400)
+    : NaN;
+  if (
+    !Number.isFinite(seconds) ||
+    seconds > AGENT_MEMORY_LIMITS.maxTtlDays * 86400
+  )
+    throw new Error(
+      `${what} must be a number of hours or days, such as 12h or 14d (at most ${AGENT_MEMORY_LIMITS.maxTtlDays}d)`,
+    );
+  return seconds;
+}
+
+/** delete-many's notes: 1 to maxDeleteBatch distinct names, each with an
+ * optional revision. */
+export function validateMemoryDeleteBatch(
+  notes: unknown,
+): { name: string; expected_revision?: string }[] {
+  if (
+    !Array.isArray(notes) ||
+    notes.length < 1 ||
+    notes.length > AGENT_MEMORY_LIMITS.maxDeleteBatch
+  )
+    throw new Error(
+      `memory delete takes 1 to ${AGENT_MEMORY_LIMITS.maxDeleteBatch} notes at a time`,
+    );
+  const seen = new Set<string>();
+  for (const note of notes) {
+    if (!note || typeof note !== "object" || Array.isArray(note))
+      throw new Error(
+        "each note to delete must be { name, expected_revision? }",
+      );
+    checkKeys(note, ["name", "expected_revision"]);
+    parseMemoryRef(note.name);
+    if (note.expected_revision !== undefined)
+      validateMemoryRevision(note.expected_revision);
+    if (seen.has(note.name))
+      throw new Error(`memory note ${note.name} is named twice`);
+    seen.add(note.name);
+  }
+  return notes;
+}
+
 const REVISION_RE = /^[0-9a-f]{16}$/;
 
 export function validateMemoryRevision(revision: unknown): string {
@@ -447,6 +512,8 @@ export function validateAgentMemoryRequest(
       "expires_in",
     ],
     delete: ["action", "op", "name", "expected_revision"],
+    "delete-many": ["action", "op", "notes"],
+    prune: ["action", "op", "expiring_within", "unused_for", "dry_run"],
     search: ["action", "op", "query", "limit"],
     move: ["action", "op", "name", "to", "expected_revision"],
     namespaces: ["action", "op"],
@@ -465,6 +532,19 @@ export function validateAgentMemoryRequest(
   if (r.op === "write") {
     validateMemoryWrite(r as any);
     if (r.expires_in !== undefined) parseMemoryExpiry(r.expires_in);
+  }
+  if (r.op === "delete-many") validateMemoryDeleteBatch(r.notes);
+  if (r.op === "prune") {
+    if (r.expiring_within === undefined && r.unused_for === undefined)
+      throw new Error(
+        "memory prune needs expiring_within (e.g. 14d) or unused_for (e.g. 30d)",
+      );
+    if (r.expiring_within !== undefined)
+      parseMemoryDuration(r.expiring_within, "expiring_within");
+    if (r.unused_for !== undefined)
+      parseMemoryDuration(r.unused_for, "unused_for");
+    if (r.dry_run !== undefined && typeof r.dry_run !== "boolean")
+      throw new Error("dry_run must be true or false");
   }
   if (r.op === "search") {
     validateSearchQuery(r.query);
@@ -703,14 +783,24 @@ export function buildMemoryIndex(input: AgentMemoryIndexInput): string {
         : `Name the namespace of new notes (<namespace>/<name>), or global/<name> for notes that apply in every project.`,
     );
   }
-  for (const [ns, count] of Object.entries(input.counts))
-    if (
+  for (const [ns, count] of Object.entries(input.counts)) {
+    // An agent's own scope has its own, smaller limit.
+    if (agentOfMemoryNamespace(ns)) {
+      if (
+        count >=
+        AGENT_MEMORY_NEARLY_FULL * AGENT_MEMORY_LIMITS.maxNotesPerAgent
+      )
+        head.push(
+          `Your own scope is nearly full (${count} of ${AGENT_MEMORY_LIMITS.maxNotesPerAgent} notes): before adding, remove working state you no longer need. memory prune --expiring-within 14d --dry-run lists notes about to expire anyway (run it again without --dry-run to delete them), and memory delete a b c deletes several in one request.`,
+        );
+    } else if (
       count >=
       AGENT_MEMORY_NEARLY_FULL * AGENT_MEMORY_LIMITS.maxNotesPerNamespace
     )
       head.push(
-        `Memory is nearly full in ${ns} (${count} of ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} notes): before adding, merge notes on the same topic into one, move working state to your own scope, and delete notes that are stale or wrong (export first if unsure). If it fills with notes of one area (for example durable review lessons, or deployment and support notes), suggest a separate namespace for that area to the owner. Never delete notes you have not read to make room, nor another agent's note without passing the revision you read.`,
+        `Memory is nearly full in ${ns} (${count} of ${AGENT_MEMORY_LIMITS.maxNotesPerNamespace} notes): before adding, merge notes on the same topic into one, move working state to your own scope, and delete notes that are stale or wrong (several at once: memory delete a b c; export first if unsure). If it fills with notes of one area (for example durable review lessons, or deployment and support notes), suggest a separate namespace for that area to the owner. Never delete notes you have not read to make room, nor another agent's note without passing the revision you read.`,
       );
+  }
   head.push(
     input.total
       ? "Saved notes (name: description), a selection (this project's and recent first):"

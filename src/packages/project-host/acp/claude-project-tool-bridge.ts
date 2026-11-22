@@ -24,8 +24,10 @@ import {
   writeProjectFile,
 } from "./claude-project-file-tools";
 import {
+  parseMemoryDuration,
   parseMemoryExpiry,
   parseMemoryRef,
+  validateMemoryDeleteBatch,
   validateMemoryRevision,
   validateMemoryScopeName,
 } from "@cocalc/conat/agents/memory";
@@ -138,9 +140,33 @@ export async function runAgentMemoryTool(
     if (args.limit != null && !Number.isInteger(args.limit))
       throw Error("limit must be an integer");
     script = `${COCALC_CLI} project chat memory search${limit} -- "$(printf %s '${b64(args.query)}' | base64 -d)"`;
-  } else if (tool === "memory_delete")
-    script = `${COCALC_CLI} project chat memory delete ${name()}${expect}`;
-  else if (tool === "memory_write") {
+  } else if (tool === "memory_delete") {
+    if (args.notes != null) {
+      // Several notes, one request: "<name> [revision]" lines on stdin.
+      if (args.name != null || args.expected_revision != null)
+        throw Error("give name (with expected_revision) or notes, not both");
+      const lines = validateMemoryDeleteBatch(args.notes).map((note) =>
+        note.expected_revision
+          ? `${note.name} ${note.expected_revision}`
+          : note.name,
+      );
+      script = `printf %s '${b64(lines.join("\n"))}' | base64 -d | ${COCALC_CLI} project chat memory delete --stdin`;
+    } else
+      script = `${COCALC_CLI} project chat memory delete ${name()}${expect}`;
+  } else if (tool === "memory_prune") {
+    const duration = (key: string, flag: string) => {
+      if (args[key] == null) return "";
+      parseMemoryDuration(args[key], key);
+      return ` ${flag} ${shellQuote(String(args[key]))}`;
+    };
+    const selectors =
+      duration("expiring_within", "--expiring-within") +
+      duration("unused_for", "--unused-for");
+    if (!selectors) throw Error("give expiring_within, unused_for, or both");
+    if (args.dry_run != null && typeof args.dry_run !== "boolean")
+      throw Error("dry_run must be true or false");
+    script = `${COCALC_CLI} project chat memory prune${selectors}${args.dry_run ? " --dry-run" : ""}`;
+  } else if (tool === "memory_write") {
     if (args.expires_in != null) parseMemoryExpiry(args.expires_in);
     const expires =
       args.expires_in == null

@@ -713,7 +713,9 @@ describeDb("agent memory", () => {
       default_namespace: "dev",
       limits: {
         account_notes: 2000,
+        account_bytes: 8_000_000,
         namespace_notes: 500,
+        agent_notes: 100,
         description_bytes: 200,
         body_bytes: 8000,
       },
@@ -862,10 +864,15 @@ describeDb("agent memory", () => {
     // 8.16 MB, all of it hidden from P1: the list stays silent about it.
     const index = (await memory.turnIndex(account, P1))!.index;
     expect(index).toBe("Saved notes: (none yet)");
-    // At the account's limit, an agent learns only that there is no room.
-    await expect(write(memory, account, P1, "one-more")).rejects.toThrow(
-      /^agent memory has no room for this note; the account owner can review and tidy it/,
+    // At the account's limit, an agent learns which limit it is (a fixed
+    // number), but nothing about the namespace it does not see.
+    const error = await write(memory, account, P1, "one-more").catch(
+      (err) => err.message,
     );
+    expect(error).toMatch(
+      /^agent memory has no room for this note: the account reached its limit of 8 MB, which every namespace and every agent's own scope/,
+    );
+    expect(error).not.toMatch(/hidden|480|8\.16/);
   });
 
   test("a move fits when the account is exactly full", async () => {
@@ -1468,5 +1475,155 @@ describeDb("agent memory: authorship, agent scopes and expiry", () => {
     expect(status.agents).toEqual([
       { agent_id: REVIEW.agent_id, name: "review", notes: 1 },
     ]);
+  });
+  test("delete-many deletes each note it may, reports the rest, and is one delete charge", async () => {
+    const { memory, charges } = setup();
+    const account = await newAccount(memory);
+    await as(memory, account, OPS, note("agent/old-1"));
+    await as(memory, account, OPS, note("agent/old-2"));
+    await as(memory, account, OPS, note("shared-mine"));
+    await as(memory, account, REVIEW, note("theirs"));
+    await as(memory, account, REVIEW, note("agent/review-own"));
+    const revision = (
+      await as(memory, account, OPS, { op: "read", name: "theirs" })
+    ).revision;
+    charges.length = 0;
+    const result = await as(memory, account, OPS, {
+      op: "delete-many",
+      notes: [
+        { name: "agent/old-1" },
+        { name: "agent/old-2" },
+        { name: "shared-mine" },
+        // Another agent's shared note: only with the revision read.
+        { name: "theirs", expected_revision: revision },
+        // Another agent's own scope stays read-only.
+        { name: "@review/review-own" },
+        { name: "no-such-note" },
+      ],
+    });
+    expect(charges).toEqual(["delete:0"]);
+    expect(result.deleted).toBe(4);
+    expect(result.failed).toBe(2);
+    expect(result.results).toEqual([
+      { name: "agent/old-1", namespace: "agent", deleted: true },
+      { name: "agent/old-2", namespace: "agent", deleted: true },
+      { name: "shared-mine", namespace: "global", deleted: true },
+      { name: "theirs", namespace: "global", deleted: true },
+      {
+        name: "@review/review-own",
+        error: expect.stringMatching(/belong to @review/),
+      },
+      { name: "no-such-note", error: "no memory note named no-such-note" },
+    ]);
+    const { rows } = await getPool().query(
+      "SELECT name FROM agent_memory_notes WHERE account_id=$1 ORDER BY name",
+      [account],
+    );
+    expect(rows.map((r: any) => r.name)).toEqual(["review-own"]);
+    // A blind delete of another agent's note is refused, as for one note.
+    await as(memory, account, REVIEW, note("theirs-again"));
+    const blind = await as(memory, account, OPS, {
+      op: "delete-many",
+      notes: [{ name: "theirs-again" }],
+    });
+    expect(blind.results[0].error).toMatch(/last written by @review/);
+  });
+
+  test("prune lists, then deletes, only the caller's own notes that are expiring or unused", async () => {
+    const { memory, charges } = setup();
+    const account = await newAccount(memory);
+    for (const name of ["soon", "later", "idle", "fresh"])
+      await as(memory, account, OPS, note(`agent/${name}`));
+    await as(memory, account, OPS, note("shared-soon"));
+    await as(memory, account, REVIEW, note("agent/review-soon"));
+    const ns = (agent: { agent_id: string }) => `agent:${agent.agent_id}`;
+    const at = (sql: string, params: unknown[]) => getPool().query(sql, params);
+    // soon: expires in 3 days; review-soon too (another agent's).
+    await at(
+      `UPDATE agent_memory_notes SET expires_at = now() + interval '3 days'
+        WHERE account_id=$1 AND name IN ('soon', 'review-soon')`,
+      [account],
+    );
+    // idle: unused for 40 days (but expiring in 25).
+    await at(
+      `UPDATE agent_memory_notes SET updated_at = now() - interval '40 days',
+              attributed_at = now() - interval '40 days',
+              expires_at = now() + interval '25 days', last_read_at = NULL
+        WHERE account_id=$1 AND name='idle'`,
+      [account],
+    );
+    charges.length = 0;
+    const dry = await as(memory, account, OPS, {
+      op: "prune",
+      expiring_within: "14d",
+      unused_for: "30d",
+      dry_run: true,
+    });
+    expect(charges).toEqual(["read:0"]);
+    expect(dry.would_delete).toBe(2);
+    expect(dry.notes.map((n: any) => n.name)).toEqual([
+      "agent/soon",
+      "agent/idle",
+    ]);
+    expect(dry.notes[0].description).toBe("the soon note");
+    // A dry run reads nothing: no expiry was pushed out.
+    const { rows: touched } = await at(
+      `SELECT name, read_count FROM agent_memory_notes
+        WHERE account_id=$1 AND namespace=$2 ORDER BY name`,
+      [account, ns(OPS)],
+    );
+    expect(touched.every((r: any) => Number(r.read_count) === 0)).toBe(true);
+    charges.length = 0;
+    const done = await as(memory, account, OPS, {
+      op: "prune",
+      expiring_within: "14d",
+      unused_for: "30d",
+    });
+    expect(charges).toEqual(["delete:0"]);
+    expect(done).toEqual({ deleted: 2, notes: ["agent/idle", "agent/soon"] });
+    const { rows } = await at(
+      "SELECT name FROM agent_memory_notes WHERE account_id=$1 ORDER BY name",
+      [account],
+    );
+    expect(rows.map((r: any) => r.name)).toEqual([
+      "fresh",
+      "later",
+      "review-soon",
+      "shared-soon",
+    ]);
+    // Without an agent identity there is no own scope to prune.
+    await expect(
+      as(memory, account, undefined, { op: "prune", expiring_within: "14d" }),
+    ).rejects.toThrow(/registered agent identity/);
+  });
+
+  test("whole-account totals only in a project with no other members", async () => {
+    const solo = new Set<string>();
+    const memory = createAgentMemory({
+      ...defaultAgentMemoryDeps,
+      pool: () => getPool() as any,
+      encrypt: async (aad, text) =>
+        `enc:${aad}:${Buffer.from(text).toString("base64")}`,
+      decrypt: async (aad, value) =>
+        Buffer.from(value.slice(`enc:${aad}:`.length), "base64").toString(),
+      assertWritable: async () => {},
+      charge: async () => {},
+      soloProject: async (_account, project) => solo.has(project),
+    });
+    const account = await newAccount(memory);
+    await as(memory, account, OPS, note("agent/mine"));
+    await as(memory, account, OPS, note("shared"));
+    const shared = await as(memory, account, OPS, { op: "namespaces" });
+    expect(shared.account_notes).toBeUndefined();
+    expect(shared.agent_scope_notes).toBeUndefined();
+    solo.add(P1);
+    const alone = await as(memory, account, OPS, { op: "namespaces" });
+    expect(alone).toMatchObject({
+      account_notes: 2,
+      agent_scope_notes: 1,
+      agent_notes: 1,
+      global_notes: 1,
+    });
+    expect(alone.account_bytes).toBeGreaterThan(0);
   });
 });
