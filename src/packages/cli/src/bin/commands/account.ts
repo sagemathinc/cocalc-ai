@@ -319,6 +319,136 @@ export function registerAccountCommand(
       });
     });
 
+  // The whole account's agent memory: needs "Read, edit or delete all agent
+  // memory" in this agent's CoCalc access (or an API key with memory:manage).
+  const memory = account
+    .command("memory")
+    .description(
+      "all of the account's agent memory, every namespace and every agent's own scope; needs \"Read, edit or delete all agent memory\" in this agent's CoCalc access (or an API key with memory:manage), only while the agent's project has no other collaborators. Name notes in full: global/<name>, <namespace>/<name> or @agent-name/<name>. Replacing or deleting a note needs the revision a read returned. For your own notes, use cocalc project chat memory",
+    );
+  const curate = (command: Command, label: string, request: any) =>
+    withContext(command, label, async (ctx) =>
+      ctx.hub.agent.curateAgentMemory(request),
+    );
+  const stdinText = async () => {
+    let value = "";
+    for await (const chunk of process.stdin) value += chunk;
+    return value;
+  };
+  memory
+    .command("list")
+    .description(
+      "list every note (or one scope's), with who wrote it and when it expires",
+    )
+    .option("--scope <scope>", "only global, a namespace, or @agent-name")
+    .action(async (opts, command: Command) =>
+      curate(command, "account memory list", {
+        op: "list",
+        ...(opts.scope ? { scope: opts.scope } : {}),
+      }),
+    );
+  memory
+    .command("read <name>")
+    .description("read a note, with its revision")
+    .action(async (name: string, _opts, command: Command) =>
+      curate(command, "account memory read", { op: "read", name }),
+    );
+  memory
+    .command("write <name> [body...]")
+    .description(
+      "create a note anywhere, or replace one with --expect-revision (use --stdin for the body)",
+    )
+    .requiredOption("--description <text>", "one line used in the index")
+    .option("--stdin", "read the body from standard input")
+    .option(
+      "--expect-revision <revision>",
+      "the revision a read returned (required to replace a note)",
+    )
+    .option("--expires <duration>", "12h, 7d, ... or never")
+    .action(async (name: string, body: string[], opts, command: Command) =>
+      curate(command, "account memory write", {
+        op: "write",
+        name,
+        description: opts.description,
+        body: opts.stdin ? await stdinText() : body.join(" "),
+        ...(opts.expectRevision
+          ? { expected_revision: opts.expectRevision }
+          : {}),
+        ...(opts.expires ? { expires_in: opts.expires } : {}),
+      }),
+    );
+  memory
+    .command("delete [name]")
+    .description(
+      'delete notes, each with the revision a read returned: one (<name> --expect-revision <revision>), or up to 100 from --stdin as "<name> <revision>" lines, in one request',
+    )
+    .option("--expect-revision <revision>", "with one name: its revision")
+    .option("--stdin", 'read "<name> <revision>" lines from standard input')
+    .action(async (name: string | undefined, opts, command: Command) => {
+      const notes: { name: string; expected_revision: string }[] = [];
+      if (name) {
+        if (!opts.expectRevision)
+          throw new Error(
+            "deleting a note needs --expect-revision: the revision a read returned",
+          );
+        notes.push({ name, expected_revision: opts.expectRevision });
+      }
+      if (opts.stdin)
+        for (const line of (await stdinText()).split("\n")) {
+          const parts = line.trim().split(/\s+/);
+          if (!parts[0]) continue;
+          if (parts.length !== 2)
+            throw new Error(
+              `expected "<name> <revision>", got: ${line.trim()}`,
+            );
+          notes.push({ name: parts[0], expected_revision: parts[1] });
+        }
+      if (notes.length === 0)
+        throw new Error("name a note to delete (or use --stdin)");
+      await curate(command, "account memory delete", {
+        op: "delete",
+        notes,
+      });
+    });
+  memory
+    .command("prune")
+    .description(
+      "delete the notes of one scope that are about to expire or unused for a while; run with --dry-run first",
+    )
+    .requiredOption("--scope <scope>", "global, a namespace, or @agent-name")
+    .option(
+      "--expiring-within <duration>",
+      "notes that expire within this long: 14d, ...",
+    )
+    .option(
+      "--unused-for <duration>",
+      "notes neither read nor changed for this long: 30d, ...",
+    )
+    .option("--dry-run", "list what would be deleted; delete nothing")
+    .action(async (opts, command: Command) => {
+      if (!opts.expiringWithin && !opts.unusedFor)
+        throw new Error("give --expiring-within, --unused-for, or both");
+      await curate(command, "account memory prune", {
+        op: "prune",
+        scope: opts.scope,
+        ...(opts.expiringWithin
+          ? { expiring_within: opts.expiringWithin }
+          : {}),
+        ...(opts.unusedFor ? { unused_for: opts.unusedFor } : {}),
+        ...(opts.dryRun ? { dry_run: true } : {}),
+      });
+    });
+  memory
+    .command("export")
+    .description("every note (or one scope's) as one Markdown document")
+    .option("--scope <scope>", "only global, a namespace, or @agent-name")
+    .action(async (opts, command: Command) =>
+      curate(command, "account memory export", {
+        op: "export",
+        ...(opts.scope ? { scope: opts.scope } : {}),
+      }),
+    );
+
   account
     .command("subscriptions")
     .description(

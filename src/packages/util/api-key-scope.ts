@@ -33,6 +33,7 @@ const ACCOUNT_CAPABILITIES = new Set<ApiKeyCapability>([
   "notifications:manage",
   "usage:read",
   "ai-subscriptions:read",
+  "memory:manage",
   "project:create",
   "project:list",
 ]);

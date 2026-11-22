@@ -1903,6 +1903,7 @@ async function hubCallByName<T>(
       "notifications.archive",
       "system.getMembershipUsage",
       "system.getAiSubscriptionStatus",
+      "agent.curateAgentMemory",
     ].includes(name)
   ) {
     return await callHubWithApiKey<T>({

@@ -61,6 +61,11 @@ const ACCOUNT_OPTIONS: Array<{
     label: "Read the usage of my AI subscriptions (Claude, Codex)",
     soloProject: true,
   },
+  {
+    capability: "memory:manage",
+    label: "Read, edit or delete all agent memory",
+    soloProject: true,
+  },
 ];
 
 function sameCapabilities(
