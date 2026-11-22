@@ -269,7 +269,7 @@ const tools = [
   {
     name: "memory_delete",
     description:
-      "Delete a memory note that is wrong or no longer useful. Deleting a note another agent wrote needs expected_revision from memory_read.",
+      "Delete memory notes that are wrong or no longer useful: one (name), or up to 100 at once (notes), as one request. Deleting a note another agent wrote needs expected_revision from memory_read. With notes, each is deleted or reported on its own.",
     inputSchema: {
       type: "object",
       properties: {
@@ -282,10 +282,55 @@ const tools = [
         expected_revision: {
           type: "string",
           pattern: "^[0-9a-f]{16}$",
-          description: "The revision memory_read returned",
+          description: "With name: the revision memory_read returned",
+        },
+        notes: {
+          type: "array",
+          minItems: 1,
+          maxItems: 100,
+          description:
+            "Instead of name: several notes to delete in one request",
+          items: {
+            type: "object",
+            properties: {
+              name: {
+                type: "string",
+                pattern:
+                  "^(?:[a-z0-9][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+              },
+              expected_revision: { type: "string", pattern: "^[0-9a-f]{16}$" },
+            },
+            required: ["name"],
+            additionalProperties: false,
+          },
         },
       },
-      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_prune",
+    description:
+      "Delete notes in your own scope (agent/) that are about to expire or that nothing has read or changed for a while. Run it with dry_run first to see the list. It chooses by stored expiry and last use, without reading (and so without keeping) the notes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        expiring_within: {
+          type: "string",
+          pattern: "^[1-9][0-9]{0,4}[hd]$",
+          description: "Notes that expire within this long, such as 14d",
+        },
+        unused_for: {
+          type: "string",
+          pattern: "^[1-9][0-9]{0,4}[hd]$",
+          description:
+            "Notes neither read nor changed for this long, such as 30d",
+        },
+        dry_run: {
+          type: "boolean",
+          description: "List what would be deleted; delete nothing",
+        },
+      },
       additionalProperties: false,
     },
   },

@@ -324,6 +324,24 @@ test("several namespaces: new notes need a namespace; nearly full asks to tidy",
   expect(index).not.toContain("nearly full in b");
 });
 
+test("an agent's own scope is nearly full at 90 of its 100 notes, and is told how to prune", () => {
+  const own = agentMemoryNamespace("00000000-0000-4000-8000-000000000001");
+  const at = (count: number) =>
+    buildMemoryIndex({
+      notes: [],
+      total: count,
+      namespaces: [],
+      counts: { global: 0, [own]: count },
+      agent: { agent_id: "00000000-0000-4000-8000-000000000001", name: "ops" },
+    });
+  expect(at(98)).toContain(
+    "Your own scope is nearly full (98 of 100 notes): before adding, remove working state you no longer need. memory prune --expiring-within 14d --dry-run",
+  );
+  // Measured against its own limit, never the 500 of a shared namespace.
+  expect(at(98)).not.toContain("Memory is nearly full in agent:");
+  expect(at(89)).not.toContain("nearly full");
+});
+
 test("the index never exceeds its byte cap, even with huge descriptions", () => {
   const notes = Array.from({ length: 2000 }, (_, i) =>
     indexNote(i % 2 ? "global" : "dev", `n-${i}`, {
@@ -692,5 +710,49 @@ describe("agent scopes and expiry", () => {
     expect(markdown).toContain("### @ops3/waiting-on");
     expect(markdown).toContain("by @ops3");
     expect(markdown).toContain("expires 2026-11-14 unless used");
+  });
+});
+
+describe("batch delete and prune requests", () => {
+  const many = (notes: unknown) =>
+    validateAgentMemoryRequest({ action: "memory", op: "delete-many", notes });
+  test("delete-many takes 1-100 distinct names, each with an optional revision", () => {
+    expect(() =>
+      many([
+        { name: "agent/a" },
+        { name: "dev/b", expected_revision: "0123456789abcdef" },
+        { name: "@review/c" },
+      ]),
+    ).not.toThrow();
+    expect(() => many([])).toThrow(/1 to 100 notes/);
+    expect(() =>
+      many(Array.from({ length: 101 }, (_, i) => ({ name: `n${i}` }))),
+    ).toThrow(/1 to 100 notes/);
+    expect(() => many([{ name: "a" }, { name: "a" }])).toThrow(/named twice/);
+    expect(() => many([{ name: "a", extra: 1 }])).toThrow(/unknown/);
+    expect(() => many([{ name: "a'; rm" }])).toThrow();
+    expect(() => many([{ name: "a", expected_revision: "nope" }])).toThrow(
+      /revision/,
+    );
+    expect(() => many(["a"])).toThrow(/name, expected_revision/);
+  });
+  test("prune needs a selector; durations are hours or days, never 'never'", () => {
+    const prune = (r: Record<string, unknown>) =>
+      validateAgentMemoryRequest({ action: "memory", op: "prune", ...r });
+    expect(() =>
+      prune({ expiring_within: "14d", unused_for: "30d", dry_run: true }),
+    ).not.toThrow();
+    expect(() => prune({ unused_for: "12h" })).not.toThrow();
+    expect(() => prune({})).toThrow(/expiring_within .* or unused_for/);
+    expect(() => prune({ expiring_within: "never" })).toThrow(
+      /expiring_within/,
+    );
+    expect(() => prune({ unused_for: "30" })).toThrow(/unused_for/);
+    expect(() => prune({ expiring_within: "14d", dry_run: "yes" })).toThrow(
+      /dry_run/,
+    );
+    expect(() =>
+      prune({ expiring_within: "14d", namespace: "global" }),
+    ).toThrow(/unknown/);
   });
 });
