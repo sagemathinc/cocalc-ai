@@ -71,8 +71,12 @@ function fakeDb(
   // null = the server returned no name (undefined would select the default)
   currentDatabase: string | null = TEST_DATABASE,
 ) {
+  // Every query the gate sends, in order.
+  const log: string[] = [];
   return {
+    log,
     query: async (text: string) => {
+      log.push(text);
       if (text.startsWith("SELECT current_database()")) {
         return { rows: [{ name: currentDatabase }] };
       }
@@ -198,11 +202,16 @@ describe("disposable test database reset", () => {
     }
   });
 
-  it("the PostgreSQL gate takes the database name from the server, not from the caller", async () => {
+  it("the PostgreSQL gate takes the database name from the server, not from the caller, and a refusal changes nothing", async () => {
+    // The test database's state before the refused check: a sentinel row and
+    // the harness marker.
+    const sentinel = await insertMint();
+    const markersBefore = await readTestMarkers(getPool());
+    expect(markersBefore).toHaveLength(1);
     if (isPgliteEnabled()) {
       // PGlite's session is not in the test database, so the query-backed
       // check refuses even though PGDATABASE and the marker (this process's
-      // nonce) are both right; the marker is kept.
+      // nonce) are both right.
       const { rows } = await getPool().query(
         "SELECT current_database() AS name",
       );
@@ -210,35 +219,56 @@ describe("disposable test database reset", () => {
       await expect(
         assertDisposablePostgres({ db: getPool(), pgdatabase: TEST_DATABASE }),
       ).rejects.toThrow(`connected database is not ${TEST_DATABASE}`);
-      expect(await readTestMarkers(getPool())).toEqual([harnessNonce()]);
-      return;
-    }
-    // Real PostgreSQL: a session on the test database passes; a session on
-    // another database is refused by the server-derived name, before any
-    // marker is read.
-    for (const [database, ok] of [
-      [TEST_DATABASE, true],
-      ["smc", false],
-    ] as const) {
-      const client = new Client({ database });
-      await client.connect();
-      try {
-        const check = assertDisposablePostgres({
-          db: client,
-          pgdatabase: TEST_DATABASE,
-        });
-        if (ok) {
-          await expect(check).resolves.toBeUndefined();
-        } else {
-          await expect(check).rejects.toThrow(
-            `connected database is not ${TEST_DATABASE}`,
-          );
+    } else {
+      // Real PostgreSQL: a session on the test database passes; a session on
+      // another database is refused by the server-derived name.
+      for (const [database, ok] of [
+        [TEST_DATABASE, true],
+        ["smc", false],
+      ] as const) {
+        const client = new Client({ database });
+        await client.connect();
+        try {
+          const check = assertDisposablePostgres({
+            db: client,
+            pgdatabase: TEST_DATABASE,
+          });
+          if (ok) {
+            await expect(check).resolves.toBeUndefined();
+          } else {
+            await expect(check).rejects.toThrow(
+              `connected database is not ${TEST_DATABASE}`,
+            );
+          }
+        } finally {
+          await client.end();
         }
-      } finally {
-        await client.end();
       }
     }
+    // The test database is unchanged: same marker, sentinel still there.
+    expect(await readTestMarkers(getPool())).toEqual(markersBefore);
+    const { rows } = await getPool().query(
+      "SELECT COUNT(*)::INT AS n FROM federated_connector_mint_log WHERE mint_id=$1",
+      [sentinel],
+    );
+    expect(rows[0].n).toBe(1);
   });
+
+  it("a wrong server identity is refused before any marker query", async () => {
+    for (const name of ["smc", null]) {
+      const db = fakeDb(["a".repeat(32)], name);
+      await expect(
+        assertDisposablePostgres({ db, pgdatabase: TEST_DATABASE }),
+      ).rejects.toThrow(`connected database is not ${TEST_DATABASE}`);
+      expect(db.log).toEqual(["SELECT current_database() AS name"]);
+    }
+    // The right identity is checked first, then the marker is read.
+    const ok = fakeDb(["a".repeat(32)]);
+    await assertDisposablePostgres({ db: ok, pgdatabase: TEST_DATABASE });
+    expect(ok.log[0]).toBe("SELECT current_database() AS name");
+    expect(ok.log.length).toBeGreaterThan(1);
+  });
+
   it("DROP/CREATE runs only on a session the server reports is in the maintenance database", async () => {
     await expect(
       assertMaintenanceSession(fakeDb([], MAINTENANCE_DATABASE)),
