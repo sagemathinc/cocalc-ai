@@ -1747,11 +1747,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
         noteError(err);
       }
     }
-    if (
-      lastError == null &&
-      lastObservedFailures == null &&
-      !verifiedFromRow
-    ) {
+    if (lastError == null && lastObservedFailures == null && !verifiedFromRow) {
       // No status read completed and no call failed: the window was spent
       // before any read could start.
       lastError = new Error(
