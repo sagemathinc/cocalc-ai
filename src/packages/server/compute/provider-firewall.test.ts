@@ -125,17 +125,148 @@ describe("managed compute firewall validation", () => {
     ).toThrow("managed compute SSH source ranges are not configured");
   });
 
+  it("fails closed when the stored setting is invalid", () => {
+    expect(() =>
+      validateComputeFirewallRules(baseRules(), {
+        ...config,
+        ssh_source_ranges: [],
+        ssh_source_ranges_error: "SSH source range 'x' must be an IPv4 CIDR",
+      }),
+    ).toThrow("managed compute SSH source ranges are invalid");
+  });
+
   it.each([
     [[{ IPProtocol: "tcp", ports: ["22"] }], ["192.0.2.10/32"]],
     [[{ IPProtocol: "tcp", ports: ["20-30"] }], ["192.0.2.10/32"]],
     [[{ IPProtocol: "tcp" }], ["192.0.2.10/32"]],
     [[{ IPProtocol: "all" }], ["192.0.2.10/32"]],
-  ])("rejects another rule that opens SSH (%j)", (allowed, sourceRanges) => {
+    [[{ IPProtocol: "6", ports: ["22"] }], ["192.0.2.10/32"]],
+    [[{ IPProtocol: "udp", ports: ["22"] }], ["192.0.2.10/32"]],
+    [[{ IPProtocol: "udp", ports: ["1-1024"] }], ["192.0.2.10/32"]],
+    [[{ IPProtocol: "udp" }], ["192.0.2.10/32"]],
+    [[{ IPProtocol: "17", ports: ["22"] }], ["192.0.2.10/32"]],
+  ])(
+    "rejects another rule that opens port 22 (%j)",
+    (allowed, sourceRanges) => {
+      const rules = baseRules();
+      rules.set("extra", rule({ direction: "INGRESS", allowed, sourceRanges }));
+      expect(() => validateComputeFirewallRules(rules, config)).toThrow(
+        "unexpected SSH ingress firewall rule 'extra'",
+      );
+    },
+  );
+
+  it.each([["::/0"], ["2001:db8::/64"], ["not-a-range"], ["192.0.2.10/33"]])(
+    "treats source %s on another rule as public",
+    (source) => {
+      const rules = baseRules();
+      rules.set(
+        "extra",
+        rule({
+          direction: "INGRESS",
+          allowed: [{ IPProtocol: "tcp", ports: ["8080"] }],
+          sourceRanges: [source],
+        }),
+      );
+      expect(() => validateComputeFirewallRules(rules, config)).toThrow(
+        "unexpected public ingress firewall rule 'extra'",
+      );
+    },
+  );
+
+  it("rejects a narrow IPv6 udp:22 rule", () => {
     const rules = baseRules();
-    rules.set("extra", rule({ direction: "INGRESS", allowed, sourceRanges }));
-    expect(() => validateComputeFirewallRules(rules, config)).toThrow(
-      "unexpected SSH ingress firewall rule 'extra'",
+    rules.set(
+      "extra",
+      rule({
+        direction: "INGRESS",
+        allowed: [{ IPProtocol: "udp", ports: ["22"] }],
+        sourceRanges: ["2001:db8::/64"],
+      }),
     );
+    expect(() => validateComputeFirewallRules(rules, config)).toThrow(
+      "firewall rule 'extra' targets managed compute",
+    );
+  });
+
+  describe("rules without the managed tag", () => {
+    function untagged(overrides: Record<string, any>) {
+      return rule({ targetTags: undefined, ...overrides });
+    }
+
+    it("rejects an untagged tcp:22 rule from 0.0.0.0/0 (it applies to every instance)", () => {
+      const rules = baseRules();
+      rules.set(
+        "untagged",
+        untagged({
+          direction: "INGRESS",
+          allowed: [{ IPProtocol: "tcp", ports: ["22"] }],
+          sourceRanges: ["0.0.0.0/0"],
+        }),
+      );
+      expect(() => validateComputeFirewallRules(rules, config)).toThrow(
+        "unexpected public ingress firewall rule 'untagged'",
+      );
+    });
+
+    it("rejects a service-account-targeted tcp:22 rule", () => {
+      const rules = baseRules();
+      rules.set(
+        "by-service-account",
+        untagged({
+          direction: "INGRESS",
+          targetServiceAccounts: ["vm@compute-test.iam.gserviceaccount.com"],
+          allowed: [{ IPProtocol: "tcp", ports: ["22"] }],
+          sourceRanges: ["192.0.2.10/32"],
+        }),
+      );
+      expect(() => validateComputeFirewallRules(rules, config)).toThrow(
+        "unexpected SSH ingress firewall rule 'by-service-account'",
+      );
+    });
+
+    it("rejects an untagged rule from split halves of 0.0.0.0/0", () => {
+      const rules = baseRules();
+      rules.set(
+        "untagged-split",
+        untagged({
+          direction: "INGRESS",
+          allowed: [{ IPProtocol: "tcp", ports: ["8080"] }],
+          sourceRanges: ["0.0.0.0/1", "128.0.0.0/1"],
+        }),
+      );
+      expect(() => validateComputeFirewallRules(rules, config)).toThrow(
+        "unexpected public ingress firewall rule 'untagged-split'",
+      );
+    });
+
+    it("allows an untagged narrow non-22 rule", () => {
+      const rules = baseRules();
+      rules.set(
+        "untagged-narrow",
+        untagged({
+          direction: "INGRESS",
+          allowed: [{ IPProtocol: "tcp", ports: ["8080"] }],
+          sourceRanges: ["192.0.2.10/32"],
+        }),
+      );
+      expect(() => validateComputeFirewallRules(rules, config)).not.toThrow();
+    });
+
+    it("ignores a tagged rule on another network (it cannot reach managed VMs)", () => {
+      const rules = baseRules();
+      rules.set(
+        "other-network",
+        rule({
+          network:
+            "https://www.googleapis.com/compute/v1/projects/compute-test/global/networks/default",
+          direction: "INGRESS",
+          allowed: [{ IPProtocol: "tcp", ports: ["22"] }],
+          sourceRanges: ["0.0.0.0/0"],
+        }),
+      );
+      expect(() => validateComputeFirewallRules(rules, config)).not.toThrow();
+    });
   });
 
   it("rejects a public rule that splits 0.0.0.0/0 into halves", () => {

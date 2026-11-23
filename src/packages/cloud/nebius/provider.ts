@@ -21,6 +21,7 @@ import {
   type NebiusSpotQuote,
 } from "./spot";
 import { nebiusSpotPolicyName } from "@cocalc/util/nebius-spot-pricing";
+import { parseSshSourceRange } from "@cocalc/util/compute/ssh-source-ranges";
 import {
   AttachedDiskSpec,
   AttachedDiskSpec_AttachMode,
@@ -636,6 +637,17 @@ export type NebiusProviderCreds = NebiusCreds & {
   subnetId?: string;
 };
 
+// Compare security rule specs regardless of CIDR order: Nebius may return the
+// sources or destinations of a rule in a different order than we sent them.
+function normalizedRuleSpec(spec: any): any {
+  const copy = JSON.parse(JSON.stringify(spec ?? {}));
+  const ingress = copy?.match?.ingress;
+  if (Array.isArray(ingress?.sourceCidrs)) ingress.sourceCidrs.sort();
+  const egress = copy?.match?.egress;
+  if (Array.isArray(egress?.destinationCidrs)) egress.destinationCidrs.sort();
+  return copy;
+}
+
 export class NebiusProvider implements CloudProvider {
   async ensurePublicAddress(
     spec: { id?: string; name: string },
@@ -724,17 +736,20 @@ export class NebiusProvider implements CloudProvider {
     creds: NebiusProviderCreds,
     opts: { sshSourceRanges: string[] },
   ): Promise<string> {
-    // tcp:22 is reachable only from our own addresses, never 0.0.0.0/0.
-    const sshSourceRanges = Array.from(new Set(opts.sshSourceRanges)).sort();
-    if (
-      sshSourceRanges.length === 0 ||
-      sshSourceRanges.some(
-        (range) => !/^\d{1,3}(\.\d{1,3}){3}\/(1[6-9]|2\d|3[0-2])$/.test(range),
-      )
-    ) {
+    // tcp:22 is reachable only from our own addresses, never 0.0.0.0/0. The
+    // same parser as the site setting and the server checks.
+    let sshSourceRanges: string[];
+    try {
+      sshSourceRanges = Array.from(
+        new Set(opts.sshSourceRanges.map(parseSshSourceRange)),
+      ).sort();
+    } catch (err) {
       throw new Error(
-        "nebius managed VM SSH source ranges must be explicit IPv4 CIDRs of /16 or narrower",
+        `nebius managed VM SSH source ranges are invalid: ${(err as Error)?.message ?? err}`,
       );
+    }
+    if (sshSourceRanges.length === 0) {
+      throw new Error("nebius managed VM SSH source ranges are not configured");
     }
     await using client = new NebiusClient(creds);
     const parentId = client.parentId();
@@ -873,6 +888,27 @@ export class NebiusProvider implements CloudProvider {
         }),
       },
     ];
+    // Refuse a group with rules we do not manage BEFORE creating anything, so a
+    // refused group is never changed.
+    const expectedRuleNames = new Set(rules.map(({ name }) => name));
+    const assertNoUnexpectedRules = async () => {
+      const observedRules = await client.securityRules.list(
+        ListSecurityRulesRequest.create({
+          parentId: groupId,
+          pageSize: Long.fromNumber(999),
+          pageToken: "",
+        }),
+      );
+      const unexpectedRuleNames = (observedRules.items ?? [])
+        .map((rule) => `${rule.metadata?.name ?? ""}`.trim())
+        .filter((name) => name && !expectedRuleNames.has(name));
+      if (unexpectedRuleNames.length) {
+        throw new Error(
+          `nebius managed VM security group has unexpected rules: ${unexpectedRuleNames.join(", ")}`,
+        );
+      }
+    };
+    await assertNoUnexpectedRules();
     for (const expected of rules) {
       let observed: any;
       try {
@@ -901,28 +937,16 @@ export class NebiusProvider implements CloudProvider {
           }),
         );
       }
-      if (JSON.stringify(observed.spec) !== JSON.stringify(expected.spec)) {
+      if (
+        JSON.stringify(normalizedRuleSpec(observed.spec)) !==
+        JSON.stringify(normalizedRuleSpec(expected.spec))
+      ) {
         throw new Error(
           `nebius managed VM security rule '${expected.name}' has drifted`,
         );
       }
     }
-    const observedRules = await client.securityRules.list(
-      ListSecurityRulesRequest.create({
-        parentId: groupId,
-        pageSize: Long.fromNumber(999),
-        pageToken: "",
-      }),
-    );
-    const expectedRuleNames = new Set(rules.map(({ name }) => name));
-    const unexpectedRuleNames = (observedRules.items ?? [])
-      .map((rule) => `${rule.metadata?.name ?? ""}`.trim())
-      .filter((name) => name && !expectedRuleNames.has(name));
-    if (unexpectedRuleNames.length) {
-      throw new Error(
-        `nebius managed VM security group has unexpected rules: ${unexpectedRuleNames.join(", ")}`,
-      );
-    }
+    await assertNoUnexpectedRules();
     return groupId;
   }
 

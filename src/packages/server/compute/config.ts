@@ -3,7 +3,17 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  MIN_SSH_SOURCE_PREFIX,
+  parseSshSourceRange,
+  parseSshSourceRanges,
+} from "@cocalc/util/compute/ssh-source-ranges";
+
+export { MIN_SSH_SOURCE_PREFIX, parseSshSourceRange, parseSshSourceRanges };
+
+const logger = getLogger("server:compute:config");
 
 export type ComputeVmMode =
   | "disabled"
@@ -22,9 +32,12 @@ export interface ComputeVmConfig {
   gcp_project_id?: string;
   gcp_network?: string;
   gcp_network_tag: string;
-  // Explicit IPv4 CIDRs that may reach managed VMs on tcp:22. Never
-  // 0.0.0.0/0; empty means unconfigured, and the network check fails closed.
+  // Explicit IPv4 CIDRs that may reach managed VMs on port 22. Never
+  // 0.0.0.0/0; empty means unconfigured, and the network checks fail closed.
   ssh_source_ranges: string[];
+  // Set when the stored setting is invalid; ssh_source_ranges is then empty.
+  // Only the network checks fail on it, so other compute paths keep working.
+  ssh_source_ranges_error?: string;
   staging_legacy_provider: boolean;
   max_active_per_account: number;
   max_active_total: number;
@@ -116,49 +129,22 @@ function parseServiceAccount(value: unknown): {
   return { json, project_id };
 }
 
-// The narrowest prefix accepted for an SSH source range. Our own addresses are
-// single hosts (/32) or small provider blocks; anything wider is treated as
-// public.
-export const MIN_SSH_SOURCE_PREFIX = 16;
-
-export function parseSshSourceRange(value: string): string {
-  const match = value
-    .trim()
-    .match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/);
-  if (!match) {
-    throw new Error(
-      `managed compute SSH source range '${value}' must be an IPv4 CIDR`,
-    );
+// An invalid stored value must not break every compute path (stop, delete,
+// inventory, ...): it becomes an empty list plus an error, and only the
+// network checks that need the ranges fail closed.
+function resolveSshSourceRanges(value: unknown): {
+  ssh_source_ranges: string[];
+  ssh_source_ranges_error?: string;
+} {
+  try {
+    return { ssh_source_ranges: parseSshSourceRanges(value) };
+  } catch (err) {
+    const ssh_source_ranges_error = `${(err as Error)?.message ?? err}`;
+    logger.warn("invalid compute_vm_ssh_source_ranges setting", {
+      error: ssh_source_ranges_error,
+    });
+    return { ssh_source_ranges: [], ssh_source_ranges_error };
   }
-  const octets = match.slice(1, 5).map(Number);
-  const prefix = Number(match[5]);
-  if (octets.some((octet) => octet > 255) || prefix > 32) {
-    throw new Error(
-      `managed compute SSH source range '${value}' is not a valid IPv4 CIDR`,
-    );
-  }
-  if (prefix < MIN_SSH_SOURCE_PREFIX) {
-    throw new Error(
-      `managed compute SSH source range '${value}' is wider than /${MIN_SSH_SOURCE_PREFIX}`,
-    );
-  }
-  const address = octets.reduce((acc, octet) => acc * 256 + octet, 0);
-  const size = 2 ** (32 - prefix);
-  if (address % size !== 0) {
-    throw new Error(
-      `managed compute SSH source range '${value}' has host bits set`,
-    );
-  }
-  return `${octets.join(".")}/${prefix}`;
-}
-
-export function parseSshSourceRanges(value: unknown): string[] {
-  const ranges = `${value ?? ""}`
-    .split(/[\s,]+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map(parseSshSourceRange);
-  return Array.from(new Set(ranges)).sort();
 }
 
 export function resolveComputeVmConfig(settings: Settings): ComputeVmConfig {
@@ -183,9 +169,7 @@ export function resolveComputeVmConfig(settings: Settings): ComputeVmConfig {
     gcp_project_id: serviceAccount.project_id,
     gcp_network: gcpNetwork || undefined,
     gcp_network_tag: gcpNetworkTag,
-    ssh_source_ranges: parseSshSourceRanges(
-      settings.compute_vm_ssh_source_ranges,
-    ),
+    ...resolveSshSourceRanges(settings.compute_vm_ssh_source_ranges),
     staging_legacy_provider,
     max_active_per_account: positiveInteger(
       settings.compute_vm_max_active_per_project,

@@ -14,6 +14,7 @@ import { isEmpty } from "lodash";
 import { hasSiteFundedCodexPrice } from "@cocalc/util/ai/site-funded-codex-prices";
 import { EMAIL_LANE_BACKENDS } from "@cocalc/util/notification-email";
 import { scannerImageDigest } from "@cocalc/util/rootfs-scan";
+import { parseSshSourceRanges } from "@cocalc/util/compute/ssh-source-ranges";
 import {
   expire_time,
   isValidUUID,
@@ -2079,19 +2080,12 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     valid: (value) => {
-      const entries = `${value ?? ""}`.split(/[\s,]+/).filter(Boolean);
-      return entries.every((entry) => {
-        const match = entry.match(
-          /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/,
-        );
-        if (!match) return false;
-        const octets = match.slice(1, 5).map(Number);
-        const prefix = Number(match[5]);
-        if (octets.some((octet) => octet > 255)) return false;
-        if (prefix < 16 || prefix > 32) return false;
-        const address = octets.reduce((acc, octet) => acc * 256 + octet, 0);
-        return address % 2 ** (32 - prefix) === 0;
-      });
+      try {
+        parseSshSourceRanges(value);
+        return true;
+      } catch {
+        return false;
+      }
     },
     tags: ["Cloud", "Security"],
     group: "Compute / Managed VMs",

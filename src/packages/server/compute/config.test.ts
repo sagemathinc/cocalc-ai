@@ -54,6 +54,21 @@ describe("managed compute VM configuration", () => {
     ).toBe(false);
   });
 
+  it("keeps compute config usable when the stored SSH ranges are invalid", () => {
+    const config = resolveComputeVmConfig({
+      dns: "cocalc.ai",
+      compute_vm_ssh_source_ranges: "0.0.0.0/0",
+    });
+    expect(config.ssh_source_ranges).toEqual([]);
+    expect(config.ssh_source_ranges_error).toContain("wider than /16");
+    expect(
+      resolveComputeVmConfig({
+        dns: "cocalc.ai",
+        compute_vm_ssh_source_ranges: "203.0.113.7/32",
+      }),
+    ).toMatchObject({ ssh_source_ranges: ["203.0.113.7/32"] });
+  });
+
   it("parses explicit SSH source ranges and never accepts the Internet", () => {
     expect(
       resolveComputeVmConfig({ dns: "cocalc.ai" }).ssh_source_ranges,
@@ -70,9 +85,7 @@ describe("managed compute VM configuration", () => {
       "256.0.0.1/32",
       "203.0.113.7/33",
     ]) {
-      expect(() => parseSshSourceRanges(value)).toThrow(
-        "managed compute SSH source range",
-      );
+      expect(() => parseSshSourceRanges(value)).toThrow("SSH source range");
     }
   });
 

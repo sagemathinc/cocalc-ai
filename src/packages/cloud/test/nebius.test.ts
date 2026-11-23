@@ -1795,17 +1795,21 @@ describe("Nebius managed VM security group", () => {
     expect(rules.has("allow-ssh-https")).toBe(false);
   });
 
-  it.each([[[]], [["0.0.0.0/0"]], [["10.0.0.0/8"]], [["203.0.113.7"]]])(
-    "fails closed for SSH source ranges %j",
-    async (sshSourceRanges) => {
-      await expect(
-        new NebiusProvider().ensureManagedComputeSecurityGroup(creds, {
-          sshSourceRanges,
-        }),
-      ).rejects.toThrow("SSH source ranges");
-      expect(securityRulesCreateMock).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    [[]],
+    [["0.0.0.0/0"]],
+    [["10.0.0.0/8"]],
+    [["203.0.113.7"]],
+    [["999.0.113.7/32"]],
+    [["203.0.113.7/24"]],
+  ])("fails closed for SSH source ranges %j", async (sshSourceRanges) => {
+    await expect(
+      new NebiusProvider().ensureManagedComputeSecurityGroup(creds, {
+        sshSourceRanges,
+      }),
+    ).rejects.toThrow("SSH source ranges");
+    expect(securityRulesCreateMock).not.toHaveBeenCalled();
+  });
 
   it("refuses a group that still has the old public SSH rule", async () => {
     rules.set("allow-ssh-https", {
@@ -1817,5 +1821,21 @@ describe("Nebius managed VM security group", () => {
         sshSourceRanges: ["203.0.113.7/32"],
       }),
     ).rejects.toThrow("unexpected rules: allow-ssh-https");
+    // Refused before anything is created: a refused group is never changed.
+    expect(securityRulesCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts an allow-ssh rule whose CIDRs come back in another order", async () => {
+    const provider = new NebiusProvider();
+    await provider.ensureManagedComputeSecurityGroup(creds, {
+      sshSourceRanges: ["203.0.113.7/32", "198.51.100.0/24"],
+    });
+    const sshRule = rules.get("allow-ssh");
+    sshRule.spec.match.ingress.sourceCidrs.reverse();
+    securityRulesCreateMock.mockClear();
+    await provider.ensureManagedComputeSecurityGroup(creds, {
+      sshSourceRanges: ["198.51.100.0/24", "203.0.113.7/32"],
+    });
+    expect(securityRulesCreateMock).not.toHaveBeenCalled();
   });
 });

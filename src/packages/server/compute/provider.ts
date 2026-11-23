@@ -37,11 +37,8 @@ import {
   gcpCpuCountForMachineType,
   gcpMemoryGiBForMachineType,
 } from "@cocalc/util/project-host-pricing";
-import {
-  getComputeVmConfig,
-  MIN_SSH_SOURCE_PREFIX,
-  type ComputeVmConfig,
-} from "./config";
+import { getComputeVmConfig, type ComputeVmConfig } from "./config";
+import { MIN_SSH_SOURCE_PREFIX } from "@cocalc/util/compute/ssh-source-ranges";
 import type { ComputeVmRow, ComputeVolumeRow } from "./types";
 import { assertComputeVmSecurity } from "./security";
 import { regionFromComputeZone } from "./placement";
@@ -221,13 +218,14 @@ function allowsProtocol(rule: any, protocol: string, port?: string): boolean {
   });
 }
 
-// True when an allow rule admits the given TCP port: protocol "all", tcp
-// with no ports (every port), an exact port or a range that contains it.
-function allowsTcpPort(rule: any, port: number): boolean {
+// True when an allow rule admits the given port over TCP or UDP: protocol
+// "all", tcp/udp (or 6/17) with no ports (every port), an exact port or a
+// range that contains it.
+function allowsPort(rule: any, port: number): boolean {
   return (rule.allowed ?? []).some((entry: any) => {
-    const protocol = `${entry.IPProtocol ?? ""}`;
+    const protocol = `${entry.IPProtocol ?? ""}`.toLowerCase();
     if (protocol === "all") return true;
-    if (protocol !== "tcp" && protocol !== "6") return false;
+    if (!["tcp", "6", "udp", "17"].includes(protocol)) return false;
     const ports = (entry.ports ?? []).map(String);
     if (ports.length === 0) return true;
     return ports.some((spec: string) => {
@@ -391,18 +389,47 @@ export async function requireProviderComputeSubnetwork(
   return subnet;
 }
 
-// A source range wider than MIN_SSH_SOURCE_PREFIX counts as public, so that
-// splitting 0.0.0.0/0 into halves (0.0.0.0/1 + 128.0.0.0/1) is still caught.
-function isWideSourceRange(range: unknown): boolean {
-  const prefix = Number(`${range ?? ""}`.split("/")[1] ?? "32");
-  return !Number.isInteger(prefix) || prefix < MIN_SSH_SOURCE_PREFIX;
+// A source counts as public unless it is an IPv4 address or CIDR of
+// MIN_SSH_SOURCE_PREFIX or narrower. That catches 0.0.0.0/0 split into halves
+// (0.0.0.0/1 + 128.0.0.0/1), every IPv6 source (the allowlist is IPv4-only)
+// and anything malformed.
+function isPublicSourceRange(range: unknown): boolean {
+  const match = `${range ?? ""}`
+    .trim()
+    .match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/(\d{1,2}))?$/);
+  if (!match) return true;
+  const prefix = match[1] == null ? 32 : Number(match[1]);
+  return prefix > 32 || prefix < MIN_SSH_SOURCE_PREFIX;
+}
+
+// Whether a firewall rule applies to managed VMs. Rules on another network
+// never reach them and are ignored. On the managed network GCP applies a rule
+// to instances with a matching tag, to EVERY instance when it has neither
+// target tags nor target service accounts, and to instances running as a
+// listed service account; the last case is counted conservatively, since
+// managed VMs must not run as a service account at all.
+function appliesToManagedVms(
+  rule: any,
+  config: Pick<ComputeVmConfig, "gcp_network" | "gcp_network_tag">,
+): boolean {
+  if (normalizeResourceUri(rule.network) !== config.gcp_network) return false;
+  const tags: string[] = rule.targetTags ?? [];
+  const serviceAccounts: string[] = rule.targetServiceAccounts ?? [];
+  return (
+    tags.includes(config.gcp_network_tag) ||
+    serviceAccounts.length > 0 ||
+    tags.length === 0
+  );
 }
 
 export function validateComputeFirewallRules(
   rules: Map<string, any>,
   config: Pick<
     ComputeVmConfig,
-    "gcp_network" | "gcp_network_tag" | "ssh_source_ranges"
+    | "gcp_network"
+    | "gcp_network_tag"
+    | "ssh_source_ranges"
+    | "ssh_source_ranges_error"
   >,
 ): void {
   const required = [
@@ -460,8 +487,13 @@ export function validateComputeFirewallRules(
   ) {
     throw new Error("managed compute egress firewall priorities are invalid");
   }
-  // tcp:22 is reachable only from our own addresses (the configured named
-  // ranges), never from the Internet. An empty list fails closed.
+  // Port 22 is reachable only from our own addresses (the configured named
+  // ranges), never from the Internet. An invalid or empty list fails closed.
+  if (config.ssh_source_ranges_error) {
+    throw new Error(
+      `managed compute SSH source ranges are invalid: ${config.ssh_source_ranges_error}`,
+    );
+  }
   if (config.ssh_source_ranges.length === 0) {
     throw new Error("managed compute SSH source ranges are not configured");
   }
@@ -486,23 +518,23 @@ export function validateComputeFirewallRules(
       continue;
     }
     if (
-      rule.direction === "INGRESS" &&
-      rule.disabled !== true &&
-      (rule.targetTags ?? []).includes(config.gcp_network_tag) &&
-      (rule.allowed ?? []).length > 0 &&
-      (!rule.sourceRanges?.length ||
-        rule.sourceRanges.some((range: unknown) => isWideSourceRange(range)))
+      rule.direction !== "INGRESS" ||
+      rule.disabled === true ||
+      (rule.allowed ?? []).length === 0 ||
+      !appliesToManagedVms(rule, config)
+    ) {
+      continue;
+    }
+    if (
+      !rule.sourceRanges?.length ||
+      rule.sourceRanges.some((range: unknown) => isPublicSourceRange(range))
     ) {
       throw new Error(
         `unexpected public ingress firewall rule '${name}' targets managed compute`,
       );
     }
-    if (
-      rule.direction === "INGRESS" &&
-      rule.disabled !== true &&
-      (rule.targetTags ?? []).includes(config.gcp_network_tag) &&
-      allowsTcpPort(rule, 22)
-    ) {
+    // Only cocalc-compute-ssh may open port 22, whatever the source.
+    if (allowsPort(rule, 22)) {
       throw new Error(
         `unexpected SSH ingress firewall rule '${name}' targets managed compute`,
       );
@@ -519,7 +551,7 @@ async function assertProviderComputeNetworkSecurity(config: ComputeVmConfig) {
   ) {
     throw new Error("managed compute dedicated GCP network is not configured");
   }
-  const key = `${config.gcp_project_id}:${config.gcp_network}:${config.gcp_network_tag}:${config.ssh_source_ranges.join(",")}`;
+  const key = `${config.gcp_project_id}:${config.gcp_network}:${config.gcp_network_tag}:${config.ssh_source_ranges.join(",")}:${config.ssh_source_ranges_error ?? ""}`;
   if (
     networkSecurityCheck?.key === key &&
     Date.now() - networkSecurityCheck.checked_at < 5 * 60_000
@@ -1137,7 +1169,13 @@ export async function nebiusComputeInstanceReplacementReason(
 
 async function ensureNebiusManagedComputeSecurityGroup(region: string) {
   const { creds } = await context("nebius", region);
-  const { ssh_source_ranges } = await getComputeVmConfig();
+  const { ssh_source_ranges, ssh_source_ranges_error } =
+    await getComputeVmConfig();
+  if (ssh_source_ranges_error) {
+    throw new Error(
+      `managed compute SSH source ranges are invalid: ${ssh_source_ranges_error}`,
+    );
+  }
   if (ssh_source_ranges.length === 0) {
     throw new Error("managed compute SSH source ranges are not configured");
   }
@@ -1739,7 +1777,14 @@ export async function createProviderComputeVm(
 }
 
 export async function startProviderComputeVm(vm: ComputeVmRow) {
-  const { creds } = await context(vm.provider, vm.region);
+  const { config, creds } = await context(vm.provider, vm.region);
+  // Starting must fail closed exactly like creating: the network rules are
+  // checked (cached) before any provider start call.
+  if (vm.provider === "gcp") {
+    await assertProviderComputeNetworkSecurity(config);
+  } else if (vm.provider === "nebius") {
+    await ensureNebiusManagedComputeSecurityGroup(vm.region);
+  }
   await (vm.provider === "gcp" ? gcpProvider : nebiusProvider).startHost(
     runtimeFor(vm),
     creds,
