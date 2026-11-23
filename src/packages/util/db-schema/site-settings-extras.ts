@@ -1341,7 +1341,7 @@ export const EXTRAS: SettingsExtras = {
   },
   site_funded_claude_heading: {
     name: "Site-Funded Claude",
-    desc: "Claude Code agents on Claude Haiku 5.5 paid for by the site, from the same membership allowance and weekly pools as site-funded Codex. The site's Anthropic API keys, each with its own monthly limit, are managed on the AI Pool page.",
+    desc: "Claude Code agents on Claude Haiku 5.5 paid for by the site, from the same membership allowance and weekly pools as site-funded Codex. The site's Anthropic API keys, each with its own monthly limit, are managed on the AI Pool page. Before enabling it, read Anthropic's [Claude Code legal and compliance terms](https://code.claude.com/docs/en/legal-and-compliance): unless you have agreed otherwise with Anthropic, a site may not pay for Claude Code usage on its users' behalf.",
     default: "",
     type: "header",
     tags: ["AI", "Commercialization", "Security"],
