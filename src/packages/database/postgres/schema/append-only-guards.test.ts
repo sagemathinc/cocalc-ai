@@ -69,7 +69,8 @@ describe("append-only guarded tables", () => {
     expect(rows.map(({ relname }) => relname).sort()).toEqual(
       [...APPEND_ONLY_GUARDED_TABLES].sort(),
     );
-  });
+    // pg_get_functiondef over every trigger, on a freshly synced database.
+  }, 30_000);
 
   it("every listed table has a row inserter in this test", () => {
     for (const table of APPEND_ONLY_GUARDED_TABLES) {

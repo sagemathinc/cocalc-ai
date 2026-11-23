@@ -27,6 +27,8 @@ import { getPglite, getPgliteDataDir } from "../pglite";
 import {
   assertDisposablePglite,
   assertDisposablePostgres,
+  assertMaintenanceSession,
+  MAINTENANCE_DATABASE,
   readTestMarkers,
   TEST_DATABASE,
   writeTestMarker,
@@ -440,7 +442,7 @@ export async function initEphemeralDatabase({
     user,
     host: primaryHost,
     port,
-    database: "smc",
+    database: MAINTENANCE_DATABASE,
     statement_timeout: STATEMENT_TIMEOUT_MS,
     ssl,
     options: "-c timezone=UTC", // ← make the session time zone UTC
@@ -469,8 +471,16 @@ export async function initEphemeralDatabase({
       if (pool != null) {
         await pool.end();
       }
-      await db.query(`DROP DATABASE "${escapedTestDb}" WITH (FORCE)`);
-      await db.query(`CREATE DATABASE "${escapedTestDb}"`);
+      // DROP and CREATE on one maintenance session the server confirms is
+      // in the maintenance database.
+      const admin = await db.connect();
+      try {
+        await assertMaintenanceSession(admin);
+        await admin.query(`DROP DATABASE "${escapedTestDb}" WITH (FORCE)`);
+        await admin.query(`CREATE DATABASE "${escapedTestDb}"`);
+      } finally {
+        admin.release();
+      }
       created = true;
     }
   } finally {
@@ -531,7 +541,6 @@ async function assertDisposableTestPostgres() {
     await assertDisposablePostgres({
       db: client,
       pgdatabase: database,
-      connectedDatabase: client.database,
     });
   } finally {
     await client.end();

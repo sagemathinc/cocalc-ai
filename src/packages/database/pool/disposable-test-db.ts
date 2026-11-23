@@ -17,7 +17,9 @@ database:
   (schema cocalc_test_harness, outside the application's public schema), and
 - PGlite: the data directory is in memory, and the marker nonce equals the one
   this process generated (an in-memory instance cannot outlive its process).
-  PostgreSQL: the marker must exist; it is written only right after the
+  PostgreSQL: the server reports (current_database()), on the session that
+  reads the marker, that it is connected to the test database, and the marker
+  must exist; it is written only right after the
   harness itself ran CREATE DATABASE, so a database the harness did not create
   is never dropped.
 Environment strings such as NODE_ENV or JEST_WORKER_ID are not part of the
@@ -27,6 +29,8 @@ gate.
 import { randomBytes } from "node:crypto";
 
 export const TEST_DATABASE = "smc_ephemeral_testing_database";
+// The database the harness connects to for CREATE/DROP DATABASE.
+export const MAINTENANCE_DATABASE = "smc";
 export const TEST_MARKER_SCHEMA = "cocalc_test_harness";
 export const TEST_MARKER_TABLE = `${TEST_MARKER_SCHEMA}.disposable_marker`;
 
@@ -94,22 +98,37 @@ export async function assertDisposablePglite({
   }
 }
 
+// db must be ONE session (a Client, not a Pool): the database name is taken
+// from the server on the same session that then reads the marker.
 export async function assertDisposablePostgres({
   db,
   pgdatabase,
-  connectedDatabase,
 }: {
   db: Queryable;
   pgdatabase: string | undefined;
-  connectedDatabase: string | undefined;
 }): Promise<void> {
-  if (pgdatabase !== TEST_DATABASE || connectedDatabase !== TEST_DATABASE) {
-    throw new NotDisposableError(`database is not ${TEST_DATABASE}`);
+  if (pgdatabase !== TEST_DATABASE) {
+    throw new NotDisposableError(`PGDATABASE is not ${TEST_DATABASE}`);
+  }
+  const { rows } = await db.query("SELECT current_database() AS name");
+  if (rows[0]?.name !== TEST_DATABASE) {
+    throw new NotDisposableError(`connected database is not ${TEST_DATABASE}`);
   }
   const markers = await readTestMarkers(db);
   if (markers.length !== 1 || !/^[0-9a-f]{32}$/.test(markers[0])) {
     throw new NotDisposableError(
       `no harness marker; the harness did not create this database (drop ${TEST_DATABASE} once by hand)`,
+    );
+  }
+}
+
+// The session that issues DROP/CREATE DATABASE must be one the server reports
+// is in the maintenance database.
+export async function assertMaintenanceSession(db: Queryable): Promise<void> {
+  const { rows } = await db.query("SELECT current_database() AS name");
+  if (rows[0]?.name !== MAINTENANCE_DATABASE) {
+    throw new NotDisposableError(
+      `maintenance session is not in ${MAINTENANCE_DATABASE}`,
     );
   }
 }

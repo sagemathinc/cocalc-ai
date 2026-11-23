@@ -3,7 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { Client } from "pg";
+import getPool, {
+  initEphemeralDatabase,
+  isPgliteEnabled,
+} from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 import { getFederatedMintLogGuardStatus } from "@cocalc/database/postgres/schema/federated-connector-mint-log";
 import { uuid } from "@cocalc/util/misc";
@@ -11,7 +15,9 @@ import { uuid } from "@cocalc/util/misc";
 import {
   assertDisposablePglite,
   assertDisposablePostgres,
+  assertMaintenanceSession,
   harnessNonce,
+  MAINTENANCE_DATABASE,
   NotDisposableError,
   readTestMarkers,
   TEST_DATABASE,
@@ -60,9 +66,16 @@ async function rowCounts(): Promise<Record<string, number>> {
   return counts;
 }
 
-function fakeDb(markers: string[] | null) {
+function fakeDb(
+  markers: string[] | null,
+  // null = the server returned no name (undefined would select the default)
+  currentDatabase: string | null = TEST_DATABASE,
+) {
   return {
     query: async (text: string) => {
+      if (text.startsWith("SELECT current_database()")) {
+        return { rows: [{ name: currentDatabase }] };
+      }
       if (text.startsWith("SELECT to_regclass")) {
         return { rows: [{ present: markers != null }] };
       }
@@ -169,34 +182,91 @@ describe("disposable test database reset", () => {
       assertDisposablePostgres({
         db: fakeDb([marker]),
         pgdatabase: TEST_DATABASE,
-        connectedDatabase: TEST_DATABASE,
       }),
     ).resolves.toBeUndefined();
     for (const args of [
-      {
-        db: fakeDb([marker]),
-        pgdatabase: "smc",
-        connectedDatabase: TEST_DATABASE,
-      },
-      {
-        db: fakeDb([marker]),
-        pgdatabase: TEST_DATABASE,
-        connectedDatabase: "smc",
-      },
-      {
-        db: fakeDb(null),
-        pgdatabase: TEST_DATABASE,
-        connectedDatabase: TEST_DATABASE,
-      },
-      {
-        db: fakeDb(["forged"]),
-        pgdatabase: TEST_DATABASE,
-        connectedDatabase: TEST_DATABASE,
-      },
+      { db: fakeDb([marker]), pgdatabase: "smc" },
+      { db: fakeDb([marker]), pgdatabase: undefined },
+      { db: fakeDb([marker], "smc"), pgdatabase: TEST_DATABASE },
+      { db: fakeDb([marker], null), pgdatabase: TEST_DATABASE },
+      { db: fakeDb(null), pgdatabase: TEST_DATABASE },
+      { db: fakeDb(["forged"]), pgdatabase: TEST_DATABASE },
     ]) {
       await expect(assertDisposablePostgres(args)).rejects.toThrow(
         NotDisposableError,
       );
+    }
+  });
+
+  it("the PostgreSQL gate takes the database name from the server, not from the caller", async () => {
+    if (isPgliteEnabled()) {
+      // PGlite's session is not in the test database, so the query-backed
+      // check refuses even though PGDATABASE and the marker (this process's
+      // nonce) are both right; the marker is kept.
+      const { rows } = await getPool().query(
+        "SELECT current_database() AS name",
+      );
+      expect(rows[0].name).not.toBe(TEST_DATABASE);
+      await expect(
+        assertDisposablePostgres({ db: getPool(), pgdatabase: TEST_DATABASE }),
+      ).rejects.toThrow(`connected database is not ${TEST_DATABASE}`);
+      expect(await readTestMarkers(getPool())).toEqual([harnessNonce()]);
+      return;
+    }
+    // Real PostgreSQL: a session on the test database passes; a session on
+    // another database is refused by the server-derived name, before any
+    // marker is read.
+    for (const [database, ok] of [
+      [TEST_DATABASE, true],
+      ["smc", false],
+    ] as const) {
+      const client = new Client({ database });
+      await client.connect();
+      try {
+        const check = assertDisposablePostgres({
+          db: client,
+          pgdatabase: TEST_DATABASE,
+        });
+        if (ok) {
+          await expect(check).resolves.toBeUndefined();
+        } else {
+          await expect(check).rejects.toThrow(
+            `connected database is not ${TEST_DATABASE}`,
+          );
+        }
+      } finally {
+        await client.end();
+      }
+    }
+  });
+  it("DROP/CREATE runs only on a session the server reports is in the maintenance database", async () => {
+    await expect(
+      assertMaintenanceSession(fakeDb([], MAINTENANCE_DATABASE)),
+    ).resolves.toBeUndefined();
+    for (const name of [TEST_DATABASE, "postgres", null]) {
+      await expect(assertMaintenanceSession(fakeDb([], name))).rejects.toThrow(
+        `maintenance session is not in ${MAINTENANCE_DATABASE}`,
+      );
+    }
+    if (isPgliteEnabled()) {
+      return;
+    }
+    for (const [database, ok] of [
+      [MAINTENANCE_DATABASE, true],
+      [TEST_DATABASE, false],
+    ] as const) {
+      const client = new Client({ database });
+      await client.connect();
+      try {
+        const check = assertMaintenanceSession(client);
+        if (ok) {
+          await expect(check).resolves.toBeUndefined();
+        } else {
+          await expect(check).rejects.toThrow(NotDisposableError);
+        }
+      } finally {
+        await client.end();
+      }
     }
   });
 });
