@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -519,6 +525,7 @@ describe("exit watchers", () => {
       status: `~/.local/share/cocalc/sensors/exits/${id}.json`,
       log: `~/.local/share/cocalc/sensors/exits/${id}.log`,
       beat: `~/.local/share/cocalc/sensors/exits/${id}.beat`,
+      restarts: `~/.local/share/cocalc/sensors/exits/${id}.restarts`,
     });
     for (const watch of [
       { type: "exit", id: "../../etc/passwd", command: "x" },
@@ -591,6 +598,128 @@ describe("exit watchers", () => {
     // A stale heartbeat with an exit code: it finished.
     writeFileSync(join(dir, `${id}.json`), '{"exit_code": 0}\n');
     expect(parseSensorWake(run())!.summary).toBe('"make" exited with code 0');
+  });
+
+  it("keeps the whole command, its directory and restart, within bounds", () => {
+    const long = "x".repeat(SENSOR_LIMITS.maxExitCommandLength);
+    expect(
+      validateSensorWatch(
+        { type: "exit", id, command: long, cwd: "src", restart: true },
+        { now },
+      ).watch,
+    ).toEqual({ type: "exit", id, command: long, cwd: "src", restart: true });
+    // Older CLIs send neither.
+    expect(
+      validateSensorWatch({ type: "exit", id, command: "make" }, { now }).watch,
+    ).toEqual({ type: "exit", id, command: "make" });
+    for (const watch of [
+      { type: "exit", id, command: long + "x" },
+      { type: "exit", id, command: "make", restart: "yes" },
+      { type: "exit", id, command: "make", cwd: "a\nb" },
+    ])
+      expect(() => validateSensorWatch(watch, { now })).toThrow();
+  });
+
+  it("starts the command again when its terminal ended, then wakes after the last try", () => {
+    const home = mkdtempSync(join(tmpdir(), "watch-exit-restart-"));
+    const dir = join(home, ".local/share/cocalc/sensors/exits");
+    mkdirSync(dir, { recursive: true });
+    const bin = mkdtempSync(join(tmpdir(), "watch-exit-bin-"));
+    // A fake `cocalc --json sensor exit-restart ...`: records its arguments,
+    // and starts the command (touches its heartbeat) unless told to fail.
+    writeFileSync(
+      join(bin, "cocalc"),
+      `#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["FAKE_CALLS"], "a") as f:
+    f.write(json.dumps(sys.argv[1:]) + "\\n")
+if os.path.exists(os.environ["FAKE_FAIL"]):
+    print("project not running", file=sys.stderr)
+    sys.exit(1)
+open(os.environ["FAKE_BEAT"], "w").close()
+print(json.dumps({"ok": True}))
+`,
+      { mode: 0o755 },
+    );
+    const command = "./wait-ci.sh 'a b'";
+    const script = sensorWatchScript({
+      type: "exit",
+      id,
+      command,
+      cwd: "my dir",
+      restart: true,
+    })!;
+    const beat = join(dir, `${id}.beat`);
+    const calls = join(bin, "calls");
+    const fail = join(bin, "fail");
+    const env = {
+      ...process.env,
+      HOME: home,
+      PATH: `${bin}:/usr/bin:/bin`,
+      FAKE_CALLS: calls,
+      FAKE_FAIL: fail,
+      FAKE_BEAT: beat,
+    };
+    const run = () =>
+      execFileSync("python3", ["-c", script], {
+        cwd: home,
+        env,
+        encoding: "utf8",
+      });
+    const stale = () => {
+      const t = Date.now() / 1000 - SENSOR_LIMITS.exitLostAfterSeconds - 30;
+      utimesSync(beat, t, t);
+    };
+    const callList = () =>
+      readFileSync(calls, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    writeFileSync(beat, "");
+    expect(run()).toBe("");
+    // The project restarted: started again, quietly.
+    stale();
+    expect(run()).toBe("");
+    expect(callList()).toEqual([
+      [
+        "--json",
+        "sensor",
+        "exit-restart",
+        "--id",
+        id,
+        "--attempt",
+        "1",
+        "--cwd",
+        "my dir",
+        "--",
+        command,
+      ],
+    ]);
+    // Running again: its heartbeat is fresh.
+    expect(run()).toBe("");
+    // A start that fails counts too.
+    stale();
+    writeFileSync(fail, "");
+    expect(run()).toBe("");
+    expect(run()).toBe("");
+    expect(callList().map((args) => args[6])).toEqual(["1", "2", "3"]);
+    // Out of tries: it wakes, saying how to run it again.
+    const wake = parseSensorWake(run())!;
+    expect(callList()).toHaveLength(SENSOR_LIMITS.exitMaxRestarts);
+    expect(wake.summary).toMatch(
+      /^"\.\/wait-ci\.sh 'a b'" stopped without an exit code: .* It was started again 3 times/,
+    );
+    expect(wake.data).toMatchObject({
+      exit_code: null,
+      reason: "terminal-ended",
+      restarts: 3,
+      rerun: `cocalc sensor watch exit --cwd 'my dir' -- ${command}`,
+    });
+    // It finished after all: the usual wake, with the restarts.
+    writeFileSync(join(dir, `${id}.json`), '{"exit_code": 0}\n');
+    const done = parseSensorWake(run())!;
+    expect(done.summary).toBe(`"./wait-ci.sh 'a b'" exited with code 0`);
+    expect(done.data).toMatchObject({ exit_code: 0, restarts: 3 });
   });
 });
 
