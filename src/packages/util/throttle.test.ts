@@ -41,6 +41,9 @@ describe("a throttled string", () => {
   });
 
   it("only schedules one timer while buffering a burst", () => {
+    // Pin the clock: the burst must fall inside one interval no matter how
+    // long 1000 writes take on a loaded machine.
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     const originalSetTimeout = global.setTimeout;
     let calls = 0;
     global.setTimeout = ((handler, timeout?: number, ...args: any[]) => {
@@ -56,6 +59,7 @@ describe("a throttled string", () => {
       throttled.close();
     } finally {
       global.setTimeout = originalSetTimeout;
+      nowSpy.mockRestore();
     }
   });
 });
@@ -97,6 +101,9 @@ describe("a throttled list of objects", () => {
   });
 
   it("only schedules one timer while buffering a burst", () => {
+    // Pin the clock: the burst must fall inside one interval no matter how
+    // long 1000 writes take on a loaded machine.
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     const originalSetTimeout = global.setTimeout;
     let calls = 0;
     global.setTimeout = ((handler, timeout?: number, ...args: any[]) => {
@@ -112,6 +119,7 @@ describe("a throttled list of objects", () => {
       throttled.close();
     } finally {
       global.setTimeout = originalSetTimeout;
+      nowSpy.mockRestore();
     }
   });
 });
