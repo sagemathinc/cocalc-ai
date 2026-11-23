@@ -2218,9 +2218,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         }),
       );
       expect(outcome).toBe("rejected");
-      expect(`${error}`).toMatch(
-        /managed component rollout RPC did not return/,
-      );
+      // The first wait is the host-control connection, and the error names it.
+      expect(`${error}`).toMatch(/host-control connection did not return/);
     });
 
     it("ends when a project-host settle reload never returns", async () => {
@@ -2285,6 +2284,257 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         /rollout request error: project-host conat router exited/,
       );
       expect(Date.now() - startedAt).toBeLessThan(5_000);
+    });
+
+    // A status client whose reads are scripted: read 1 is the pre-verify
+    // observation, the rest are the verification loop's reads.
+    const scriptedStatusClient = (
+      reads: Array<() => Promise<any>>,
+      onRead?: () => void,
+    ) => {
+      let n = 0;
+      return {
+        getRuntimeLog: async ({ source }: { source?: string }) => ({
+          source: source ?? "project-host",
+          lines: 25,
+          text: "",
+        }),
+        rolloutManagedComponents: async () => ({
+          results: [
+            {
+              component: "conat-router" as const,
+              action: "restarted" as const,
+            },
+          ],
+        }),
+        getManagedComponentStatus: async () => {
+          onRead?.();
+          const read = reads[Math.min(n, reads.length - 1)];
+          n += 1;
+          return await read();
+        },
+      };
+    };
+    const stoppedRouter = async () => [
+      {
+        component: "conat-router",
+        artifact: "project-host",
+        upgrade_policy: "restart_now",
+        enabled: true,
+        managed: true,
+        desired_version: "ph-v1",
+        runtime_state: "stopped",
+        version_state: "drifted",
+        running_versions: [],
+        running_pids: [],
+      },
+    ];
+    const waitsIn = (text: string) =>
+      [...text.matchAll(/within (\d+)ms/g)].map((m) => Number(m[1]));
+
+    it("keeps the first real error when later status reads time out", async () => {
+      const client = scriptedStatusClient([
+        async () => [],
+        async () => {
+          throw new Error("status backend exploded");
+        },
+        never,
+      ]);
+      const { outcome, error } = await settled(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: (async () => client) as any,
+          managedComponentRolloutRpcTimeoutMs: 40,
+          projectHostRolloutSettleTimeoutMs: 200,
+          managedComponentVerifyMinCallBudgetMs: 20,
+        }),
+      );
+      expect(outcome).toBe("rejected");
+      const text = `${error}`;
+      // The real error leads; the later timeout does not replace it.
+      expect(text).toMatch(
+        /could not be verified: status backend exploded; also status_read_timeout: host status read did not return within \d+ms/,
+      );
+    });
+
+    it("never starts a verification call with less than the minimum budget", async () => {
+      const client = scriptedStatusClient([async () => [], never]);
+      const { outcome, error } = await settled(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: (async () => client) as any,
+          managedComponentRolloutRpcTimeoutMs: 1_000,
+          projectHostRolloutSettleTimeoutMs: 120,
+          managedComponentVerifyMinCallBudgetMs: 30,
+        }),
+      );
+      expect(outcome).toBe("rejected");
+      const text = `${error}`;
+      expect(text).toMatch(/could not be verified: host status read did not/);
+      const waits = waitsIn(text);
+      expect(waits.length).toBeGreaterThan(0);
+      for (const ms of waits) {
+        expect(ms).toBeGreaterThanOrEqual(30);
+      }
+    });
+
+    it("reports the last completed status read with a later timeout", async () => {
+      const client = scriptedStatusClient([
+        async () => [],
+        stoppedRouter,
+        never,
+      ]);
+      const { outcome, error } = await settled(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: (async () => client) as any,
+          managedComponentRolloutRpcTimeoutMs: 40,
+          projectHostRolloutSettleTimeoutMs: 200,
+          managedComponentVerifyMinCallBudgetMs: 20,
+        }),
+      );
+      expect(outcome).toBe("rejected");
+      expect(`${error}`).toMatch(
+        /could not be verified: host status read did not return within \d+ms; last completed status read: conat-router: runtime_state=stopped/,
+      );
+    });
+
+    it("reports drift, not a timeout, when the window ends after a completed read", async () => {
+      // Every read completes; the window simply ends while the router is
+      // still stopped. The old loop's last 1 ms call turned this into a
+      // timeout; now the drift itself is the error.
+      const client = scriptedStatusClient([async () => [], stoppedRouter]);
+      await expect(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: (async () => client) as any,
+          managedComponentRolloutRpcTimeoutMs: 40,
+          projectHostRolloutSettleTimeoutMs: 60,
+          managedComponentVerifyMinCallBudgetMs: 20,
+          projectHostRolloutPollMs: 5,
+        }),
+      ).rejects.toThrow(
+        /managed component rollout did not converge: conat-router: runtime_state=stopped/,
+      );
+    });
+
+    it("keeps an earlier real error when a later completed read shows drift", async () => {
+      const client = scriptedStatusClient([
+        async () => [],
+        async () => {
+          throw new Error("status backend exploded");
+        },
+        stoppedRouter,
+      ]);
+      await expect(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: (async () => client) as any,
+          managedComponentRolloutRpcTimeoutMs: 40,
+          projectHostRolloutSettleTimeoutMs: 120,
+          managedComponentVerifyMinCallBudgetMs: 20,
+          projectHostRolloutPollMs: 5,
+        }),
+      ).rejects.toThrow(
+        /did not converge: conat-router: runtime_state=stopped; errors during verification: status backend exploded/,
+      );
+    });
+
+    it("keeps an earlier timeout when a later completed read shows drift", async () => {
+      const client = scriptedStatusClient([
+        async () => [],
+        never,
+        stoppedRouter,
+      ]);
+      await expect(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: (async () => client) as any,
+          managedComponentRolloutRpcTimeoutMs: 30,
+          projectHostRolloutSettleTimeoutMs: 200,
+          managedComponentVerifyMinCallBudgetMs: 20,
+          projectHostRolloutPollMs: 5,
+        }),
+      ).rejects.toThrow(
+        /did not converge: conat-router: runtime_state=stopped; errors during verification: host status read did not return within \d+ms/,
+      );
+    });
+
+    it("succeeds unchanged when the first verification read is aligned", async () => {
+      const aligned = async () => [
+        {
+          component: "conat-router",
+          artifact: "project-host",
+          upgrade_policy: "restart_now",
+          enabled: true,
+          managed: true,
+          desired_version: "ph-v1",
+          runtime_state: "running",
+          version_state: "aligned",
+          running_versions: ["ph-v1"],
+          running_pids: [457],
+        },
+      ];
+      let reads = 0;
+      const client = scriptedStatusClient([async () => [], aligned], () => {
+        reads += 1;
+      });
+      const response = await rolloutHostManagedComponentsInternalHelper({
+        ...common,
+        hostControlClient: (async () => client) as any,
+        managedComponentRolloutRpcTimeoutMs: 40,
+        projectHostRolloutSettleTimeoutMs: 200,
+      });
+      expect(response.results).toEqual([
+        expect.objectContaining({ component: "conat-router" }),
+      ]);
+      // One pre-verify observation plus exactly one verification read.
+      expect(reads).toBe(2);
+    });
+
+    it("reports when the window is too short to start any read", async () => {
+      const client = scriptedStatusClient([async () => [], stoppedRouter]);
+      await expect(
+        rolloutHostManagedComponentsInternalHelper({
+          ...common,
+          hostControlClient: (async () => client) as any,
+          managedComponentRolloutRpcTimeoutMs: 40,
+          projectHostRolloutSettleTimeoutMs: 10,
+          managedComponentVerifyMinCallBudgetMs: 50,
+        }),
+      ).rejects.toThrow(
+        /could not be verified: no host status read completed within 10ms/,
+      );
+    });
+  });
+
+  describe("managedComponentVerifyErrorSummary", () => {
+    const timeout = (ms: number) =>
+      new Error(`host status read did not return within ${ms}ms`);
+    it("puts a real error before timeouts and keeps the first timeout", () => {
+      const real = new Error("socket reset");
+      const first = timeout(900);
+      const later = timeout(1);
+      const summary = __test__.managedComponentVerifyErrorSummary({
+        firstErrors: new Map<string, unknown>([
+          ["status_read_timeout", first],
+          ["error", real],
+        ]),
+        lastError: later,
+        lastObservedFailures: ["conat-router: runtime_state=stopped"],
+      });
+      expect(summary).toBe(
+        "socket reset; also status_read_timeout: host status read did not return within 900ms; last completed status read: conat-router: runtime_state=stopped",
+      );
+    });
+    it("uses the first timeout, not the last, when no real error exists", () => {
+      const summary = __test__.managedComponentVerifyErrorSummary({
+        firstErrors: new Map<string, unknown>([
+          ["status_read_timeout", timeout(900)],
+        ]),
+        lastError: timeout(1),
+      });
+      expect(summary).toBe("host status read did not return within 900ms");
     });
   });
 
