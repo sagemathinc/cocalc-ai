@@ -6,13 +6,16 @@
 // Starting a managed VM must fail closed exactly like creating one: the
 // network rules are checked before any provider start call.
 
-import { startProviderComputeVm } from "./provider";
+import { probeProviderComputeSpot, startProviderComputeVm } from "./provider";
 import { getComputeVmConfig } from "./config";
 import { getProviderContext } from "../cloud/provider-context";
 import type { ComputeVmRow } from "./types";
 
 jest.mock("@cocalc/cloud", () => ({
-  GcpProvider: jest.fn(() => ({ startHost: jest.fn() })),
+  GcpProvider: jest.fn(() => ({
+    startHost: jest.fn(),
+    probeSpotAvailability: jest.fn(),
+  })),
   NebiusProvider: jest.fn(() => ({
     startHost: jest.fn(),
     ensureManagedComputeSecurityGroup: jest.fn(),
@@ -149,6 +152,7 @@ function vm(provider: "gcp" | "nebius"): ComputeVmRow {
 
 beforeEach(() => {
   gcp.startHost.mockReset();
+  gcp.probeSpotAvailability.mockReset();
   nebius.startHost.mockReset();
   nebius.ensureManagedComputeSecurityGroup.mockReset();
   sdk.__firewalls.listAsync.mockReset();
@@ -190,6 +194,27 @@ describe("starting a managed VM checks the network rules first", () => {
     );
     expect(gcp.startHost).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["the live SSH rule is still public", gcpConfig(), ["0.0.0.0/0"]],
+    [
+      "no SSH source ranges are configured",
+      gcpConfig({ ssh_source_ranges: [] }),
+      SSH_RANGES,
+    ],
+  ])(
+    "never runs the GCP spot probe (a tagged public VM) when %s",
+    async (_case, config, sshSources) => {
+      jest.mocked(getComputeVmConfig).mockResolvedValue(config as any);
+      sdk.__firewalls.listAsync.mockImplementation(async function* () {
+        yield* firewallRules(sshSources as string[]);
+      });
+      await expect(probeProviderComputeSpot(vm("gcp"))).rejects.toThrow(
+        /SSH (ingress rule is invalid|source ranges are not configured)/,
+      );
+      expect(gcp.probeSpotAvailability).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses to start a Nebius VM when SSH source ranges are not configured", async () => {
     jest

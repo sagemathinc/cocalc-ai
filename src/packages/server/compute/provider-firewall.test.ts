@@ -156,23 +156,29 @@ describe("managed compute firewall validation", () => {
     },
   );
 
-  it.each([["::/0"], ["2001:db8::/64"], ["not-a-range"], ["192.0.2.10/33"]])(
-    "treats source %s on another rule as public",
-    (source) => {
-      const rules = baseRules();
-      rules.set(
-        "extra",
-        rule({
-          direction: "INGRESS",
-          allowed: [{ IPProtocol: "tcp", ports: ["8080"] }],
-          sourceRanges: [source],
-        }),
-      );
-      expect(() => validateComputeFirewallRules(rules, config)).toThrow(
-        "unexpected public ingress firewall rule 'extra'",
-      );
-    },
-  );
+  it.each([
+    ["::/0"],
+    ["2001:db8::/64"],
+    ["not-a-range"],
+    ["192.0.2.10/33"],
+    ["999.0.113.7/32"],
+    ["192.0.2.10/24"],
+    ["10.0.0.0/8"],
+    [""],
+  ])("treats source %s on another rule as public", (source) => {
+    const rules = baseRules();
+    rules.set(
+      "extra",
+      rule({
+        direction: "INGRESS",
+        allowed: [{ IPProtocol: "tcp", ports: ["8080"] }],
+        sourceRanges: [source],
+      }),
+    );
+    expect(() => validateComputeFirewallRules(rules, config)).toThrow(
+      "unexpected public ingress firewall rule 'extra'",
+    );
+  });
 
   it("rejects a narrow IPv6 udp:22 rule", () => {
     const rules = baseRules();
@@ -282,6 +288,19 @@ describe("managed compute firewall validation", () => {
     expect(() => validateComputeFirewallRules(rules, config)).toThrow(
       "unexpected public ingress firewall rule 'split'",
     );
+  });
+
+  it("allows a narrow non-SSH ingress rule from a bare address", () => {
+    const rules = baseRules();
+    rules.set(
+      "narrow-bare",
+      rule({
+        direction: "INGRESS",
+        allowed: [{ IPProtocol: "tcp", ports: ["8080"] }],
+        sourceRanges: ["192.0.2.10"],
+      }),
+    );
+    expect(() => validateComputeFirewallRules(rules, config)).not.toThrow();
   });
 
   it("allows a narrow non-SSH ingress rule", () => {

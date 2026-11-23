@@ -38,7 +38,7 @@ import {
   gcpMemoryGiBForMachineType,
 } from "@cocalc/util/project-host-pricing";
 import { getComputeVmConfig, type ComputeVmConfig } from "./config";
-import { MIN_SSH_SOURCE_PREFIX } from "@cocalc/util/compute/ssh-source-ranges";
+import { parseSshSourceRange } from "@cocalc/util/compute/ssh-source-ranges";
 import type { ComputeVmRow, ComputeVolumeRow } from "./types";
 import { assertComputeVmSecurity } from "./security";
 import { regionFromComputeZone } from "./placement";
@@ -389,17 +389,19 @@ export async function requireProviderComputeSubnetwork(
   return subnet;
 }
 
-// A source counts as public unless it is an IPv4 address or CIDR of
-// MIN_SSH_SOURCE_PREFIX or narrower. That catches 0.0.0.0/0 split into halves
-// (0.0.0.0/1 + 128.0.0.0/1), every IPv6 source (the allowlist is IPv4-only)
-// and anything malformed.
+// A source counts as public unless the shared parser accepts it: a valid IPv4
+// CIDR of /16 or narrower with no host bits set (a bare address counts as
+// /32). That catches 0.0.0.0/0 split into halves (0.0.0.0/1 + 128.0.0.0/1),
+// every IPv6 source (the allowlist is IPv4-only), invalid octets, host bits
+// and anything else malformed.
 function isPublicSourceRange(range: unknown): boolean {
-  const match = `${range ?? ""}`
-    .trim()
-    .match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/(\d{1,2}))?$/);
-  if (!match) return true;
-  const prefix = match[1] == null ? 32 : Number(match[1]);
-  return prefix > 32 || prefix < MIN_SSH_SOURCE_PREFIX;
+  const value = `${range ?? ""}`.trim();
+  try {
+    parseSshSourceRange(value.includes("/") ? value : `${value}/32`);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 // Whether a firewall rule applies to managed VMs. Rules on another network
@@ -2129,6 +2131,9 @@ export async function probeProviderComputeSpot(vm: ComputeVmRow) {
   if (vm.provider === "nebius") return NEBIUS_SPOT_OFFERED;
   if (vm.provider !== "gcp") return true;
   const { config, creds } = await context();
+  // The probe boots a tagged VM with a public address for about 10 s, so it
+  // must fail closed on the network rules exactly like create and start.
+  await assertProviderComputeNetworkSecurity(config);
   const subnetwork = await requireProviderComputeSubnetwork(requireGcpZone(vm));
   return await gcpProvider.probeSpotAvailability(
     specFor(vm, config, subnetwork, "spot"),
