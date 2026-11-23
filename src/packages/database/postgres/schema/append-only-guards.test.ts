@@ -6,7 +6,10 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 import { uuid } from "@cocalc/util/misc";
-import { APPEND_ONLY_GUARDED_TABLES } from "./append-only-guards";
+import {
+  APPEND_ONLY_GUARDED_TABLES,
+  TRUNCATE_GUARDED_TABLES,
+} from "./append-only-guards";
 import { FEDERATED_MINT_LOG_TABLE } from "./federated-connector-mint-log";
 
 const FLAG_NAMES = [
@@ -40,6 +43,14 @@ const INSERT: Record<string, () => Promise<void>> = {
       [uuid(), uuid(), uuid(), uuid()],
     );
   },
+  federated_connector_assignment_audit: async () => {
+    await getPool().query(
+      `INSERT INTO federated_connector_assignment_audit
+         (id, action, actor_account_id, account_id)
+       VALUES ($1, 'assign', $2, $3)`,
+      [uuid(), uuid(), uuid()],
+    );
+  },
 };
 
 async function firstColumn(table: string): Promise<string> {
@@ -67,7 +78,7 @@ describe("append-only guarded tables", () => {
                OR pg_get_functiondef(t.tgfoid) ILIKE '%append-only%')`,
     );
     expect(rows.map(({ relname }) => relname).sort()).toEqual(
-      [...APPEND_ONLY_GUARDED_TABLES].sort(),
+      [...APPEND_ONLY_GUARDED_TABLES, ...TRUNCATE_GUARDED_TABLES].sort(),
     );
     // pg_get_functiondef over every trigger, on a freshly synced database.
   }, 30_000);
@@ -75,6 +86,14 @@ describe("append-only guarded tables", () => {
   it("every listed table has a row inserter in this test", () => {
     for (const table of APPEND_ONLY_GUARDED_TABLES) {
       expect(INSERT[table]).toBeDefined();
+    }
+  });
+
+  it("every truncate-guarded table refuses TRUNCATE", async () => {
+    for (const table of TRUNCATE_GUARDED_TABLES) {
+      await expect(getPool().query(`TRUNCATE ${table}`)).rejects.toThrow(
+        `${table}: TRUNCATE refused (truncate)`,
+      );
     }
   });
 
