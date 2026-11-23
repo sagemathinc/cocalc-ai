@@ -9,6 +9,10 @@ SUBNET_PREFIX_LENGTH=${SUBNET_PREFIX_LENGTH:-20}
 NETWORK_TAG=${NETWORK_TAG:-cocalc-compute-vm}
 REGIONS=${REGIONS:-}
 SUBNET_CONCURRENCY=${SUBNET_CONCURRENCY:-8}
+# tcp:22 is reachable only from our own addresses: the bay control plane's
+# egress and the project hosts. Comma/space separated IPv4 CIDRs, each /16 or
+# narrower; must match the compute_vm_ssh_source_ranges site setting.
+SSH_SOURCE_RANGES=${SSH_SOURCE_RANGES:-}
 
 if [[ -z "$PROJECT_ID" ]]; then
   echo "PROJECT_ID is required" >&2
@@ -17,6 +21,33 @@ fi
 
 if [[ ! "$SUBNET_CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
   echo "SUBNET_CONCURRENCY must be a positive integer" >&2
+  exit 1
+fi
+
+if ! SSH_SOURCE_RANGES_FLAG=$(python3 - "$SSH_SOURCE_RANGES" <<'PY'
+import ipaddress
+import re
+import sys
+
+entries = [entry for entry in re.split(r"[\s,]+", sys.argv[1].strip()) if entry]
+if not entries:
+    raise SystemExit(
+        "SSH_SOURCE_RANGES is required: the bay and project-host IPv4 CIDRs allowed on tcp:22"
+    )
+ranges = set()
+for entry in entries:
+    try:
+        network = ipaddress.IPv4Network(entry, strict=True)
+    except ValueError as err:
+        raise SystemExit(f"SSH_SOURCE_RANGES entry {entry!r} is invalid: {err}")
+    if "/" not in entry or network.prefixlen < 16:
+        raise SystemExit(
+            f"SSH_SOURCE_RANGES entry {entry!r} must be an explicit CIDR of /16 or narrower"
+        )
+    ranges.add(str(network))
+print(",".join(sorted(ranges)))
+PY
+); then
   exit 1
 fi
 
@@ -219,12 +250,12 @@ done <"$TMP_DIR/subnet-plan.tsv"
 if gcloud compute firewall-rules describe cocalc-compute-ssh --project "$PROJECT_ID" >/dev/null 2>&1; then
   gcloud compute firewall-rules update cocalc-compute-ssh \
     --project "$PROJECT_ID" --priority=1000 --rules=tcp:22 \
-    --source-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
+    --source-ranges="$SSH_SOURCE_RANGES_FLAG" --target-tags="$NETWORK_TAG"
 else
   gcloud compute firewall-rules create cocalc-compute-ssh \
     --project "$PROJECT_ID" --network "$NETWORK" --direction=INGRESS \
     --priority=1000 --action=ALLOW --rules=tcp:22 \
-    --source-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
+    --source-ranges="$SSH_SOURCE_RANGES_FLAG" --target-tags="$NETWORK_TAG"
 fi
 
 if gcloud compute firewall-rules describe cocalc-compute-https --project "$PROJECT_ID" >/dev/null 2>&1; then

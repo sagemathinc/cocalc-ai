@@ -29,7 +29,6 @@ it("distinguishes loading, unknown failure, and a ready catalog", async () => {
       allow_on_demand_fallback: false,
     },
     projectSshPublicKey: null,
-    sshKeys: [],
     saving: false,
     preferredR2Region: undefined,
     onCancel: jest.fn(),
@@ -102,7 +101,6 @@ it("opens the real VM form without a catalog but blocks creation", () => {
         allow_on_demand_fallback: false,
       }}
       projectSshPublicKey={null}
-      sshKeys={[]}
       saving={false}
       preferredR2Region={undefined}
       onCancel={onCancel}
@@ -146,7 +144,6 @@ it("waits for course projects before applying the course-funded default", async 
     volumes: [],
     initial,
     projectSshPublicKey: null,
-    sshKeys: [],
     saving: false,
     preferredR2Region: undefined,
     onCancel: jest.fn(),

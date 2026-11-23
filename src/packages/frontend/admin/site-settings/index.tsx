@@ -1609,6 +1609,7 @@ export default function SiteSettings({
               onSave={applyWizardSettings}
               currentJson={data?.compute_vm_gcp_service_account_json}
               domainName={data?.dns}
+              sshSourceRanges={data?.compute_vm_ssh_source_ranges}
             />
             <NebiusCliWizard
               open={activeWizard === "nebius-cli"}

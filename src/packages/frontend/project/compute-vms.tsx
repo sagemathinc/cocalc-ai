@@ -40,7 +40,7 @@ import type {
   ComputeVmProjectAccess,
   ComputeVmSshKey,
 } from "@cocalc/conat/hub/api/compute";
-import { useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -414,16 +414,6 @@ function formatMaximumSpend(usd: number): string {
   });
 }
 
-function sshKeyOptions(sshKeys: any) {
-  const raw = sshKeys?.toJS?.() ?? sshKeys ?? {};
-  return Object.entries(raw)
-    .map(([fingerprint, value]: [string, any]) => ({
-      label: value?.title || fingerprint,
-      value: `${value?.value ?? ""}`.trim(),
-    }))
-    .filter(({ value }) => value);
-}
-
 function similarName(name: string, rows: ComputeVm[]): string {
   const names = new Set(rows.map((vm) => vm.name));
   const stem = `${name.slice(0, 26)}-copy`;
@@ -469,7 +459,6 @@ export function VmCreateModal({
   initial,
   projectSshPublicKey,
   connectedProjects = [],
-  sshKeys,
   saving,
   error,
   preferredR2Region,
@@ -489,7 +478,6 @@ export function VmCreateModal({
   initial: VmDraft;
   projectSshPublicKey: string | null;
   connectedProjects?: VmConnectedProject[];
-  sshKeys: Array<{ label: string; value: string }>;
   saving: boolean;
   error?: string;
   preferredR2Region?: ReturnType<typeof mapCountryRegionToR2Region>;
@@ -749,10 +737,12 @@ export function VmCreateModal({
     ...values,
     expected_home_volume_funding_version:
       selectedVolume?.funding_status?.funding_version,
+    // The only initial key is the project's own key. Arbitrary keys are not
+    // offered: SSH to VMs comes only from our own addresses.
     ssh_public_key:
       project_id && values.use_project_ssh_key
         ? (projectSshPublicKey ?? "")
-        : values.ssh_public_key,
+        : "",
   });
 
   const reviewCreate = () => {
@@ -1959,35 +1949,6 @@ export function VmCreateModal({
                           style={{ marginBottom: 16 }}
                         />
                       )}
-                      <Form.Item
-                        name="ssh_public_key"
-                        label={
-                          project_id && projectSshPublicKey
-                            ? "Other SSH public key (optional)"
-                            : "SSH public key (optional)"
-                        }
-                        extra={
-                          draft.use_project_ssh_key
-                            ? "Uncheck the project key above to select a different initial key."
-                            : sshKeys.length
-                              ? "Select an account key, or leave blank. The CoCalc CLI can authorize your local key later when you run cocalc vm ssh."
-                              : "Leave blank to authorize your local key later with cocalc vm ssh, or paste a public key now."
-                        }
-                      >
-                        {sshKeys.length ? (
-                          <Select
-                            allowClear
-                            disabled={draft.use_project_ssh_key}
-                            options={sshKeys}
-                            placeholder="No initial key"
-                          />
-                        ) : (
-                          <Input.TextArea
-                            autoSize={{ minRows: 2, maxRows: 4 }}
-                            disabled={draft.use_project_ssh_key}
-                          />
-                        )}
-                      </Form.Item>
                       <Divider />
                       <Text strong>Equivalent CLI command</Text>
                       <Paragraph type="secondary" style={{ margin: "4px 0 0" }}>
@@ -3150,14 +3111,12 @@ export function ProjectComputeVms({
 }) {
   const projectId = project_id?.trim() || undefined;
   const accountMode = projectId == null;
-  const accountSshKeys = useRedux("account", "ssh_keys");
   const accountId = useTypedRedux("account", "account_id");
   const projectMap = useTypedRedux("projects", "project_map");
   const connectedProjectCandidates = useMemo(
     () => vmConnectedProjects(projectMap, accountId),
     [accountId, projectMap],
   );
-  const sshKeys = sshKeyOptions(accountSshKeys);
   const cloudflareCountry = useTypedRedux("customize", "country");
   const cloudflareRegionCode = useTypedRedux(
     "customize",
@@ -3488,7 +3447,7 @@ export function ProjectComputeVms({
       connected_project_ids: [],
       use_project_ssh_key: projectSshPublicKey != null,
       configure_project_ssh: projectSshPublicKey != null,
-      ssh_public_key: sshKeys[0]?.value ?? "",
+      ssh_public_key: "",
     };
   };
 
@@ -3528,7 +3487,7 @@ export function ProjectComputeVms({
       connected_project_ids: [],
       use_project_ssh_key: projectSshPublicKey != null,
       configure_project_ssh: projectSshPublicKey != null,
-      ssh_public_key: sshKeys[0]?.value ?? "",
+      ssh_public_key: "",
     });
     setVmCreateError(undefined);
     setVmModalOpen(true);
@@ -3731,19 +3690,6 @@ export function ProjectComputeVms({
           projectKeys,
           idempotencyKey: vmKey,
         });
-        const directSshKey = `${values.ssh_public_key ?? ""}`.trim();
-        if (
-          !values.funding_source &&
-          directSshKey &&
-          directSshKey !== primaryProjectKey
-        ) {
-          await webapp_client.conat_client.hub.compute.authorizeSshKey({
-            browser_id: webapp_client.browser_id,
-            id_or_name: vm.id,
-            ssh_public_key: directSshKey,
-            idempotency_key: `${vmKey}:direct-ssh`,
-          });
-        }
       });
       if (!completed) return;
       vmCreateAttempt.current = undefined;
@@ -5172,7 +5118,6 @@ export function ProjectComputeVms({
           initial={vmInitial}
           projectSshPublicKey={projectSshPublicKey}
           connectedProjects={connectedProjects}
-          sshKeys={sshKeys}
           saving={saving}
           error={vmCreateError}
           preferredR2Region={preferredR2Region}

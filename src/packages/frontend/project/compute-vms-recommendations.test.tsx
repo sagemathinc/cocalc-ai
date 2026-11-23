@@ -88,7 +88,6 @@ it("carries a selected recommendation through the real create form without chang
         configure_project_ssh: false,
       }}
       projectSshPublicKey={null}
-      sshKeys={[]}
       saving={false}
       preferredR2Region={undefined}
       onCancel={jest.fn()}
@@ -128,6 +127,7 @@ it("carries a selected recommendation through the real create form without chang
     funding_mode: "account-prepaid",
     stop_after_minutes: 90,
     ttl_minutes: 1440,
-    ssh_public_key: "preserved-public-key",
+    // Arbitrary initial keys are no longer offered or submitted.
+    ssh_public_key: "",
   });
 }, 15_000);

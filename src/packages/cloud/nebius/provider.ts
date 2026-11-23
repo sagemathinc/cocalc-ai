@@ -722,7 +722,20 @@ export class NebiusProvider implements CloudProvider {
 
   async ensureManagedComputeSecurityGroup(
     creds: NebiusProviderCreds,
+    opts: { sshSourceRanges: string[] },
   ): Promise<string> {
+    // tcp:22 is reachable only from our own addresses, never 0.0.0.0/0.
+    const sshSourceRanges = Array.from(new Set(opts.sshSourceRanges)).sort();
+    if (
+      sshSourceRanges.length === 0 ||
+      sshSourceRanges.some(
+        (range) => !/^\d{1,3}(\.\d{1,3}){3}\/(1[6-9]|2\d|3[0-2])$/.test(range),
+      )
+    ) {
+      throw new Error(
+        "nebius managed VM SSH source ranges must be explicit IPv4 CIDRs of /16 or narrower",
+      );
+    }
     await using client = new NebiusClient(creds);
     const parentId = client.parentId();
     if (!parentId) throw new Error("nebius parentId is required");
@@ -769,7 +782,24 @@ export class NebiusProvider implements CloudProvider {
     }
     const rules: Array<{ name: string; spec: SecurityRuleSpec }> = [
       {
-        name: "allow-ssh-https",
+        name: "allow-ssh",
+        spec: SecurityRuleSpec.create({
+          access: RuleAccessAction.ALLOW,
+          priority: 100,
+          protocol: RuleProtocol.TCP,
+          type: RuleType.STATEFUL,
+          match: {
+            $case: "ingress",
+            ingress: RuleIngress.create({
+              sourceSecurityGroupId: "",
+              sourceCidrs: sshSourceRanges,
+              destinationPorts: [22],
+            }),
+          },
+        }),
+      },
+      {
+        name: "allow-https",
         spec: SecurityRuleSpec.create({
           access: RuleAccessAction.ALLOW,
           priority: 100,
@@ -780,7 +810,7 @@ export class NebiusProvider implements CloudProvider {
             ingress: RuleIngress.create({
               sourceSecurityGroupId: "",
               sourceCidrs: ["0.0.0.0/0"],
-              destinationPorts: [22, 443],
+              destinationPorts: [443],
             }),
           },
         }),

@@ -383,7 +383,6 @@ it("the actual VM form blocks unsupported combined course creation before either
         accept_course_retention: true,
       }}
       projectSshPublicKey={null}
-      sshKeys={[]}
       saving={false}
       preferredR2Region={undefined}
       onCancel={jest.fn()}
@@ -433,7 +432,6 @@ it.each(["new", "existing"])(
           accept_course_retention: true,
         }}
         projectSshPublicKey={null}
-        sshKeys={[]}
         saving={false}
         preferredR2Region={undefined}
         onCancel={jest.fn()}

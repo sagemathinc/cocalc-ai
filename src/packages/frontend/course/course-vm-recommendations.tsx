@@ -254,7 +254,6 @@ export function CourseVmRecommendationsEditor({
           volumes={[]}
           initial={recommendationInitial}
           projectSshPublicKey={null}
-          sshKeys={[]}
           preferredR2Region={undefined}
           saving={busy}
           onCancel={() => {

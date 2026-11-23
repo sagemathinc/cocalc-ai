@@ -22,6 +22,9 @@ export interface ComputeVmConfig {
   gcp_project_id?: string;
   gcp_network?: string;
   gcp_network_tag: string;
+  // Explicit IPv4 CIDRs that may reach managed VMs on tcp:22. Never
+  // 0.0.0.0/0; empty means unconfigured, and the network check fails closed.
+  ssh_source_ranges: string[];
   staging_legacy_provider: boolean;
   max_active_per_account: number;
   max_active_total: number;
@@ -113,6 +116,51 @@ function parseServiceAccount(value: unknown): {
   return { json, project_id };
 }
 
+// The narrowest prefix accepted for an SSH source range. Our own addresses are
+// single hosts (/32) or small provider blocks; anything wider is treated as
+// public.
+export const MIN_SSH_SOURCE_PREFIX = 16;
+
+export function parseSshSourceRange(value: string): string {
+  const match = value
+    .trim()
+    .match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/);
+  if (!match) {
+    throw new Error(
+      `managed compute SSH source range '${value}' must be an IPv4 CIDR`,
+    );
+  }
+  const octets = match.slice(1, 5).map(Number);
+  const prefix = Number(match[5]);
+  if (octets.some((octet) => octet > 255) || prefix > 32) {
+    throw new Error(
+      `managed compute SSH source range '${value}' is not a valid IPv4 CIDR`,
+    );
+  }
+  if (prefix < MIN_SSH_SOURCE_PREFIX) {
+    throw new Error(
+      `managed compute SSH source range '${value}' is wider than /${MIN_SSH_SOURCE_PREFIX}`,
+    );
+  }
+  const address = octets.reduce((acc, octet) => acc * 256 + octet, 0);
+  const size = 2 ** (32 - prefix);
+  if (address % size !== 0) {
+    throw new Error(
+      `managed compute SSH source range '${value}' has host bits set`,
+    );
+  }
+  return `${octets.join(".")}/${prefix}`;
+}
+
+export function parseSshSourceRanges(value: unknown): string[] {
+  const ranges = `${value ?? ""}`
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map(parseSshSourceRange);
+  return Array.from(new Set(ranges)).sort();
+}
+
 export function resolveComputeVmConfig(settings: Settings): ComputeVmConfig {
   const environment = environmentFromSettings(settings);
   const { mode, automatic } = parseMode(settings.compute_vm_mode, environment);
@@ -135,6 +183,9 @@ export function resolveComputeVmConfig(settings: Settings): ComputeVmConfig {
     gcp_project_id: serviceAccount.project_id,
     gcp_network: gcpNetwork || undefined,
     gcp_network_tag: gcpNetworkTag,
+    ssh_source_ranges: parseSshSourceRanges(
+      settings.compute_vm_ssh_source_ranges,
+    ),
     staging_legacy_provider,
     max_active_per_account: positiveInteger(
       settings.compute_vm_max_active_per_project,

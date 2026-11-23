@@ -17,6 +17,8 @@ interface WizardProps {
   currentJson?: string;
   domainName?: string;
   computeVm?: boolean;
+  // compute_vm_ssh_source_ranges: the setup script opens tcp:22 only to these.
+  sshSourceRanges?: string;
 }
 
 const START_MARKER = "=== COCALC GCP CONFIG START ===";
@@ -88,7 +90,13 @@ export default function GcpServiceAccountWizard({
   currentJson,
   domainName,
   computeVm = false,
+  sshSourceRanges,
 }: WizardProps) {
+  const trimmedSshSourceRanges = `${sshSourceRanges ?? ""}`.trim();
+  const sshRangesEnv =
+    computeVm && trimmedSshSourceRanges
+      ? `SSH_SOURCE_RANGES=${shQuote(trimmedSshSourceRanges)} `
+      : "";
   const defaultServiceAccountName = computeVm
     ? "cocalc-compute-vm"
     : "cocalc-host";
@@ -166,9 +174,9 @@ export default function GcpServiceAccountWizard({
         ? `COCALC_SETUP_UPLOAD_URL=${shQuote(uploadUrl)} COCALC_SETUP_TOKEN=${shQuote(challenge.token)} `
         : "";
     if (!trimmedProject) {
-      return `curl -fsSL \"${scriptUrl}\" | ${uploadEnv}bash`;
+      return `curl -fsSL \"${scriptUrl}\" | ${uploadEnv}${sshRangesEnv}bash`;
     }
-    return `curl -fsSL \"${scriptUrl}\" | ${uploadEnv}PROJECT_ID=\"${trimmedProject}\" SA_NAME=\"${serviceAccountName}\" bash`;
+    return `curl -fsSL \"${scriptUrl}\" | ${uploadEnv}${sshRangesEnv}PROJECT_ID=\"${trimmedProject}\" SA_NAME=\"${serviceAccountName}\" bash`;
   }, [
     scriptUrl,
     trimmedProject,
@@ -176,6 +184,7 @@ export default function GcpServiceAccountWizard({
     challenge,
     useDirectUpload,
     computeVm,
+    sshRangesEnv,
   ]);
 
   const scriptMarkdown = useMemo(
@@ -408,6 +417,15 @@ export default function GcpServiceAccountWizard({
                       ) : null}
                     </Space>
                   }
+                />
+              ) : null}
+              {computeVm && !trimmedSshSourceRanges ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginTop: "8px" }}
+                  title="Set Managed Compute VMs: SSH Source Ranges first"
+                  description="The setup script opens port 22 only to the bay and project-host addresses in that setting, and stops when it is empty."
                 />
               ) : null}
               {useDirectUpload ? (

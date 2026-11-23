@@ -37,7 +37,11 @@ import {
   gcpCpuCountForMachineType,
   gcpMemoryGiBForMachineType,
 } from "@cocalc/util/project-host-pricing";
-import { getComputeVmConfig, type ComputeVmConfig } from "./config";
+import {
+  getComputeVmConfig,
+  MIN_SSH_SOURCE_PREFIX,
+  type ComputeVmConfig,
+} from "./config";
 import type { ComputeVmRow, ComputeVolumeRow } from "./types";
 import { assertComputeVmSecurity } from "./security";
 import { regionFromComputeZone } from "./placement";
@@ -217,6 +221,22 @@ function allowsProtocol(rule: any, protocol: string, port?: string): boolean {
   });
 }
 
+// True when an allow rule admits the given TCP port: protocol "all", tcp
+// with no ports (every port), an exact port or a range that contains it.
+function allowsTcpPort(rule: any, port: number): boolean {
+  return (rule.allowed ?? []).some((entry: any) => {
+    const protocol = `${entry.IPProtocol ?? ""}`;
+    if (protocol === "all") return true;
+    if (protocol !== "tcp" && protocol !== "6") return false;
+    const ports = (entry.ports ?? []).map(String);
+    if (ports.length === 0) return true;
+    return ports.some((spec: string) => {
+      const [low, high = low] = spec.split("-").map(Number);
+      return low <= port && port <= high;
+    });
+  });
+}
+
 function deniesAll(rule: any): boolean {
   return (rule.denied ?? []).some(
     (entry: any) => `${entry.IPProtocol ?? ""}` === "all",
@@ -371,31 +391,20 @@ export async function requireProviderComputeSubnetwork(
   return subnet;
 }
 
-async function assertProviderComputeNetworkSecurity(config: ComputeVmConfig) {
-  if (config.staging_legacy_provider) return;
-  if (
-    !config.gcp_service_account_json ||
-    !config.gcp_project_id ||
-    !config.gcp_network
-  ) {
-    throw new Error("managed compute dedicated GCP network is not configured");
-  }
-  const key = `${config.gcp_project_id}:${config.gcp_network}:${config.gcp_network_tag}`;
-  if (
-    networkSecurityCheck?.key === key &&
-    Date.now() - networkSecurityCheck.checked_at < 5 * 60_000
-  ) {
-    return;
-  }
-  const client = new FirewallsClient({
-    credentials: JSON.parse(config.gcp_service_account_json),
-  });
-  const rules = new Map<string, any>();
-  for await (const rule of client.listAsync({
-    project: config.gcp_project_id,
-  })) {
-    if (rule.name) rules.set(rule.name, rule);
-  }
+// A source range wider than MIN_SSH_SOURCE_PREFIX counts as public, so that
+// splitting 0.0.0.0/0 into halves (0.0.0.0/1 + 128.0.0.0/1) is still caught.
+function isWideSourceRange(range: unknown): boolean {
+  const prefix = Number(`${range ?? ""}`.split("/")[1] ?? "32");
+  return !Number.isInteger(prefix) || prefix < MIN_SSH_SOURCE_PREFIX;
+}
+
+export function validateComputeFirewallRules(
+  rules: Map<string, any>,
+  config: Pick<
+    ComputeVmConfig,
+    "gcp_network" | "gcp_network_tag" | "ssh_source_ranges"
+  >,
+): void {
   const required = [
     "cocalc-compute-ssh",
     "cocalc-compute-https",
@@ -451,11 +460,16 @@ async function assertProviderComputeNetworkSecurity(config: ComputeVmConfig) {
   ) {
     throw new Error("managed compute egress firewall priorities are invalid");
   }
+  // tcp:22 is reachable only from our own addresses (the configured named
+  // ranges), never from the Internet. An empty list fails closed.
+  if (config.ssh_source_ranges.length === 0) {
+    throw new Error("managed compute SSH source ranges are not configured");
+  }
   const ssh = rules.get("cocalc-compute-ssh");
   if (
     ssh.direction !== "INGRESS" ||
     !hasExactTcpPorts(ssh, ["22"]) ||
-    !hasExactRanges(ssh.sourceRanges, ["0.0.0.0/0"])
+    !hasExactRanges(ssh.sourceRanges, config.ssh_source_ranges)
   ) {
     throw new Error("managed compute SSH ingress rule is invalid");
   }
@@ -476,13 +490,52 @@ async function assertProviderComputeNetworkSecurity(config: ComputeVmConfig) {
       rule.disabled !== true &&
       (rule.targetTags ?? []).includes(config.gcp_network_tag) &&
       (rule.allowed ?? []).length > 0 &&
-      (!rule.sourceRanges?.length || rule.sourceRanges.includes("0.0.0.0/0"))
+      (!rule.sourceRanges?.length ||
+        rule.sourceRanges.some((range: unknown) => isWideSourceRange(range)))
     ) {
       throw new Error(
         `unexpected public ingress firewall rule '${name}' targets managed compute`,
       );
     }
+    if (
+      rule.direction === "INGRESS" &&
+      rule.disabled !== true &&
+      (rule.targetTags ?? []).includes(config.gcp_network_tag) &&
+      allowsTcpPort(rule, 22)
+    ) {
+      throw new Error(
+        `unexpected SSH ingress firewall rule '${name}' targets managed compute`,
+      );
+    }
   }
+}
+
+async function assertProviderComputeNetworkSecurity(config: ComputeVmConfig) {
+  if (config.staging_legacy_provider) return;
+  if (
+    !config.gcp_service_account_json ||
+    !config.gcp_project_id ||
+    !config.gcp_network
+  ) {
+    throw new Error("managed compute dedicated GCP network is not configured");
+  }
+  const key = `${config.gcp_project_id}:${config.gcp_network}:${config.gcp_network_tag}:${config.ssh_source_ranges.join(",")}`;
+  if (
+    networkSecurityCheck?.key === key &&
+    Date.now() - networkSecurityCheck.checked_at < 5 * 60_000
+  ) {
+    return;
+  }
+  const client = new FirewallsClient({
+    credentials: JSON.parse(config.gcp_service_account_json),
+  });
+  const rules = new Map<string, any>();
+  for await (const rule of client.listAsync({
+    project: config.gcp_project_id,
+  })) {
+    if (rule.name) rules.set(rule.name, rule);
+  }
+  validateComputeFirewallRules(rules, config);
   networkSecurityCheck = { key, checked_at: Date.now() };
 }
 
@@ -1084,7 +1137,11 @@ export async function nebiusComputeInstanceReplacementReason(
 
 async function ensureNebiusManagedComputeSecurityGroup(region: string) {
   const { creds } = await context("nebius", region);
-  const securityKey = `${creds.parentId ?? ""}:${creds.subnetId ?? ""}`;
+  const { ssh_source_ranges } = await getComputeVmConfig();
+  if (ssh_source_ranges.length === 0) {
+    throw new Error("managed compute SSH source ranges are not configured");
+  }
+  const securityKey = `${creds.parentId ?? ""}:${creds.subnetId ?? ""}:${ssh_source_ranges.join(",")}`;
   if (
     !nebiusSecurityGroupCheck ||
     nebiusSecurityGroupCheck.key !== securityKey ||
@@ -1093,8 +1150,12 @@ async function ensureNebiusManagedComputeSecurityGroup(region: string) {
     nebiusSecurityGroupCheck = {
       key: securityKey,
       checked_at: Date.now(),
-      security_group_id:
-        await nebiusProvider.ensureManagedComputeSecurityGroup(creds),
+      security_group_id: await nebiusProvider.ensureManagedComputeSecurityGroup(
+        creds,
+        {
+          sshSourceRanges: ssh_source_ranges,
+        },
+      ),
     };
   }
   return nebiusSecurityGroupCheck.security_group_id;

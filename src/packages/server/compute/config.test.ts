@@ -5,6 +5,7 @@
 
 import {
   computeVmUiEnabled,
+  parseSshSourceRanges,
   requireComputeVmCreateAllowed,
   resolveComputeVmConfig,
 } from "./config";
@@ -51,6 +52,28 @@ describe("managed compute VM configuration", () => {
         compute_vm_mode: "invalid",
       }),
     ).toBe(false);
+  });
+
+  it("parses explicit SSH source ranges and never accepts the Internet", () => {
+    expect(
+      resolveComputeVmConfig({ dns: "cocalc.ai" }).ssh_source_ranges,
+    ).toEqual([]);
+    expect(
+      parseSshSourceRanges("203.0.113.7/32, 198.51.100.0/24 203.0.113.7/32"),
+    ).toEqual(["198.51.100.0/24", "203.0.113.7/32"]);
+    for (const value of [
+      "0.0.0.0/0",
+      "0.0.0.0/1",
+      "10.0.0.0/8",
+      "203.0.113.7",
+      "203.0.113.7/24",
+      "256.0.0.1/32",
+      "203.0.113.7/33",
+    ]) {
+      expect(() => parseSshSourceRanges(value)).toThrow(
+        "managed compute SSH source range",
+      );
+    }
   });
 
   it("fails closed on production defaults", () => {

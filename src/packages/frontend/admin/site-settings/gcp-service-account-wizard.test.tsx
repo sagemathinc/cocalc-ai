@@ -94,6 +94,46 @@ describe("GcpServiceAccountWizard", () => {
     system.clearProviderSetupChallenge.mockResolvedValue({ deleted: true });
   });
 
+  it("passes the configured SSH source ranges to the compute setup script", async () => {
+    system.createProviderSetupChallenge.mockResolvedValue({
+      id: "challenge-1",
+      token: "upload-token",
+      provider: "gcp",
+      status: "pending",
+      created_at: "2026-08-07T00:00:00.000Z",
+      expires_at: "2026-08-07T01:00:00.000Z",
+    });
+    renderWizard({ sshSourceRanges: "203.0.113.7/32,198.51.100.0/24" });
+    await enterProjectAndContinue();
+    expect(
+      await screen.findByText(
+        /SSH_SOURCE_RANGES='203\.0\.113\.7\/32,198\.51\.100\.0\/24'/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Set Managed Compute VMs: SSH Source Ranges first"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("warns that compute setup needs SSH source ranges", async () => {
+    system.createProviderSetupChallenge.mockResolvedValue({
+      id: "challenge-1",
+      token: "upload-token",
+      provider: "gcp",
+      status: "pending",
+      created_at: "2026-08-07T00:00:00.000Z",
+      expires_at: "2026-08-07T01:00:00.000Z",
+    });
+    renderWizard();
+    await enterProjectAndContinue();
+    expect(
+      await screen.findByText(
+        "Set Managed Compute VMs: SSH Source Ranges first",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/SSH_SOURCE_RANGES=/)).not.toBeInTheDocument();
+  });
+
   it("keeps the compute setup flow compact and isolates deletion instructions", async () => {
     system.createProviderSetupChallenge.mockResolvedValue({
       id: "challenge-1",

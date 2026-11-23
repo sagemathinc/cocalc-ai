@@ -36,6 +36,12 @@ const pricingPoliciesGetMock = jest.fn();
 const pricingPoliciesGetByNameMock = jest.fn();
 const pricingPoliciesCreateMock = jest.fn();
 const spotPricesListMock = jest.fn();
+const subnetsGetMock = jest.fn();
+const securityGroupsGetByNameMock = jest.fn();
+const securityGroupsCreateMock = jest.fn();
+const securityRulesGetByNameMock = jest.fn();
+const securityRulesCreateMock = jest.fn();
+const securityRulesListMock = jest.fn();
 
 // These tests exercise the provider as it works once Nebius Spot is offered
 // again (#684); the "while Nebius Spot is off" tests below turn it off.
@@ -88,6 +94,16 @@ jest.mock("../nebius/client", () => {
       create: pricingPoliciesCreateMock,
     };
     readonly spotPrices = { list: spotPricesListMock };
+    readonly subnets = { get: subnetsGetMock };
+    readonly securityGroups = {
+      getByName: securityGroupsGetByNameMock,
+      create: securityGroupsCreateMock,
+    };
+    readonly securityRules = {
+      getByName: securityRulesGetByNameMock,
+      create: securityRulesCreateMock,
+      list: securityRulesListMock,
+    };
 
     constructor(private creds: any) {}
 
@@ -1713,5 +1729,93 @@ describe("NebiusProvider Spot instances must match their billed cap (#684)", () 
       creds,
     );
     expect(observed?.metadata?.spot_pricing_policy_id).toBe("policy-1");
+  });
+});
+
+describe("Nebius managed VM security group", () => {
+  const creds = {
+    parentId: "project-1",
+    subnetId: "subnet-1",
+    serviceAccountId: "svc-1",
+    publicKeyId: "pub-1",
+    privateKeyPem: "key",
+    sshPublicKey: "unused",
+  };
+  let rules: Map<string, any>;
+
+  beforeEach(() => {
+    rules = new Map();
+    subnetsGetMock.mockReset();
+    securityGroupsGetByNameMock.mockReset();
+    securityGroupsCreateMock.mockReset();
+    securityRulesGetByNameMock.mockReset();
+    securityRulesCreateMock.mockReset();
+    securityRulesListMock.mockReset();
+    subnetsGetMock.mockResolvedValue({ spec: { networkId: "network-1" } });
+    securityGroupsGetByNameMock.mockResolvedValue({
+      metadata: { id: "group-1" },
+      spec: { networkId: "network-1" },
+    });
+    securityRulesGetByNameMock.mockImplementation(async ({ name }) => {
+      const rule = rules.get(name);
+      if (!rule) throw new Error("NOT_FOUND");
+      return rule;
+    });
+    securityRulesCreateMock.mockImplementation(async ({ metadata, spec }) => {
+      rules.set(metadata.name, { metadata, spec });
+      return { wait: jest.fn(async () => undefined) };
+    });
+    securityRulesListMock.mockImplementation(async () => ({
+      items: Array.from(rules.values()),
+    }));
+  });
+
+  function ingress(name: string) {
+    return rules.get(name)?.spec?.match?.ingress;
+  }
+
+  it("allows tcp:22 only from the configured ranges", async () => {
+    await new NebiusProvider().ensureManagedComputeSecurityGroup(creds, {
+      sshSourceRanges: ["203.0.113.7/32", "198.51.100.0/24"],
+    });
+    expect(ingress("allow-ssh")).toMatchObject({
+      sourceCidrs: ["198.51.100.0/24", "203.0.113.7/32"],
+      destinationPorts: [22],
+    });
+    expect(ingress("allow-https")).toMatchObject({
+      sourceCidrs: ["0.0.0.0/0"],
+      destinationPorts: [443],
+    });
+    for (const rule of rules.values()) {
+      const match = rule.spec?.match?.ingress;
+      if (match?.destinationPorts?.includes(22)) {
+        expect(match.sourceCidrs).not.toContain("0.0.0.0/0");
+      }
+    }
+    expect(rules.has("allow-ssh-https")).toBe(false);
+  });
+
+  it.each([[[]], [["0.0.0.0/0"]], [["10.0.0.0/8"]], [["203.0.113.7"]]])(
+    "fails closed for SSH source ranges %j",
+    async (sshSourceRanges) => {
+      await expect(
+        new NebiusProvider().ensureManagedComputeSecurityGroup(creds, {
+          sshSourceRanges,
+        }),
+      ).rejects.toThrow("SSH source ranges");
+      expect(securityRulesCreateMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a group that still has the old public SSH rule", async () => {
+    rules.set("allow-ssh-https", {
+      metadata: { name: "allow-ssh-https" },
+      spec: {},
+    });
+    await expect(
+      new NebiusProvider().ensureManagedComputeSecurityGroup(creds, {
+        sshSourceRanges: ["203.0.113.7/32"],
+      }),
+    ).rejects.toThrow("unexpected rules: allow-ssh-https");
   });
 });
