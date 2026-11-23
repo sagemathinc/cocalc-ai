@@ -2331,6 +2331,24 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
     ];
     const waitsIn = (text: string) =>
       [...text.matchAll(/within (\d+)ms/g)].map((m) => Number(m[1]));
+    // The verification window is wall-clock time. With real timers these
+    // tests were load-sensitive: in a full server-suite run a scheduling
+    // stall let the window end before the next status read could start, so
+    // the other message was produced. They run on jest's fake clock instead:
+    // withTimeout, delay and the window arithmetic use the global timers and
+    // Date.now that jest replaces, and the scripted reads resolve as promises,
+    // so the window moves only when the test advances the clock.
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+    const settleOnFakeClock = async (verifying: Promise<unknown>) => {
+      verifying.catch(() => undefined);
+      try {
+        await jest.advanceTimersByTimeAsync(1_000);
+      } finally {
+        jest.useRealTimers();
+      }
+    };
 
     it("keeps the first real error when later status reads time out", async () => {
       const client = scriptedStatusClient([
@@ -2340,15 +2358,16 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         },
         never,
       ]);
-      const { outcome, error } = await settled(
-        rolloutHostManagedComponentsInternalHelper({
-          ...common,
-          hostControlClient: (async () => client) as any,
-          managedComponentRolloutRpcTimeoutMs: 40,
-          projectHostRolloutSettleTimeoutMs: 200,
-          managedComponentVerifyMinCallBudgetMs: 20,
-        }),
-      );
+      jest.useFakeTimers();
+      const verifying = rolloutHostManagedComponentsInternalHelper({
+        ...common,
+        hostControlClient: (async () => client) as any,
+        managedComponentRolloutRpcTimeoutMs: 40,
+        projectHostRolloutSettleTimeoutMs: 200,
+        managedComponentVerifyMinCallBudgetMs: 20,
+      });
+      await settleOnFakeClock(verifying);
+      const { outcome, error } = await settled(verifying);
       expect(outcome).toBe("rejected");
       const text = `${error}`;
       // The real error leads; the later timeout does not replace it.
@@ -2359,15 +2378,16 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
 
     it("never starts a verification call with less than the minimum budget", async () => {
       const client = scriptedStatusClient([async () => [], never]);
-      const { outcome, error } = await settled(
-        rolloutHostManagedComponentsInternalHelper({
-          ...common,
-          hostControlClient: (async () => client) as any,
-          managedComponentRolloutRpcTimeoutMs: 1_000,
-          projectHostRolloutSettleTimeoutMs: 120,
-          managedComponentVerifyMinCallBudgetMs: 30,
-        }),
-      );
+      jest.useFakeTimers();
+      const verifying = rolloutHostManagedComponentsInternalHelper({
+        ...common,
+        hostControlClient: (async () => client) as any,
+        managedComponentRolloutRpcTimeoutMs: 1_000,
+        projectHostRolloutSettleTimeoutMs: 120,
+        managedComponentVerifyMinCallBudgetMs: 30,
+      });
+      await settleOnFakeClock(verifying);
+      const { outcome, error } = await settled(verifying);
       expect(outcome).toBe("rejected");
       const text = `${error}`;
       expect(text).toMatch(/could not be verified: host status read did not/);
@@ -2384,15 +2404,16 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         stoppedRouter,
         never,
       ]);
-      const { outcome, error } = await settled(
-        rolloutHostManagedComponentsInternalHelper({
-          ...common,
-          hostControlClient: (async () => client) as any,
-          managedComponentRolloutRpcTimeoutMs: 40,
-          projectHostRolloutSettleTimeoutMs: 200,
-          managedComponentVerifyMinCallBudgetMs: 20,
-        }),
-      );
+      jest.useFakeTimers();
+      const verifying = rolloutHostManagedComponentsInternalHelper({
+        ...common,
+        hostControlClient: (async () => client) as any,
+        managedComponentRolloutRpcTimeoutMs: 40,
+        projectHostRolloutSettleTimeoutMs: 200,
+        managedComponentVerifyMinCallBudgetMs: 20,
+      });
+      await settleOnFakeClock(verifying);
+      const { outcome, error } = await settled(verifying);
       expect(outcome).toBe("rejected");
       expect(`${error}`).toMatch(
         /could not be verified: host status read did not return within \d+ms; last completed status read: conat-router: runtime_state=stopped/,
@@ -2404,16 +2425,17 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
       // still stopped. The old loop's last 1 ms call turned this into a
       // timeout; now the drift itself is the error.
       const client = scriptedStatusClient([async () => [], stoppedRouter]);
-      await expect(
-        rolloutHostManagedComponentsInternalHelper({
-          ...common,
-          hostControlClient: (async () => client) as any,
-          managedComponentRolloutRpcTimeoutMs: 40,
-          projectHostRolloutSettleTimeoutMs: 60,
-          managedComponentVerifyMinCallBudgetMs: 20,
-          projectHostRolloutPollMs: 5,
-        }),
-      ).rejects.toThrow(
+      jest.useFakeTimers();
+      const verifying = rolloutHostManagedComponentsInternalHelper({
+        ...common,
+        hostControlClient: (async () => client) as any,
+        managedComponentRolloutRpcTimeoutMs: 40,
+        projectHostRolloutSettleTimeoutMs: 60,
+        managedComponentVerifyMinCallBudgetMs: 20,
+        projectHostRolloutPollMs: 5,
+      });
+      await settleOnFakeClock(verifying);
+      await expect(verifying).rejects.toThrow(
         /managed component rollout did not converge: conat-router: runtime_state=stopped/,
       );
     });
@@ -2426,16 +2448,17 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         },
         stoppedRouter,
       ]);
-      await expect(
-        rolloutHostManagedComponentsInternalHelper({
-          ...common,
-          hostControlClient: (async () => client) as any,
-          managedComponentRolloutRpcTimeoutMs: 40,
-          projectHostRolloutSettleTimeoutMs: 120,
-          managedComponentVerifyMinCallBudgetMs: 20,
-          projectHostRolloutPollMs: 5,
-        }),
-      ).rejects.toThrow(
+      jest.useFakeTimers();
+      const verifying = rolloutHostManagedComponentsInternalHelper({
+        ...common,
+        hostControlClient: (async () => client) as any,
+        managedComponentRolloutRpcTimeoutMs: 40,
+        projectHostRolloutSettleTimeoutMs: 120,
+        managedComponentVerifyMinCallBudgetMs: 20,
+        projectHostRolloutPollMs: 5,
+      });
+      await settleOnFakeClock(verifying);
+      await expect(verifying).rejects.toThrow(
         /did not converge: conat-router: runtime_state=stopped; errors during verification: status backend exploded/,
       );
     });
@@ -2446,16 +2469,17 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         never,
         stoppedRouter,
       ]);
-      await expect(
-        rolloutHostManagedComponentsInternalHelper({
-          ...common,
-          hostControlClient: (async () => client) as any,
-          managedComponentRolloutRpcTimeoutMs: 30,
-          projectHostRolloutSettleTimeoutMs: 200,
-          managedComponentVerifyMinCallBudgetMs: 20,
-          projectHostRolloutPollMs: 5,
-        }),
-      ).rejects.toThrow(
+      jest.useFakeTimers();
+      const verifying = rolloutHostManagedComponentsInternalHelper({
+        ...common,
+        hostControlClient: (async () => client) as any,
+        managedComponentRolloutRpcTimeoutMs: 30,
+        projectHostRolloutSettleTimeoutMs: 200,
+        managedComponentVerifyMinCallBudgetMs: 20,
+        projectHostRolloutPollMs: 5,
+      });
+      await settleOnFakeClock(verifying);
+      await expect(verifying).rejects.toThrow(
         /did not converge: conat-router: runtime_state=stopped; errors during verification: host status read did not return within \d+ms/,
       );
     });
@@ -2479,12 +2503,15 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
       const client = scriptedStatusClient([async () => [], aligned], () => {
         reads += 1;
       });
-      const response = await rolloutHostManagedComponentsInternalHelper({
+      jest.useFakeTimers();
+      const verifying = rolloutHostManagedComponentsInternalHelper({
         ...common,
         hostControlClient: (async () => client) as any,
         managedComponentRolloutRpcTimeoutMs: 40,
         projectHostRolloutSettleTimeoutMs: 200,
       });
+      await settleOnFakeClock(verifying);
+      const response = await verifying;
       expect(response.results).toEqual([
         expect.objectContaining({ component: "conat-router" }),
       ]);
