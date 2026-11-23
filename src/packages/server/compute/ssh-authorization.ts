@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { ARBITRARY_SSH_KEY_UNSUPPORTED } from "@cocalc/util/compute/managed-vm-ssh-keys";
+
 export function normalizeManagedVmSshPublicKey(value: unknown): string {
   const key = `${value ?? ""}`.trim();
   if (!key) return "";
@@ -30,6 +32,10 @@ export function resolveManagedVmCreateSshAuthorization(opts: {
     opts.requested_key == null
       ? projectKey
       : normalizeManagedVmSshPublicKey(opts.requested_key);
+  // Only the project's own deploy key (or no key) can be the initial key.
+  if (requestedKey && requestedKey !== projectKey) {
+    throw new Error(ARBITRARY_SSH_KEY_UNSUPPORTED);
+  }
   const configureProjectSsh = opts.configure_project_ssh === true;
   if (configureProjectSsh && (!projectKey || projectKey !== requestedKey)) {
     throw new Error(

@@ -1113,7 +1113,7 @@ describePg(
             ssh_public_key,
             idempotency_key: randomUUID(),
           }),
-        ).rejects.toThrow(/fresh auth/);
+        ).rejects.toThrow(/can no longer be authorized/);
         await (
           await import("@cocalc/server/auth/auth-sessions")
         ).recordNewAuthSession({
@@ -1122,13 +1122,24 @@ describePg(
           expire: new Date(Date.now() + 3600_000),
           fresh_auth_until: new Date(Date.now() + 60_000),
         });
-        await api.authorizeSshKey({
-          account_id: f.student,
-          id_or_name: f.vm.id,
-          session_hash,
-          ssh_public_key,
-          idempotency_key: randomUUID(),
-        });
+        // Even with fresh auth, an arbitrary key is rejected.
+        await expect(
+          api.authorizeSshKey({
+            account_id: f.student,
+            id_or_name: f.vm.id,
+            session_hash,
+            ssh_public_key,
+            idempotency_key: randomUUID(),
+          }),
+        ).rejects.toThrow(/can no longer be authorized/);
+        // A key authorized before the change can still be listed and revoked
+        // through the owner bay.
+        await pools
+          .get(resourceBay)!
+          .query(
+            "UPDATE compute_vms SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ssh_public_keys}', COALESCE(metadata->'ssh_public_keys', '[]'::jsonb) || to_jsonb($2::text)) WHERE id=$1",
+            [f.vm.id, ssh_public_key],
+          );
         expect(
           await api.listVmSshKeys({
             account_id: f.student,

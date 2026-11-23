@@ -2902,7 +2902,6 @@ export function VmAccessModal({
   onClose,
   onGrant,
   onRevoke,
-  onAddSshKey,
   onRevokeSshKey,
 }: {
   vm?: ComputeVm;
@@ -2913,18 +2912,15 @@ export function VmAccessModal({
   onClose: () => void;
   onGrant: (projectId: string) => Promise<void>;
   onRevoke: (projectId: string) => Promise<void>;
-  onAddSshKey: (sshPublicKey: string) => Promise<boolean>;
   onRevokeSshKey: (sshPublicKey: string) => Promise<void>;
 }) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>();
-  const [sshPublicKey, setSshPublicKey] = useState("");
   const current = vm
     ? access.filter(({ vm_id }) => vm_id === vm.id)
     : ([] as ComputeVmProjectAccess[]);
 
   useEffect(() => {
     setSelectedProjectId(undefined);
-    setSshPublicKey("");
   }, [vm?.id]);
 
   return (
@@ -3028,9 +3024,10 @@ export function VmAccessModal({
       <Divider />
       <Title level={5}>Public SSH keys</Title>
       <Paragraph type="secondary">
-        These public keys can connect directly to the VM as{" "}
-        <Text code>{vm?.ssh_user || "user"}</Text>. Private keys never leave
-        their owners.
+        These keys were authorized earlier and can connect to the VM as{" "}
+        <Text code>{vm?.ssh_user || "user"}</Text>. New keys can no longer be
+        added here; only the project&apos;s own SSH key is accepted. Remove keys
+        you no longer need.
       </Paragraph>
       <Space orientation="vertical" size={8} style={{ width: "100%" }}>
         {sshKeys.map((key) => (
@@ -3073,29 +3070,6 @@ export function VmAccessModal({
         )}
         {loadingKeys && <Text type="secondary">Loading SSH keys…</Text>}
       </Space>
-      <Input.TextArea
-        aria-label="Public SSH key"
-        autoSize={{ minRows: 2, maxRows: 4 }}
-        placeholder="ssh-ed25519 AAAA… name@example.com"
-        value={sshPublicKey}
-        onChange={(event) => setSshPublicKey(event.target.value)}
-        style={{ marginTop: 16 }}
-      />
-      <Button
-        type="primary"
-        disabled={!sshPublicKey.trim()}
-        loading={saving}
-        onClick={() => {
-          const key = sshPublicKey.trim();
-          if (!key) return;
-          void onAddSshKey(key).then((added) => {
-            if (added) setSshPublicKey("");
-          });
-        }}
-        style={{ marginTop: 12 }}
-      >
-        Add public key
-      </Button>
     </Modal>
   );
 }
@@ -3572,36 +3546,6 @@ export function ProjectComputeVms({
       await load({ refreshCatalogAndGrants: false, showLoading: false });
     } catch (err) {
       setError(String(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const addDirectSshKey = async (sshPublicKey: string) => {
-    if (!accessVm) return false;
-    setSaving(true);
-    setError(undefined);
-    try {
-      const vm = accessVm;
-      const completed = await runFreshAuthAction(async () => {
-        await webapp_client.conat_client.hub.compute.authorizeSshKey({
-          browser_id: webapp_client.browser_id,
-          id_or_name: vm.id,
-          ssh_public_key: sshPublicKey,
-          idempotency_key: uuid(),
-        });
-      });
-      if (!completed) return false;
-      setDirectSshKeys(
-        await webapp_client.conat_client.hub.compute.listVmSshKeys({
-          id_or_name: vm.id,
-        }),
-      );
-      setNotice(`SSH key access to '${vm.name}' was authorized.`);
-      return true;
-    } catch (err) {
-      setError(String(err));
-      return false;
     } finally {
       setSaving(false);
     }
@@ -5212,7 +5156,6 @@ export function ProjectComputeVms({
         onClose={() => setAccessVm(undefined)}
         onGrant={grantProjectAccess}
         onRevoke={revokeProjectAccess}
-        onAddSshKey={addDirectSshKey}
         onRevokeSshKey={revokeDirectSshKey}
       />
     </div>

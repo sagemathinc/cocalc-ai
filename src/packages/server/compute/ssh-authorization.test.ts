@@ -36,24 +36,33 @@ describe("managed VM create SSH authorization", () => {
     });
   });
 
-  it("allows an explicit alternative key only without project SSH config", () => {
-    expect(
-      resolveManagedVmCreateSshAuthorization({
-        requested_key: OTHER_KEY,
-        configure_project_ssh: false,
-        project_key: PROJECT_KEY,
-      }),
-    ).toEqual({
-      ssh_public_key: OTHER_KEY,
-      configure_project_ssh: false,
-    });
+  it("rejects any explicit key other than the project deploy key", () => {
+    for (const configure_project_ssh of [false, true]) {
+      expect(() =>
+        resolveManagedVmCreateSshAuthorization({
+          requested_key: OTHER_KEY,
+          configure_project_ssh,
+          project_key: PROJECT_KEY,
+        }),
+      ).toThrow(/can no longer be authorized/);
+    }
     expect(() =>
       resolveManagedVmCreateSshAuthorization({
         requested_key: OTHER_KEY,
-        configure_project_ssh: true,
+        configure_project_ssh: false,
+        project_key: null,
+      }),
+    ).toThrow(/can no longer be authorized/);
+  });
+
+  it("accepts the project deploy key passed explicitly", () => {
+    expect(
+      resolveManagedVmCreateSshAuthorization({
+        requested_key: PROJECT_KEY,
+        configure_project_ssh: false,
         project_key: PROJECT_KEY,
       }),
-    ).toThrow(/exact project deploy public key/);
+    ).toEqual({ ssh_public_key: PROJECT_KEY, configure_project_ssh: false });
   });
 
   it("distinguishes an explicit keyless request from an omitted key", () => {
@@ -68,8 +77,8 @@ describe("managed VM create SSH authorization", () => {
 });
 
 describe("VM create SSH policy", () => {
-  it("keeps an account key when course funding has no project context", () => {
-    expect(
+  it("rejects an account key when course funding has no project context", () => {
+    expect(() =>
       resolveVmCreateSshAuthorization({
         requested_key: OTHER_KEY,
         configure_project_ssh: true,
@@ -77,10 +86,16 @@ describe("VM create SSH policy", () => {
         course_funded: true,
         has_project_context: false,
       }),
-    ).toEqual({
-      ssh_public_key: OTHER_KEY,
-      configure_project_ssh: false,
-    });
+    ).toThrow(/can no longer be authorized/);
+    expect(
+      resolveVmCreateSshAuthorization({
+        requested_key: "",
+        configure_project_ssh: true,
+        project_key: null,
+        course_funded: true,
+        has_project_context: false,
+      }),
+    ).toEqual({ ssh_public_key: "", configure_project_ssh: false });
   });
 
   it("forces the managed project key for course funding with a project", () => {

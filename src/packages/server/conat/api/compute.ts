@@ -68,7 +68,6 @@ import { assertComputeProjectAssignedToHost } from "@cocalc/server/compute/host-
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import {
-  addComputeVmSshPublicKey,
   allocateComputeVmPublicHostname,
   appendComputeEvent,
   computeVmSshPublicKeys,
@@ -92,8 +91,8 @@ import {
   normalizeManagedVmSshPublicKey,
   resolveVmCreateSshAuthorization,
 } from "@cocalc/server/compute/ssh-authorization";
+import { ARBITRARY_SSH_KEY_UNSUPPORTED } from "@cocalc/util/compute/managed-vm-ssh-keys";
 import {
-  ensureProviderComputeSshAccess,
   prepareProviderComputeWindowsRdp,
   deleteOrphanProviderComputeAddress,
   deleteOrphanProviderComputeBootDisk,
@@ -1188,7 +1187,8 @@ export async function createVm(
   const projectKey =
     opts.project_id &&
     ((fundingSource ? true : opts.configure_project_ssh) === true ||
-      opts.ssh_public_key == null)
+      opts.ssh_public_key == null ||
+      `${opts.ssh_public_key}`.trim() !== "")
       ? await getManagedVmProjectSshPublicKey({
           account_id: accountId,
           project_id: opts.project_id,
@@ -2206,34 +2206,19 @@ async function requireComputeProjectReadIdentity(opts: {
   return projectId;
 }
 
-export async function authorizeSshKey(opts: {
+// Arbitrary account keys can no longer be authorized. The method stays in the
+// hub and inter-bay APIs so that bays on different versions get a clear error
+// instead of an unknown method; keys authorized earlier can still be listed and
+// revoked.
+export async function authorizeSshKey(_opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
   id_or_name: string;
   ssh_public_key: string;
   idempotency_key: string;
-}) {
-  const routed = await routeComputeOwnerMutation("authorizeSshKey", opts);
-  if (routed !== undefined) return routed;
-  const accountId = requireAccount(opts.account_id);
-  const key = normalizeManagedVmSshPublicKey(opts.ssh_public_key);
-  if (!key) throw new Error("ssh_public_key is required");
-  const vm = await resolveOwned(accountId, opts.id_or_name);
-  return await authorizeSshKeyForVm({
-    vm,
-    key,
-    idempotency_key: opts.idempotency_key,
-    actor_account_id: accountId,
-    actor_kind: "human",
-    beforeAdd: async () => {
-      await requireComputeOwnerFreshAuth({
-        account_id: accountId,
-        browser_id: opts.browser_id,
-        session_hash: opts.session_hash,
-      });
-    },
-  });
+}): Promise<never> {
+  throw new Error(ARBITRARY_SSH_KEY_UNSUPPORTED);
 }
 
 function publicVmSshKey(sshPublicKey: string): ComputeVmSshKey {
@@ -2349,68 +2334,6 @@ export async function prepareWindowsRdp(opts: {
     windows_password: password,
     remote_port: 3389 as const,
   };
-}
-
-async function authorizeSshKeyForVm(opts: {
-  vm: ComputeVmRow;
-  key: string;
-  idempotency_key: string;
-  actor_account_id?: string;
-  actor_kind: "human" | "project";
-  beforeAdd?: () => Promise<void>;
-}) {
-  const { vm, key } = opts;
-  const providerReady = vm.state === "ready" && !!vm.public_ip;
-  const existingKeys = Array.from(
-    new Set(
-      [
-        vm.ssh_public_key,
-        ...(Array.isArray(vm.metadata?.ssh_public_keys)
-          ? vm.metadata.ssh_public_keys
-          : []),
-      ]
-        .map((value) => `${value ?? ""}`.trim())
-        .filter(Boolean),
-    ),
-  );
-  let next = vm;
-  let added = false;
-  if (!existingKeys.includes(key)) {
-    await opts.beforeAdd?.();
-    const result = await addComputeVmSshPublicKey({
-      id: vm.id,
-      owner_account_id: vm.owner_account_id,
-      ssh_public_key: key,
-    });
-    next = result.vm;
-    added = result.added;
-  }
-  if (providerReady) {
-    await ensureProviderComputeSshAccess(next);
-  } else if (added) {
-    await enqueueComputeWork({
-      resource_id: vm.id,
-      action: "reconcile_ssh_access",
-      idempotency_key: `authorize-ssh-key:${vm.id}:${opts.idempotency_key}`,
-    });
-  }
-  if (added) {
-    const authorizedKeyCount = Array.isArray(next.metadata?.ssh_public_keys)
-      ? next.metadata.ssh_public_keys.length
-      : 1;
-    await appendComputeEvent({
-      vm: next,
-      actor_account_id: opts.actor_account_id,
-      actor_kind: opts.actor_kind,
-      action: "authorize_ssh_key",
-      idempotency_key: normalizeIdempotencyKey(opts.idempotency_key),
-      old_state: vm.state,
-      new_state: next.state,
-      status: providerReady ? "completed" : "requested",
-      details: { authorized_key_count: authorizedKeyCount },
-    });
-  }
-  return publicVm(next);
 }
 
 async function authorizeVerifiedProjectSshKey(opts: {

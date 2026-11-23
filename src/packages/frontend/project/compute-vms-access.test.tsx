@@ -59,8 +59,8 @@ test("VM details lead with hardware and keep technical fields collapsed", () => 
 });
 
 describe("VmAccessModal", () => {
-  it("explains the one-way project boundary and manages direct public keys", async () => {
-    const onAddSshKey = jest.fn(async () => true);
+  it("explains the one-way project boundary and lists earlier keys for removal only", async () => {
+    const onRevokeSshKey = jest.fn(async () => undefined);
     render(
       <VmAccessModal
         vm={vm}
@@ -78,8 +78,7 @@ describe("VmAccessModal", () => {
         onClose={jest.fn()}
         onGrant={jest.fn(async () => undefined)}
         onRevoke={jest.fn(async () => undefined)}
-        onAddSshKey={onAddSshKey}
-        onRevokeSshKey={jest.fn(async () => undefined)}
+        onRevokeSshKey={onRevokeSshKey}
       />,
     );
 
@@ -93,15 +92,22 @@ describe("VmAccessModal", () => {
     expect(screen.getByText("Public SSH keys")).toBeInTheDocument();
     expect(screen.getByText("SHA256:fingerprint")).toBeInTheDocument();
 
-    const input = screen.getByRole("textbox", { name: "Public SSH key" });
-    fireEvent.change(input, {
-      target: { value: "ssh-ed25519 AAAANEW workstation" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Add public key" }));
+    // No way to add an arbitrary key any more.
+    expect(
+      screen.queryByRole("textbox", { name: "Public SSH key" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add public key" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/New keys can no longer be/)).toBeInTheDocument();
 
+    // Keys authorized earlier can still be removed.
+    const removeButtons = screen.getAllByRole("button", { name: "Remove" });
+    fireEvent.click(removeButtons[removeButtons.length - 1]);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove key" }));
     await waitFor(() =>
-      expect(onAddSshKey).toHaveBeenCalledWith(
-        "ssh-ed25519 AAAANEW workstation",
+      expect(onRevokeSshKey).toHaveBeenCalledWith(
+        "ssh-ed25519 AAAATEST laptop",
       ),
     );
   });

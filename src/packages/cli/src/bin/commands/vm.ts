@@ -15,6 +15,7 @@ import {
   requireVolumeFundingVersion,
 } from "@cocalc/util/compute-volume-funding";
 import { isValidUUID } from "@cocalc/util/misc";
+import { ARBITRARY_SSH_KEY_UNSUPPORTED } from "@cocalc/util/compute/managed-vm-ssh-keys";
 import { registerVmPersonalFundingCommand } from "./vm-personal-funding";
 
 export type VmCommandDeps = {
@@ -483,13 +484,16 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
     const publicKeyPath =
       opts.sshPublicKey ??
       (opts.identity ? `${expandHome(opts.identity)}.pub` : undefined);
-    const key = resolvePublicKey(publicKeyPath);
     const projectId = projectScopedAuthId(ctx);
-    const authorize = projectId
-      ? ctx.hub.compute.authorizeProjectSshKey
-      : ctx.hub.compute.authorizeSshKey;
-    return await authorize({
-      ...(projectId ? { project_id: projectId } : {}),
+    if (!projectId) {
+      // Outside a project no new key is authorized; keys authorized earlier
+      // keep working until they are removed.
+      progress(ARBITRARY_SSH_KEY_UNSUPPORTED);
+      return await ctx.hub.compute.getVm({ id_or_name: idOrName });
+    }
+    const key = resolvePublicKey(publicKeyPath);
+    return await ctx.hub.compute.authorizeProjectSshKey({
+      project_id: projectId,
       id_or_name: idOrName,
       ssh_public_key: key.key,
       idempotency_key: randomUUID(),

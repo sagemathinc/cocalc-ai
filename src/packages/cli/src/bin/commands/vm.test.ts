@@ -759,15 +759,14 @@ describe("vm machine", () => {
 });
 
 describe("vm ssh", () => {
-  it("opens an interactive SSH session when no command is supplied", async () => {
+  it("opens an interactive SSH session without authorizing a key outside a project", async () => {
     const { program, sshCalls, callbackResults, sshAuthorizationCalls } =
       harness();
     await program.parseAsync(["node", "cocalc", "vm", "ssh", "build-vm"]);
     assert.deepEqual(sshCalls[0]?.slice(-1), ["user@203.0.113.10"]);
-    assert.equal(
-      sshAuthorizationCalls[0]?.ssh_public_key,
-      "ssh-ed25519 AAAATEST test@example.com",
-    );
+    // Arbitrary keys can no longer be authorized: keys authorized earlier
+    // still connect, nothing new is added.
+    assert.equal(sshAuthorizationCalls.length, 0);
     assert.deepEqual(callbackResults, [undefined]);
   });
 

@@ -403,6 +403,8 @@ export interface ComputeApi
     project_id?: string;
     id_or_name: string;
   }) => Promise<ComputeVm>;
+  // Always rejected: arbitrary account keys can no longer be authorized. Kept
+  // so that older clients and bays get a clear error; list/revoke still work.
   authorizeSshKey: (opts: {
     account_id?: string;
     browser_id?: string;
