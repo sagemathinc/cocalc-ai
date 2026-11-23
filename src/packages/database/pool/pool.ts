@@ -23,6 +23,14 @@ import {
   isPgliteEnabled,
   PglitePool,
 } from "./pglite";
+import { getPglite, getPgliteDataDir } from "../pglite";
+import {
+  assertDisposablePglite,
+  assertDisposablePostgres,
+  readTestMarkers,
+  TEST_DATABASE,
+  writeTestMarker,
+} from "./disposable-test-db";
 
 const L = getLogger("db:pool");
 
@@ -395,25 +403,29 @@ export function getClient(): Client {
 }
 
 export { isPgliteEnabled };
-const TEST = "smc_ephemeral_testing_database";
+const TEST = TEST_DATABASE;
 
 /**
  * Initialize the ephemeral test database and ensure the schema is loaded.
  *
- * Call with `{ reset: true }` to truncate all tables after schema sync.
+ * Call with `{ reset: true }` to replace it with a new, empty database
+ * (see ./disposable-test-db.ts): a fresh in-memory PGlite instance, or
+ * DROP/CREATE DATABASE on PostgreSQL. No rows are deleted through the
+ * application's SQL path, so append-only guards are never bypassed.
  * Do not run `initEphemeralDatabase({ reset: true })` in test preambles,
  * since parallel tests can interfere with each other's state.
  *
  * @param options
- * @param options.reset When true, truncates all tables after schema sync.
+ * @param options.reset When true, replaces the database with an empty one.
  */
 export async function initEphemeralDatabase({
   reset,
 }: { reset?: boolean } = {}) {
   if (isPgliteEnabled()) {
     await syncSchema();
+    await markNewPgliteInstance();
     if (reset) {
-      await dropAllDataPglite();
+      await recreatePglite();
     }
     return;
   }
@@ -442,68 +454,86 @@ export async function initEphemeralDatabase({
     });
   });
   const escapedTestDb = TEST.replace(/"/g, '""');
-  let databaseExists = false;
+  let created = false;
   try {
-    await db.query(`CREATE DATABASE "${escapedTestDb}"`);
-  } catch (err) {
-    if ((err as { code?: string })?.code !== "42P04") {
-      throw err;
+    try {
+      await db.query(`CREATE DATABASE "${escapedTestDb}"`);
+      created = true;
+    } catch (err) {
+      if ((err as { code?: string })?.code !== "42P04") {
+        throw err;
+      }
     }
-    databaseExists = true;
+    if (!created && reset) {
+      await assertDisposableTestPostgres();
+      if (pool != null) {
+        await pool.end();
+      }
+      await db.query(`DROP DATABASE "${escapedTestDb}" WITH (FORCE)`);
+      await db.query(`CREATE DATABASE "${escapedTestDb}"`);
+      created = true;
+    }
+  } finally {
+    await db.end();
   }
-  await db.end();
   // sync the schema
   await syncSchema();
-  if (databaseExists && reset) {
-    // Drop all data from all tables for a clean slate.
-    // Unfortunately, this can take a little while.
-    await dropAllData();
+  if (created) {
+    await writeTestMarker(getPool());
   }
 }
 
-async function dropAllData() {
-  const pool = getPool();
-  pool.on("error", (err: Error) => {
-    L.debug("WARNING: Unexpected error on idle client in PG pool", {
-      err: err.message,
-      stack: err.stack,
-    });
+// PGlite instances the harness has marked. The marker is written once, when
+// the harness first sees a new in-memory instance (which this process just
+// created), and never rewritten, so deleting or forging it blocks resets.
+const markedPgliteInstances = new WeakSet<object>();
+
+async function markNewPgliteInstance() {
+  if (database != TEST || !getPgliteDataDir().startsWith("memory://")) {
+    return;
+  }
+  const instance = await getPglite();
+  if (markedPgliteInstances.has(instance)) {
+    return;
+  }
+  markedPgliteInstances.add(instance);
+  if ((await readTestMarkers(getPool())).length == 0) {
+    await writeTestMarker(getPool());
+  }
+}
+
+// Replaces this process's in-memory PGlite instance with a new, empty one.
+async function recreatePglite() {
+  const pglite = getPool();
+  await assertDisposablePglite({
+    db: pglite,
+    pgdatabase: database,
+    dataDir: getPgliteDataDir(),
   });
-  if (pool?.["options"]?.database != TEST) {
-    // safety check!
-    throw Error(
-      `You can't use dropAllData() if the env variabe PGDATABASE is not set to ${TEST}!`,
-    );
-  }
-  const client = await pool.connect();
-
-  try {
-    // Get all table names
-    const result = await client.query(
-      "SELECT tablename FROM pg_tables WHERE schemaname='public'",
-    );
-    const tableNames = result.rows.map((row) => row.tablename);
-    await client.query(`TRUNCATE ${tableNames.join(",")}`);
-  } catch (err) {
-    throw err;
-  } finally {
-    client.release();
-  }
+  // Closes the instance; the pool opens a new one on its next query.
+  await pglite.end();
+  await syncSchema();
+  await markNewPgliteInstance();
 }
 
-async function dropAllDataPglite() {
-  const pool = getPool();
-  const client = await pool.connect();
-
+async function assertDisposableTestPostgres() {
+  const { host: primaryHost, port } = getPrimaryHost();
+  const client = new Client({
+    password: dbPassword(),
+    user,
+    host: primaryHost,
+    port,
+    database: TEST,
+    ssl,
+  });
+  await client.connect();
   try {
-    const result = await client.query(
-      "SELECT tablename FROM pg_tables WHERE schemaname='public'",
-    );
-    const tableNames = result.rows.map((row) => row.tablename);
-    if (tableNames.length > 0) {
-      await client.query(`TRUNCATE ${tableNames.join(",")}`);
-    }
+    await assertDisposablePostgres({
+      db: client,
+      pgdatabase: database,
+      connectedDatabase: client.database,
+    });
   } finally {
-    client.release();
+    await client.end();
   }
 }
