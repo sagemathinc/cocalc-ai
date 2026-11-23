@@ -18,6 +18,7 @@ import type { Command } from "commander";
 import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
 import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import {
+  exitWatchKeepsWhole,
   parseSensorWake,
   SENSOR_LIMITS,
   SENSOR_WATCH_AGENT_UNTIL,
@@ -550,11 +551,7 @@ export function registerSensorCommand(
         const cwd = `${opts.cwd ?? ""}`.trim() || undefined;
         // Only a command the watcher keeps whole can be started again.
         let restart =
-          opts.restart !== false &&
-          Buffer.byteLength(command) <= SENSOR_LIMITS.maxExitCommandLength &&
-          !/[\r\n]/.test(command) &&
-          (cwd ?? "").length <= 1_000 &&
-          !/[\r\n]/.test(cwd ?? "");
+          opts.restart !== false && exitWatchKeepsWhole(command, cwd);
         // The watcher first: nothing runs if it cannot be set.
         const short = { type: "exit", id, command: command.slice(0, 200) };
         const setWatch = (watch: object) =>

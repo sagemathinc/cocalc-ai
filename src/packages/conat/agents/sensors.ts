@@ -70,8 +70,11 @@ export const SENSOR_LIMITS = {
   /** Times an exit watcher starts its command again after its terminal
    * ended, before it wakes saying so. */
   exitMaxRestarts: 3,
-  /** The longest command an exit watcher keeps (to start it again). */
+  /** The longest command an exit watcher keeps (to start it again), in
+   * UTF-8 bytes. */
   maxExitCommandLength: 2_000,
+  /** The longest working directory an exit watcher keeps, in UTF-8 bytes. */
+  maxExitCwdBytes: 1_000,
   /** Wakes held while an earlier one is queued, combined into the next. */
   maxCoalescedWakes: 20,
   /** A queued wake older than this no longer holds back later ones. */
@@ -471,6 +474,24 @@ function bytes(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+function isOneLine(value: string, maxBytes: number): boolean {
+  return (
+    !!value.trim() && !LINE_CONTROL_RE.test(value) && bytes(value) <= maxBytes
+  );
+}
+
+/**
+ * Whether an exit watcher can keep this command and working directory
+ * exactly as given, as validateSensorWatch requires for one that starts
+ * its command again.
+ */
+export function exitWatchKeepsWhole(command: string, cwd?: string): boolean {
+  return (
+    isOneLine(command, SENSOR_LIMITS.maxExitCommandLength) &&
+    (cwd == null || isOneLine(cwd, SENSOR_LIMITS.maxExitCwdBytes))
+  );
+}
+
 function boundedInt(
   value: unknown,
   name: string,
@@ -689,7 +710,10 @@ export function validateSensorWatch(
       "command",
       SENSOR_LIMITS.maxExitCommandLength,
     );
-    const cwd = w.cwd != null ? oneLine(w.cwd, "cwd", 1_000) : undefined;
+    const cwd =
+      w.cwd != null
+        ? oneLine(w.cwd, "cwd", SENSOR_LIMITS.maxExitCwdBytes)
+        : undefined;
     if (w.restart != null && typeof w.restart !== "boolean")
       throw new Error("restart must be true or false");
     watch = {

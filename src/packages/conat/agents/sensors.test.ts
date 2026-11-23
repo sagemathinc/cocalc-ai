@@ -14,6 +14,7 @@ import {
   SENSOR_LIMITS,
   SENSOR_WATCH_AGENT_UNTIL,
   type SensorWatchAgentUntil,
+  exitWatchKeepsWhole,
   sensorExitPaths,
   reminderText,
   scheduledPromptText,
@@ -618,6 +619,48 @@ describe("exit watchers", () => {
       { type: "exit", id, command: "make", cwd: "a\nb" },
     ])
       expect(() => validateSensorWatch(watch, { now })).toThrow();
+  });
+
+  it("the CLI's check for a restartable watcher agrees with what the hub stores", () => {
+    const cases: [string, string | undefined, boolean][] = [
+      ["make test", undefined, true],
+      ["make test", "src/app", true],
+      ["printf 'a\tb'", undefined, false], // a tab
+      ["echo \u202e evil", undefined, false], // a bidi override
+      ["echo \u0085", undefined, false], // a C1 control
+      ["x".repeat(SENSOR_LIMITS.maxExitCommandLength), undefined, true],
+      ["é".repeat(SENSOR_LIMITS.maxExitCommandLength / 2), undefined, true],
+      [
+        "é".repeat(SENSOR_LIMITS.maxExitCommandLength / 2 + 1),
+        undefined,
+        false,
+      ],
+      ["make", "目".repeat(333), true], // 999 bytes
+      ["make", "目".repeat(400), false], // 400 characters, 1200 bytes
+      ["make", "a\tb", false],
+      ["make", "   ", false],
+    ];
+    for (const [command, cwd, keeps] of cases) {
+      expect([command, cwd, exitWatchKeepsWhole(command, cwd)]).toEqual([
+        command,
+        cwd,
+        keeps,
+      ]);
+      const store = () =>
+        validateSensorWatch(
+          {
+            type: "exit",
+            id,
+            command,
+            ...(cwd != null ? { cwd } : {}),
+            restart: true,
+          },
+          { now },
+        );
+      if (keeps)
+        expect(store().watch).toMatchObject({ command, restart: true });
+      else expect(store).toThrow();
+    }
   });
 
   it("starts the command again when its terminal ended, then wakes after the last try", () => {
