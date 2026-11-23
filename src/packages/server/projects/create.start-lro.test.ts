@@ -1,5 +1,9 @@
 export {};
 
+// Each test here takes 3-6 s in the full server suite, close to jest's
+// 5 s default; a longer limit keeps them from timing out under load.
+jest.setTimeout(20_000);
+
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   assertClusterAccountTrustedForProductAccess: jest.fn(async () => undefined),
 }));
