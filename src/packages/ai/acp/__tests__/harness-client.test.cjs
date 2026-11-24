@@ -911,7 +911,9 @@ async function inProjectProofClient(t, flags, extra) {
       },
       ...extra,
     }),
-    30_000,
+    // like the other identity tests: the identity wait is min(timeout, 6 s),
+    // and the whole file must finish within harness-integration's 90 s
+    1500,
     undefined,
     "claude-subscription-controller",
   );
