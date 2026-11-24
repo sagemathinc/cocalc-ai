@@ -43,6 +43,7 @@ import { createProjectCliTokenLease } from "../codex/codex-project";
 import { startProviderRelaySession } from "../codex/site-funded-proxy";
 import { getClaudeSubscriptionCredential } from "./claude-subscription-registry";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -80,6 +81,14 @@ jest.mock("@cocalc/project-runner/run/filesystem", () => ({
 }));
 jest.mock("@cocalc/project-runner/run/podman", () => ({
   projectPoolPodmanLauncher: () => ({ command: "podman", argsPrefix: [] }),
+}));
+jest.mock("@cocalc/backend/podman/env", () => ({
+  podmanEnv: () => ({
+    PATH: "/opt/cocalc/container-runtime/current/bin:/usr/bin:/bin",
+    CONTAINERS_CONF_OVERRIDE:
+      "/opt/cocalc/container-runtime/current/etc/containers/containers.conf",
+    XDG_RUNTIME_DIR: "/run/user/2001",
+  }),
 }));
 
 const run = promisify(
@@ -850,6 +859,51 @@ describe("launchClaudeSubscriptionInProject", () => {
     await expect(
       launchClaudeSubscriptionInProject(binding, conversation),
     ).rejects.toThrow(/managed settings/);
+    expect(startProviderRelaySession).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("runs every podman exec with the podman environment of the project containers", async () => {
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    await proc.beginConnectorTurn!({ path: "a.chat" } as any);
+    await proc.endConnectorTurn!();
+    const calls = (execFile as unknown as jest.Mock).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const expected = podmanEnv();
+    for (const [, , options] of calls) {
+      expect(options.env).toEqual(expected);
+    }
+  });
+
+  it("names the reason when the managed-policy check fails, and says try again only for a timeout", async () => {
+    const mock = execFile as unknown as jest.Mock;
+    mock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(
+        Object.assign(Error("Command failed"), { code: 125 }),
+        "",
+        `Error: no container with name or ID "project-${projectId}" found: no such container\nmore\n`,
+      ),
+    );
+    const failed = launchClaudeSubscriptionInProject(binding, conversation);
+    await expect(failed).rejects.toThrow(
+      /podman exec exited 125: Error: no container with name or ID/,
+    );
+    await expect(failed).rejects.not.toThrow(/try again/);
+
+    mock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(
+        Object.assign(Error("killed"), {
+          code: null,
+          killed: true,
+          signal: "SIGKILL",
+        }),
+        "",
+        "",
+      ),
+    );
+    await expect(
+      launchClaudeSubscriptionInProject(binding, conversation),
+    ).rejects.toThrow(/in time; try again/);
     expect(startProviderRelaySession).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
   });
