@@ -68,6 +68,18 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   }),
 }));
 
+const gateApply = jest.fn(async (_opts: any) => undefined);
+const gateClientMock = jest.fn((_client: any, _bay: string) => ({
+  apply: gateApply,
+}));
+jest.mock("@cocalc/conat/inter-bay/federated-gate", () => ({
+  createInterBayFederatedGateClient: (client: any, bay: string) =>
+    gateClientMock(client, bay),
+}));
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: () => ({}),
+}));
+
 jest.mock("@cocalc/server/bay-registry", () => ({
   listClusterBayRegistry: (...args: any[]) =>
     listClusterBayRegistryMock(...args),
@@ -756,6 +768,55 @@ describe("site settings dangerous-session auth", () => {
       `${sql}`.includes("INSERT INTO global_config_bay_state"),
     );
     expect(bayStateWrites).toHaveLength(2);
+  });
+
+  it("replicates the gate only through its own service", async () => {
+    listClusterBayRegistryMock = jest.fn(async () => [
+      { bay_id: "seed" },
+      { bay_id: "attached-a" },
+    ]);
+    const setServerSetting = jest.fn(async () => undefined);
+    bayOpsMock = jest.fn(() => ({ setServerSetting }));
+    gateApply.mockClear();
+    const { propagateSiteSettingsToBays } = await import("./system");
+
+    await propagateSiteSettingsToBays([
+      { name: "site_name", value: "Seed Name" },
+      { name: "federated_cli_connectors", value: "gcloud" },
+    ]);
+    expect(setServerSetting).toHaveBeenCalledTimes(1);
+    expect(setServerSetting).toHaveBeenCalledWith({
+      name: "site_name",
+      value: "Seed Name",
+    });
+    expect(gateClientMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "attached-a",
+    );
+    expect(gateApply).toHaveBeenCalledWith({
+      name: "federated_cli_connectors",
+      value: "gcloud",
+    });
+  });
+
+  it("refuses the federated connector gate before applying anything", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => undefined);
+    const setServerSetting = jest.fn(async () => undefined);
+    bayOpsMock = jest.fn(() => ({ setServerSetting }));
+    const { setSiteSettings } = await import("./system");
+
+    await expect(
+      setSiteSettings({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        settings: [
+          { name: "site_name", value: "Seed Name" },
+          { name: "federated_cli_connectors", value: "gcloud" },
+        ],
+      }),
+    ).rejects.toThrow(/only through the federated connector gate/);
+    expect(dbMock.set_server_setting).not.toHaveBeenCalled();
+    expect(setServerSetting).not.toHaveBeenCalled();
   });
 
   it("keeps Stripe secrets on the seed while mirroring public billing config", async () => {

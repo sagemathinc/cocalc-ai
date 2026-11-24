@@ -60,6 +60,7 @@ import "./deleted-projects";
 import "./email-auth";
 import "./email-counter";
 import "./external-credentials";
+import "./federated-connectors";
 import "./global-config";
 import "./growth-analytics";
 import "./public-home-experiment-counts";

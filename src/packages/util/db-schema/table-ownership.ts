@@ -525,6 +525,77 @@ export const TABLE_OWNERSHIP = {
     },
   ),
 
+  ...entries(
+    ["federated_connector_connections", "federated_connector_grants"],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      notes:
+        "An account's federated CLI connector connections and their grants (util/db-schema/federated-connectors.ts): cloud resource names only, no credentials. Authoritative at the account home; account rehome requires explicit migration before these tables are portable.",
+    },
+  ),
+  ...entries(
+    ["federated_connector_agent_grants", "federated_connector_turn_leases"],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Source project of the agent or turn; project authority is checked on its owning bay.",
+        host_id: "Host that began the turn; a binding reference only.",
+      },
+      notes:
+        "Which federated connector grant each agent uses per source project, and one durable lease record per verified agent turn (ended rows are revocation tombstones, retained 13 months after ending). Authoritative at the account home; account rehome requires explicit migration before these tables are portable.",
+    },
+  ),
+  ...entries(["federated_connector_shared_project_approvals"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      account_id:
+        "Account whose federated credentials are approved, and the approving owner; references, not placement authority.",
+    },
+    notes:
+      "Project owners' approvals for one account's federated credentials in a shared project. Authoritative on the project's owning bay; project rehome does not copy them, so a rehomed shared project needs a new approval. Revoked rows are purged 13 months after revocation.",
+  }),
+  ...entries(["federated_connector_assignment_audit"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      account_id:
+        "Account whose access changed, or the actor; an audit reference, not placement authority.",
+      project_id:
+        "Source project of the change; an audit reference, not placement authority.",
+    },
+    notes:
+      "Append-only audit of federated connector assignment, shared-project approval and site gate changes, kept on the bay where each change was made (account home, project owning bay or seed). Never moved by a rehome, so an access review reads it on every bay. Retained 13 months.",
+  }),
+  ...entries(["federated_connector_allowlist"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    notes:
+      "Site-wide admin allowlist of what a federated CLI connector may mint for (provider, service account, permission profile, target project). Seed-authoritative.",
+  }),
+  ...entries(["federated_connector_mint_log"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      account_id:
+        "Account the minted credential was for; an audit reference, not placement authority.",
+      project_id:
+        "Project of the turn or run; an audit reference, not placement authority.",
+      host_id: "Host of the turn or run; an audit reference only.",
+    },
+    notes:
+      "Append-only record, kept on the bay that runs the connector broker, of every federated credential mint attempt and its outcome; ids and times only, never token bytes. Retained at least 13 months.",
+  }),
+
   ...entries(["oauth_authorization_codes"], {
     ownership: "ephemeral",
     authority: "local",

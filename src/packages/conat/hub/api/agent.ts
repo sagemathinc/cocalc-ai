@@ -16,6 +16,10 @@ import {
 } from "./util";
 import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 import type {
+  FederatedConnectorAssignment,
+  FederatedConnectorTurnAnswer,
+} from "@cocalc/util/ai/federated-connectors";
+import type {
   CliConnector,
   CliConnectorTurnToken,
 } from "@cocalc/util/ai/cli-connectors";
@@ -114,6 +118,16 @@ export const agent = {
   beginCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
   renewCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
   endCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
+  beginFederatedConnectorTurn: authFirstRequireHostWithAccountTarget,
+  endFederatedConnectorTurn: authFirstRequireHostWithAccountTarget,
+  listFederatedConnectorAssignments: authFirstRequireAccount,
+  saveFederatedConnectorAssignment: authFirstRequireAccountWithBoundSession,
+  removeFederatedConnectorAssignment: authFirstRequireAccountWithBoundSession,
+  approveFederatedSharedProject: authFirstRequireAccountWithBoundSession,
+  revokeFederatedSharedProject: authFirstRequireAccountWithBoundSession,
+  setFederatedConnectorGate: authFirstRequireAccountWithBoundSession,
+  setFederatedBrokerSigner: authFirstRequireAccountWithBoundSession,
+  setFederatedIssuerKeyPins: authFirstRequireAccountWithBoundSession,
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
@@ -415,6 +429,63 @@ export interface AgentApi {
   endCocalcConnectorTurn(
     opts: Omit<CocalcConnectorTurnRequest, "turn_ref"> & { turn_id: string },
   ): Promise<void>;
+  /**
+   * The turn's federated (gcloud) credential, or its lease's revocation
+   * (project host only; contract v7). Exactly the turn request: any other
+   * key is refused.
+   */
+  beginFederatedConnectorTurn(
+    opts: CocalcConnectorTurnRequest,
+  ): Promise<FederatedConnectorTurnAnswer>;
+  /** Ends the turn's federated lease (project host only). */
+  endFederatedConnectorTurn(
+    opts: CocalcConnectorTurnRequest,
+  ): Promise<Record<string, never>>;
+  listFederatedConnectorAssignments(opts?: {
+    account_id?: string;
+  }): Promise<FederatedConnectorAssignment[]>;
+  /** Gives an agent a grant, changes or pauses it (fresh auth). */
+  saveFederatedConnectorAssignment(
+    opts: AgentHumanAuth & {
+      agent_id: string;
+      source_project_id: string;
+      grant_id: string;
+      enabled: boolean;
+      expected_revision?: number;
+    },
+  ): Promise<FederatedConnectorAssignment>;
+  removeFederatedConnectorAssignment(
+    opts: AgentHumanAuth & {
+      agent_id: string;
+      source_project_id: string;
+      expected_revision: number;
+    },
+  ): Promise<void>;
+  /** A project owner allows an account's credentials in a shared project. */
+  approveFederatedSharedProject(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      approved_account_id: string;
+    },
+  ): Promise<{ approval_id: string }>;
+  revokeFederatedSharedProject(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      approved_account_id: string;
+    },
+  ): Promise<void>;
+  /** The site's federated connector gate (admin, fresh auth). */
+  setFederatedConnectorGate(
+    opts: AgentHumanAuth & { connectors: string[] },
+  ): Promise<{ connectors: string[] }>;
+  /** The broker's signer record, "<sa email> <unique id>" (admin, fresh auth). */
+  setFederatedBrokerSigner(
+    opts: AgentHumanAuth & { signer: string },
+  ): Promise<{ value: string }>;
+  /** The issuer keys the JWKS may serve, by SPKI sha256 (admin, fresh auth). */
+  setFederatedIssuerKeyPins(
+    opts: AgentHumanAuth & { pins: string[] },
+  ): Promise<{ value: string }>;
   getCocalcConnectorConfig(opts: {
     account_id?: string;
     agent_id: string;

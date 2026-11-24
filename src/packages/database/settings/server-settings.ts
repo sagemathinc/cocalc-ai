@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { FEDERATED_PROTECTED_SETTINGS } from "@cocalc/util/ai/federated-connectors";
 import LRU from "lru-cache";
 
 import getLogger from "@cocalc/backend/logger";
@@ -119,6 +120,18 @@ export async function load_server_settings_from_env(
   // if none of the envvars starts with the prefix, then we don't do anything
   if (!Object.keys(process.env).some((k) => k.startsWith(PREFIX))) {
     return;
+  }
+
+  // The federated connector gate changes only on the seed, with admin fresh
+  // authentication and an audit row (server/federated-connectors/site-gate.ts),
+  // never from the environment. Refused before anything is written.
+  for (const name of FEDERATED_PROTECTED_SETTINGS) {
+    const envVar = `${PREFIX}_${name.toUpperCase()}`;
+    if (process.env[envVar] != null) {
+      throw new Error(
+        `$${envVar} is not allowed: the federated connector gate changes only through its audited admin path`,
+      );
+    }
   }
 
   L.debug("load_server_settings_from_env variables prefixed by ", PREFIX);

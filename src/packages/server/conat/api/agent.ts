@@ -30,6 +30,23 @@ export const disconnectCliConnection = cliConnectors.disconnectCliConnection;
 export const listCliConnectorGrants = cliConnectors.listCliConnectorGrants;
 export const saveCliConnectorGrant = cliConnectors.saveCliConnectorGrant;
 export const beginCliConnectorTurn = cliConnectors.beginCliConnectorTurn;
+import * as federated from "@cocalc/server/federated-connectors/routing";
+export const beginFederatedConnectorTurn =
+  federated.beginFederatedConnectorTurn;
+export const endFederatedConnectorTurn = federated.endFederatedConnectorTurn;
+export const listFederatedConnectorAssignments =
+  federated.listFederatedConnectorAssignments;
+export const saveFederatedConnectorAssignment =
+  federated.saveFederatedConnectorAssignment;
+export const removeFederatedConnectorAssignment =
+  federated.removeFederatedConnectorAssignment;
+export const approveFederatedSharedProject =
+  federated.approveFederatedSharedProject;
+export const revokeFederatedSharedProject =
+  federated.revokeFederatedSharedProject;
+export const setFederatedConnectorGate = federated.setFederatedConnectorGate;
+export const setFederatedBrokerSigner = federated.setFederatedBrokerSigner;
+export const setFederatedIssuerKeyPins = federated.setFederatedIssuerKeyPins;
 import {
   createAgentNetwork as createAgentNetworkImpl,
   resolveAgentNetworkProposal as resolveAgentNetworkProposalImpl,

@@ -341,6 +341,22 @@ describe("project rehome", () => {
       }
       return await defaultQueryMock(sql, params);
     });
+    // The source flip and the end of its shared-project approvals run in one
+    // transaction on a pool client.
+    const defaultClientQueryMock = clientQueryMock;
+    clientQueryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("UPDATE projects")) {
+        order.push("flip-source");
+        return { rows: [] };
+      }
+      if (sql.includes("federated_connector_shared_project_approvals")) {
+        expect(sql).toContain("revoke_reason = 'rehome'");
+        expect(params).toEqual([PROJECT_ID]);
+        order.push("revoke-approvals");
+        return { rows: [], rowCount: 1 };
+      }
+      return await defaultClientQueryMock(sql, params);
+    });
     const { rehomeProject } = await import("./rehome");
 
     const result = await rehomeProject({
@@ -361,6 +377,7 @@ describe("project rehome", () => {
     expect(order).toEqual([
       "accept-destination",
       "flip-source",
+      "revoke-approvals",
       "accept-destination",
       "accept-destination",
     ]);
@@ -563,6 +580,22 @@ describe("project rehome", () => {
       }
       return await defaultQueryMock(sql, params);
     });
+    // The source flip and the end of its shared-project approvals run in one
+    // transaction on a pool client.
+    const defaultClientQueryMock = clientQueryMock;
+    clientQueryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("UPDATE projects")) {
+        order.push("flip-source");
+        return { rows: [] };
+      }
+      if (sql.includes("federated_connector_shared_project_approvals")) {
+        expect(sql).toContain("revoke_reason = 'rehome'");
+        expect(params).toEqual([PROJECT_ID]);
+        order.push("revoke-approvals");
+        return { rows: [], rowCount: 1 };
+      }
+      return await defaultClientQueryMock(sql, params);
+    });
     const { reconcileProjectRehome } = await import("./rehome");
 
     await expect(
@@ -595,7 +628,7 @@ describe("project rehome", () => {
         project_log: [PROJECT_LOG_ROW],
       },
     });
-    expect(order).toEqual(["flip-source"]);
+    expect(order).toEqual(["flip-source", "revoke-approvals"]);
   });
 
   it("summarizes failed project rehome operations for operator retry", async () => {

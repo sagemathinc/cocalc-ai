@@ -2,6 +2,20 @@
 // src/packages/project-host/conat-auth.ts.
 // Both adapters intentionally share subject-policy logic from
 // src/packages/conat/auth/subject-policy.ts.
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  authenticateFederatedBroker,
+  isFederatedBrokerAllowed,
+  looksLikeGoogleIdToken,
+  brokerTransportLostSubject,
+  isBayOnlyBrokerSubscription,
+  isExactBrokerStamp,
+  isExactLossStamp,
+  isReservedForFederatedBroker,
+  signerRecordFromSetting,
+} from "@cocalc/server/federated-connectors/broker-auth";
+import { FEDERATED_BROKER_SIGNER_SETTING } from "@cocalc/util/ai/federated-connectors";
+import { isFederatedBrokerLossPrincipal } from "@cocalc/conat/core/server";
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import { trackConnectedSession } from "@cocalc/server/auth/session-expiry";
 import { parse } from "cookie";
@@ -313,6 +327,16 @@ export async function getUser(
 ): Promise<CoCalcUser> {
   const bearerToken = getBearerToken(socket);
   if (bearerToken) {
+    // The federated token broker: a Google ID token for the recorded signer
+    // (G3b). Recognized by its issuer; a failure never falls through.
+    if (looksLikeGoogleIdToken(bearerToken)) {
+      const settings = (await getServerSettings()) as Record<string, unknown>;
+      return (await authenticateFederatedBroker({
+        token: bearerToken,
+        clusterId: getConfiguredClusterId(),
+        signerSetting: settings[FEDERATED_BROKER_SIGNER_SETTING],
+      })) as CoCalcUser;
+    }
     if (bearerToken.startsWith(EXTERNAL_AGENT_TOKEN_PREFIX)) {
       assertExternalAgentLoginEnabled();
       const installation = await externalStore().authenticate(bearerToken);
@@ -615,6 +639,100 @@ export async function isAllowed({
   if (user == null || user?.error) {
     // non-authenticated user -- allow NOTHING
     return false;
+  }
+  // The server-derived transport-loss event of a broker connection: its one
+  // subject, publish only (v3.4.2 §2).
+  if (isFederatedBrokerLossPrincipal(user)) {
+    return (
+      type === "pub" &&
+      subject === brokerTransportLostSubject(getConfiguredClusterId())
+    );
+  }
+  // The federated token broker: exactly its own subjects, and only while the
+  // signer record still names it (G3b, v3.1).
+  if ((user as any).federated_broker_signer_id !== undefined) {
+    const settings = (await getServerSettings()) as Record<string, unknown>;
+    return isFederatedBrokerAllowed({
+      signerId: (user as any).federated_broker_signer_id,
+      currentSignerId: signerRecordFromSetting(
+        settings[FEDERATED_BROKER_SIGNER_SETTING],
+      )?.uniqueId,
+      clusterId: getConfiguredClusterId(),
+      subject,
+      type,
+    });
+  }
+  // A broker publication forwarded by a cluster link: the same exact access,
+  // for the stamp the first server set (only the stamp, nothing mixed in).
+  if (
+    (user as any).hub_id === "cluster-link" &&
+    type === "pub" &&
+    (forwardedCaller as any)?.federated_broker_transport_lost !== undefined
+  ) {
+    return (
+      isExactLossStamp(forwardedCaller) &&
+      subject === brokerTransportLostSubject(getConfiguredClusterId())
+    );
+  }
+  if (
+    (user as any).hub_id === "cluster-link" &&
+    type === "pub" &&
+    (forwardedCaller as any)?.federated_broker_signer_id !== undefined
+  ) {
+    if (!isExactBrokerStamp(forwardedCaller)) return false;
+    const settings = (await getServerSettings()) as Record<string, unknown>;
+    return isFederatedBrokerAllowed({
+      signerId: (forwardedCaller as any).federated_broker_signer_id,
+      currentSignerId: signerRecordFromSetting(
+        settings[FEDERATED_BROKER_SIGNER_SETTING],
+      )?.uniqueId,
+      clusterId: getConfiguredClusterId(),
+      subject,
+      type,
+    });
+  }
+  if (
+    isReservedForFederatedBroker({
+      clusterId: getConfiguredClusterId(),
+      subject,
+      type,
+    })
+  ) {
+    return false;
+  }
+  // The broker's heartbeats and loss events carry its transport ids: only
+  // bay principals may subscribe (v3.4.2 §2a): an active bay credential of
+  // this cluster or, in a standalone site, the local hub principal.
+  if (
+    isBayOnlyBrokerSubscription({
+      clusterId: getConfiguredClusterId(),
+      subject,
+      type,
+    })
+  ) {
+    if (getCoCalcUserType(user) !== "hub" || user.hub_id === "cluster-link") {
+      return false;
+    }
+    const bayCredential =
+      "bay_credential_id" in user && !!(user as any).bay_credential_id;
+    if (!bayCredential) {
+      // Standalone: only the local fabric hub principal (the hub-password
+      // user, exactly {hub_id: "hub"}), not any other hub-type user.
+      return (
+        getConfiguredClusterRole() === "standalone" &&
+        Object.keys(user).length === 1 &&
+        (user as any).hub_id === "hub"
+      );
+    }
+    try {
+      return (
+        (user as any).cluster_id === getConfiguredClusterId() &&
+        (await isBayCredentialUserActive(user as any))
+      );
+    } catch (err) {
+      logger.error("failed closed while checking bay credential", err);
+      return false;
+    }
   }
   // Computers connect to their project's host, never to a bay.
   if ((user as any).auth_actor === "computer") return false;

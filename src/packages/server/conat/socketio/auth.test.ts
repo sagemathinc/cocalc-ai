@@ -31,6 +31,15 @@ jest.mock("@cocalc/server/agents/store", () => ({
   }),
 }));
 
+// The synthetic loss principal is created only inside conat/core; here a
+// test stands in for it.
+const lossPrincipals = new WeakSet<object>();
+jest.mock("@cocalc/conat/core/server", () => ({
+  ...jest.requireActual("@cocalc/conat/core/server"),
+  isFederatedBrokerLossPrincipal: (u: unknown) =>
+    u != null && typeof u === "object" && lossPrincipals.has(u as object),
+}));
+
 const verifyProjectHostTokenMock = jest.fn();
 const verifyProjectHostAuthTokenMock = jest.fn();
 const ensureAccountSecurityStateReadyMock = jest.fn();
@@ -59,6 +68,12 @@ jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
   __esModule: true,
   verifyProjectHostToken: (...args: any[]) =>
     verifyProjectHostTokenMock(...args),
+}));
+
+let serverSettingsMock: Record<string, unknown> = {};
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  __esModule: true,
+  getServerSettings: async () => serverSettingsMock,
 }));
 
 jest.mock("@cocalc/server/inter-bay/bay-credentials", () => ({
@@ -404,9 +419,10 @@ describe("test isAllowed for hub", () => {
   it("hub user can do anything we try", async () => {
     for (const subject of ["*", "public", "global", ">", "hub", "test"]) {
       for (const type of PUBSUB) {
+        // ">" can match the federated token broker's reserved subjects (G3b).
         expect(
           await isAllowed({ user: { hub_id: "hub" }, type, subject }),
-        ).toBe(true);
+        ).toBe(subject !== ">");
       }
     }
   });
@@ -1952,5 +1968,296 @@ describe("connected browser sessions count as used", () => {
     });
     expect(connectedSessionCount("hash-c")).toBe(0);
     expect(socket.listenerCount("disconnect")).toBe(0);
+  });
+});
+
+describe("federated connector inter-bay subjects", () => {
+  // The project snapshot, the broker's recheck and gate replication are
+  // reachable only by bay principals with an active credential.
+  const subjects = [
+    "bay.bay-1.rpc.federated-connector.v1",
+    "bay.bay-1.rpc.federated-gate-replica.v1",
+  ];
+
+  it("allows a bay principal with an active credential (positive control)", async () => {
+    const user = {
+      hub_id: "bay:bay-1",
+      cluster_id: "test-cluster",
+      bay_id: "bay-1",
+      bay_credential_id: "credential-1",
+    };
+    for (const subject of subjects) {
+      for (const type of PUBSUB) {
+        expect(await isAllowed({ user, subject, type })).toBe(true);
+      }
+    }
+  });
+
+  it("refuses accounts, projects, hosts and hubs without a bay credential", async () => {
+    const previous = process.env.COCALC_CLUSTER_ROLE;
+    process.env.COCALC_CLUSTER_ROLE = "seed";
+    try {
+      for (const subject of subjects) {
+        for (const type of PUBSUB) {
+          for (const user of [
+            { account_id },
+            { project_id },
+            { host_id },
+            { hub_id: "hub" },
+          ]) {
+            expect(await isAllowed({ user, subject, type })).toBe(false);
+          }
+        }
+      }
+    } finally {
+      if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;
+      else process.env.COCALC_CLUSTER_ROLE = previous;
+    }
+  });
+});
+
+describe("federated token broker principal", () => {
+  const ID = "109876543210987654321";
+  const SIGNER = `fake-broker@example-project-1.iam.gserviceaccount.com ${ID}`;
+  const broker = { hub_id: "federated-broker", federated_broker_signer_id: ID };
+
+  beforeEach(() => {
+    serverSettingsMock = { federated_broker_signer: SIGNER };
+    process.env.COCALC_CLUSTER_ID = "cluster-1";
+  });
+
+  it("is allowed exactly its subjects", async () => {
+    for (const [type, subject] of [
+      ["pub", "_INBOX.abc"],
+      ["pub", "bay.bay-a.rpc.federated-broker.v1"],
+      ["pub", "broker.cluster-1.heartbeat.v1"],
+      ["sub", "broker.cluster-1.rpc.mint.v1"],
+      ["sub", `_INBOX.broker-${ID}.xyz`],
+    ] as const) {
+      expect(await isAllowed({ user: broker as any, subject, type })).toBe(
+        true,
+      );
+    }
+    for (const [type, subject] of [
+      ["pub", "bay.bay-a.rpc.federated-connector.v1"],
+      ["pub", "bay.bay-a.rpc.project-control.start"],
+      ["pub", "hub.account.x.api"],
+      ["pub", "global.directory.rpc.resolve-project-bay"],
+      ["sub", "_INBOX.>"],
+      ["sub", "_INBOX.someone-else.x"],
+      ["sub", "hub.>"],
+      ["sub", "bay.>"],
+    ] as const) {
+      expect(await isAllowed({ user: broker as any, subject, type })).toBe(
+        false,
+      );
+    }
+  });
+
+  it("is the only principal on its reserved subjects", async () => {
+    const hub = { hub_id: "hub" };
+    for (const [type, subject] of [
+      ["pub", "bay.bay-a.rpc.federated-broker.v1"],
+      ["pub", "bay.*.rpc.federated-broker.v1"],
+      ["pub", "broker.cluster-1.heartbeat.v1"],
+      ["sub", "broker.cluster-1.rpc.mint.v1"],
+      ["sub", "broker.*.rpc.mint.v1"],
+      ["sub", "broker.cluster-1.>"],
+      ["sub", "broker.>"],
+      ["sub", ">"],
+    ] as const) {
+      expect(await isAllowed({ user: hub as any, subject, type })).toBe(false);
+    }
+    // Positive controls: bays send mint requests and hear heartbeats.
+    for (const [type, subject] of [
+      ["pub", "broker.cluster-1.rpc.mint.v1"],
+      ["sub", "broker.cluster-1.heartbeat.v1"],
+    ] as const) {
+      expect(await isAllowed({ user: hub as any, subject, type })).toBe(true);
+    }
+  });
+
+  it("keeps its exact access through a cluster link, and only for its stamp", async () => {
+    const link = { hub_id: "cluster-link" };
+    const stamp = {
+      federated_broker_signer_id: ID,
+      federated_broker_connection_id: "AAAAAAAAAAAAAAAAAAAAAA",
+    };
+    const ok = (subject: string, forwardedCaller: any) =>
+      isAllowed({ user: link as any, subject, type: "pub", forwardedCaller });
+    expect(await ok("bay.bay-a.rpc.federated-broker.v1", stamp)).toBe(true);
+    expect(await ok("broker.cluster-1.heartbeat.v1", stamp)).toBe(true);
+    expect(await ok("bay.bay-a.rpc.federated-connector.v1", stamp)).toBe(false);
+    for (const forwarded of [
+      { ...stamp, bay_id: "bay-a" },
+      { ...stamp, socket_return: "x" },
+      { ...stamp, federated_broker_signer_id: "109876543210987654322" },
+      { federated_broker_signer_id: ID }, // the old one-key stamp
+      { ...stamp, federated_broker_connection_id: "short" },
+      { ...stamp, federated_broker_transport_lost: "AAAAAAAAAAAAAAAAAAAAAA" },
+      {
+        cluster_id: "cluster-1",
+        bay_id: "bay-a",
+        bay_credential_id: "credential-1",
+      },
+      undefined,
+    ]) {
+      expect(await ok("bay.bay-a.rpc.federated-broker.v1", forwarded)).toBe(
+        false,
+      );
+      expect(await ok("broker.cluster-1.heartbeat.v1", forwarded)).toBe(false);
+    }
+  });
+
+  it("the transport-loss event: only the server's synthetic principal, only its subject, publish only", async () => {
+    const LOSS = "broker.cluster-1.transport-lost.v1";
+    const principal = {};
+    lossPrincipals.add(principal);
+    expect(
+      await isAllowed({ user: principal as any, subject: LOSS, type: "pub" }),
+    ).toBe(true);
+    for (const [type, subject] of [
+      ["sub", LOSS],
+      ["pub", "broker.cluster-1.heartbeat.v1"],
+      ["pub", "broker.cluster-2.transport-lost.v1"],
+      ["pub", "hub.x"],
+    ] as const) {
+      expect(await isAllowed({ user: principal as any, subject, type })).toBe(
+        false,
+      );
+    }
+    // Everyone else is refused publishing there: hubs, bays, accounts and
+    // the broker itself; an empty object isn't the principal.
+    for (const user of [
+      {},
+      { hub_id: "hub" },
+      {
+        hub_id: "bay:bay-a",
+        cluster_id: "cluster-1",
+        bay_id: "bay-a",
+        bay_credential_id: "credential-1",
+      },
+      { account_id: "00000000-0000-4000-8000-000000000001" },
+      broker,
+    ]) {
+      expect(
+        await isAllowed({ user: user as any, subject: LOSS, type: "pub" }),
+      ).toBe(false);
+    }
+    // Forwarded through a cluster link: only the exact loss stamp.
+    const link = { hub_id: "cluster-link" };
+    const fwd = (forwardedCaller: any, subject = LOSS) =>
+      isAllowed({ user: link as any, subject, type: "pub", forwardedCaller });
+    const lost = { federated_broker_transport_lost: "AAAAAAAAAAAAAAAAAAAAAA" };
+    expect(await fwd(lost)).toBe(true);
+    expect(await fwd(lost, "broker.cluster-1.heartbeat.v1")).toBe(false);
+    for (const bad of [
+      { ...lost, bay_id: "b" },
+      { federated_broker_transport_lost: "x" },
+      {
+        cluster_id: "cluster-1",
+        bay_id: "bay-a",
+        bay_credential_id: "credential-1",
+      },
+      undefined,
+    ]) {
+      expect(await fwd(bad)).toBe(false);
+    }
+  });
+
+  it("only bay principals may subscribe to the heartbeats and loss events", async () => {
+    const previous = process.env.COCALC_CLUSTER_ROLE;
+    const bay = {
+      hub_id: "bay:bay-a",
+      cluster_id: "cluster-1",
+      bay_id: "bay-a",
+      bay_credential_id: "credential-1",
+    };
+    try {
+      for (const subject of [
+        "broker.cluster-1.heartbeat.v1",
+        "broker.cluster-1.transport-lost.v1",
+        "broker.*.transport-lost.v1",
+      ]) {
+        process.env.COCALC_CLUSTER_ROLE = "seed";
+        isBayCredentialUserActiveMock.mockResolvedValue(true);
+        expect(
+          await isAllowed({ user: bay as any, subject, type: "sub" }),
+        ).toBe(true);
+        isBayCredentialUserActiveMock.mockResolvedValue(false);
+        expect(
+          await isAllowed({ user: bay as any, subject, type: "sub" }),
+        ).toBe(false);
+        isBayCredentialUserActiveMock.mockResolvedValue(true);
+        expect(
+          await isAllowed({
+            user: { ...bay, cluster_id: "cluster-2" } as any,
+            subject,
+            type: "sub",
+          }),
+        ).toBe(false);
+        // An ordinary hub without a bay credential, in a multi-bay cluster.
+        expect(
+          await isAllowed({
+            user: { hub_id: "hub" } as any,
+            subject,
+            type: "sub",
+          }),
+        ).toBe(false);
+        for (const user of [
+          { account_id: "00000000-0000-4000-8000-000000000001" },
+          { project_id: "00000000-0000-4000-8000-000000000002" },
+          { hub_id: "cluster-link" },
+          broker,
+        ]) {
+          expect(
+            await isAllowed({ user: user as any, subject, type: "sub" }),
+          ).toBe(false);
+        }
+        // A standalone site: only its local fabric hub principal, exactly.
+        process.env.COCALC_CLUSTER_ROLE = "standalone";
+        expect(
+          await isAllowed({
+            user: { hub_id: "hub" } as any,
+            subject,
+            type: "sub",
+          }),
+        ).toBe(true);
+        for (const user of [
+          { hub_id: "service" },
+          { hub_id: "hub", extra: 1 },
+          { hub_id: "receiver" },
+        ]) {
+          expect(
+            await isAllowed({ user: user as any, subject, type: "sub" }),
+          ).toBe(false);
+        }
+      }
+    } finally {
+      if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;
+      else process.env.COCALC_CLUSTER_ROLE = previous;
+      isBayCredentialUserActiveMock.mockReset();
+    }
+  });
+
+  it("gets nothing once the signer record names someone else, or no one", async () => {
+    serverSettingsMock = {
+      federated_broker_signer: SIGNER.replace(ID, "109876543210987654322"),
+    };
+    expect(
+      await isAllowed({
+        user: broker as any,
+        subject: "_INBOX.abc",
+        type: "pub",
+      }),
+    ).toBe(false);
+    serverSettingsMock = {};
+    expect(
+      await isAllowed({
+        user: broker as any,
+        subject: "broker.cluster-1.rpc.mint.v1",
+        type: "sub",
+      }),
+    ).toBe(false);
   });
 });

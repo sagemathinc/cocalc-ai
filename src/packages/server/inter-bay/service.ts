@@ -31,6 +31,19 @@ import { createInterBayPersonalUrlAliasesHandler } from "@cocalc/conat/inter-bay
 import { personalUrlAliasHomeControl } from "@cocalc/server/personal-url-aliases";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
+import { createInterBayFederatedGateHandler } from "@cocalc/conat/inter-bay/federated-gate";
+import { createInterBayFederatedConnectorHandler } from "@cocalc/conat/inter-bay/federated-connector";
+import { createInterBayFederatedBrokerHandler } from "@cocalc/conat/inter-bay/federated-broker";
+import {
+  currentFederatedBrokerSignerId,
+  federatedBrokerLookupsAtThisBay,
+  federatedBrokerRegistration,
+  federatedConnectorAtThisBay,
+  setFederatedBrokerMintClient,
+} from "@cocalc/server/federated-connectors/routing";
+import { startFederatedBrokerTransport } from "@cocalc/server/federated-connectors/broker-transport";
+import { applyFederatedGateReplica } from "@cocalc/server/federated-connectors/site-gate";
+import { applyServerSettingFromBay } from "@cocalc/server/inter-bay/server-setting-replica";
 import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
 import { createInterBayComputersHandler } from "@cocalc/conat/inter-bay/computers";
 import { computersAtThisBay } from "@cocalc/server/computers/routing";
@@ -109,7 +122,6 @@ import type { SiteLicenseAffiliationReverificationSeat } from "@cocalc/conat/hub
 import getLogger from "@cocalc/backend/logger";
 import { db } from "@cocalc/database";
 import getPool from "@cocalc/database/pool";
-import { callback2 } from "@cocalc/util/async-utils";
 import { getRequiresTokensDirect } from "@cocalc/server/auth/tokens/get-requires-token";
 import {
   deleteRegistrationTokenDirect,
@@ -175,6 +187,7 @@ import {
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
+  getConfiguredClusterId,
   getConfiguredClusterRole,
   getConfiguredClusterSeedBayId,
 } from "@cocalc/server/cluster-config";
@@ -619,7 +632,33 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectDetailsService();
+    // The broker's heartbeats and the mint client (G3b). A failure here
+    // leaves the federated gate closed; nothing else depends on it.
+    await startFederatedBrokerTransport({
+      client: getInterBayFabricServiceClient(),
+      clusterId: getConfiguredClusterId(),
+      currentSignerId: currentFederatedBrokerSignerId,
+      registration: federatedBrokerRegistration,
+      setMintClient: setFederatedBrokerMintClient,
+    }).catch((err) =>
+      logger.warn("federated broker transport unavailable", `${err}`),
+    );
     services.push(
+      createInterBayFederatedGateHandler(
+        getConfiguredBayId(),
+        applyFederatedGateReplica,
+        { client: getInterBayFabricServiceClient() },
+      ),
+      createInterBayFederatedConnectorHandler(
+        getConfiguredBayId(),
+        federatedConnectorAtThisBay,
+        { client: getInterBayFabricServiceClient(), parallel: true },
+      ),
+      createInterBayFederatedBrokerHandler(
+        getConfiguredBayId(),
+        federatedBrokerLookupsAtThisBay,
+        { client: getInterBayFabricServiceClient(), parallel: true },
+      ),
       createInterBayAgentConnectorHandler(
         getConfiguredBayId(),
         agentConnectorControl,
@@ -849,15 +888,8 @@ async function startBayOpsService(): Promise<void> {
     getWebappCrashes: async (opts) => await readWebappCrashesLocal(opts),
     setWebappCrashResolution: async (opts) =>
       await setWebappCrashResolutionLocal(opts),
-    setServerSetting: async (opts) => {
-      if (
-        bay_id !== getConfiguredClusterSeedBayId() &&
-        isSeedOnlySiteSetting(opts.name)
-      ) {
-        throw Error(`setting '${opts.name}' is seed-only`);
-      }
-      await callback2(db().set_server_setting, opts);
-    },
+    setServerSetting: async (opts) =>
+      await applyServerSettingFromBay(bay_id, opts, isSeedOnlySiteSetting),
     checkCloudflareBlobEnvironment: async () => {
       const { checkCloudflareBlobEnvironment } =
         await import("@cocalc/server/cloud/cloudflare-blob-preflight");

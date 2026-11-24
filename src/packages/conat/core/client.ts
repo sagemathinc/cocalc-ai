@@ -3461,6 +3461,16 @@ export interface AuthenticatedCaller {
   // Only on the host-status subject from a host connection: that host's own
   // id, so the status service never trusts a host_id in the request (068).
   host_id?: string;
+  // Only for the federated token broker's connection: its signer's unique id
+  // (a decimal string), as verified at authentication. Never set together
+  // with any other identity.
+  federated_broker_signer_id?: string;
+  // With it, the broker connection's id, minted by the server per accepted
+  // socket and never part of the user object (G3b design v3.4.2 §1).
+  federated_broker_connection_id?: string;
+  // Only on the server-derived transport-loss event of a broker connection
+  // (§2): that connection's id. No client can produce this stamp.
+  federated_broker_transport_lost?: string;
 }
 
 export class MessageData<T = any> {

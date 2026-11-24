@@ -1,4 +1,6 @@
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
+import { isFederatedProtectedSetting } from "@cocalc/util/ai/federated-connectors";
+import { createInterBayFederatedGateClient } from "@cocalc/conat/inter-bay/federated-gate";
 import {
   aiSubscriptionStatus,
   type AiSubscriptionStatus,
@@ -1062,8 +1064,19 @@ async function assertSiteSettingWritable(name: string): Promise<void> {
   }
 }
 
+// The federated connector gate changes only through
+// server/federated-connectors/site-gate.ts, atomically with its audit row.
+function assertNotFederatedGate(name: string): void {
+  if (isFederatedProtectedSetting(name)) {
+    throw Error(
+      `setting '${name}' is changed only through the federated connector gate`,
+    );
+  }
+}
+
 async function setSiteSettingLocal(update: SiteSettingUpdate): Promise<void> {
   const normalized = normalizeSiteSettingUpdate(update);
+  assertNotFederatedGate(normalized.name);
   await assertSiteSettingWritable(normalized.name);
   await callback2(db().set_server_setting, normalized);
   if (isRootfsPrepullSiteSetting(normalized.name)) {
@@ -1180,7 +1193,7 @@ async function getGlobalConfigVersion(
   return version > 0 ? version : undefined;
 }
 
-async function recordGlobalConfigEventOnSeed({
+export async function recordGlobalConfigEventOnSeed({
   scope,
   account_id,
   source_bay_id,
@@ -1261,7 +1274,7 @@ async function recordGlobalConfigBayState({
   );
 }
 
-async function propagateSiteSettingsToBays(
+export async function propagateSiteSettingsToBays(
   settings: SiteSettingUpdate[],
   opts: { scope?: string; version?: number } = {},
 ): Promise<SiteSettingsSyncResult> {
@@ -1274,8 +1287,15 @@ async function propagateSiteSettingsToBays(
   ]
     .filter((bay_id) => bay_id !== local_bay_id)
     .sort();
+  // The federated connector gate has its own seed-authenticated replication.
+  // The protected federated settings have their own seed-authenticated
+  // replication.
+  const protectedSettings = settings.filter(({ name }) =>
+    isFederatedProtectedSetting(name),
+  );
   const remoteSettings = settings.filter(
-    ({ name }) => !isSeedOnlySiteSetting(name),
+    ({ name }) =>
+      !isSeedOnlySiteSetting(name) && !isFederatedProtectedSetting(name),
   );
   const bays: SiteSettingsSyncResult["bays"] = [
     { bay_id: local_bay_id, status: "local", count: settings.length, version },
@@ -1296,6 +1316,15 @@ async function propagateSiteSettingsToBays(
       const api = getInterBayBridge().bayOps(bay_id, { timeout_ms: 15_000 });
       for (const setting of remoteSettings) {
         await api.setServerSetting(setting);
+      }
+      if (protectedSettings.length > 0) {
+        const replica = createInterBayFederatedGateClient(
+          getInterBayFabricClient(),
+          bay_id,
+        );
+        for (const { name, value } of protectedSettings) {
+          await replica.apply({ name, value });
+        }
       }
       return bay_id;
     }),
@@ -1345,6 +1374,8 @@ export async function setSiteSettingsOnSeed({
     );
   }
   const updates = settings.map(normalizeSiteSettingUpdate);
+  // Before anything is applied.
+  updates.forEach(({ name }) => assertNotFederatedGate(name));
   await assertSessionLimitSettings(updates);
   const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
     isSignupEmailDomainPolicySetting(name),
@@ -7114,7 +7145,10 @@ function parseMap(raw?: string): Record<string, string> {
 }
 
 function resolveSharedHomeMode():
-  "disabled" | "fallback" | "prefer" | "always" {
+  | "disabled"
+  | "fallback"
+  | "prefer"
+  | "always" {
   const defaultMode =
     `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
       ? "disabled"
@@ -7133,7 +7167,8 @@ const OPENAI_API_KEY_KIND = "openai-api-key";
 
 function toExternalCredentialInfo(
   credential:
-    Awaited<ReturnType<typeof getExternalCredentialRouted>> | undefined,
+    | Awaited<ReturnType<typeof getExternalCredentialRouted>>
+    | undefined,
 ) {
   if (!credential) return undefined;
   return {
