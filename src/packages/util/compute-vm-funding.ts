@@ -179,6 +179,9 @@ export interface SettleComputeVmFundingRequest {
   successor_reservation_id?: string;
   successor_binding?: ComputeVmFundingBinding;
   transferred_at?: string;
+  // Release an expired, never-dispatched sponsored reservation in full
+  // (a replaced restart authorization). Carries no usage fields.
+  release_undispatched?: boolean;
 }
 
 export interface ComputeVmFundingSettlement {
@@ -188,6 +191,9 @@ export interface ComputeVmFundingSettlement {
   // Missing on older payer bays means unknown to the status projection.
   committed_usd?: string;
   overrun: boolean;
+  // Set only by a payer that released (or had released) an undispatched
+  // reservation; absent from older payer bays.
+  released_undispatched?: boolean;
 }
 
 export interface ComputeVmFundingStatus {

@@ -5,7 +5,9 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
+import type { PoolClient } from "@cocalc/database/pool";
 import type {
+  ComputeVmFundingBinding,
   SettleComputeVmFundingRequest,
   ComputeVmFundingSettlement,
 } from "@cocalc/util/compute-vm-funding";
@@ -24,6 +26,7 @@ import {
   fundingEvent,
   lockVmFundingReservation,
 } from "./vm-reservations";
+import type { VmFundingReservation } from "./vm-reservations";
 import { lockPersonalVmReservation } from "./vm-personal-reservations";
 
 /** Exact cumulative metering, rounded only against the cumulative posted total.
@@ -40,6 +43,84 @@ export function cumulativeVmCharge(
     exact: moneyToDbString(bounded),
     charged: moneyToDbString(moneyRoundToCents(bounded)),
   };
+}
+
+const RELEASE_REFUSED =
+  "Only an expired, undispatched sponsored reservation can be released.";
+
+/** A replaced restart authorization: the VM never ran under it, so nothing is
+ * charged and its whole authorization returns to the pool and grant. Runs in
+ * settlement's transaction, under the same reservation and source locks.
+ */
+async function releaseUndispatchedReservation(
+  client: PoolClient,
+  opts: SettleComputeVmFundingRequest,
+  source: {
+    pool?: { id: string };
+    grant?: { id: string };
+    reservation: VmFundingReservation;
+    binding: ComputeVmFundingBinding;
+  },
+  now: Date,
+): Promise<ComputeVmFundingSettlement> {
+  const { pool, grant, reservation: row, binding } = source;
+  const unreleased = toDecimal(row.authorized_usd)
+    .minus(row.spent_usd)
+    .minus(row.released_usd);
+  const released = {
+    charged_usd: moneyToDbString(0),
+    authorized_usd: row.authorized_usd,
+    committed_usd: moneyToDbString(0),
+    overrun: false,
+    released_undispatched: true,
+  };
+  if (row.state === "settled") {
+    if (!toDecimal(row.spent_usd).eq(0) || !unreleased.eq(0))
+      fundingConflict(RELEASE_REFUSED);
+    return released;
+  }
+  if (
+    binding.source.kind !== "course" ||
+    !pool ||
+    !grant ||
+    row.state !== "reserved" ||
+    row.dispatched_at ||
+    !toDecimal(row.spent_usd).eq(0) ||
+    now < new Date(binding.stop_at) ||
+    opts.running_started_at != null ||
+    opts.meter_as_of != null ||
+    opts.stopped_until != null ||
+    opts.deleted != null ||
+    opts.public_egress_bytes != null ||
+    opts.egress_complete_through != null ||
+    opts.egress_finalized != null ||
+    opts.successor_reservation_id != null ||
+    opts.successor_binding != null ||
+    opts.transferred_at != null
+  )
+    fundingConflict(RELEASE_REFUSED);
+  const amount = moneyToDbString(unreleased);
+  for (const [table, id] of [
+    ["compute_funding_pools", pool.id],
+    ["compute_funding_grants", grant.id],
+  ] as const) {
+    const { rowCount } = await client.query(
+      `UPDATE ${table} SET reserved_usd=reserved_usd-$2,version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND reserved_usd>=$2`,
+      [id, amount],
+    );
+    if (rowCount !== 1) fundingConflict(RELEASE_REFUSED);
+  }
+  const { rowCount } = await client.query(
+    `UPDATE compute_funding_reservations SET released_usd=released_usd+$2,protected_usd=0,state='settled',updated_at=clock_timestamp()
+    WHERE id=$1 AND state='reserved' AND dispatched_at IS NULL`,
+    [row.id, amount],
+  );
+  if (rowCount !== 1) fundingConflict(RELEASE_REFUSED);
+  await fundingEvent(client, row, "canceled-before-dispatch", {
+    released_usd: amount,
+    reason: "replaced-restart",
+  });
+  return released;
 }
 
 export async function settleComputeVmFundingLocal(
@@ -94,6 +175,8 @@ export async function settleComputeVmFundingLocal(
     const {
       rows: [{ now }],
     } = await client.query<{ now: Date }>("SELECT clock_timestamp() AS now");
+    if (opts.release_undispatched)
+      return await releaseUndispatchedReservation(client, opts, source, now);
     const runEnd = new Date(fundingDate(opts.running_until));
     const storageEnd =
       opts.stopped_until == null

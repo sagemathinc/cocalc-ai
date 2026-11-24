@@ -9,6 +9,7 @@ import type {
   ComputeVmFundingBinding,
   ReserveComputeVmFundingRequest,
 } from "@cocalc/util/compute-vm-funding";
+import { toDecimal } from "@cocalc/util/money";
 import type { ComputeVmRow } from "../types";
 import { insertComputeInstance } from "../db";
 import { fundingConflict } from "./vm-reservations";
@@ -81,7 +82,7 @@ export async function prepareCourseVmRestart(
     requested_until: until.toISOString(),
     previous_reservation_id: previous.reservation_id,
   };
-  const candidate = { operation_id: operation, request };
+  const candidate: PendingCourseRestart = { operation_id: operation, request };
   const {
     rows: [current],
   } = await getPool().query<ComputeVmRow>(
@@ -96,12 +97,53 @@ export async function prepareCourseVmRestart(
   );
   if (!current)
     fundingConflict("VM changed while preparing its sponsored restart.");
-  const pending = current.metadata.billing.course_funding.restart;
-  if (pending.operation_id !== operation)
-    fundingConflict("Another sponsored restart is pending.");
-  const binding = await (
-    await payerApi(previous.payer_account_id)
-  ).reserveComputeVmFunding(pending.request);
+  const api = await payerApi(previous.payer_account_id);
+  let pending: PendingCourseRestart =
+    current.metadata.billing.course_funding.restart;
+  if (pending.request.funding_epoch !== request.funding_epoch) {
+    // An earlier attempt is stored. Replace it only once it can no longer
+    // become live: its reservation expired, or none was committed and none
+    // can be anymore. A lookup failure propagates; it never counts as absent.
+    const existing = await api.lookupComputeVmFunding({
+      account_id: pending.request.account_id,
+      source: pending.request.source,
+      resource_kind: "compute-vm",
+      resource_id: pending.request.resource_id,
+      resource_generation: pending.request.resource_generation,
+      owner_account_id: pending.request.owner_account_id,
+      owning_bay_id: pending.request.owning_bay_id,
+      funding_epoch: pending.request.funding_epoch,
+    });
+    let expired = existing
+      ? new Date(existing.stop_at).valueOf() <= Date.now()
+      : undefined;
+    if (
+      expired === undefined &&
+      Date.now() >=
+        restartRequestedUntil(pending) + RESTART_RESERVE_IN_FLIGHT_MS
+    ) {
+      // Positive absence: re-reserve the old request. It serializes behind any
+      // reserve still holding the payer's source locks and returns that row,
+      // or, with nothing committed, reaches the quote's time refusal under
+      // the same locks. Any other outcome fails closed below.
+      const barrier = await reserveAfterDeadline(api, pending);
+      if (barrier) {
+        expired = new Date(barrier.stop_at).valueOf() <= Date.now();
+        if (expired) await releaseExpiredRestart(api, pending, barrier);
+      } else {
+        expired = true;
+      }
+    } else if (expired) {
+      await releaseExpiredRestart(api, pending, existing!);
+    }
+    if (expired) {
+      await replacePendingRestart(vm, previous.funding_epoch, pending, candidate);
+      pending = candidate;
+    } else if (pending.operation_id !== operation) {
+      fundingConflict("Another sponsored restart is pending.");
+    }
+  }
+  const binding = await api.reserveComputeVmFunding(pending.request);
   if (new Date(binding.stop_at).valueOf() <= Date.now())
     fundingConflict("The prepared restart authorization expired.");
   return {
@@ -109,6 +151,86 @@ export async function prepareCourseVmRestart(
     operation_id: operation,
     previous_epoch: previous.funding_epoch,
   };
+}
+
+interface PendingCourseRestart {
+  operation_id: string;
+  request: ReserveComputeVmFundingRequest;
+}
+
+// Until shortly after requested_until, an absent reservation is treated as a
+// reserve still in flight. Afterwards the barrier below decides; this bound
+// only avoids probing while a fresh reserve is likely running.
+const RESTART_RESERVE_IN_FLIGHT_MS = 5 * 60_000;
+
+function restartRequestedUntil(pending: PendingCourseRestart): number {
+  const until = Date.parse(pending.request?.requested_until ?? "");
+  return Number.isFinite(until) ? until : -Infinity;
+}
+
+// The quote's refusals for a request whose requested_until has passed. Both
+// are raised after the payer's source locks are taken (vm-reservations.ts).
+const DEADLINE_REFUSALS = new Set([
+  "Funding must cover fifteen useful minutes plus the shutdown margin.",
+  "The VM stop or deletion deadline has already passed.",
+]);
+
+async function reserveAfterDeadline(
+  api: Awaited<ReturnType<typeof payerApi>>,
+  pending: PendingCourseRestart,
+): Promise<ComputeVmFundingBinding | undefined> {
+  try {
+    return await api.reserveComputeVmFunding(pending.request);
+  } catch (err) {
+    if (DEADLINE_REFUSALS.has((err as Error)?.message)) return undefined;
+    throw err;
+  }
+}
+
+async function releaseExpiredRestart(
+  api: Awaited<ReturnType<typeof payerApi>>,
+  pending: PendingCourseRestart,
+  binding: ComputeVmFundingBinding,
+): Promise<void> {
+  const result = await api.settleComputeVmFunding({
+    account_id: pending.request.account_id,
+    binding,
+    running_until: binding.stop_at,
+    release_undispatched: true,
+  });
+  // Fail closed: a payer that does not confirm the release (e.g. an older
+  // version that ignores the flag) must not get a second reservation.
+  if (
+    result.released_undispatched !== true ||
+    result.committed_usd == null ||
+    !toDecimal(result.committed_usd).eq(0)
+  )
+    fundingConflict(
+      "The expired restart authorization could not be released yet; try again later.",
+    );
+}
+
+async function replacePendingRestart(
+  vm: ComputeVmRow,
+  previousEpoch: string,
+  old: PendingCourseRestart,
+  next: PendingCourseRestart,
+): Promise<void> {
+  const { rows } = await getPool().query(
+    `UPDATE compute_vms SET metadata=jsonb_set(metadata,'{billing,course_funding,restart}',$4::jsonb),updated_at=clock_timestamp()
+    WHERE id=$1 AND metadata#>>'{billing,course_funding,funding_epoch}'=$2 AND instance_generation=$3 AND state='stopped' AND desired_state='stopped' AND deleted_at IS NULL
+      AND metadata#>>'{billing,course_funding,restart,operation_id}'=$5 AND metadata#>>'{billing,course_funding,restart,request,funding_epoch}'=$6 RETURNING id`,
+    [
+      vm.id,
+      previousEpoch,
+      vm.instance_generation,
+      JSON.stringify(next),
+      old.operation_id,
+      old.request.funding_epoch,
+    ],
+  );
+  if (!rows.length)
+    fundingConflict("VM changed while preparing its sponsored restart.");
 }
 
 /** Runs inside the scheduled-start transaction after it locks the current VM. */
