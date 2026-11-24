@@ -9,8 +9,18 @@ import { listProjectsByStates } from "./sqlite/projects";
 import {
   getProjectStopState,
   listProjectStopPolicies,
+  upsertProjectStopState,
 } from "./sqlite/stop-policy";
 
+// These tests exercise a shared-pool host (the bay's known policy: enforce).
+jest.mock("./pressure-policy", () => ({
+  __esModule: true,
+  getEffectivePressurePolicy: () => ({
+    watchOnly: false,
+    tokens: [],
+    refreshFailures: 0,
+  }),
+}));
 jest.mock("./sqlite/projects", () => ({ listProjectsByStates: jest.fn() }));
 jest.mock("./sqlite/stop-policy", () => ({
   getProjectStopState: jest.fn(),
@@ -55,7 +65,12 @@ describe("memory pressure eviction", () => {
     );
   }
 
-  async function run(metrics: HostCurrentMetrics) {
+  async function run(
+    metrics: HostCurrentMetrics,
+    readPressurePolicy?: Parameters<
+      typeof startHostPressureController
+    >[0]["readPressurePolicy"],
+  ) {
     const stopProject = jest.fn(async (_opts: { project_id: string }) => {});
     const reportPressureAction = jest.fn(async () => {});
     const controller = startHostPressureController({
@@ -63,6 +78,7 @@ describe("memory pressure eviction", () => {
       getCurrentMetrics: () => metrics,
       stopProject,
       reportPressureAction,
+      ...(readPressurePolicy ? { readPressurePolicy } : {}),
     });
     try {
       await jest.advanceTimersByTimeAsync(0);
@@ -219,5 +235,123 @@ describe("memory pressure eviction", () => {
         reason: expect.stringContaining("priority:unknown"),
       }),
     );
+  });
+});
+
+describe("watch-only pressure policy", () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now });
+    jest.clearAllMocks();
+    jest.mocked(getProjectStopState).mockReturnValue(undefined);
+    jest
+      .mocked(listProjectsByStates)
+      .mockReturnValue([{ project_id: "idle", state: "running" }] as any);
+    jest.mocked(listProjectStopPolicies).mockReturnValue([
+      {
+        project_id: "idle",
+        owner_account_id: "owner",
+        shared_compute_priority: 0,
+        authoritative_last_edited_ms: now - 600 * minute,
+        policy_updated_ms: now,
+        stop_override: "default",
+      },
+    ] as any);
+  });
+
+  afterEach(() => jest.useRealTimers());
+
+  async function run(metrics: HostCurrentMetrics, policy: any) {
+    const stopProject = jest.fn(async (_opts: { project_id: string }) => {});
+    const controller = startHostPressureController({
+      refreshMetrics: async () => metrics,
+      getCurrentMetrics: () => metrics,
+      stopProject,
+      readPressurePolicy: () => policy,
+    });
+    try {
+      await jest.advanceTimersByTimeAsync(0);
+      return { stopProject, state: controller.getCurrentState() };
+    } finally {
+      controller.stop();
+    }
+  }
+
+  const PRIVATE = {
+    watchOnly: true,
+    tokens: ["watch_only_private_host"],
+    refreshFailures: 0,
+  };
+  const UNKNOWN = { watchOnly: true, tokens: ["policy_unknown"], refreshFailures: 0 };
+  const STALE_SHARED = {
+    watchOnly: false,
+    tokens: ["policy_stale"],
+    refreshFailures: 5,
+  };
+  const STALE_PRIVATE = {
+    watchOnly: true,
+    tokens: ["watch_only_private_host", "policy_stale"],
+    refreshFailures: 5,
+  };
+  // Every comma-separated token of a published reason.
+  const tokensOf = (reason?: string) => `${reason ?? ""}`.split(",");
+
+  it.each([
+    ["pressure", { memory_used_percent: 81 }],
+    ["memory emergency", { memory_used_percent: 95 }],
+  ])(
+    "a private host never stops a project (%s), but still publishes the zone",
+    async (_label, metrics) => {
+      const { stopProject, state } = await run(metrics, PRIVATE);
+      expect(stopProject).not.toHaveBeenCalled();
+      expect(upsertProjectStopState).not.toHaveBeenCalled();
+      expect(state?.zone).toMatch(/^(pressure|emergency)$/);
+      expect(state?.candidate_count).toBe(0);
+      expect(tokensOf(state?.reason)).toContain("watch_only_private_host");
+    },
+  );
+
+  it("a stale private policy stays watch-only", async () => {
+    const { stopProject, state } = await run(
+      { memory_used_percent: 95 },
+      STALE_PRIVATE,
+    );
+    expect(stopProject).not.toHaveBeenCalled();
+    expect(tokensOf(state?.reason)).toEqual(
+      expect.arrayContaining(["watch_only_private_host", "policy_stale"]),
+    );
+    expect(state?.policy_refresh_failures).toBe(5);
+  });
+
+  it("a host the bay has not answered for yet observes without stopping", async () => {
+    const { stopProject, state } = await run({ memory_used_percent: 95 }, UNKNOWN);
+    expect(stopProject).not.toHaveBeenCalled();
+    expect(tokensOf(state?.reason)).toContain("policy_unknown");
+  });
+
+  it("a shared host with a stale policy still stops as before", async () => {
+    const { stopProject, state } = await run(
+      { memory_used_percent: 81 },
+      STALE_SHARED,
+    );
+    expect(stopProject.mock.calls.map(([o]) => o.project_id)).toEqual(["idle"]);
+    expect(tokensOf(state?.reason)).toContain("policy_stale");
+  });
+
+  it("a private host in the normal zone publishes its policy too", async () => {
+    const { state } = await run({ memory_used_percent: 10 }, PRIVATE);
+    expect(state?.zone).toBe("normal");
+    expect(tokensOf(state?.reason)).toContain("watch_only_private_host");
+    // no failed refreshes: the counter is not published
+    expect(state).not.toHaveProperty("policy_refresh_failures");
+  });
+
+  it("the policy reason tokens fit the published reason token format", () => {
+    for (const token of [
+      "watch_only_private_host",
+      "policy_unknown",
+      "policy_stale",
+    ]) {
+      expect(token).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
+    }
   });
 });

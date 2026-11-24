@@ -143,6 +143,7 @@ import { upsertProjectStopPolicy } from "./sqlite/stop-policy";
 import { querySqlite } from "./sqlite/admin-query";
 import { readAgentTurns } from "./agent-turns";
 import { startHostPressureController } from "./host-pressure";
+import { startPressurePolicyRefresh } from "./pressure-policy";
 import { redactRuntimeLogText } from "./runtime-diagnostics-redaction";
 import {
   cancelRootfsBuild as cancelRootfsBuildOnHost,
@@ -2172,6 +2173,7 @@ export async function startMasterRegistration({
     ) {
       return;
     }
+    startPressurePolicyRefresh();
     pressureController = startHostPressureController({
       refreshMetrics: hostMetrics.refresh,
       getCurrentMetrics: hostMetrics.getCurrentSnapshot,

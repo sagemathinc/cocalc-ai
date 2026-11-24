@@ -8,6 +8,7 @@ import { getMasterConatClient } from "./master-status";
 import { getLocalHostId } from "./sqlite/hosts";
 import { getProjectStopState } from "./sqlite/stop-policy";
 import { getProjectRuntimeMaintenanceState } from "./runtime-maintenance";
+import { getEffectivePressurePolicy } from "./pressure-policy";
 
 function formatDuration(ms: number): string {
   const minutes = Math.max(1, Math.ceil(ms / 60_000));
@@ -41,10 +42,15 @@ export async function startProjectWithAdmission({
       "Project start is temporarily paused while this host upgrades its container runtime. CoCalc will retry after maintenance finishes; files and collaborative documents remain available.",
     );
   }
-  const stopState = getProjectStopState(project);
+  const now = Date.now();
+  // A watch-only host (a private host, or one the bay has not answered for
+  // yet) never blocks a start on a pressure cooldown or quarantine, including
+  // one left from before.
+  const stopState = getEffectivePressurePolicy(now).watchOnly
+    ? undefined
+    : getProjectStopState(project);
   const pressureCooldownUntilMs = stopState?.pressure_cooldown_until_ms;
   const pressureQuarantineUntilMs = stopState?.pressure_quarantine_until_ms;
-  const now = Date.now();
   if (
     pressureQuarantineUntilMs != null &&
     Number(pressureQuarantineUntilMs) > now

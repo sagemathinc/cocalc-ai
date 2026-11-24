@@ -1242,6 +1242,8 @@ export interface HostPressureState {
   // evaluation, and whether the turn leases could not be read.
   agent_turn_protected_count?: number;
   agent_turns_unknown?: boolean;
+  // Failed or refused refreshes of the bay's pressure policy since start.
+  policy_refresh_failures?: number;
 }
 
 export interface HostMetricsHistoryPoint extends HostCurrentMetrics {
@@ -1294,6 +1296,14 @@ export interface HostMetricsHistory {
 export interface HostMetrics {
   current?: HostCurrentMetrics;
   history?: HostMetricsHistory;
+}
+
+export interface HostPressurePolicy {
+  host_id: string;
+  // true for a private host: measure and publish pressure, never stop projects
+  watch_only: boolean;
+  reason: "private_host" | "shared_pool";
+  evaluated_at: string;
 }
 
 export interface HostPlacementSnapshot {
@@ -2061,6 +2071,7 @@ export const hosts = {
   upgradeHostConnector: authFirstRequireAccount,
   setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
+  getPressurePolicy: authFirstRequireHost,
   listProjectMaintenanceSchedules: authFirstRequireHost,
   confirmProjectMaintenanceAssignment: authFirstRequireHost,
   reportProjectMaintenance: authFirstRequireHost,
@@ -2439,6 +2450,9 @@ export interface Hosts {
     host_region?: string | null;
     host_machine?: HostMachine | null;
   }) => Promise<ProjectBackupConfig>;
+  // A host asks whether its pressure monitor is watch-only: the bay answers
+  // from its own row for the calling host.
+  getPressurePolicy: (opts?: { host_id?: string }) => Promise<HostPressurePolicy>;
   getProjectOwnerEffectiveLimits: (opts: {
     host_id?: string;
     project_id?: string;

@@ -8,6 +8,7 @@ let getMasterConatClientMock: jest.Mock;
 let getLocalHostIdMock: jest.Mock;
 let getProjectStopStateMock: jest.Mock;
 let getProjectRuntimeMaintenanceStateMock: jest.Mock;
+let getEffectivePressurePolicyMock: jest.Mock;
 
 jest.mock("@cocalc/conat/hub/call-hub", () => ({
   __esModule: true,
@@ -35,6 +36,12 @@ jest.mock("./runtime-maintenance", () => ({
     getProjectRuntimeMaintenanceStateMock(...args),
 }));
 
+jest.mock("./pressure-policy", () => ({
+  __esModule: true,
+  getEffectivePressurePolicy: (...args: any[]) =>
+    getEffectivePressurePolicyMock(...args),
+}));
+
 describe("startProjectWithAdmission", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -43,6 +50,12 @@ describe("startProjectWithAdmission", () => {
     getLocalHostIdMock = jest.fn(() => "host-1");
     getProjectStopStateMock = jest.fn(() => undefined);
     getProjectRuntimeMaintenanceStateMock = jest.fn(() => undefined);
+    // a shared-pool host unless a test says otherwise
+    getEffectivePressurePolicyMock = jest.fn(() => ({
+      watchOnly: false,
+      tokens: [],
+      refreshFailures: 0,
+    }));
   });
 
   afterEach(() => {
@@ -156,6 +169,79 @@ describe("startProjectWithAdmission", () => {
       }),
     ).resolves.toEqual({ ok: true });
     expect(callHubMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe("on a watch-only host", () => {
+    const blockedState = () => ({
+      project_id: "proj-1",
+      pressure_cooldown_until_ms: 3_000_000,
+      pressure_quarantine_until_ms: 3_000_000,
+      pressure_quarantine_reason: "memory",
+    });
+
+    it("a private host starts a project despite an earlier cooldown and quarantine", async () => {
+      jest.spyOn(Date, "now").mockReturnValue(2_000_000);
+      getEffectivePressurePolicyMock = jest.fn(() => ({
+        watchOnly: true,
+        tokens: ["watch_only_private_host"],
+        refreshFailures: 0,
+      }));
+      getProjectStopStateMock = jest.fn(blockedState);
+      const { startProjectWithAdmission } =
+        await import("./project-start-admission");
+      await expect(
+        startProjectWithAdmission({ account_id: "acct-1", project_id: "proj-1" }),
+      ).resolves.toEqual({ ok: true });
+      expect(callHubMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("a host the bay has not answered for yet does not block either", async () => {
+      jest.spyOn(Date, "now").mockReturnValue(2_000_000);
+      getEffectivePressurePolicyMock = jest.fn(() => ({
+        watchOnly: true,
+        tokens: ["policy_unknown"],
+        refreshFailures: 0,
+      }));
+      getProjectStopStateMock = jest.fn(blockedState);
+      const { startProjectWithAdmission } =
+        await import("./project-start-admission");
+      await expect(
+        startProjectWithAdmission({ account_id: "acct-1", project_id: "proj-1" }),
+      ).resolves.toEqual({ ok: true });
+    });
+
+    it("a private host still pauses starts during container runtime maintenance", async () => {
+      getEffectivePressurePolicyMock = jest.fn(() => ({
+        watchOnly: true,
+        tokens: ["watch_only_private_host"],
+        refreshFailures: 0,
+      }));
+      getProjectRuntimeMaintenanceStateMock = jest.fn(() => ({
+        operation_id: "op-1",
+      }));
+      const { startProjectWithAdmission } =
+        await import("./project-start-admission");
+      await expect(
+        startProjectWithAdmission({ account_id: "acct-1", project_id: "proj-1" }),
+      ).rejects.toThrow("container runtime");
+      expect(callHubMock).not.toHaveBeenCalled();
+    });
+
+    it("a shared host with a stale policy still blocks on the same state", async () => {
+      jest.spyOn(Date, "now").mockReturnValue(2_000_000);
+      getEffectivePressurePolicyMock = jest.fn(() => ({
+        watchOnly: false,
+        tokens: ["policy_stale"],
+        refreshFailures: 3,
+      }));
+      getProjectStopStateMock = jest.fn(blockedState);
+      const { startProjectWithAdmission } =
+        await import("./project-start-admission");
+      await expect(
+        startProjectWithAdmission({ account_id: "acct-1", project_id: "proj-1" }),
+      ).rejects.toThrow("repeatedly exceeded project-host resource limits");
+      expect(callHubMock).not.toHaveBeenCalled();
+    });
   });
 
   it("requires a local host id", async () => {
