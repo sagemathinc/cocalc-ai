@@ -908,6 +908,25 @@ describe("launchClaudeSubscriptionInProject", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it("shows the container's stderr as plain text: no terminal escapes, control characters or markdown", async () => {
+    (execFile as unknown as jest.Mock).mockImplementation(
+      (_cmd, _args, _opts, cb) =>
+        cb(
+          Object.assign(Error("Command failed"), { code: 1 }),
+          "",
+          "\u001b[31mError\u001b[0m: see [the docs](https://evil.example/x) ‮here\u0007\n",
+        ),
+    );
+    let message = "";
+    await launchClaudeSubscriptionInProject(binding, conversation).catch(
+      (err) => (message = `${err.message}`),
+    );
+    expect(message).toMatch(/podman exec exited 1: Error: see/);
+    expect(message).not.toMatch(/[\u001b\u0007‮]/);
+    expect(message).not.toMatch(/\[the docs\]\(/);
+    expect(message).not.toMatch(/[[\]`*<>]/);
+  });
+
   it("checks for a managed policy again at each turn start, failing the turn before the relay accepts it", async () => {
     const proc = await launchClaudeSubscriptionInProject(binding, conversation);
     const mock = execFile as unknown as jest.Mock;

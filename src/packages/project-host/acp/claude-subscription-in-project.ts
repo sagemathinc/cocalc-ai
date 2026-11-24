@@ -341,8 +341,23 @@ export function claudeInProjectBackgroundWorkScript(
 const MANAGED_POLICY_CHECK_TIMEOUT_MS = 15_000;
 
 /**
+ * One line of text from inside a project container (which the project's user
+ * controls) made safe for host logs and a chat-visible error: no terminal
+ * escapes, control or bidi characters, and no markdown-active characters.
+ */
+export function plainTextLine(text: string): string {
+  return text
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "")
+    .replace(/[\\`*_[\]<>|~#]/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
+/**
  * Why a podman exec failed, for the log and the user: the exit code or
- * signal and the first line of stderr (capped). Never env or stdout content.
+ * signal and the first line of stderr (made plain text, capped). Never env or
+ * stdout content.
  */
 export function podmanExecFailureReason(
   error: { code?: unknown; signal?: unknown; message?: unknown },
@@ -350,7 +365,7 @@ export function podmanExecFailureReason(
 ): string {
   const line = `${stderr ?? ""}`
     .split("\n")
-    .map((s) => s.trim())
+    .map((s) => plainTextLine(s))
     .find((s) => s.length > 0);
   const detail = line ? `: ${line.slice(0, 200)}` : "";
   if (typeof error.code === "number")
