@@ -13,6 +13,15 @@ process.env.COCALC_PROJECT_HOST_RESOURCE_PRESSURE_MODE = "enforce";
 
 import type { AgentTurnRead } from "./agent-turns";
 
+// These tests exercise a shared-pool host (the bay's known policy: enforce).
+jest.mock("./pressure-policy", () => ({
+  __esModule: true,
+  getEffectivePressurePolicy: () => ({
+    watchOnly: false,
+    tokens: [],
+    refreshFailures: 0,
+  }),
+}));
 jest.mock("./sqlite/projects", () => ({ listProjectsByStates: jest.fn() }));
 jest.mock("./sqlite/stop-policy", () => ({
   getProjectStopState: jest.fn(),

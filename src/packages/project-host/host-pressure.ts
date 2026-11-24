@@ -20,6 +20,10 @@ import {
 } from "./sqlite/stop-policy";
 import type { AgentTurnRead } from "./agent-turns";
 import {
+  getEffectivePressurePolicy,
+  type EffectivePressurePolicy,
+} from "./pressure-policy";
+import {
   ProjectWorkloadActivityTracker,
   sampleProjectWorkloads,
   type ProjectWorkloadRates,
@@ -1114,6 +1118,7 @@ export function startHostPressureController({
   stopProject,
   reportPressureAction,
   readAgentTurns,
+  readPressurePolicy = getEffectivePressurePolicy,
 }: {
   refreshMetrics: () => Promise<HostCurrentMetrics | undefined>;
   getCurrentMetrics: () => HostCurrentMetrics | undefined;
@@ -1137,6 +1142,8 @@ export function startHostPressureController({
   }) => Promise<void>;
   // The projects with a running agent turn (agent-turns.ts readAgentTurns).
   readAgentTurns?: (opts: { now: number }) => AgentTurnRead;
+  // Whether this host is watch-only (pressure-policy.ts).
+  readPressurePolicy?: (now: number) => EffectivePressurePolicy;
 }): HostPressureControllerHandle {
   let currentState: HostPressureState | undefined;
   // This evaluation's agent-turn counts, for the published state.
@@ -1191,6 +1198,12 @@ export function startHostPressureController({
     candidate_count?: number;
   }) => {
     trimRecentStops(evaluated_at_ms);
+    // The pressure policy is published with every state: watch-only, unknown
+    // or stale. A fresh shared-pool policy adds nothing.
+    const policyTokens = readPressurePolicy(evaluated_at_ms).tokens;
+    if (policyTokens.length > 0) {
+      reason = [reason, ...policyTokens].filter(Boolean).join(",");
+    }
     currentState = {
       zone,
       ...(reason ? { reason } : {}),
@@ -1276,6 +1289,18 @@ export function startHostPressureController({
     }
     if (pressureSinceMs == null) {
       pressureSinceMs = now;
+    }
+    // A private host, or one the bay has not answered for yet, is watch-only:
+    // the zone is measured and published above and here, but no project is
+    // ever stopped and no stop state is written.
+    if (readPressurePolicy(now).watchOnly) {
+      publishState({
+        zone: classified.zone,
+        reason: classified.reason,
+        evaluated_at_ms: now,
+        candidate_count: 0,
+      });
+      return;
     }
     const resourceOnlyPressure =
       hasResourcePressureReason(classified.reason) &&
