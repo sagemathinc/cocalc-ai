@@ -22,7 +22,7 @@ import {
 import * as vmFunding from "./vm-funding";
 import { courseVmBinding, meterCourseVm, payerApi } from "./vm-funding";
 import { settleComputeVmFundingLocal } from "./vm-settlement";
-import { prepareCourseVmRestart } from "./vm-restart";
+import { prepareCourseVmRestart, restartClock } from "./vm-restart";
 import * as exposure from "./exposure";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
 import { enableTestSponsorshipRollout } from "./__tests__/rollout-fixture";
@@ -576,7 +576,9 @@ postgresIt(
       randomUUID(),
       restartRequest(f, new Date(Date.now() + 25 * 60_000)),
     );
-    // Pause the old reserve after its quote, while it holds the source locks.
+    // The race the barrier exists for: the lookup ran before the old reserve
+    // took the payer's locks, so it saw nothing; the old reserve then holds
+    // those locks (paused after its quote) when the barrier arrives.
     let resume!: () => void;
     const paused = new Promise<void>((r) => (resume = r));
     let reached!: () => void;
@@ -590,30 +592,58 @@ postgresIt(
         return await realCheck(...args);
       });
     const inFlight = reserveComputeVmFundingLocal(old);
-    await atPause;
-    // The bay now sees the old request as long past its bound.
-    const vm = (await getComputeVmById(f.vmId))!;
-    jest.spyOn(vmFunding, "meterCourseVm").mockResolvedValue(vm);
-    const now = Date.now() + 35 * 60_000;
-    jest.spyOn(Date, "now").mockReturnValue(now);
-    let settled = false;
-    const prepare = prepareCourseVmRestart(vm, randomUUID(), null).finally(
-      () => (settled = true),
-    );
-    await delay(1000);
-    expect(settled).toBe(false);
-    resume();
-    const committed = await inFlight;
-    await expect(prepare).rejects.toThrow(
-      "Only an expired, undispatched sponsored reservation can be released.",
-    );
-    // No orphan: the stored request still points at the committed reservation.
-    expect((await storedPending(f.vmId)).request.funding_epoch).toBe(
-      committed.funding_epoch,
-    );
-    expect((await reservation(committed.reservation_id)).state).toBe(
-      "reserved",
-    );
+    let prepare: Promise<unknown> | undefined;
+    try {
+      await atPause;
+      const vm = (await getComputeVmById(f.vmId))!;
+      jest.spyOn(vmFunding, "meterCourseVm").mockResolvedValue(vm);
+      const real = await payerApi(f.payer);
+      const reserved: string[] = [];
+      await stubPayer(f.payer, {
+        lookupComputeVmFunding: async () => null,
+        reserveComputeVmFunding: async (opts) => {
+          reserved.push(opts.funding_epoch);
+          return await real.reserveComputeVmFunding(opts);
+        },
+      });
+      // Age the stored request on the bay's clock only; the payer's clock
+      // and its admission proofs are untouched.
+      const later = Date.now() + 35 * 60_000;
+      jest.spyOn(restartClock, "now").mockReturnValue(later);
+      let settled = false;
+      prepare = prepareCourseVmRestart(vm, randomUUID(), null);
+      prepare.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      await delay(1000);
+      expect(reserved).toEqual([old.funding_epoch]);
+      expect(settled).toBe(false);
+      resume();
+      const committed = await inFlight;
+      await expect(prepare).rejects.toThrow(
+        "Only an expired, undispatched sponsored reservation can be released.",
+      );
+      // The barrier returned the committed row and the payer refused to
+      // release a live one: no CAS, no new reservation, nothing orphaned.
+      expect(reserved).toEqual([old.funding_epoch]);
+      expect((await storedPending(f.vmId)).request.funding_epoch).toBe(
+        committed.funding_epoch,
+      );
+      expect((await reservation(committed.reservation_id)).state).toBe(
+        "reserved",
+      );
+      const {
+        rows: [count],
+      } = await getPool().query(
+        "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE resource_id=$1 AND resource_generation=2",
+        [f.vmId],
+      );
+      expect(count.n).toBe(1);
+    } finally {
+      resume();
+      await Promise.allSettled([inFlight, prepare ?? Promise.resolve()]);
+    }
   },
   30_000,
 );

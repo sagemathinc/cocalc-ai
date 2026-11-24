@@ -7,7 +7,6 @@ import { createHash, randomUUID } from "node:crypto";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import type { PoolClient } from "@cocalc/database/pool";
 import type {
-  ComputeVmFundingBinding,
   SettleComputeVmFundingRequest,
   ComputeVmFundingSettlement,
 } from "@cocalc/util/compute-vm-funding";
@@ -26,7 +25,6 @@ import {
   fundingEvent,
   lockVmFundingReservation,
 } from "./vm-reservations";
-import type { VmFundingReservation } from "./vm-reservations";
 import { lockPersonalVmReservation } from "./vm-personal-reservations";
 
 /** Exact cumulative metering, rounded only against the cumulative posted total.
@@ -55,12 +53,7 @@ const RELEASE_REFUSED =
 async function releaseUndispatchedReservation(
   client: PoolClient,
   opts: SettleComputeVmFundingRequest,
-  source: {
-    pool?: { id: string };
-    grant?: { id: string };
-    reservation: VmFundingReservation;
-    binding: ComputeVmFundingBinding;
-  },
+  source: Awaited<ReturnType<typeof lockVmFundingReservation>>,
   now: Date,
 ): Promise<ComputeVmFundingSettlement> {
   const { pool, grant, reservation: row, binding } = source;
@@ -85,8 +78,6 @@ async function releaseUndispatchedReservation(
   }
   if (
     binding.source.kind !== "course" ||
-    !pool ||
-    !grant ||
     row.state !== "reserved" ||
     row.dispatched_at ||
     !toDecimal(row.spent_usd).eq(0) ||
@@ -166,6 +157,15 @@ export async function settleComputeVmFundingLocal(
     successorConfirmed = true;
   }
   return withFundingAccountTransaction(opts.account_id, async (client) => {
+    if (opts.release_undispatched) {
+      // Course-only: a replaced restart authorization never ran.
+      if (opts.binding.source.kind !== "course") fundingConflict(RELEASE_REFUSED);
+      const course = await lockVmFundingReservation(client, opts);
+      const {
+        rows: [{ now }],
+      } = await client.query<{ now: Date }>("SELECT clock_timestamp() AS now");
+      return await releaseUndispatchedReservation(client, opts, course, now);
+    }
     const source =
       opts.binding.source.kind === "personal"
         ? await lockPersonalVmReservation(client, opts)
@@ -179,8 +179,6 @@ export async function settleComputeVmFundingLocal(
     const {
       rows: [{ now }],
     } = await client.query<{ now: Date }>("SELECT clock_timestamp() AS now");
-    if (opts.release_undispatched)
-      return await releaseUndispatchedReservation(client, opts, source, now);
     const runEnd = new Date(fundingDate(opts.running_until));
     const storageEnd =
       opts.stopped_until == null

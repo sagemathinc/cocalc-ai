@@ -20,6 +20,10 @@ import {
   requireSponsoredVmAdmission,
 } from "./vm-funding";
 
+/** The bay's clock for restart expiry decisions; tests replace it to age a
+ * stored request without moving the payer's clock. */
+export const restartClock = { now: () => Date.now() };
+
 export interface PreparedCourseRestart {
   binding: ComputeVmFundingBinding;
   operation_id: string;
@@ -115,11 +119,11 @@ export async function prepareCourseVmRestart(
       funding_epoch: pending.request.funding_epoch,
     });
     let expired = existing
-      ? new Date(existing.stop_at).valueOf() <= Date.now()
+      ? new Date(existing.stop_at).valueOf() <= restartClock.now()
       : undefined;
     if (
       expired === undefined &&
-      Date.now() >=
+      restartClock.now() >=
         restartRequestedUntil(pending) + RESTART_RESERVE_IN_FLIGHT_MS
     ) {
       // Positive absence: re-reserve the old request. It serializes behind any
@@ -128,7 +132,7 @@ export async function prepareCourseVmRestart(
       // the same locks. Any other outcome fails closed below.
       const barrier = await reserveAfterDeadline(api, pending);
       if (barrier) {
-        expired = new Date(barrier.stop_at).valueOf() <= Date.now();
+        expired = new Date(barrier.stop_at).valueOf() <= restartClock.now();
         if (expired) await releaseExpiredRestart(api, pending, barrier);
       } else {
         expired = true;
@@ -150,7 +154,7 @@ export async function prepareCourseVmRestart(
     }
   }
   const binding = await api.reserveComputeVmFunding(pending.request);
-  if (new Date(binding.stop_at).valueOf() <= Date.now())
+  if (new Date(binding.stop_at).valueOf() <= restartClock.now())
     fundingConflict("The prepared restart authorization expired.");
   return {
     binding,
