@@ -856,24 +856,28 @@ Schedule a prompt for the same job instead.
 export const CODEX_NOTIFICATIONS_BODY = String.raw`
 Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used the agent before.
 
-## Get a notification when a turn finishes
+## Get notified when an agent needs you
 
-In account settings, find **Notifications** and **Codex and agents**.
-**Notify when Codex turns complete by default** sets the preference for threads
-that inherit the account default. The channel table separately controls
-**Inbox**, **Toast**, **Browser**, and **Email** for **Needs attention**,
-**Turn completed**, and **Turn failed**.
+CoCalc does not notify you when an agent's turn finishes successfully. Check
+the chat to see finished work. For every agent, CoCalc notifies you when an
+agent needs your attention, for example to answer a question or approve an
+action, and when a turn fails. A turn paused by a usage limit gets a shared
+notice instead, described below.
 
-To set a thread's completion preference:
+In account settings, open **Communication** and find **Codex and agents** under
+**Notifications**. Its table has two rows, **Needs attention** and
+**Turn failed**. Each row has its own **Inbox**, **Toast**, **Browser**, and
+**Email** controls. **Email** can be **Off**, **Immediately**,
+**Daily digest**, or **After 5 minutes unresolved**. These settings apply to all
+of your agent threads; there is no per-thread setting for agent notices.
+**Mute chat** in a thread's menu stops notices about collaborators' new replies
+in that thread; it does not affect agent notices. Changing a setting does not
+withdraw a notice already produced.
 
-1. Open its menu and choose **Behavior...**.
-2. In **Edit Thread Behavior**, clear **Mute completion notifications for this thread**
-   to request notices, or check it to mute them.
-3. Confirm the dialog. Changing this checkbox saves an explicit preference for that thread.
-
-Set the preference before starting work when possible. A turn's completion can
-race with a settings change, and changing settings does not withdraw a notice
-already produced.
+When a usage limit pauses agents, CoCalc sends one notice for all of them
+instead of an error notice for each. It says that their turns are paused and
+resume automatically when the limit resets. The **Needs attention** and
+**Turn failed** rows do not apply to this notice.
 
 Delivery depends on the enabled channels and site settings. CoCalc can show a
 toast while its page is visible or a browser notification while it is hidden.
@@ -881,10 +885,14 @@ Browser delivery also needs browser permission; use **Enable browser notificatio
 and **Test notification** in account settings. CoCalc suppresses the extra toast
 or browser alert when you are directly watching that thread.
 
-In CoCalc, successful completion uses **Codex turn finished**; an error uses
-**Codex turn ended with an error**. Browser notifications use the generic title
-**Codex finished**; open CoCalc to inspect the outcome. A completion notice does
-not establish that every background command or descendant agent has stopped. Inspect the account's
+In CoCalc, a failed turn's notice names the agent, for example
+**Codex turn ended with an error**. Browser notifications use generic titles,
+such as **Agent needs your attention**, **Agent turn paused**, or
+**Agent turn finished**, which is also the title for a failed turn. When the
+thread belongs to a named agent, toasts and browser notifications start with
+its name, for example **@helper · Agent turn finished**. Open CoCalc to inspect
+the outcome. The end of a turn does not establish that every
+background command or descendant agent has stopped. Inspect the account's
 Codex sessions panel when you need to confirm remaining activity.
 
 ## Inspect and stop Codex sessions
