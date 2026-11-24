@@ -56,6 +56,9 @@ const HOST_CONTROL_CLIENT_TIMEOUT_MS = 30_000;
 // the host may be the very thing that is not answering.
 const ROLLOUT_DIAGNOSTIC_TIMEOUT_MS = 30_000;
 const ROLLOUT_DIAGNOSTIC_CALL_TIMEOUT_MS = 10_000;
+// A verification call is never started with less than this budget left: a
+// call with a 1 ms budget always times out and only hides the real error.
+const MANAGED_COMPONENT_VERIFY_MIN_CALL_BUDGET_MS = 1_000;
 
 export type HostSoftwareRolloutProgressUpdate = {
   rollout_phase: string;
@@ -100,19 +103,97 @@ function trimRuntimeLogText(text?: string): string | undefined {
   return normalized || undefined;
 }
 
+// Each bounded wait in a rollout names its step, so a timeout says which
+// call did not return (a host-control connection, a status read, a row
+// reload or the rollout request itself) instead of one generic message.
+export type RolloutWaitStep =
+  | "rollout_request_ack"
+  | "host_control_connect"
+  | "status_read"
+  | "row_load"
+  | "diagnostics_read";
+
+const ROLLOUT_WAIT_STEP_LABEL: Record<RolloutWaitStep, string> = {
+  rollout_request_ack: "managed component rollout RPC",
+  host_control_connect: "host-control connection",
+  status_read: "host status read",
+  row_load: "host record reload",
+  diagnostics_read: "host diagnostics read",
+};
+
 class ManagedComponentRolloutRpcTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`managed component rollout RPC did not return within ${timeoutMs}ms`);
+  readonly step: RolloutWaitStep;
+  readonly code: `${RolloutWaitStep}_timeout`;
+  constructor(timeoutMs: number, step: RolloutWaitStep) {
+    super(
+      `${ROLLOUT_WAIT_STEP_LABEL[step]} did not return within ${timeoutMs}ms`,
+    );
     this.name = "ManagedComponentRolloutRpcTimeoutError";
+    this.step = step;
+    this.code = `${step}_timeout`;
   }
+}
+
+function rolloutWaitErrorCode(err: unknown): string {
+  return err instanceof ManagedComponentRolloutRpcTimeoutError
+    ? err.code
+    : "error";
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : `${err}`;
+}
+
+// Thrown (and caught) inside the verification loop when the window has less
+// than the minimum call budget left; it is never reported as a host error.
+class ManagedComponentVerifyBudgetExhausted extends Error {
+  constructor() {
+    super("managed component verification window exhausted");
+    this.name = "ManagedComponentVerifyBudgetExhausted";
+  }
+}
+
+// The text after "could not be verified: ". A real (non-timeout) error comes
+// first; otherwise the FIRST timeout, never a later one. Other kinds and the
+// last completed status read follow, so no evidence is dropped.
+function managedComponentVerifyErrorSummary({
+  firstErrors,
+  lastError,
+  lastObservedFailures,
+}: {
+  firstErrors: Map<string, unknown>;
+  lastError: unknown;
+  lastObservedFailures?: string[];
+}): string {
+  const primary =
+    firstErrors.get("error") ?? firstErrors.values().next().value ?? lastError;
+  const parts = [errorMessage(primary)];
+  const others = [...firstErrors.entries()]
+    .filter(([, err]) => err !== primary)
+    .map(([code, err]) => `${code}: ${errorMessage(err)}`);
+  if (others.length > 0) {
+    parts.push(`also ${others.join("; ")}`);
+  }
+  if (lastObservedFailures != null) {
+    parts.push(
+      `last completed status read: ${
+        lastObservedFailures.length > 0
+          ? lastObservedFailures.join("; ")
+          : "aligned"
+      }`,
+    );
+  }
+  return parts.join("; ");
 }
 
 async function withTimeout<T>({
   promise,
   timeoutMs,
+  step,
 }: {
   promise: Promise<T>;
   timeoutMs: number;
+  step: RolloutWaitStep;
 }): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
   try {
@@ -120,7 +201,8 @@ async function withTimeout<T>({
       promise,
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
-          () => reject(new ManagedComponentRolloutRpcTimeoutError(timeoutMs)),
+          () =>
+            reject(new ManagedComponentRolloutRpcTimeoutError(timeoutMs, step)),
           timeoutMs,
         );
         timeout.unref?.();
@@ -739,6 +821,7 @@ async function enrichManagedComponentRolloutError({
     if (remaining <= 0) break;
     try {
       const log = await withTimeout({
+        step: "diagnostics_read",
         promise: client.getRuntimeLog({
           source,
           lines: ROLLOUT_DIAGNOSTIC_LINES,
@@ -1075,6 +1158,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   managedComponentRolloutRpcTimeoutMs = MANAGED_COMPONENT_ROLLOUT_RPC_TIMEOUT_MS,
   hostControlClientTimeoutMs = HOST_CONTROL_CLIENT_TIMEOUT_MS,
   rolloutDiagnosticTimeoutMs = ROLLOUT_DIAGNOSTIC_TIMEOUT_MS,
+  managedComponentVerifyMinCallBudgetMs,
   onProgress,
 }: {
   account_id?: string;
@@ -1174,6 +1258,9 @@ export async function rolloutHostManagedComponentsInternalHelper({
   managedComponentRolloutRpcTimeoutMs?: number;
   hostControlClientTimeoutMs?: number;
   rolloutDiagnosticTimeoutMs?: number;
+  // The smallest budget a verification call is started with. Default:
+  // min(MANAGED_COMPONENT_VERIFY_MIN_CALL_BUDGET_MS, verify window / 4).
+  managedComponentVerifyMinCallBudgetMs?: number;
   onProgress?: (
     update: HostSoftwareRolloutProgressUpdate,
   ) => Promise<void> | void;
@@ -1182,6 +1269,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   assertHostRunningForUpgrade(row);
   const requestedProjectHostRollout = components.includes("project-host");
   const client = await withTimeout({
+    step: "host_control_connect",
     promise: hostControlClient(id, 60_000),
     timeoutMs: hostControlClientTimeoutMs,
   });
@@ -1287,6 +1375,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
     }
     baselineProjectHostPids = observedRunningProjectHostPids(
       await withTimeout({
+        step: "status_read",
         promise: client.getManagedComponentStatus(),
         timeoutMs: managedComponentRolloutRpcTimeoutMs,
       }),
@@ -1305,6 +1394,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   } else {
     try {
       const directResponse = await withTimeout({
+        step: "rollout_request_ack",
         promise: client.rolloutManagedComponents({
           components: directlyRolledOutComponents,
           reason,
@@ -1345,6 +1435,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
     await waitForHostHeartbeatAfter({ host_id: id, since });
     try {
       refreshedRow = await withTimeout({
+        step: "row_load",
         promise: loadHostForStartStop(id, account_id),
         timeoutMs: hostControlClientTimeoutMs,
       });
@@ -1370,11 +1461,13 @@ export async function rolloutHostManagedComponentsInternalHelper({
     observedProjectHostPids = [];
     try {
       statusClient = await withTimeout({
+        step: "host_control_connect",
         promise: hostControlClient(id, 30_000),
         timeoutMs: capped(hostControlClientTimeoutMs),
       });
       if (typeof statusClient.getManagedComponentStatus === "function") {
         const statuses = await withTimeout({
+          step: "status_read",
           promise: statusClient.getManagedComponentStatus(),
           timeoutMs: capped(managedComponentRolloutRpcTimeoutMs),
         });
@@ -1383,6 +1476,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
       }
       if (typeof statusClient.getHostAgentStatus === "function") {
         hostAgentStatus = await withTimeout({
+          step: "status_read",
           promise: statusClient.getHostAgentStatus(),
           timeoutMs: capped(managedComponentRolloutRpcTimeoutMs),
         });
@@ -1472,6 +1566,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
       await delay(Math.min(projectHostRolloutPollMs, settleRemainingMs()));
       try {
         refreshedRow = await withTimeout({
+          step: "row_load",
           promise: loadHostForStartStop(id, account_id),
           timeoutMs: Math.min(hostControlClientTimeoutMs, settleRemainingMs()),
         });
@@ -1550,17 +1645,42 @@ export async function rolloutHostManagedComponentsInternalHelper({
     // call that never returned (a host-control client right after the
     // project-host restart) left an upgrade "verifying" for 50 minutes.
     const remainingMs = () =>
-      Math.max(
-        1,
-        verifyStartedAt + projectHostRolloutSettleTimeoutMs - Date.now(),
-      );
+      verifyStartedAt + projectHostRolloutSettleTimeoutMs - Date.now();
+    // Never start a call with less than this left: a call with a 1 ms budget
+    // always times out, and its timeout used to replace the real error.
+    const minCallBudgetMs = Math.max(
+      1,
+      managedComponentVerifyMinCallBudgetMs ??
+        Math.min(
+          MANAGED_COMPONENT_VERIFY_MIN_CALL_BUDGET_MS,
+          Math.floor(projectHostRolloutSettleTimeoutMs / 4),
+        ),
+    );
+    const callBudgetMs = (capMs: number) => {
+      const remaining = remainingMs();
+      if (remaining < minCallBudgetMs) {
+        throw new ManagedComponentVerifyBudgetExhausted();
+      }
+      return Math.min(capMs, remaining);
+    };
     let lastFailures: string[] = [];
+    // The failures seen by the last status read that completed, if any.
+    let lastObservedFailures: string[] | undefined;
+    // The error of the last try (undefined when the last try completed), and
+    // the first error of each kind, so a later timeout never hides it.
     let lastError: unknown;
-    while (Date.now() - verifyStartedAt <= projectHostRolloutSettleTimeoutMs) {
+    let verifiedFromRow = false;
+    const firstErrors = new Map<string, unknown>();
+    const noteError = (err: unknown) => {
+      const code = rolloutWaitErrorCode(err);
+      if (!firstErrors.has(code)) firstErrors.set(code, err);
+    };
+    while (remainingMs() >= minCallBudgetMs) {
       try {
         const statusClient = await withTimeout({
+          step: "host_control_connect",
           promise: hostControlClient(id, 30_000),
-          timeoutMs: Math.min(hostControlClientTimeoutMs, remainingMs()),
+          timeoutMs: callBudgetMs(hostControlClientTimeoutMs),
         });
         if (typeof statusClient.getManagedComponentStatus !== "function") {
           throw new Error(
@@ -1568,11 +1688,9 @@ export async function rolloutHostManagedComponentsInternalHelper({
           );
         }
         const statuses = await withTimeout({
+          step: "status_read",
           promise: statusClient.getManagedComponentStatus(),
-          timeoutMs: Math.min(
-            managedComponentRolloutRpcTimeoutMs,
-            remainingMs(),
-          ),
+          timeoutMs: callBudgetMs(managedComponentRolloutRpcTimeoutMs),
         });
         lastFailures = managedComponentAlignmentFailures({
           statuses,
@@ -1580,12 +1698,18 @@ export async function rolloutHostManagedComponentsInternalHelper({
           desiredVersion,
           row: refreshedRow,
         });
+        lastObservedFailures = lastFailures;
         lastError = undefined;
         if (lastFailures.length === 0) {
           break;
         }
       } catch (err) {
+        if (err instanceof ManagedComponentVerifyBudgetExhausted) {
+          // Not an observation and not a host error: the window is spent.
+          break;
+        }
         lastError = err;
+        noteError(err);
         const observedStatuses =
           observedManagedComponentStatusFromRow(refreshedRow);
         lastFailures = observedStatuses
@@ -1598,26 +1722,47 @@ export async function rolloutHostManagedComponentsInternalHelper({
           : [];
         if (observedStatuses && lastFailures.length === 0) {
           lastError = undefined;
+          verifiedFromRow = true;
           break;
         }
       }
-      if (Date.now() - verifyStartedAt > projectHostRolloutSettleTimeoutMs) {
+      if (remainingMs() < minCallBudgetMs) {
         break;
       }
-      await delay(Math.min(projectHostRolloutPollMs, remainingMs()));
+      await delay(
+        Math.min(projectHostRolloutPollMs, Math.max(0, remainingMs())),
+      );
       try {
         refreshedRow = await withTimeout({
+          step: "row_load",
           promise: loadHostForStartStop(id, account_id),
-          timeoutMs: Math.min(hostControlClientTimeoutMs, remainingMs()),
+          timeoutMs: callBudgetMs(hostControlClientTimeoutMs),
         });
       } catch (err) {
+        if (err instanceof ManagedComponentVerifyBudgetExhausted) {
+          break;
+        }
         // Keep the last row; the next status read decides.
         lastError ??= err;
+        noteError(err);
       }
     }
+    if (lastError == null && lastObservedFailures == null && !verifiedFromRow) {
+      // No status read completed and no call failed: the window was spent
+      // before any read could start.
+      lastError = new Error(
+        `no host status read completed within ${projectHostRolloutSettleTimeoutMs}ms`,
+      );
+      noteError(lastError);
+    }
     if (lastError != null) {
+      const summary = managedComponentVerifyErrorSummary({
+        firstErrors,
+        lastError,
+        lastObservedFailures,
+      });
       const err = new Error(
-        `managed component alignment could not be verified: ${lastError instanceof Error ? lastError.message : lastError}`,
+        `managed component alignment could not be verified: ${summary}`,
       );
       throw rolloutRequestError == null
         ? err
@@ -1631,8 +1776,18 @@ export async function rolloutHostManagedComponentsInternalHelper({
           });
     }
     if (lastFailures.length > 0) {
+      // A later completed read clears lastError, but the errors seen before
+      // it are still part of the evidence: report them beside the drift.
+      const earlier =
+        firstErrors.size > 0
+          ? "; errors during verification: " +
+            managedComponentVerifyErrorSummary({
+              firstErrors,
+              lastError: undefined,
+            })
+          : "";
       const err = new Error(
-        `managed component rollout did not converge: ${lastFailures.join("; ")}`,
+        `managed component rollout did not converge: ${lastFailures.join("; ")}${earlier}`,
       );
       throw rolloutRequestError == null
         ? err
@@ -1671,4 +1826,5 @@ export async function rolloutHostManagedComponentsInternalHelper({
 
 export const __test__ = {
   managedComponentAlignmentFailures,
+  managedComponentVerifyErrorSummary,
 };
