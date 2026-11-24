@@ -319,6 +319,7 @@ describe("watch-only pressure policy", () => {
     expect(tokensOf(state?.reason)).toEqual(
       expect.arrayContaining(["watch_only_private_host", "policy_stale"]),
     );
+    expect(state?.policy_refresh_failures).toBe(5);
   });
 
   it("a host the bay has not answered for yet observes without stopping", async () => {
@@ -340,6 +341,8 @@ describe("watch-only pressure policy", () => {
     const { state } = await run({ memory_used_percent: 10 }, PRIVATE);
     expect(state?.zone).toBe("normal");
     expect(tokensOf(state?.reason)).toContain("watch_only_private_host");
+    // no failed refreshes: the counter is not published
+    expect(state).not.toHaveProperty("policy_refresh_failures");
   });
 
   it("the policy reason tokens fit the published reason token format", () => {

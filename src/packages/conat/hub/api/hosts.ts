@@ -1242,6 +1242,8 @@ export interface HostPressureState {
   // evaluation, and whether the turn leases could not be read.
   agent_turn_protected_count?: number;
   agent_turns_unknown?: boolean;
+  // Failed or refused refreshes of the bay's pressure policy since start.
+  policy_refresh_failures?: number;
 }
 
 export interface HostMetricsHistoryPoint extends HostCurrentMetrics {

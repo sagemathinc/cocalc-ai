@@ -1200,9 +1200,9 @@ export function startHostPressureController({
     trimRecentStops(evaluated_at_ms);
     // The pressure policy is published with every state: watch-only, unknown
     // or stale. A fresh shared-pool policy adds nothing.
-    const policyTokens = readPressurePolicy(evaluated_at_ms).tokens;
-    if (policyTokens.length > 0) {
-      reason = [reason, ...policyTokens].filter(Boolean).join(",");
+    const policy = readPressurePolicy(evaluated_at_ms);
+    if (policy.tokens.length > 0) {
+      reason = [reason, ...policy.tokens].filter(Boolean).join(",");
     }
     currentState = {
       zone,
@@ -1224,6 +1224,9 @@ export function startHostPressureController({
         ? { agent_turn_protected_count: agentTurnProtectedCount }
         : {}),
       ...(agentTurnsUnknown ? { agent_turns_unknown: true } : {}),
+      ...(policy.refreshFailures > 0
+        ? { policy_refresh_failures: policy.refreshFailures }
+        : {}),
     };
   };
 
