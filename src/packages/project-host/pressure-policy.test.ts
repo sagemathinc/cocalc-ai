@@ -5,6 +5,7 @@
 
 let stored: any;
 let saveCalls = 0;
+let saveFails = false;
 let localHostId: string | undefined = "host-1";
 
 jest.mock("./sqlite/hosts", () => ({
@@ -21,6 +22,7 @@ jest.mock("./sqlite/pressure-policy", () => {
       actual.isStoredPressurePolicy(stored) ? { ...stored } : undefined,
     saveStoredPressurePolicy: (policy: any) => {
       saveCalls += 1;
+      if (saveFails) throw new Error("disk full");
       stored = { ...policy };
     },
   };
@@ -62,6 +64,7 @@ function restart() {
 beforeEach(() => {
   stored = undefined;
   saveCalls = 0;
+  saveFails = false;
   localHostId = "host-1";
   restart();
 });
@@ -211,5 +214,54 @@ describe("effective policy", () => {
     stored = { host_id: "host-1", watch_only: "no", reason: "shared_pool" };
     restart();
     expect(getEffectivePressurePolicy(now).tokens).toEqual(["policy_unknown"]);
+  });
+
+  it.each([
+    ["known private, a shared reply", reply(), reply(SHARED), true, ["watch_only_private_host"]],
+    ["known shared, a private reply", reply(SHARED), reply(), false, []],
+    ["an empty store, a valid reply", undefined, reply(SHARED), true, ["policy_unknown"]],
+  ])(
+    "a reply that cannot be stored changes nothing (%s)",
+    async (_label, known: any, next: any, watchOnly, tokens) => {
+      if (known) {
+        await refreshPressurePolicy({ fetchReply: async () => known, now });
+      }
+      const storedBefore = stored;
+      saveFails = true;
+      await expect(
+        refreshPressurePolicy({ fetchReply: async () => next, now }),
+      ).resolves.toBe(false);
+      const policy = getEffectivePressurePolicy(now);
+      expect(policy.watchOnly).toBe(watchOnly);
+      expect(policy.tokens).toEqual(tokens);
+      expect(policy.refreshFailures).toBe(1);
+      expect(stored).toEqual(storedBefore);
+      // a later refresh that can be stored installs the reply
+      saveFails = false;
+      await expect(
+        refreshPressurePolicy({ fetchReply: async () => next, now }),
+      ).resolves.toBe(true);
+      expect(getEffectivePressurePolicy(now).watchOnly).toBe(next.watch_only);
+      expect(stored?.watch_only).toBe(next.watch_only);
+    },
+  );
+
+  it("loads the stored policy once the host knows its id", () => {
+    stored = {
+      host_id: "host-1",
+      watch_only: false,
+      reason: "shared_pool",
+      evaluated_at_ms: now,
+      fetched_at_ms: now,
+    };
+    localHostId = undefined;
+    restart();
+    // no id yet: nothing can be matched, so the policy is unknown for now
+    expect(getEffectivePressurePolicy(now).tokens).toEqual(["policy_unknown"]);
+    localHostId = "host-1";
+    // the next read loads the stored shared policy instead of staying unknown
+    const policy = getEffectivePressurePolicy(now);
+    expect(policy.watchOnly).toBe(false);
+    expect(policy.tokens).toEqual([]);
   });
 });

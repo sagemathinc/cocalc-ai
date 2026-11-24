@@ -56,13 +56,17 @@ let refreshFailures = 0;
 
 function ensureLoaded(): void {
   if (loaded) return;
-  loaded = true;
   try {
-    const stored = loadStoredPressurePolicy();
     const hostId = getLocalHostId();
+    // Until this host knows its own id, try again on the next call: a stored
+    // policy can only be matched to an id.
+    if (!hostId) return;
+    loaded = true;
+    const stored = loadStoredPressurePolicy();
     // a policy stored for another host id (a re-provisioned host) is not ours
-    current = stored && hostId && stored.host_id === hostId ? stored : undefined;
+    current = stored && stored.host_id === hostId ? stored : undefined;
   } catch (err) {
+    loaded = true;
     logger.warn("unable to load the stored pressure policy", {
       err: `${err}`,
     });
@@ -141,10 +145,16 @@ export async function refreshPressurePolicy({
     logger.warn("pressure policy reply refused; keeping the known policy");
     return false;
   }
+  // The known policy changes only once the new one is stored, so the running
+  // process and a restart always agree. A failed save is a failed refresh.
   try {
     saveStoredPressurePolicy(parsed);
   } catch (err) {
-    logger.warn("unable to store the pressure policy", { err: `${err}` });
+    refreshFailures += 1;
+    logger.warn("unable to store the pressure policy; keeping the known policy", {
+      err: `${err}`,
+    });
+    return false;
   }
   if (current?.watch_only !== parsed.watch_only) {
     logger.info("pressure policy", {
