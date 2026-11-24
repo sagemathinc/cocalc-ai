@@ -870,7 +870,7 @@ function hostProof(overrides = {}) {
   });
 }
 
-async function inProjectClient(t, flags, extra) {
+async function inProjectProofClient(t, flags, extra) {
   const child = spawn(
     process.execPath,
     [...profile.args, "--claude-adapter", "--in-project", ...flags],
@@ -922,7 +922,7 @@ async function inProjectClient(t, flags, extra) {
 
 test("in the project, a silent agent's turn runs on the host's proof for this turn, asked again each turn", async (t) => {
   const nonces = [];
-  const client = await inProjectClient(t, [], {
+  const client = await inProjectProofClient(t, [], {
     hostSubscriptionIdentity: async ({ nonce }) => {
       nonces.push(nonce);
       return hostProof()({ nonce });
@@ -945,7 +945,7 @@ for (const [label, flags] of [
 ]) {
   test(`in the project, ${label}: a turn after the host's credential is revoked fails, though the turn before ran`, async (t) => {
     let revoked = false;
-    const client = await inProjectClient(t, flags, {
+    const client = await inProjectProofClient(t, flags, {
       hostSubscriptionIdentity: async ({ nonce }) => {
         if (revoked)
           throw Error("Claude subscription credential is unavailable or revoked");
@@ -969,7 +969,7 @@ for (const [label, flags] of [
 // can come from config in the project): billing goes through the relay with
 // the host's credential, so with the host's proof the turn runs.
 test("in the project, an agent reporting an account runs on the host's proof", async (t) => {
-  const client = await inProjectClient(t, ["--subscription-status"], {
+  const client = await inProjectProofClient(t, ["--subscription-status"], {
     hostSubscriptionIdentity: hostProof(),
   });
   const events = [];
@@ -978,7 +978,7 @@ test("in the project, an agent reporting an account runs on the host's proof", a
 });
 
 test('in the project, an agent reporting "none" runs on the host\'s proof', async (t) => {
-  const client = await inProjectClient(t, ["--none-status"], {
+  const client = await inProjectProofClient(t, ["--none-status"], {
     hostSubscriptionIdentity: hostProof(),
   });
   const events = [];
@@ -1041,7 +1041,7 @@ for (const [name, extra, flags, rejected] of [
   ],
 ]) {
   test(`in the project, ${name} does not pass a turn`, async (t) => {
-    const client = await inProjectClient(t, flags, extra);
+    const client = await inProjectProofClient(t, flags, extra);
     const events = [];
     await assert.rejects(
       () => client.prompt("hello", async (event) => events.push(event)),
