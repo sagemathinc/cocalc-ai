@@ -776,6 +776,8 @@ describe("launchClaudeSubscriptionInProject", () => {
     const proc = await launchClaudeSubscriptionInProject(binding, conversation);
     expect(proc.sessionPolicy).toBe("default");
     expect(proc.subscriptionAuth).toBe("oauth-token");
+    // the credential was resolved on the host before the launch
+    expect(proc.hostVerifiedSubscription).toBe(true);
     // the route pinned at the flag-settings tier; never the token
     const noProxy = "localhost,127.0.0.1,::1,host.containers.internal";
     expect(proc.pinnedSettingsEnv).toEqual({

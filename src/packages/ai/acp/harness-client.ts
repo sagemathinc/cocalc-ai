@@ -148,6 +148,14 @@ export interface HarnessProcess {
    */
   subscriptionAuth?: "oauth-token";
   /**
+   * Trusted launcher fact, only with subscriptionAuth "oauth-token": the host
+   * itself resolved the account's subscription credential and holds it behind
+   * the relay, so the identity is known even when the agent cannot read its
+   * own. A turn then proceeds when the agent reports no identity; a different
+   * billing method the agent does report is still refused.
+   */
+  hostVerifiedSubscription?: true;
+  /**
    * Trusted launcher fact: how this process's sessions run, replacing the
    * policy the caller chose from the credential. A subscription agent run in
    * the project (not the controller) is a normal session in the project.
@@ -1205,6 +1213,14 @@ export class AcpHarnessClient {
     if (this.process.subscriptionAuth === "oauth-token") {
       const kind = (this.authStatus as { kind?: unknown } | undefined)?.kind;
       if (kind === "none" || kind === "account") return;
+      // In the project the agent reads its identity from Anthropic directly,
+      // not through the relay, and a failed or slow read reports nothing.
+      // The host already holds the verified credential behind the relay.
+      if (
+        this.authStatus == null &&
+        this.process.hostVerifiedSubscription === true
+      )
+        return;
     }
     const status = this.authStatus as
       | { kind?: string; account?: { plan?: unknown } }

@@ -858,6 +858,76 @@ test("a Claude subscription run in the project is a normal session whose billing
   }
 });
 
+test("a Claude subscription in the project passes on the host-verified identity when the agent reports none", async (t) => {
+  for (const [flags, hostVerified, rejected] of [
+    // The agent's own identity read failed: no report at all.
+    [[], true, undefined],
+    [[], false, /not reported a verifiable subscription identity/],
+    // A different billing method the agent does report is still refused.
+    [["--api-key-status"], true, /different billing method/],
+  ]) {
+    const child = spawn(
+      process.execPath,
+      [...profile.args, "--claude-adapter", "--in-project", ...flags],
+      { env: {}, stdio: "pipe" },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user/work",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+        credential: {
+          version: 1,
+          provider: "anthropic",
+          mode: "account-subscription",
+          credentialId: "11111111-1111-4111-8111-111111111111",
+        },
+      },
+      async () => ({
+        sessionPolicy: "default",
+        subscriptionAuth: "oauth-token",
+        ...(hostVerified ? { hostVerifiedSubscription: true } : {}),
+        pinnedSettingsEnv: pinnedRelayEnv,
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+      30_000,
+      undefined,
+      "claude-subscription-controller",
+    );
+    t.after(() => client.dispose());
+    await client.open();
+    if (rejected) {
+      const events = [];
+      await assert.rejects(
+        () => client.prompt("hello", async (event) => events.push(event)),
+        rejected,
+      );
+      assert.ok(!events.some((event) => event.type === "message"));
+    } else {
+      const events = [];
+      await client.prompt("hello", async (event) => events.push(event));
+      assert.ok(events.some((event) => event.type === "message"));
+    }
+    await client.dispose();
+  }
+});
+
 test("a resumed session gets newer CoCalc instructions with its next turn, once", async (t) => {
   for (const [resume, stored, expectUpdate] of [
     [true, undefined, true], // a session from before versions were recorded

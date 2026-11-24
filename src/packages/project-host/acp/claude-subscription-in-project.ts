@@ -720,6 +720,10 @@ export async function launchClaudeSubscriptionInProject(
       sessionPolicy: "default",
       pinnedSettingsEnv: claudeRelaySettingsEnv(relay.baseUrl),
       subscriptionAuth: "oauth-token",
+      // tokenOf() resolved this account's credential before the launch, and
+      // the relay re-checks it: the identity does not depend on the agent's
+      // own read, which goes to Anthropic directly and can fail.
+      hostVerifiedSubscription: true,
       // The harness calls these around every turn of the qualified Claude
       // Code harness (endConnectorTurn in its finally): a turn makes the
       // relay session usable, and its end starts the fixed time after which
