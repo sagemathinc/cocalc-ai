@@ -181,6 +181,17 @@ async function storePending(
   );
 }
 
+/** Store a pending restart and return its request as read back (jsonb
+ * reorders keys, and production reserves the stored copy). */
+async function storeAndRead(
+  vmId: string,
+  operation_id: string,
+  request: ReserveComputeVmFundingRequest,
+): Promise<ReserveComputeVmFundingRequest> {
+  await storePending(vmId, operation_id, request);
+  return (await storedPending(vmId)).request;
+}
+
 async function storedPending(vmId: string) {
   return (await getComputeVmById(vmId))!.metadata.billing.course_funding
     .restart;
@@ -263,9 +274,12 @@ it("replaces a stale pending restart from another key that never reserved", asyn
 it("lets the same key retry after its authorization expired, releasing the old reservation first", async () => {
   const f = await stoppedCourseVm();
   const operation = randomUUID();
-  const old = restartRequest(f, new Date(Date.now() + 25 * 60_000));
+  const old = await storeAndRead(
+    f.vmId,
+    operation,
+    restartRequest(f, new Date(Date.now() + 25 * 60_000)),
+  );
   const oldBinding = await reserveComputeVmFundingLocal(old);
-  await storePending(f.vmId, operation, old);
   await expire(oldBinding);
   const before = await reservedTotals(f);
   const authorized = Number((await reservation(oldBinding.reservation_id)).authorized_usd);
@@ -311,9 +325,12 @@ it("lets the same key retry after its authorization expired, releasing the old r
 
 it("keeps a live pending restart from another key and releases nothing", async () => {
   const f = await stoppedCourseVm();
-  const old = restartRequest(f, new Date(Date.now() + 25 * 60_000));
+  const old = await storeAndRead(
+    f.vmId,
+    randomUUID(),
+    restartRequest(f, new Date(Date.now() + 25 * 60_000)),
+  );
   const oldBinding = await reserveComputeVmFundingLocal(old);
-  await storePending(f.vmId, randomUUID(), old);
   const before = await reservedTotals(f);
   const vm = (await getComputeVmById(f.vmId))!;
   await expect(prepareCourseVmRestart(vm, randomUUID(), null)).rejects.toThrow(
@@ -412,9 +429,12 @@ it("releases only an expired, undispatched, unspent sponsored reservation", asyn
 it("fails closed when the payer does not confirm the release (older payer)", async () => {
   const f = await stoppedCourseVm();
   const operation = randomUUID();
-  const old = restartRequest(f, new Date(Date.now() + 25 * 60_000));
+  const old = await storeAndRead(
+    f.vmId,
+    operation,
+    restartRequest(f, new Date(Date.now() + 25 * 60_000)),
+  );
   const oldBinding = await reserveComputeVmFundingLocal(old);
-  await storePending(f.vmId, operation, old);
   await expire(oldBinding);
   const reserve = jest.fn();
   await stubPayer(f.payer, {
@@ -483,12 +503,79 @@ it("never treats a failed lookup or a non-time barrier failure as absence", asyn
   expect(JSON.stringify(await storedPending(f.vmId))).toBe(stored);
 });
 
+it("returns the same binding when the same key retries after a replacement", async () => {
+  const f = await stoppedCourseVm();
+  await storePending(
+    f.vmId,
+    randomUUID(),
+    restartRequest(f, new Date(Date.now() - 2 * 3600_000)),
+  );
+  const operation = randomUUID();
+  const first = await prepareCourseVmRestart(
+    (await getComputeVmById(f.vmId))!,
+    operation,
+    null,
+  );
+  const retry = await prepareCourseVmRestart(
+    (await getComputeVmById(f.vmId))!,
+    operation,
+    null,
+  );
+  expect(retry!.binding.reservation_id).toBe(first!.binding.reservation_id);
+  expect(await epochRows(f.payer, first!.binding.funding_epoch)).toBe(1);
+});
+
+it("recognises a billing-authority payer's deadline refusal and nothing looser", async () => {
+  const f = await stoppedCourseVm();
+  const real = await payerApi(f.payer);
+  let pendingEpoch = "";
+  const refusal =
+    (message: string) => async (opts: ReserveComputeVmFundingRequest) => {
+      if (opts.funding_epoch === pendingEpoch) throw Error(message);
+      return await real.reserveComputeVmFunding(opts);
+    };
+  // A wrapped message that is not one of the quote's refusals: fail closed.
+  pendingEpoch = (
+    await storeAndRead(
+      f.vmId,
+      randomUUID(),
+      restartRequest(f, new Date(Date.now() - 2 * 3600_000)),
+    )
+  ).funding_epoch;
+  const stored = JSON.stringify(await storedPending(f.vmId));
+  await stubPayer(f.payer, {
+    reserveComputeVmFunding: refusal(
+      "Funding must cover fifteen useful minutes plus the shutdown margin, almost [billing authority command c; status failed]",
+    ),
+  });
+  await expect(
+    prepareCourseVmRestart((await getComputeVmById(f.vmId))!, randomUUID(), null),
+  ).rejects.toThrow("almost");
+  expect(JSON.stringify(await storedPending(f.vmId))).toBe(stored);
+  jest.restoreAllMocks();
+  // The billing-authority form of a real refusal: positive absence.
+  await stubPayer(f.payer, {
+    reserveComputeVmFunding: refusal(
+      "Funding must cover fifteen useful minutes plus the shutdown margin. [billing authority command c; status failed]",
+    ),
+  });
+  const prepared = await prepareCourseVmRestart(
+    (await getComputeVmById(f.vmId))!,
+    randomUUID(),
+    null,
+  );
+  expect(prepared!.binding.funding_epoch).not.toBe(pendingEpoch);
+});
+
 postgresIt(
   "waits for an in-flight reserve of the old request instead of orphaning it",
   async () => {
     const f = await stoppedCourseVm();
-    const old = restartRequest(f, new Date(Date.now() + 25 * 60_000));
-    await storePending(f.vmId, randomUUID(), old);
+    const old = await storeAndRead(
+      f.vmId,
+      randomUUID(),
+      restartRequest(f, new Date(Date.now() + 25 * 60_000)),
+    );
     // Pause the old reserve after its quote, while it holds the source locks.
     let resume!: () => void;
     const paused = new Promise<void>((r) => (resume = r));

@@ -75,7 +75,11 @@ async function releaseUndispatchedReservation(
     released_undispatched: true,
   };
   if (row.state === "settled") {
-    if (!toDecimal(row.spent_usd).eq(0) || !unreleased.eq(0))
+    if (
+      row.dispatched_at ||
+      !toDecimal(row.spent_usd).eq(0) ||
+      !unreleased.eq(0)
+    )
       fundingConflict(RELEASE_REFUSED);
     return released;
   }

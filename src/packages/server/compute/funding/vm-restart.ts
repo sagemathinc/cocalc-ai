@@ -137,8 +137,14 @@ export async function prepareCourseVmRestart(
       await releaseExpiredRestart(api, pending, existing!);
     }
     if (expired) {
-      await replacePendingRestart(vm, previous.funding_epoch, pending, candidate);
-      pending = candidate;
+      // Reserve the request as stored: jsonb reorders keys, and a retry of
+      // this key reads the stored copy, so its request hash must match.
+      pending = await replacePendingRestart(
+        vm,
+        previous.funding_epoch,
+        pending,
+        candidate,
+      );
     } else if (pending.operation_id !== operation) {
       fundingConflict("Another sponsored restart is pending.");
     }
@@ -170,10 +176,22 @@ function restartRequestedUntil(pending: PendingCourseRestart): number {
 
 // The quote's refusals for a request whose requested_until has passed. Both
 // are raised after the payer's source locks are taken (vm-reservations.ts).
-const DEADLINE_REFUSALS = new Set([
+// A billing-authority payer appends its command reference; any other shape
+// is not recognised and fails closed.
+const DEADLINE_REFUSALS = [
   "Funding must cover fifteen useful minutes plus the shutdown margin.",
   "The VM stop or deletion deadline has already passed.",
-]);
+];
+
+function isDeadlineRefusal(err: unknown): boolean {
+  const message = (err as Error)?.message;
+  if (typeof message !== "string") return false;
+  return DEADLINE_REFUSALS.some(
+    (refusal) =>
+      message === refusal ||
+      message.startsWith(`${refusal} [billing authority command `),
+  );
+}
 
 async function reserveAfterDeadline(
   api: Awaited<ReturnType<typeof payerApi>>,
@@ -182,7 +200,7 @@ async function reserveAfterDeadline(
   try {
     return await api.reserveComputeVmFunding(pending.request);
   } catch (err) {
-    if (DEADLINE_REFUSALS.has((err as Error)?.message)) return undefined;
+    if (isDeadlineRefusal(err)) return undefined;
     throw err;
   }
 }
@@ -215,11 +233,12 @@ async function replacePendingRestart(
   previousEpoch: string,
   old: PendingCourseRestart,
   next: PendingCourseRestart,
-): Promise<void> {
-  const { rows } = await getPool().query(
+): Promise<PendingCourseRestart> {
+  const { rows } = await getPool().query<{ restart: PendingCourseRestart }>(
     `UPDATE compute_vms SET metadata=jsonb_set(metadata,'{billing,course_funding,restart}',$4::jsonb),updated_at=clock_timestamp()
     WHERE id=$1 AND metadata#>>'{billing,course_funding,funding_epoch}'=$2 AND instance_generation=$3 AND state='stopped' AND desired_state='stopped' AND deleted_at IS NULL
-      AND metadata#>>'{billing,course_funding,restart,operation_id}'=$5 AND metadata#>>'{billing,course_funding,restart,request,funding_epoch}'=$6 RETURNING id`,
+      AND metadata#>>'{billing,course_funding,restart,operation_id}'=$5 AND metadata#>>'{billing,course_funding,restart,request,funding_epoch}'=$6
+    RETURNING metadata#>'{billing,course_funding,restart}' AS restart`,
     [
       vm.id,
       previousEpoch,
@@ -231,6 +250,7 @@ async function replacePendingRestart(
   );
   if (!rows.length)
     fundingConflict("VM changed while preparing its sponsored restart.");
+  return rows[0].restart;
 }
 
 /** Runs inside the scheduled-start transaction after it locks the current VM. */
