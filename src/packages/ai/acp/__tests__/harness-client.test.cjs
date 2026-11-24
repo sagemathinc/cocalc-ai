@@ -965,6 +965,18 @@ for (const [label, flags] of [
   });
 }
 
+// An "account" the agent reports in the project is a reporting artefact (it
+// can come from config in the project): billing goes through the relay with
+// the host's credential, so with the host's proof the turn runs.
+test("in the project, an agent reporting an account runs on the host's proof", async (t) => {
+  const client = await inProjectClient(t, ["--subscription-status"], {
+    hostSubscriptionIdentity: hostProof(),
+  });
+  const events = [];
+  await client.prompt("hello", async (event) => events.push(event));
+  assert.ok(events.some((event) => event.type === "message"));
+});
+
 test('in the project, an agent reporting "none" runs on the host\'s proof', async (t) => {
   const client = await inProjectClient(t, ["--none-status"], {
     hostSubscriptionIdentity: hostProof(),
@@ -1025,12 +1037,6 @@ for (const [name, extra, flags, rejected] of [
     "a valid proof with a different billing method reported by the agent",
     { hostSubscriptionIdentity: hostProof() },
     ["--api-key-status"],
-    /different billing method/,
-  ],
- [
-    "a valid proof with an account the agent reports itself",
-    { hostSubscriptionIdentity: hostProof() },
-    ["--subscription-status"],
     /different billing method/,
   ],
 ]) {

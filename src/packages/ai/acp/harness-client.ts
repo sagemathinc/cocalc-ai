@@ -1290,11 +1290,13 @@ export class AcpHarnessClient {
           "unavailable",
           "Your Claude subscription could not be verified for this turn. No message was sent or billed. Retry; if this persists, reconnect in Claude settings.",
         );
-      // With the relay's token the agent reports nothing or "none"; any
-      // identity of its own (an account, an API key, ...) is not the
-      // subscription the host holds.
+      // With the relay's token the agent reports nothing or "none". An
+      // "account" (from config in the project, say) is only what it
+      // reports: billing goes through the relay with the host's credential.
+      // A billing method of its own (an API key, a gateway, ...) is refused.
       const kind = (this.authStatus as { kind?: unknown } | undefined)?.kind;
-      if (this.authStatus == null || kind === "none") return;
+      if (this.authStatus == null || kind === "none" || kind === "account")
+        return;
       throw new HarnessError(
         "rejected",
         "Claude reported a different billing method instead of your subscription. Open Claude settings and reconnect the selected subscription. No message was sent or billed.",
