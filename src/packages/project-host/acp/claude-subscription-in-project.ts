@@ -27,6 +27,7 @@ import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import getLogger from "@cocalc/backend/logger";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import {
   CLAUDE_CODE_INSTALL_ROOT,
@@ -337,12 +338,57 @@ export function claudeInProjectBackgroundWorkScript(
   ].join("\n");
 }
 
+const MANAGED_POLICY_CHECK_TIMEOUT_MS = 15_000;
+
+/**
+ * One line of text from inside a project container (which the project's user
+ * controls) made safe for host logs and a chat-visible error: no terminal
+ * escapes, control or bidi characters, and no markdown-active characters.
+ */
+export function plainTextLine(text: string): string {
+  return text
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(
+      /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g,
+      "",
+    )
+    .replace(/[\\`*_[\]<>|~#]/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Why a podman exec failed, for the log and the user: the exit code or
+ * signal and the first line of stderr (made plain text, capped). Never env or
+ * stdout content.
+ */
+export function podmanExecFailureReason(
+  error: { code?: unknown; signal?: unknown; message?: unknown },
+  stderr: string,
+): string {
+  const line = `${stderr ?? ""}`
+    .split("\n")
+    .map((s) => plainTextLine(s))
+    .find((s) => s.length > 0);
+  const detail = line ? `: ${line.slice(0, 200)}` : "";
+  if (typeof error.code === "number")
+    return `podman exec exited ${error.code}${detail}`;
+  if (typeof error.signal === "string" && error.signal)
+    return `podman exec was killed by ${error.signal}${detail}`;
+  if (typeof error.code === "string" && error.code)
+    return `podman exec failed (${error.code})${detail}`;
+  return `podman exec failed${detail}`;
+}
+
 /** Runs claudeManagedPolicyCheck in the project container. */
 async function checkNoManagedPolicy(
   launcher: { command: string; argsPrefix: string[] },
   name: string,
 ): Promise<void> {
-  const code = await new Promise<number | string | null>((resolve) =>
+  const failure = await new Promise<
+    | undefined
+    | { code: unknown; signal: unknown; killed: boolean; stderr: string }
+  >((resolve) =>
     execFile(
       launcher.command,
       [
@@ -355,15 +401,44 @@ async function checkNoManagedPolicy(
         "-c",
         claudeManagedPolicyCheck(),
       ],
-      { cwd: "/", timeout: 15_000, killSignal: "SIGKILL" },
-      (error) => resolve(error ? ((error as any).code ?? "failed") : 0),
+      {
+        cwd: "/",
+        timeout: MANAGED_POLICY_CHECK_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+        // The podman binary, containers.conf and runtime dir the project
+        // containers were created with (as every other podman call here).
+        env: podmanEnv(),
+      },
+      (error, _stdout, stderr) =>
+        resolve(
+          error
+            ? {
+                code: (error as any).code,
+                signal: (error as any).signal,
+                killed: !!(error as any).killed,
+                stderr: `${stderr ?? ""}`,
+              }
+            : undefined,
+        ),
     ),
   );
-  if (code === MANAGED_POLICY_EXIT) throw Error(MANAGED_POLICY_MESSAGE);
-  if (code !== 0)
+  if (failure == null) return;
+  if (failure.code === MANAGED_POLICY_EXIT) throw Error(MANAGED_POLICY_MESSAGE);
+  const reason = podmanExecFailureReason(failure, failure.stderr);
+  logger.warn("Claude Code managed-settings check failed", {
+    reason,
+    code: failure.code,
+    signal: failure.signal,
+    killed: failure.killed,
+    stderrBytes: Buffer.byteLength(failure.stderr),
+  });
+  if (failure.killed && failure.signal === "SIGKILL")
     throw Error(
-      "Could not check the project for Claude Code managed settings; try again.",
+      "Could not check the project for Claude Code managed settings in time; try again.",
     );
+  throw Error(
+    `Could not check the project for Claude Code managed settings (${reason}).`,
+  );
 }
 
 /**
@@ -615,7 +690,12 @@ export async function launchClaudeSubscriptionInProject(
             "-c",
             script,
           ],
-          { cwd: "/", timeout: 15_000, killSignal: "SIGKILL" },
+          {
+            cwd: "/",
+            timeout: 15_000,
+            killSignal: "SIGKILL",
+            env: podmanEnv(),
+          },
           (error, stdout) => (error ? reject(error) : resolve(`${stdout}`)),
         );
       });

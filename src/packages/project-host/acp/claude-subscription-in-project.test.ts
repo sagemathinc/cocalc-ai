@@ -43,6 +43,7 @@ import { createProjectCliTokenLease } from "../codex/codex-project";
 import { startProviderRelaySession } from "../codex/site-funded-proxy";
 import { getClaudeSubscriptionCredential } from "./claude-subscription-registry";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -80,6 +81,14 @@ jest.mock("@cocalc/project-runner/run/filesystem", () => ({
 }));
 jest.mock("@cocalc/project-runner/run/podman", () => ({
   projectPoolPodmanLauncher: () => ({ command: "podman", argsPrefix: [] }),
+}));
+jest.mock("@cocalc/backend/podman/env", () => ({
+  podmanEnv: () => ({
+    PATH: "/opt/cocalc/container-runtime/current/bin:/usr/bin:/bin",
+    CONTAINERS_CONF_OVERRIDE:
+      "/opt/cocalc/container-runtime/current/etc/containers/containers.conf",
+    XDG_RUNTIME_DIR: "/run/user/2001",
+  }),
 }));
 
 const run = promisify(
@@ -852,6 +861,87 @@ describe("launchClaudeSubscriptionInProject", () => {
     ).rejects.toThrow(/managed settings/);
     expect(startProviderRelaySession).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("runs every podman exec with the podman environment of the project containers", async () => {
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    await proc.beginConnectorTurn!({ path: "a.chat" } as any);
+    await proc.endConnectorTurn!();
+    const calls = (execFile as unknown as jest.Mock).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const expected = podmanEnv();
+    for (const [, , options] of calls) {
+      expect(options.env).toEqual(expected);
+    }
+  });
+
+  it("names the reason when the managed-policy check fails, and says try again only for a timeout", async () => {
+    const mock = execFile as unknown as jest.Mock;
+    mock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(
+        Object.assign(Error("Command failed"), { code: 125 }),
+        "",
+        `Error: no container with name or ID "project-${projectId}" found: no such container\nmore\n`,
+      ),
+    );
+    const failed = launchClaudeSubscriptionInProject(binding, conversation);
+    await expect(failed).rejects.toThrow(
+      /podman exec exited 125: Error: no container with name or ID/,
+    );
+    await expect(failed).rejects.not.toThrow(/try again/);
+
+    mock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(
+        Object.assign(Error("killed"), {
+          code: null,
+          killed: true,
+          signal: "SIGKILL",
+        }),
+        "",
+        "",
+      ),
+    );
+    await expect(
+      launchClaudeSubscriptionInProject(binding, conversation),
+    ).rejects.toThrow(/in time; try again/);
+    expect(startProviderRelaySession).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("shows the container's stderr as plain text: no terminal escapes, control characters or markdown", async () => {
+    (execFile as unknown as jest.Mock).mockImplementation(
+      (_cmd, _args, _opts, cb) =>
+        cb(
+          Object.assign(Error("Command failed"), { code: 1 }),
+          "",
+          "\u001b[31mError\u001b[0m: see [the docs](https://evil.example/x) \u202ehere\u0007\n",
+        ),
+    );
+    let message = "";
+    await launchClaudeSubscriptionInProject(binding, conversation).catch(
+      (err) => (message = `${err.message}`),
+    );
+    expect(message).toMatch(/podman exec exited 1: Error: see/);
+    expect(message).not.toMatch(/[\u001b\u0007\u202e]/);
+    expect(message).not.toMatch(/\[the docs\]\(/);
+    expect(message).not.toMatch(/[[\]`*<>]/);
+  });
+
+  it("removes line and paragraph separators and byte-order marks from the container's stderr", async () => {
+    (execFile as unknown as jest.Mock).mockImplementation(
+      (_cmd, _args, _opts, cb) =>
+        cb(
+          Object.assign(Error("Command failed"), { code: 2 }),
+          "",
+          "\ufeffbad\u2028fake line\u2029second\u200btail\n",
+        ),
+    );
+    let message = "";
+    await launchClaudeSubscriptionInProject(binding, conversation).catch(
+      (err) => (message = `${err.message}`),
+    );
+    expect(message).toMatch(/podman exec exited 2: badfake linesecondtail/);
+    expect(message).not.toMatch(/[\ufeff\u2028\u2029\u200b]/);
   });
 
   it("checks for a managed policy again at each turn start, failing the turn before the relay accepts it", async () => {
