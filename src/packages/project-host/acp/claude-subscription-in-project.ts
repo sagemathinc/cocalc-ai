@@ -599,6 +599,8 @@ export async function launchClaudeSubscriptionInProject(
     },
     tokenPrefix: RELAY_TOKEN_PREFIX,
   });
+  // Until this launch is released (its relay closed).
+  let relayOpen = true;
 
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
   try {
@@ -710,6 +712,7 @@ export async function launchClaudeSubscriptionInProject(
     const { closed, stop } = superviseInProjectProcess({
       proc,
       release: async () => {
+        relayOpen = false;
         relay.close();
         await lease.close().catch(() => {});
       },
@@ -720,10 +723,23 @@ export async function launchClaudeSubscriptionInProject(
       sessionPolicy: "default",
       pinnedSettingsEnv: claudeRelaySettingsEnv(relay.baseUrl),
       subscriptionAuth: "oauth-token",
-      // tokenOf() resolved this account's credential before the launch, and
-      // the relay re-checks it: the identity does not depend on the agent's
-      // own read, which goes to Anthropic directly and can fail.
-      hostVerifiedSubscription: true,
+      // The identity a turn may rely on when the agent's own read (which
+      // goes to Anthropic directly, not through the relay) reports nothing:
+      // this account's credential, resolved again now, as the relay uses it.
+      hostSubscriptionIdentity: async ({ nonce }) => {
+        // Only while this launch's relay serves the turn, and only if the
+        // same credential still resolves now (revoked or replaced: throws).
+        if (!relayOpen) return undefined;
+        await tokenOf();
+        if (!relayOpen) return undefined;
+        return {
+          kind: "in-project-relay",
+          projectId,
+          accountId,
+          credentialId,
+          nonce,
+        };
+      },
       // The harness calls these around every turn of the qualified Claude
       // Code harness (endConnectorTurn in its finally): a turn makes the
       // relay session usable, and its end starts the fixed time after which

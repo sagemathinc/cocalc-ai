@@ -776,8 +776,16 @@ describe("launchClaudeSubscriptionInProject", () => {
     const proc = await launchClaudeSubscriptionInProject(binding, conversation);
     expect(proc.sessionPolicy).toBe("default");
     expect(proc.subscriptionAuth).toBe("oauth-token");
-    // the credential was resolved on the host before the launch
-    expect(proc.hostVerifiedSubscription).toBe(true);
+    // the host's proof for a turn: this binding, the turn's nonce
+    await expect(
+      proc.hostSubscriptionIdentity!({ nonce: "turn-1" }),
+    ).resolves.toEqual({
+      kind: "in-project-relay",
+      projectId,
+      accountId,
+      credentialId,
+      nonce: "turn-1",
+    });
     // the route pinned at the flag-settings tier; never the token
     const noProxy = "localhost,127.0.0.1,::1,host.containers.internal";
     expect(proc.pinnedSettingsEnv).toEqual({
@@ -1001,6 +1009,36 @@ describe("launchClaudeSubscriptionInProject", () => {
       cb(Object.assign(Error("gone"), { code: 125 }), "", ""),
     );
     await expect(proc.hasBackgroundWork!()).rejects.toThrow();
+  });
+
+  it("proves the host identity per turn: resolved again now, and never after release", async () => {
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    const calls = (getClaudeSubscriptionCredential as jest.Mock).mock.calls
+      .length;
+    await expect(
+      proc.hostSubscriptionIdentity!({ nonce: "a" }),
+    ).resolves.toMatchObject({ nonce: "a" });
+    // asked again: the credential is resolved again, not cached
+    expect(
+      (getClaudeSubscriptionCredential as jest.Mock).mock.calls.length,
+    ).toBe(calls + 1);
+    // revoked since: no proof
+    (getClaudeSubscriptionCredential as jest.Mock).mockRejectedValueOnce(
+      Error("Claude subscription credential is unavailable or revoked"),
+    );
+    await expect(
+      proc.hostSubscriptionIdentity!({ nonce: "b" }),
+    ).rejects.toThrow(/revoked/);
+    // released (relay closed): no proof, without asking the hub
+    await proc.stop();
+    const before = (getClaudeSubscriptionCredential as jest.Mock).mock.calls
+      .length;
+    await expect(
+      proc.hostSubscriptionIdentity!({ nonce: "c" }),
+    ).resolves.toBeUndefined();
+    expect(
+      (getClaudeSubscriptionCredential as jest.Mock).mock.calls.length,
+    ).toBe(before);
   });
 
   it("revalidates the subscription token at most every minute", async () => {

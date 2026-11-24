@@ -858,74 +858,195 @@ test("a Claude subscription run in the project is a normal session whose billing
   }
 });
 
-test("a Claude subscription in the project passes on the host-verified identity when the agent reports none", async (t) => {
-  for (const [flags, hostVerified, rejected] of [
-    // The agent's own identity read failed: no report at all.
-    [[], true, undefined],
-    [[], false, /not reported a verifiable subscription identity/],
-    // A different billing method the agent does report is still refused.
-    [["--api-key-status"], true, /different billing method/],
-  ]) {
-    const child = spawn(
-      process.execPath,
-      [...profile.args, "--claude-adapter", "--in-project", ...flags],
-      { env: {}, stdio: "pipe" },
-    );
-    const closed = new Promise((resolve) => child.once("close", resolve));
-    const client = await AcpHarnessClient.start(
-      {
-        projectId: "project-a",
-        accountId: "account-a",
-        profile: {
-          version: 2,
-          kind: "acp",
-          id: "claude-code",
-          revision: "0.93.0",
-          cwd: "/home/user/work",
-          credentialMode: "project-managed",
-          executionPolicy: "full-access",
-        },
-        credential: {
-          version: 1,
-          provider: "anthropic",
-          mode: "account-subscription",
-          credentialId: "11111111-1111-4111-8111-111111111111",
-        },
+// The host's proof for one turn, as the in-project launcher answers it.
+function hostProof(overrides = {}) {
+  return async ({ nonce }) => ({
+    kind: "in-project-relay",
+    projectId: "project-a",
+    accountId: "account-a",
+    credentialId: "11111111-1111-4111-8111-111111111111",
+    nonce,
+    ...overrides,
+  });
+}
+
+async function inProjectClient(t, flags, extra) {
+  const child = spawn(
+    process.execPath,
+    [...profile.args, "--claude-adapter", "--in-project", ...flags],
+    { env: {}, stdio: "pipe" },
+  );
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  const client = await AcpHarnessClient.start(
+    {
+      projectId: "project-a",
+      accountId: "account-a",
+      profile: {
+        version: 2,
+        kind: "acp",
+        id: "claude-code",
+        revision: "0.93.0",
+        cwd: "/home/user/work",
+        credentialMode: "project-managed",
+        executionPolicy: "full-access",
       },
-      async () => ({
-        sessionPolicy: "default",
-        subscriptionAuth: "oauth-token",
-        ...(hostVerified ? { hostVerifiedSubscription: true } : {}),
-        pinnedSettingsEnv: pinnedRelayEnv,
-        stdin: child.stdin,
-        stdout: child.stdout,
-        stderr: child.stderr,
-        closed,
-        stop: async () => {
-          child.kill("SIGKILL");
-          await closed;
-        },
-      }),
-      30_000,
-      undefined,
-      "claude-subscription-controller",
-    );
-    t.after(() => client.dispose());
-    await client.open();
-    if (rejected) {
-      const events = [];
-      await assert.rejects(
-        () => client.prompt("hello", async (event) => events.push(event)),
-        rejected,
-      );
-      assert.ok(!events.some((event) => event.type === "message"));
-    } else {
-      const events = [];
-      await client.prompt("hello", async (event) => events.push(event));
-      assert.ok(events.some((event) => event.type === "message"));
-    }
-    await client.dispose();
+      credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "11111111-1111-4111-8111-111111111111",
+      },
+    },
+    async () => ({
+      sessionPolicy: "default",
+      subscriptionAuth: "oauth-token",
+      pinnedSettingsEnv: pinnedRelayEnv,
+      stdin: child.stdin,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      closed,
+      stop: async () => {
+        child.kill("SIGKILL");
+        await closed;
+      },
+      ...extra,
+    }),
+    30_000,
+    undefined,
+    "claude-subscription-controller",
+  );
+  t.after(() => client.dispose());
+  await client.open();
+  return client;
+}
+
+test("in the project, a silent agent's turn runs on the host's proof for this turn, asked again each turn", async (t) => {
+  const nonces = [];
+  const client = await inProjectClient(t, [], {
+    hostSubscriptionIdentity: async ({ nonce }) => {
+      nonces.push(nonce);
+      return hostProof()({ nonce });
+    },
+  });
+  for (let turn = 0; turn < 2; turn++) {
+    const events = [];
+    await client.prompt("hello", async (event) => events.push(event));
+    assert.ok(events.some((event) => event.type === "message"));
   }
+  // asked once per turn, with a fresh nonce each time: never cached
+  assert.equal(nonces.length, 2);
+  assert.notEqual(nonces[0], nonces[1]);
+});
+
+test("in the project, a turn after the host's credential is revoked fails, though the turn before ran", async (t) => {
+  let revoked = false;
+  const client = await inProjectClient(t, [], {
+    hostSubscriptionIdentity: async ({ nonce }) => {
+      if (revoked)
+        throw Error("Claude subscription credential is unavailable or revoked");
+      return hostProof()({ nonce });
+    },
+  });
+  const events = [];
+  await client.prompt("hello", async (event) => events.push(event));
+  assert.ok(events.some((event) => event.type === "message"));
+  revoked = true;
+  const after = [];
+  await assert.rejects(
+    () => client.prompt("hello again", async (event) => after.push(event)),
+    /not reported a verifiable subscription identity/,
+  );
+  assert.ok(!after.some((event) => event.type === "message"));
+});
+
+for (const [name, extra, flags, rejected] of [
+  // no host proof at all: silence still fails closed
+  ["no host proof", {}, [], /not reported a verifiable subscription identity/],
+  [
+    "a proof for another project",
+    { hostSubscriptionIdentity: hostProof({ projectId: "project-b" }) },
+    [],
+    /not reported a verifiable subscription identity/,
+  ],
+  [
+    "a proof for another account",
+    { hostSubscriptionIdentity: hostProof({ accountId: "account-b" }) },
+    [],
+    /not reported a verifiable subscription identity/,
+  ],
+  [
+    "a proof for another credential",
+    {
+      hostSubscriptionIdentity: hostProof({
+        credentialId: "22222222-2222-4222-8222-222222222222",
+      }),
+    },
+    [],
+    /not reported a verifiable subscription identity/,
+  ],
+  [
+    "a proof for another turn (stale nonce)",
+    { hostSubscriptionIdentity: hostProof({ nonce: "an-earlier-turn" }) },
+    [],
+    /not reported a verifiable subscription identity/,
+  ],
+  [
+    "a proof of another kind",
+    { hostSubscriptionIdentity: hostProof({ kind: "controller" }) },
+    [],
+    /not reported a verifiable subscription identity/,
+  ],
+  [
+    "a host that cannot resolve the credential now",
+    {
+      hostSubscriptionIdentity: async () => {
+        throw Error("Claude subscription credential is unavailable or revoked");
+      },
+    },
+    [],
+    /not reported a verifiable subscription identity/,
+  ],
+  [
+    "a valid proof with a different billing method reported by the agent",
+    { hostSubscriptionIdentity: hostProof() },
+    ["--api-key-status"],
+    /different billing method/,
+  ],
+]) {
+  test(`in the project, ${name} does not pass a turn`, async (t) => {
+    const client = await inProjectClient(t, flags, extra);
+    const events = [];
+    await assert.rejects(
+      () => client.prompt("hello", async (event) => events.push(event)),
+      rejected,
+    );
+    assert.ok(!events.some((event) => event.type === "message"));
+  });
+}
+
+test("the controller path ignores a host proof: a silent controller agent still fails", async (t) => {
+  let asked = 0;
+  const client = await start(
+    t,
+    ["--claude-adapter"],
+    undefined,
+    [],
+    undefined,
+    undefined,
+    {
+      hostSubscriptionIdentity: async ({ nonce }) => {
+        asked++;
+        return hostProof()({ nonce });
+      },
+    },
+    "claude-subscription-controller",
+  );
+  await client.open();
+  await assert.rejects(
+    client.prompt("hello", async () => {}),
+    /not reported a verifiable subscription identity/,
+  );
+  assert.equal(asked, 0);
 });
 
 test("a resumed session gets newer CoCalc instructions with its next turn, once", async (t) => {

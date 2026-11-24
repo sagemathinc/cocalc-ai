@@ -24,7 +24,7 @@ import {
   harnessSessionGuidance,
 } from "./harness-context";
 import type { Readable, Writable } from "node:stream";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   parseAcpHarnessCredential,
   parseAcpHarnessProfile,
@@ -148,13 +148,16 @@ export interface HarnessProcess {
    */
   subscriptionAuth?: "oauth-token";
   /**
-   * Trusted launcher fact, only with subscriptionAuth "oauth-token": the host
-   * itself resolved the account's subscription credential and holds it behind
-   * the relay, so the identity is known even when the agent cannot read its
-   * own. A turn then proceeds when the agent reports no identity; a different
-   * billing method the agent does report is still refused.
+   * Trusted launcher check of a subscription agent run in the project
+   * (sessionPolicy "default", subscriptionAuth "oauth-token"): the host
+   * resolves, NOW, the credential it holds behind the relay and answers with
+   * a proof for this turn's nonce. It is asked at each turn whose agent
+   * reported no identity; see HostSubscriptionProof. An identity the agent
+   * does report is judged exactly as before.
    */
-  hostVerifiedSubscription?: true;
+  hostSubscriptionIdentity?(turn: {
+    nonce: string;
+  }): Promise<HostSubscriptionProof | undefined>;
   /**
    * Trusted launcher fact: how this process's sessions run, replacing the
    * policy the caller chose from the credential. A subscription agent run in
@@ -182,6 +185,23 @@ export interface HarnessTurnPublicationContext {
   thread_id: string;
   message_date: string;
   workbench: boolean;
+}
+
+/** How long a turn waits for the host's proof; no answer in time is a fail. */
+const HOST_SUBSCRIPTION_PROOF_TIMEOUT_MS = 10_000;
+
+/**
+ * The host's answer for one turn: it resolved this account's subscription
+ * credential for this project just now, and holds it behind the in-project
+ * relay. A turn accepts it only when every field matches its own binding and
+ * nonce.
+ */
+export interface HostSubscriptionProof {
+  kind: "in-project-relay";
+  projectId: string;
+  accountId: string;
+  credentialId: string;
+  nonce: string;
 }
 
 export interface HarnessBinding {
@@ -1188,6 +1208,50 @@ export class AcpHarnessClient {
     }
   }
 
+  /**
+   * Whether the host, asked now for this turn, resolves this binding's
+   * subscription credential behind the in-project relay. Only a subscription
+   * agent run in the project can pass; anything unclear is false.
+   */
+  private async hostIdentityForThisTurn(): Promise<boolean> {
+    const read = this.process.hostSubscriptionIdentity;
+    if (
+      typeof read !== "function" ||
+      this.process.subscriptionAuth !== "oauth-token" ||
+      this.process.sessionPolicy !== "default"
+    )
+      return false;
+    const credentialId = (
+      this.binding.credential as { credentialId?: unknown } | undefined
+    )?.credentialId;
+    if (typeof credentialId !== "string" || !credentialId) return false;
+    const nonce = randomUUID();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const proof = await Promise.race([
+        read.call(this.process, { nonce }),
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(
+            () => resolve(undefined),
+            HOST_SUBSCRIPTION_PROOF_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      return (
+        proof != null &&
+        proof.kind === "in-project-relay" &&
+        proof.projectId === this.binding.projectId &&
+        proof.accountId === this.binding.accountId &&
+        proof.credentialId === credentialId &&
+        proof.nonce === nonce
+      );
+    } catch {
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   private async verifySubscriptionIdentity(): Promise<void> {
     // The adapter's initial identity probe is asynchronous and can finish
     // after session/new. Reserve the turn, but do not send it or enable tools.
@@ -1215,12 +1279,16 @@ export class AcpHarnessClient {
       if (kind === "none" || kind === "account") return;
       // In the project the agent reads its identity from Anthropic directly,
       // not through the relay, and a failed or slow read reports nothing.
-      // The host already holds the verified credential behind the relay.
-      if (
-        this.authStatus == null &&
-        this.process.hostVerifiedSubscription === true
-      )
+      // The host holds the credential behind the relay: it resolves it again
+      // for this turn, for this project and credential.
+      if (this.authStatus == null && (await this.hostIdentityForThisTurn())) {
+        if (this.canceled || this.disposed || this.failure)
+          throw new HarnessError(
+            "unavailable",
+            "Claude startup was interrupted. No message was sent.",
+          );
         return;
+      }
     }
     const status = this.authStatus as
       | { kind?: string; account?: { plan?: unknown } }
