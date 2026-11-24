@@ -58,7 +58,7 @@ On phones, open **Chat tools** with the ellipsis button, then choose
 
 ## Other agents
 
-[Claude Code](/docs/ai/claude-code) is also integrated on sites that enable it.
+[Claude Code](/docs/ai/claude-code) is also integrated.
 Use the [feature comparison](/docs/ai/agent-features) for the differences in
 goals, tools, access, and controls. Other terminal agents, such as opencode,
 can run in a project terminal when compatible with its software and permissions;
@@ -84,8 +84,7 @@ checks that would make the result useful.
 
 When CoCalc opens the request box for you, it asks **What would you like to work
 on?** There is no name or project to choose. Below the box, the runtime menu
-starts at **Codex**; choose **Claude** there for Claude Code, where the site
-enables it. For Codex, the model, thinking level, and
+starts at **Codex**; choose **Claude** there for Claude Code. For Codex, the model, thinking level, and
 payment source buttons work as in the new-agent form described below. If CoCalc
 asks you to verify your email, do that first. When you start typing, CoCalc
 prepares a project and starts it, which can start project compute; the chat and
@@ -104,8 +103,8 @@ box. They start from the agent you had selected, if any.
    no project, CoCalc says **Your first project will be created
    automatically**, and titles that project from the first line of your
    request, or **My first project** if there is no request.
-3. In the runtime menu, choose **Claude** for Claude Code, where the site
-   enables it; see [Use Claude Code](/docs/ai/claude-code).
+3. In the runtime menu, choose **Claude** for Claude Code; see
+   [Use Claude Code](/docs/ai/claude-code).
    For Codex, click the model, thinking level, or payment source button to
    change it. When **CoCalc Membership** pays, whether chosen directly or
    automatically, the thinking level is fixed. Access, funding, project

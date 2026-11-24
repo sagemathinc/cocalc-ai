@@ -28,7 +28,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     body: AGENT_FEATURES_BODY.trim(),
     category: "AI",
     id: "ai.agent-features",
-    lastReviewed: "2026-09-28",
+    lastReviewed: "2026-11-23",
     noActionReason:
       "This reference compares workflows; follow its linked guides to configure or start work.",
     slug: "ai/agent-features",

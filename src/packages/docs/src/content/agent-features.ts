@@ -11,8 +11,10 @@ feature in a provider's standalone command-line application. Use the linked
 guides for instructions. Start with [Agents](/docs/ai/my-agents) or
 [Open Codex chat](/docs/ai/codex-chat).
 
-**Assessed 2026-09-28.** This assessment combines the current CoCalc implementation,
-its workflow documentation, and available live checks. It is not a claim that
+**Assessed 2026-09-28; the Claude Code column was reassessed on 2026-11-23
+against the CoCalc source, without new live checks.** This assessment combines
+the current CoCalc implementation, its workflow documentation, and available
+live checks. It is not a claim that
 every row was retested on every deployment. Older frontend, project-host, worker,
 or CLI builds can lack features listed here. Site policy, project permissions,
 model access, installed software, and compute availability still apply.
@@ -27,8 +29,7 @@ of each row describes that capability, not Claude Code as a whole.
 
 | Status | Meaning |
 | --- | --- |
-| Supported | A documented integrated Codex workflow, subject to the stated prerequisites. |
-| Preview | Available in the Claude integration, but still under preview restrictions. |
+| Supported | A documented integrated workflow for that agent, subject to the stated prerequisites. |
 | Conditional | Requires the named provider, runtime, site, or tool capability; not universal. |
 | Limited | Only the described subset works, or a known gap prevents full parity. |
 | Not supported | No supported integrated workflow for this feature. |
@@ -38,16 +39,16 @@ of each row describes that capability, not Claude Code as a whole.
 
 | Feature and guide | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
-| [Start a named agent in a selected project](/docs/ai/my-agents) | Supported | Preview | Creating an agent can start project compute and consume model allowance. |
-| [Name an existing chat; pin, order, group, and retire agents](/docs/ai/my-agents) | Supported | Preview | Naming does not grant messaging access; retiring a name keeps the conversation and results. |
-| [Use project chats with collaborators](/docs/collaboration/chat) | Supported | Preview | The project is the collaboration boundary, not a private workspace for each agent. |
-| [Choose a working directory](/docs/ai/codex-conversations) | Supported | Preview | Use the composer directory control. A directory is not an access restriction. |
-| [Open a terminal from an agent](/docs/terminal/use-terminal) | Supported | Preview | New agent terminals use the agent's configured working directory on current builds. Existing terminals keep their shell state. |
-| [Connect personal subscription access](/docs/ai/connect-credentials) | Supported | Preview | ChatGPT for Codex; verified personal Claude Pro/Max for Claude. These are separate connections. |
+| [Start a named agent in a selected project](/docs/ai/my-agents) | Supported | Supported | Creating an agent can start project compute and consume model allowance. Claude Code also needs one of its access options set up; see [Claude Code](/docs/ai/claude-code). |
+| [Name an existing chat; pin, order, group, and retire agents](/docs/ai/my-agents) | Supported | Supported | Naming does not grant messaging access; retiring a name keeps the conversation and results. |
+| [Use project chats with collaborators](/docs/collaboration/chat) | Supported | Supported | The project is the collaboration boundary, not a private workspace for each agent. |
+| [Choose a working directory](/docs/ai/codex-conversations) | Supported | Limited | Use the composer directory control. A directory is not an access restriction. Claude Code's project commands start in this directory unless it names another; in the default subscription runtime, Claude's own session runs in a separate workspace. |
+| [Open a terminal from an agent](/docs/terminal/use-terminal) | Supported | Supported | New agent terminals use the agent's configured working directory on current builds. Existing terminals keep their shell state. |
+| [Connect personal subscription access](/docs/ai/connect-credentials) | Supported | Supported | ChatGPT for Codex; verified personal Claude Pro/Max for Claude. These are separate connections. |
 | [Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Conditional | Claude offers membership funding when enabled and included in your membership, an account Anthropic API key, or a project API-key secret. Membership uses its included model and the AI allowance shared with Codex; Anthropic bills API-key usage. See [Claude access and billing](/docs/ai/claude-code). |
-| [Choose model, reasoning/effort, and Standard/Fast speed](/docs/ai/codex-settings) | Conditional | Preview | Only options advertised for the selected model and credential are usable. Fast can consume additional allowance. |
+| [Choose model, reasoning/effort, and Standard/Fast speed](/docs/ai/codex-settings) | Conditional | Conditional | Only options advertised for the selected model and credential are usable. Fast can consume additional allowance. |
 | [Save account defaults and refresh available models](/docs/ai/codex-settings) | Supported | Limited | Claude offers model refresh and remembers payment choices, but does not share all Codex account-default controls. Changes do not rewrite admitted work. |
-| [Inspect subscription usage and reconnect](/docs/ai/connect-credentials) | Supported | Preview | Provider-reported usage, not a per-agent hard spending limit. Claude offers Reconnect Claude in settings. |
+| [Inspect subscription usage and reconnect](/docs/ai/connect-credentials) | Supported | Supported | Provider-reported usage, not a per-agent hard spending limit. Claude offers Reconnect Claude in settings. |
 | [Restrict command execution modes](/docs/ai/codex-settings) | Conditional | Not supported | Hosted UI defaults to full project access; Codex Lite offers sandbox choices. Integrated Claude currently has full project access. |
 | [Use provider account connectors](/docs/ai/claude-code) | Conditional | Limited | Subscriptions connected now use a long-lived token that cannot load claude.ai connectors; earlier full sign-ins still can, controlled by Use my claude.ai connectors. This is not a common connector catalog across providers. |
 
@@ -55,18 +56,18 @@ of each row describes that capability, not Claude Code as a whole.
 
 | Feature and guide | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
-| [Stream responses and inspect tool activity](/docs/ai/codex-chat) | Supported | Preview | Activity and final response are separate. Claude project commands show readable input/output rather than raw job JSON on current builds. |
-| [Continue a saved conversation](/docs/ai/codex-conversations) | Supported | Preview | Native session storage must still exist. Visible chat history alone cannot reconstruct all native context. |
-| [Copy/fork an agent with conversation context](/docs/ai/codex-conversations) | Supported | Preview | Claude's happy path has live confirmation. A fork is not a copy of project files or a separate Git worktree. |
-| [Queue follow-up messages and manage drafts](/docs/ai/codex-conversations) | Supported | Preview | A queued human message waits for execution; editing or canceling unsent work is different from interrupting admitted work. |
-| [Guide a running turn](/docs/ai/codex-conversations) | Supported | Preview | Requires adapter steering support. The pinned Claude adapter supports delivery during active work; otherwise messages queue. |
-| [Stop the current turn](/docs/ai/codex-notifications) | Supported | Preview | Stops are not rollbacks of file changes, external requests, or provider usage. Claude also cancels its managed project commands. |
-| [Return after a browser disconnect](/docs/ai/codex-conversations) | Supported | Preview | Closing a browser is not cancellation. Project/host loss is different: do not assume running commands are replayed or recovered automatically. |
-| [Paste images and attach project context](/docs/ai/editor-agent) | Conditional | Preview | Model, attachment type, size, and transport limits apply. Claude accepts pasted images; this does not imply arbitrary binary attachments or native PDF understanding. |
-| [Ask from an editor selection, notebook cell, error, or terminal](/docs/ai/editor-agent) | Supported | Unverified | Do not assume every editor-to-agent shortcut correctly targets Claude just because the chat composer is shared. |
+| [Stream responses and inspect tool activity](/docs/ai/codex-chat) | Supported | Supported | Activity and final response are separate. Claude project commands show readable input/output rather than raw job JSON on current builds. |
+| [Continue a saved conversation](/docs/ai/codex-conversations) | Supported | Supported | Native session storage must still exist; Claude keeps its transcripts in the project's home. Visible chat history alone cannot reconstruct all native context. |
+| [Copy/fork an agent with conversation context](/docs/ai/codex-conversations) | Supported | Supported | If the Claude adapter cannot copy a session, CoCalc refuses the copy rather than starting one without context. A fork is not a copy of project files or a separate Git worktree. |
+| [Queue follow-up messages and manage drafts](/docs/ai/codex-conversations) | Supported | Supported | A queued human message waits for execution; editing or canceling unsent work is different from interrupting admitted work. |
+| [Guide a running turn](/docs/ai/codex-conversations) | Supported | Supported | Requires adapter steering support; without it, messages queue. Claude reads guidance at its next step, after the current step finishes. |
+| [Stop the current turn](/docs/ai/codex-notifications) | Supported | Supported | Stops are not rollbacks of file changes, external requests, or provider usage. Claude also cancels its managed project commands. |
+| [Return after a browser disconnect](/docs/ai/codex-conversations) | Supported | Supported | Closing a browser is not cancellation. Project/host loss is different: do not assume running commands are replayed or recovered automatically. |
+| [Paste images and attach project context](/docs/ai/editor-agent) | Conditional | Conditional | Model, attachment type, size, and transport limits apply. Claude accepts up to 8 pasted PNG, JPEG, GIF or WebP images (5 MiB each, 10 MiB total); this does not imply arbitrary binary attachments or native PDF understanding. |
+| [Ask from an editor selection, notebook cell, error, or terminal](/docs/ai/editor-agent) | Supported | Unverified | These shortcuts are built to ask Codex: one that starts a new conversation starts a Codex conversation. Sending one into an open Claude conversation has not been verified. |
 | [Preview/edit a generated prompt before submission](/docs/ai/editor-agent) | Supported | Unverified | Agent Prompt appears only for workflows that prepare one; it is not the complete runtime instruction set. |
 | [Answer structured blocking questions](/docs/ai/codex-goals) | Supported | Limited | ACP supports a bounded subset of form questions when the adapter requests it; not all provider question tools map to it. |
-| [Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Preview | Claude subscription tools use the same durable question cards and answer delivery as Codex. Answers guide active work or resume the conversation after its turn finishes. |
+| [Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Conditional | Only in the default Claude subscription runtime, where Claude's project tools use the same durable question cards and answer delivery as Codex. Answers guide active work or resume the conversation after its turn finishes. Not available for API-key or site-funded Claude, or when a site runs Claude subscriptions inside the project. |
 | [Dictate or use voice controls](/docs/ai/codex-chat) | Conditional | Unverified | Depends on the site's voice service, browser permission, and UI mode; a microphone icon is not evidence of provider feature parity. |
 
 ## Project work and tools
@@ -78,13 +79,13 @@ isolated login controller. Both agents remain subject to CLI authorization.
 
 | Feature and guide | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
-| [Inspect/edit files and run project commands](/docs/files/project-files) | Supported | Preview | Both can change the shared project and run tests/builds. Review results rather than relying only on the final answer. |
-| [Honor project instructions and use CoCalc skills](/docs/cli/use-cocalc-cli) | Supported | Preview | Claude receives the CoCalc skill as instructions and reads project CLAUDE.md through project tools; it is not a separate native Skill tool. |
-| [Remember notes across sessions and projects](/docs/ai/agent-memory) | Supported | Preview | Off by default; the account owner turns it on in Settings -> AI. Codex and Claude share one account-wide set of notes. |
+| [Inspect/edit files and run project commands](/docs/files/project-files) | Supported | Supported | Both can change the shared project and run tests/builds. Review results rather than relying only on the final answer. |
+| [Honor project instructions and use CoCalc skills](/docs/cli/use-cocalc-cli) | Supported | Limited | In the default subscription runtime, an isolated controller, Claude receives the CoCalc skill as preloaded instructions, not as a separate Skill tool, and reads project CLAUDE.md through project tools. Other Claude runs install it as a Claude Code skill in ~/.claude/skills/cocalc unless the project has its own. |
+| [Remember notes across sessions and projects](/docs/ai/agent-memory) | Supported | Supported | Off by default; the account owner turns it on in Settings -> AI. Codex and Claude share one account-wide set of notes. |
 | [Edit live collaborative text](/docs/cli/collaborative-text) | Supported | Conditional | Use the live text API so unsaved collaborative state is respected; a raw filesystem edit is not equivalent. |
 | [Read/edit/run live notebooks and inspect outputs](/docs/cli/notebook-workflows) | Supported | Conditional | Shared project CLI capability. Use live notebook APIs rather than rewriting an open .ipynb file. |
 | [Build LaTeX, documents, and other supported formats](/docs/cli/builds-and-versions) | Supported | Conditional | Requires the format's installed toolchain. Use the document build pipeline rather than assuming a shell command reproduces editor behavior. |
-| [Run long foreground commands and inspect partial output](/docs/ai/claude-code) | Supported | Preview | Claude uses managed jobs with wait/cancel/list and bounded output. A short tool wait is not a process deadline. |
+| [Run long foreground commands and inspect partial output](/docs/ai/claude-code) | Supported | Limited | In the default subscription runtime, Claude uses managed jobs with wait/cancel/list and bounded output. A short tool wait is not a process deadline. Very large output can leave a job unconfirmed and block project commands until the project restarts. |
 | [Interact with terminals and run persistent services](/docs/terminal/use-terminal) | Supported | Conditional | Use project-owned terminal/service facilities. Detaching a Claude managed command does not make it persistent. |
 | [Inspect Git changes, commit, and work with repositories](/docs/files/git) | Supported | Conditional | Git is shared project tooling. Pushes and pull requests require separately configured repository access. |
 | [Use browser-session automation](/docs/cli/browser-workflows) | Conditional | Conditional | Requires an authorized browser target and the appropriate runtime tools; it does not grant access to an arbitrary user's browser. |
@@ -97,15 +98,15 @@ isolated login controller. Both agents remain subject to CLI authorization.
 
 | Feature | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
-| Registered agent identity and peer discovery | Supported | Preview | Claude project tools receive the registered thread's identity on updated hosts. Discovery does not itself start work. |
-| Agent-to-agent messaging in one project | Supported | Preview | Claude-to-Claude delivery and replies are live-verified. Mixed Claude/Codex routing has automated coverage; live mixed-runtime qualification remains outstanding. |
+| Registered agent identity and peer discovery | Supported | Supported | Claude project tools receive the registered thread's identity on updated hosts. Discovery does not itself start work. |
+| Agent-to-agent messaging in one project | Supported | Supported | Claude-to-Claude delivery and replies are live-verified. Mixed Claude/Codex routing has automated coverage; live mixed-runtime qualification remains outstanding. |
 | Agent-to-agent messaging across projects | Supported | Unverified | The shared routing path supports Claude and has automated cross-project coverage; live cross-project Claude subscription delivery has not yet been qualified. |
-| Queued Agent Networks that wake idle recipients | Supported | Preview | Claude resumes using the recipient's previously admitted subscription selection, not the sender's credentials. Idle-recipient execution is live-verified. |
-| Live Agent Networks that guide busy recipients | Supported | Preview | Claude can receive messages during active work when the execution principal matches the network account. Network and subscription authorization are rechecked at delivery. |
+| Queued Agent Networks that wake idle recipients | Supported | Supported | Claude resumes using the recipient's previously admitted subscription selection, not the sender's credentials. Idle-recipient execution is live-verified. |
+| Live Agent Networks that guide busy recipients | Supported | Supported | Claude can receive messages during active work when the execution principal matches the network account. Network and subscription authorization are rechecked at delivery. |
 | Broadcast to several network peers | Supported | Unverified | Explicit network membership and bounded recipient limits apply; broadcast does not bypass a recipient's restrictions. |
 | Same-project file references and cross-project file snapshots in messages | Supported | Unverified | References are live files; snapshots are bounded copies. Neither grants arbitrary access to the sending project. |
 | Enrolled external agents in Agent Networks | Conditional | Unverified | Explicit external enrollment and network membership are required; sharing a provider account is not enrollment. |
-| Parallel native subagents and concurrency preference | Supported | Not supported | Codex's parallel-worker control is not a Claude setting. Provider-native delegation is not equivalent to a named CoCalc agent or network member. |
+| Parallel native subagents and concurrency preference | Supported | Limited | Claude's own subagents are reported as CoCalc subagent activity in chat, but Codex's parallel-worker control is not a Claude setting. Provider-native delegation is not equivalent to a named CoCalc agent or network member. |
 
 ### Agent Networks
 
@@ -163,11 +164,11 @@ that recipient execution completed.
 | Feature and guide | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
 | [Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported | Includes objective editing, usage, pause/resume, stop, and automatic continuations; not a guaranteed provider spending cap. |
-| [Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Unverified | Scheduled prompts, one-shot watchers (CI, file, time) and approved scripts that run with the agent's own access. Needs project internet access; membership limits the number of sensors, their interval and wakes per day. Claude Code wakes need a subscription or site-funded credential, not an account API key. |
-| [Completion/failure/attention notifications](/docs/ai/codex-notifications) | Supported | Unverified | Channels and browser permission matter. Do not assume every Claude event has Codex notification parity. |
+| [Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Conditional | Scheduled prompts, one-shot watchers (CI, file, time) and approved scripts that run with the agent's own access. Needs project internet access; membership limits the number of sensors, their interval and wakes per day. Claude Code wakes need a subscription or site-funded credential, not an account API key. |
+| [Failure and attention notifications](/docs/ai/codex-notifications) | Supported | Supported | Agents no longer send a notice when a turn finishes; failures, usage-limit pauses and questions that need you still notify. Channels and browser permission matter. |
 | [Account session inventory and stop controls](/docs/ai/codex-notifications) | Supported | Unverified | The Codex panel is a bounded inventory, not proof that every provider process has stopped. |
-| [Inspect durable chat activity and submission state](/docs/cli/command-reference) | Supported | Preview | Activity can outlive a browser connection. Unknown outcomes require inspection, not automatic retries. |
-| Automatically wake a finished turn when an independent background service exits | Not supported | Not supported | Wait for foreground work, explicitly check a terminal/service, or use a separately configured schedule. |
+| [Inspect durable chat activity and submission state](/docs/cli/command-reference) | Supported | Supported | Activity can outlive a browser connection. Unknown outcomes require inspection, not automatic retries. |
+| Automatically wake a finished turn when an independent background service exits | Not supported | Not supported | Wait for foreground work, explicitly check a terminal/service, use a separately configured schedule, or start the command with an exit watcher (\`cocalc sensor watch exit -- COMMAND\`) so its exit wakes the agent (for Claude Code, with a subscription or site-funded credential). |
 
 ## Results and workbench
 

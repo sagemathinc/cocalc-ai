@@ -6,8 +6,8 @@
 export const CLAUDE_CODE_BODY = String.raw`
 ## Work with Claude Code
 
-Claude Code works in a CoCalc project from the Agents workspace. Availability
-depends on the site's configuration, and some capabilities differ from Codex. Choose Claude in the runtime menu and a
+Claude Code works in a CoCalc project from the Agents workspace, unless the
+site has turned it off, and some capabilities differ from Codex. Choose Claude in the runtime menu and a
 payment method in its settings; the sections below explain each access option
 and its permissions. Start in a project whose files you can restore and whose
 collaborators and code you trust.
@@ -227,8 +227,11 @@ and may require separate cleanup.
   Use CoCalc agent memory instead.
 - Guidance you send while Claude works is delivered at its next step, the same
   as in the Claude Code CLI. It does not cut off the current reply or tool call.
-- Live guidance requires adapter support; other messages queue. Automations
-  and goal workflows are not yet supported by this integration.
+- Live guidance requires adapter support; other messages queue. Continuing
+  goals are not supported by this integration. Sensors and watchers can wake a
+  registered Claude agent; Claude Code wakes need a subscription or site-funded
+  credential, not an account API key. See [sensors](/docs/ai/codex-automation)
+  and the rating in [Agent features](/docs/ai/agent-features).
 - A background subprocess finishing does not automatically wake a completed
   CoCalc turn. Ask Claude to wait for completion or explicitly check its status.
 - In the controller runtime, registered Claude agents can discover network

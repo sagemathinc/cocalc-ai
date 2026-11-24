@@ -11,7 +11,7 @@ test("agent feature reference is ordered, public, and searchable in both catalog
     const entry = registry.getDocsEntry(slug);
     assert.ok(entry);
     assert.equal(entry.category, "AI");
-    assert.equal(entry.lastReviewed, "2026-09-28");
+    assert.equal(entry.lastReviewed, "2026-11-23");
     assert.ok(entry.noActionReason);
     const entries = registry.listDocsEntries();
     assert.equal(
@@ -62,25 +62,35 @@ test("feature matrix renders as tables with valid detailed-guide links", () => {
   }
 });
 
-test("assessment distinguishes Claude preview ratings from full parity and unknown evidence", () => {
+test("assessment distinguishes Claude ratings from full parity and unknown evidence", () => {
   const body = full.getDocsEntry(slug).body;
   for (const phrase of [
     "describes that capability, not Claude Code as a whole",
     "Access options reviewed 2026-10-26",
     "Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Conditional",
-    "Live Agent Networks that guide busy recipients | Supported | Preview",
-    "Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Preview",
+    "Live Agent Networks that guide busy recipients | Supported | Supported",
+    "Agent-to-agent messaging in one project | Supported | Supported",
+    "Return after a browser disconnect](/docs/ai/codex-conversations) | Supported | Supported",
+    "Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Conditional",
     "Agent-to-agent messaging across projects | Supported | Unverified",
+    "Registered agent identity and peer discovery | Supported | Supported",
+    "Start a named agent in a selected project](/docs/ai/my-agents) | Supported | Supported",
     "Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported",
-    "Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Unverified",
+    "Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Conditional",
+    "[Failure and attention notifications](/docs/ai/codex-notifications) | Supported | Supported",
+    "Run long foreground commands and inspect partial output](/docs/ai/claude-code) | Supported | Limited",
     "Accepted means admitted, not completed",
     "live-verified",
     "not a copy of project files",
     "approval is not execution",
+    "| Supported | A documented integrated workflow for that agent, subject to the stated prerequisites. |",
+    "the Claude Code column was reassessed on 2026-11-23",
   ])
     assert.ok(body.includes(phrase), phrase);
-  // Preview is a per-capability rating; Claude Code as a whole is not one.
+  // Neither Claude Code as a whole nor any single capability is a preview.
   assert.doesNotMatch(body, /Claude\s+preview/i);
+  assert.doesNotMatch(body, /\|\s*Preview\s*\|/);
+  assert.doesNotMatch(body, /Codex workflow/);
   const claude = full.getDocsEntry("ai/claude-code").body;
   assert.match(claude, /still need live qualification/);
   assert.match(claude, /stored payment selection/);
