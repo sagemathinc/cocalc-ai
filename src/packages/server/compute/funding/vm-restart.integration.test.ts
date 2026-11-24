@@ -22,7 +22,8 @@ import {
 import * as vmFunding from "./vm-funding";
 import { courseVmBinding, meterCourseVm, payerApi } from "./vm-funding";
 import { settleComputeVmFundingLocal } from "./vm-settlement";
-import { prepareCourseVmRestart, restartClock } from "./vm-restart";
+import { prepareCourseVmRestart } from "./vm-restart";
+import { restartClock } from "./restart-clock";
 import * as exposure from "./exposure";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
 import { enableTestSponsorshipRollout } from "./__tests__/rollout-fixture";

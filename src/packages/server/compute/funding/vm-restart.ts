@@ -11,6 +11,7 @@ import type {
 } from "@cocalc/util/compute-vm-funding";
 import { toDecimal } from "@cocalc/util/money";
 import type { ComputeVmRow } from "../types";
+import { restartClock } from "./restart-clock";
 import { insertComputeInstance } from "../db";
 import { fundingConflict } from "./vm-reservations";
 import {
@@ -19,10 +20,6 @@ import {
   meterCourseVm,
   requireSponsoredVmAdmission,
 } from "./vm-funding";
-
-/** The bay's clock for restart expiry decisions; tests replace it to age a
- * stored request without moving the payer's clock. */
-export const restartClock = { now: () => Date.now() };
 
 export interface PreparedCourseRestart {
   binding: ComputeVmFundingBinding;
