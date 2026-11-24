@@ -23,7 +23,7 @@ States:
 
 import callHub from "@cocalc/conat/hub/call-hub";
 import getLogger from "@cocalc/backend/logger";
-import { getMasterConatClient } from "./master-status";
+import { getMasterConatClient } from "./master-conat-client";
 import { getLocalHostId } from "./sqlite/hosts";
 import {
   loadStoredPressurePolicy,

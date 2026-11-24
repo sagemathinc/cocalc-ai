@@ -28,7 +28,7 @@ jest.mock("./sqlite/pressure-policy", () => {
   };
 });
 
-jest.mock("./master-status", () => ({
+jest.mock("./master-conat-client", () => ({
   __esModule: true,
   getMasterConatClient: () => undefined,
 }));
