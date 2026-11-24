@@ -348,7 +348,10 @@ const MANAGED_POLICY_CHECK_TIMEOUT_MS = 15_000;
 export function plainTextLine(text: string): string {
   return text
     .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "")
+    .replace(
+      /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g,
+      "",
+    )
     .replace(/[\\`*_[\]<>|~#]/g, " ")
     .replace(/ {2,}/g, " ")
     .trim();

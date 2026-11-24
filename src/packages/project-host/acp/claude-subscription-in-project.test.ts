@@ -914,7 +914,7 @@ describe("launchClaudeSubscriptionInProject", () => {
         cb(
           Object.assign(Error("Command failed"), { code: 1 }),
           "",
-          "\u001b[31mError\u001b[0m: see [the docs](https://evil.example/x) ‮here\u0007\n",
+          "\u001b[31mError\u001b[0m: see [the docs](https://evil.example/x) \u202ehere\u0007\n",
         ),
     );
     let message = "";
@@ -922,9 +922,26 @@ describe("launchClaudeSubscriptionInProject", () => {
       (err) => (message = `${err.message}`),
     );
     expect(message).toMatch(/podman exec exited 1: Error: see/);
-    expect(message).not.toMatch(/[\u001b\u0007‮]/);
+    expect(message).not.toMatch(/[\u001b\u0007\u202e]/);
     expect(message).not.toMatch(/\[the docs\]\(/);
     expect(message).not.toMatch(/[[\]`*<>]/);
+  });
+
+  it("removes line and paragraph separators and byte-order marks from the container's stderr", async () => {
+    (execFile as unknown as jest.Mock).mockImplementation(
+      (_cmd, _args, _opts, cb) =>
+        cb(
+          Object.assign(Error("Command failed"), { code: 2 }),
+          "",
+          "\ufeffbad\u2028fake line\u2029second\u200btail\n",
+        ),
+    );
+    let message = "";
+    await launchClaudeSubscriptionInProject(binding, conversation).catch(
+      (err) => (message = `${err.message}`),
+    );
+    expect(message).toMatch(/podman exec exited 2: badfake linesecondtail/);
+    expect(message).not.toMatch(/[\ufeff\u2028\u2029\u200b]/);
   });
 
   it("checks for a managed policy again at each turn start, failing the turn before the relay accepts it", async () => {
