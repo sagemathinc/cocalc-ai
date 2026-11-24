@@ -1213,14 +1213,17 @@ export class AcpHarnessClient {
    * subscription credential behind the in-project relay. Only a subscription
    * agent run in the project can pass; anything unclear is false.
    */
+  private inProjectHostCheck(): boolean {
+    return (
+      typeof this.process.hostSubscriptionIdentity === "function" &&
+      this.process.subscriptionAuth === "oauth-token" &&
+      this.process.sessionPolicy === "default"
+    );
+  }
+
   private async hostIdentityForThisTurn(): Promise<boolean> {
     const read = this.process.hostSubscriptionIdentity;
-    if (
-      typeof read !== "function" ||
-      this.process.subscriptionAuth !== "oauth-token" ||
-      this.process.sessionPolicy !== "default"
-    )
-      return false;
+    if (typeof read !== "function" || !this.inProjectHostCheck()) return false;
     const credentialId = (
       this.binding.credential as { credentialId?: unknown } | undefined
     )?.credentialId;
@@ -1271,24 +1274,38 @@ export class AcpHarnessClient {
         "unavailable",
         "Claude startup was interrupted. No message was sent.",
       );
+    // A subscription agent run in the project: every turn needs the host's
+    // proof that it holds this binding's credential now. The agent's own
+    // read goes to Anthropic directly, not through the relay, and a failed or
+    // slow read reports nothing, so silence passes with the proof.
+    if (this.inProjectHostCheck()) {
+      const proven = await this.hostIdentityForThisTurn();
+      if (this.canceled || this.disposed || this.failure)
+        throw new HarnessError(
+          "unavailable",
+          "Claude startup was interrupted. No message was sent.",
+        );
+      if (!proven)
+        throw new HarnessError(
+          "unavailable",
+          "Your Claude subscription could not be verified for this turn. No message was sent or billed. Retry; if this persists, reconnect in Claude settings.",
+        );
+      // With the relay's token the agent reports nothing or "none"; any
+      // identity of its own (an account, an API key, ...) is not the
+      // subscription the host holds.
+      const kind = (this.authStatus as { kind?: unknown } | undefined)?.kind;
+      if (this.authStatus == null || kind === "none") return;
+      throw new HarnessError(
+        "rejected",
+        "Claude reported a different billing method instead of your subscription. Open Claude settings and reconnect the selected subscription. No message was sent or billed.",
+      );
+    }
     if (isClaudeSubscriptionStatus(this.authStatus)) return;
     // A token-authenticated controller reports no plan, so the adapter says
     // "none" (or an account). Any other billing method is still refused.
     if (this.process.subscriptionAuth === "oauth-token") {
       const kind = (this.authStatus as { kind?: unknown } | undefined)?.kind;
       if (kind === "none" || kind === "account") return;
-      // In the project the agent reads its identity from Anthropic directly,
-      // not through the relay, and a failed or slow read reports nothing.
-      // The host holds the credential behind the relay: it resolves it again
-      // for this turn, for this project and credential.
-      if (this.authStatus == null && (await this.hostIdentityForThisTurn())) {
-        if (this.canceled || this.disposed || this.failure)
-          throw new HarnessError(
-            "unavailable",
-            "Claude startup was interrupted. No message was sent.",
-          );
-        return;
-      }
     }
     const status = this.authStatus as
       | { kind?: string; account?: { plan?: unknown } }

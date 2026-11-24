@@ -1041,6 +1041,23 @@ describe("launchClaudeSubscriptionInProject", () => {
     ).toBe(before);
   });
 
+  it("a turn's proof hands a replaced credential to the relay at once", async () => {
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    const policy = (startProviderRelaySession as jest.Mock).mock.calls[0][0];
+    expect(await policy.credentialValue()).toBe(`Bearer ${REAL_TOKEN}`);
+    // Reconnected under the same credential id: a new token.
+    (getClaudeSubscriptionCredential as jest.Mock).mockResolvedValue({
+      payload: "token:sk-ant-oat01-REPLACED-token",
+    });
+    // Within the minute the relay alone would keep the old token...
+    expect(await policy.credentialValue()).toBe(`Bearer ${REAL_TOKEN}`);
+    // ...but the turn's proof renews it, so the proof and the relay agree.
+    await proc.hostSubscriptionIdentity!({ nonce: "t" });
+    expect(await policy.credentialValue()).toBe(
+      "Bearer sk-ant-oat01-REPLACED-token",
+    );
+  });
+
   it("revalidates the subscription token at most every minute", async () => {
     await launchClaudeSubscriptionInProject(binding, conversation);
     const policy = (startProviderRelaySession as jest.Mock).mock.calls[0][0];

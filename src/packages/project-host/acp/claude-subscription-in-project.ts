@@ -560,6 +560,20 @@ export async function launchClaudeSubscriptionInProject(
   // Fail now, with a clear message, rather than at the first request.
   let token = await tokenOf();
   let checkedAt = Date.now();
+  // The one way the token is renewed: the relay's periodic recheck and each
+  // turn's host proof both use it, so the proof attests exactly the token the
+  // relay sends next.
+  // Concurrent callers share one resolution.
+  let refreshing: Promise<void> | undefined;
+  const refreshToken = (): Promise<void> =>
+    (refreshing ??= (async () => {
+      try {
+        token = await tokenOf();
+        checkedAt = Date.now();
+      } finally {
+        refreshing = undefined;
+      }
+    })());
 
   await ensureProjectContainerRunning({ projectId, accountId });
   const name = `project-${projectId}`;
@@ -591,10 +605,7 @@ export async function launchClaudeSubscriptionInProject(
     allowedMethods: ["POST"],
     credentialHeader: "authorization",
     credentialValue: async () => {
-      if (Date.now() - checkedAt > CREDENTIAL_RECHECK_MS) {
-        token = await tokenOf();
-        checkedAt = Date.now();
-      }
+      if (Date.now() - checkedAt > CREDENTIAL_RECHECK_MS) await refreshToken();
       return `Bearer ${token}`;
     },
     tokenPrefix: RELAY_TOKEN_PREFIX,
@@ -723,14 +734,14 @@ export async function launchClaudeSubscriptionInProject(
       sessionPolicy: "default",
       pinnedSettingsEnv: claudeRelaySettingsEnv(relay.baseUrl),
       subscriptionAuth: "oauth-token",
-      // The identity a turn may rely on when the agent's own read (which
-      // goes to Anthropic directly, not through the relay) reports nothing:
-      // this account's credential, resolved again now, as the relay uses it.
+      // Asked before every turn: this account's credential, resolved again
+      // now and handed to the relay, since the agent's own identity read
+      // goes to Anthropic directly (not through the relay) and can fail.
       hostSubscriptionIdentity: async ({ nonce }) => {
-        // Only while this launch's relay serves the turn, and only if the
-        // same credential still resolves now (revoked or replaced: throws).
+        // Only while this launch's relay serves the turn. Revoked: throws.
+        // Replaced under the same id: the relay sends the new token next.
         if (!relayOpen) return undefined;
-        await tokenOf();
+        await refreshToken();
         if (!relayOpen) return undefined;
         return {
           kind: "in-project-relay",

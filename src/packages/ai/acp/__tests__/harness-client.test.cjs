@@ -938,25 +938,40 @@ test("in the project, a silent agent's turn runs on the host's proof for this tu
   assert.notEqual(nonces[0], nonces[1]);
 });
 
-test("in the project, a turn after the host's credential is revoked fails, though the turn before ran", async (t) => {
-  let revoked = false;
-  const client = await inProjectClient(t, [], {
-    hostSubscriptionIdentity: async ({ nonce }) => {
-      if (revoked)
-        throw Error("Claude subscription credential is unavailable or revoked");
-      return hostProof()({ nonce });
-    },
+for (const [label, flags] of [
+  ["a silent agent", []],
+  // the relay token's normal report
+  ['an agent reporting "none"', ["--none-status"]],
+]) {
+  test(`in the project, ${label}: a turn after the host's credential is revoked fails, though the turn before ran`, async (t) => {
+    let revoked = false;
+    const client = await inProjectClient(t, flags, {
+      hostSubscriptionIdentity: async ({ nonce }) => {
+        if (revoked)
+          throw Error("Claude subscription credential is unavailable or revoked");
+        return hostProof()({ nonce });
+      },
+    });
+    const events = [];
+    await client.prompt("hello", async (event) => events.push(event));
+    assert.ok(events.some((event) => event.type === "message"));
+    revoked = true;
+    const after = [];
+    await assert.rejects(
+      () => client.prompt("hello again", async (event) => after.push(event)),
+      /could not be verified for this turn/,
+    );
+    assert.ok(!after.some((event) => event.type === "message"));
+  });
+}
+
+test('in the project, an agent reporting "none" runs on the host\'s proof', async (t) => {
+  const client = await inProjectClient(t, ["--none-status"], {
+    hostSubscriptionIdentity: hostProof(),
   });
   const events = [];
   await client.prompt("hello", async (event) => events.push(event));
   assert.ok(events.some((event) => event.type === "message"));
-  revoked = true;
-  const after = [];
-  await assert.rejects(
-    () => client.prompt("hello again", async (event) => after.push(event)),
-    /not reported a verifiable subscription identity/,
-  );
-  assert.ok(!after.some((event) => event.type === "message"));
 });
 
 for (const [name, extra, flags, rejected] of [
@@ -966,13 +981,13 @@ for (const [name, extra, flags, rejected] of [
     "a proof for another project",
     { hostSubscriptionIdentity: hostProof({ projectId: "project-b" }) },
     [],
-    /not reported a verifiable subscription identity/,
+    /could not be verified for this turn/,
   ],
   [
     "a proof for another account",
     { hostSubscriptionIdentity: hostProof({ accountId: "account-b" }) },
     [],
-    /not reported a verifiable subscription identity/,
+    /could not be verified for this turn/,
   ],
   [
     "a proof for another credential",
@@ -982,19 +997,19 @@ for (const [name, extra, flags, rejected] of [
       }),
     },
     [],
-    /not reported a verifiable subscription identity/,
+    /could not be verified for this turn/,
   ],
   [
     "a proof for another turn (stale nonce)",
     { hostSubscriptionIdentity: hostProof({ nonce: "an-earlier-turn" }) },
     [],
-    /not reported a verifiable subscription identity/,
+    /could not be verified for this turn/,
   ],
   [
     "a proof of another kind",
     { hostSubscriptionIdentity: hostProof({ kind: "controller" }) },
     [],
-    /not reported a verifiable subscription identity/,
+    /could not be verified for this turn/,
   ],
   [
     "a host that cannot resolve the credential now",
@@ -1004,12 +1019,18 @@ for (const [name, extra, flags, rejected] of [
       },
     },
     [],
-    /not reported a verifiable subscription identity/,
+    /could not be verified for this turn/,
   ],
   [
     "a valid proof with a different billing method reported by the agent",
     { hostSubscriptionIdentity: hostProof() },
     ["--api-key-status"],
+    /different billing method/,
+  ],
+ [
+    "a valid proof with an account the agent reports itself",
+    { hostSubscriptionIdentity: hostProof() },
+    ["--subscription-status"],
     /different billing method/,
   ],
 ]) {
