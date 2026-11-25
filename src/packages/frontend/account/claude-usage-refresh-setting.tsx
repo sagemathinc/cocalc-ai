@@ -5,16 +5,12 @@
 
 import { Space, Switch } from "antd";
 import { useId } from "react";
-import {
-  useAccountOtherSetting,
-  useActions,
-} from "@cocalc/frontend/app-framework";
+import { redux, useAccountOtherSetting } from "@cocalc/frontend/app-framework";
 import { CLAUDE_USAGE_REFRESH_SETTING } from "@cocalc/util/ai/claude-usage-probe";
 
 /** The opt-in to periodic limit checks for Auto, off by default: each check
  * is a request through the user's subscription. */
 export function ClaudeUsageRefreshSetting() {
-  const actions = useActions("account");
   const enabled =
     useAccountOtherSetting<boolean>(CLAUDE_USAGE_REFRESH_SETTING) === true;
   const id = useId();
@@ -25,7 +21,11 @@ export function ClaudeUsageRefreshSetting() {
         size="small"
         checked={enabled}
         onChange={(checked) =>
-          actions.set_other_settings(CLAUDE_USAGE_REFRESH_SETTING, checked)
+          // Looked up on change: where no account is loaded (tests, some
+          // embeddings) the switch still renders.
+          redux
+            .getActions("account")
+            ?.set_other_settings(CLAUDE_USAGE_REFRESH_SETTING, checked)
         }
       />
       <label htmlFor={id}>

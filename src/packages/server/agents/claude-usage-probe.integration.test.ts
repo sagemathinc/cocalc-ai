@@ -71,6 +71,15 @@ describeDb("fresh Claude readings for Auto", () => {
     return id;
   }
 
+  // Whether the credential has a check record at all (not even null).
+  async function hasProbeKey(id: string): Promise<boolean> {
+    const { rows } = await query(
+      "SELECT metadata ? 'claude_usage_probe' AS has FROM external_credentials WHERE id=$1",
+      [id],
+    );
+    return rows[0]?.has === true;
+  }
+
   async function probeRecord(id: string) {
     const { rows } = await query(
       "SELECT metadata->'claude_usage_probe' AS probe FROM external_credentials WHERE id=$1",
@@ -230,7 +239,7 @@ describeDb("fresh Claude readings for Auto", () => {
       failed: 0,
     });
     expect(calls).toEqual([]);
-    for (const id of ids) expect(await probeRecord(id)).toBeUndefined();
+    for (const id of ids) expect(await hasProbeKey(id)).toBe(false);
 
     // Turned on: checked as before.
     const { rows } = await query(
@@ -306,7 +315,7 @@ describeDb("fresh Claude readings for Auto", () => {
     };
     await runClaudeUsageProbes(d, () => now);
     expect(calls).toEqual([]);
-    expect(await probeRecord(id)).toBeUndefined();
+    expect(await hasProbeKey(id)).toBe(false);
     // Turned on again: checked at once, with no check inherited.
     await query("UPDATE accounts SET other_settings=$2 WHERE account_id=$1", [
       owner,

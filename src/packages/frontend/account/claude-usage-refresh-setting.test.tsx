@@ -8,7 +8,7 @@ const mockSave = jest.fn();
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useAccountOtherSetting: (name) =>
     name === "claude_usage_refresh" ? mockValue : undefined,
-  useActions: () => ({ set_other_settings: mockSave }),
+  redux: { getActions: () => ({ set_other_settings: mockSave }) },
 }));
 
 beforeEach(() => {
