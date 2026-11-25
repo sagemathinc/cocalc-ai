@@ -22,10 +22,8 @@ feature-by-feature comparison, including known messaging limitations.
    **What would you like to work on?**, it prepares a project for you.
 2. In the runtime menu below the request box, select **Claude**, then open its
    settings icon to configure Claude Code.
-3. Choose a payment method in settings: **CoCalc Membership** when your
-   membership includes Claude, a connected Claude Pro/Max subscription, an
-   account API key, or a project API-key secret. Membership access does not
-   require your own Anthropic credential.
+3. Choose a payment method in settings, such as a connected Claude Pro/Max
+   subscription, an account API key, or a project API-key secret.
 4. For a project key, use the Claude API-key dialog. For a subscription, use
    **Connect Claude Pro/Max** and complete the sign-in flow.
    Never paste credentials or login codes into a chat message.
@@ -98,25 +96,6 @@ The selected ANTHROPIC_API_KEY is a project secret. Project collaborators and
 code running in the project can read, copy, and use the key. Anthropic bills
 the key owner. Removing the secret from CoCalc cannot revoke copies already
 made; revoke or rotate the key with the provider when necessary.
-
-### CoCalc Membership (included Claude)
-
-When your site offers it and your membership includes AI usage, Claude Code
-agents can run on **CoCalc Membership (Claude Haiku 5.5)** without a Claude
-subscription or Anthropic key of your own. It is the default for a new Claude
-agent when you have no Claude credential. Each turn is paid from your
-membership's included AI allowance (shared with Codex); when it is used up, the
-turn says so and you can wait for it to reset or choose your own credential.
-
-Every request goes through a CoCalc relay on the project host that adds the
-site's key, so no key reaches the project. The relay allows only the model
-included in your membership (Claude Haiku 5.5), caps each request's output and
-web searches, and refuses tools that cost extra, such as remote MCP servers and
-code execution. Each request's context is limited to 100,000 tokens: Claude
-Code compacts the conversation before it gets there. For a larger context, use
-your own Claude subscription or Anthropic key. While a turn runs, project code
-can make requests through the relay too; they count against your allowance and
-that turn's limits. Between turns nothing is funded.
 
 ### Account API key
 
@@ -229,8 +208,8 @@ and may require separate cleanup.
   as in the Claude Code CLI. It does not cut off the current reply or tool call.
 - Live guidance requires adapter support; other messages queue. Continuing
   goals are not supported by this integration. Sensors and watchers can wake a
-  registered Claude agent; Claude Code wakes need a subscription or site-funded
-  credential, not an account API key. See [sensors](/docs/ai/codex-automation)
+  registered Claude agent; Claude Code wakes work with a personal Claude
+  subscription, not an account API key. See [sensors](/docs/ai/codex-automation)
   and the rating in [Agent features](/docs/ai/agent-features).
 - A background subprocess finishing does not automatically wake a completed
   CoCalc turn. Ask Claude to wait for completion or explicitly check its status.

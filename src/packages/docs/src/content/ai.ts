@@ -203,9 +203,7 @@ that provider's default as well; other agents following the default use it too.
 Codex and Claude have separate choices.
 
 For Claude, **Project secret (ANTHROPIC_API_KEY)** uses a configured project
-key. **CoCalc Membership (Claude Haiku 5.5)**, when your site offers it, pays
-from your membership's included AI allowance, the same allowance as Codex's
-**CoCalc Membership** option. Agents with project-managed credentials are not
+key. Agents with project-managed credentials are not
 changed by this control.
 
 These choices belong to your account and are stored on the server, so a browser
@@ -387,16 +385,14 @@ For unavailable-model messages, see
 
 1. Open an agent and choose **Claude** in the runtime menu.
 2. Open Claude settings using its settings icon or payment method control.
-3. Choose **CoCalc Membership** if offered, a connected Claude Pro/Max
+3. Choose a payment method, such as a connected Claude Pro/Max
    subscription, an account Anthropic API key, or a project API-key secret.
 4. For subscription access, choose **Connect Claude Pro/Max** and complete
    the sign-in flow. For a project key, use the Claude API-key dialog.
-   Membership funding does not require your own Anthropic credential.
 5. Check the selected payment method and available model before sending work.
    Changes apply to future turns, not work already admitted.
 
-Membership-funded Claude uses its included model and the AI allowance shared
-with Codex; higher membership tiers include a larger allowance. A personal subscription uses that provider plan's allowance;
+A personal subscription uses that provider plan's allowance;
 API-key usage is billed by Anthropic. These modes have different credential
 and tool boundaries: see [Claude Code access and billing](/docs/ai/claude-code).
 In particular, an account API key does not authorize agent-authored network

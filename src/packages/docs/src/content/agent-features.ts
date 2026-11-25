@@ -19,8 +19,8 @@ every row was retested on every deployment. Older frontend, project-host, worker
 or CLI builds can lack features listed here. Site policy, project permissions,
 model access, installed software, and compute availability still apply.
 
-**Access options reviewed 2026-10-26.** The access rows include Claude membership
-and API-key options. Unless a row specifies another payment method, the remaining
+**Access options reviewed 2026-10-26.** The access rows include Claude's API-key
+options. Unless a row specifies another payment method, the remaining
 Claude qualifications refer to **integrated Claude Code with a personal Pro/Max
 subscription on an enabled managed project host** and retain the assessment above.
 They do not qualify generic ACP adapters or Claude running independently in a
@@ -45,7 +45,7 @@ of each row describes that capability, not Claude Code as a whole.
 | [Choose a working directory](/docs/ai/codex-conversations) | Supported | Limited | Use the composer directory control. A directory is not an access restriction. Claude Code's project commands start in this directory unless it names another; in the default subscription runtime, Claude's own session runs in a separate workspace. |
 | [Open a terminal from an agent](/docs/terminal/use-terminal) | Supported | Supported | New agent terminals use the agent's configured working directory on current builds. Existing terminals keep their shell state. |
 | [Connect personal subscription access](/docs/ai/connect-credentials) | Supported | Supported | ChatGPT for Codex; verified personal Claude Pro/Max for Claude. These are separate connections. |
-| [Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Conditional | Claude offers membership funding when enabled and included in your membership, an account Anthropic API key, or a project API-key secret. Membership uses its included model and the AI allowance shared with Codex; Anthropic bills API-key usage. See [Claude access and billing](/docs/ai/claude-code). |
+| [Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Supported | An account Anthropic API key or a project API-key secret is supported, as is a personal Claude Pro/Max subscription; Anthropic bills API-key usage. See [Claude access and billing](/docs/ai/claude-code). |
 | [Choose model, reasoning/effort, and Standard/Fast speed](/docs/ai/codex-settings) | Conditional | Conditional | Only options advertised for the selected model and credential are usable. Fast can consume additional allowance. |
 | [Save account defaults and refresh available models](/docs/ai/codex-settings) | Supported | Limited | Claude offers model refresh and remembers payment choices, but does not share all Codex account-default controls. Changes do not rewrite admitted work. |
 | [Inspect subscription usage and reconnect](/docs/ai/connect-credentials) | Supported | Supported | Provider-reported usage, not a per-agent hard spending limit. Claude offers Reconnect Claude in settings. |
@@ -67,7 +67,7 @@ of each row describes that capability, not Claude Code as a whole.
 | [Ask from an editor selection, notebook cell, error, or terminal](/docs/ai/editor-agent) | Supported | Unverified | These shortcuts are built to ask Codex: one that starts a new conversation starts a Codex conversation. Sending one into an open Claude conversation has not been verified. |
 | [Preview/edit a generated prompt before submission](/docs/ai/editor-agent) | Supported | Unverified | Agent Prompt appears only for workflows that prepare one; it is not the complete runtime instruction set. |
 | [Answer structured blocking questions](/docs/ai/codex-goals) | Supported | Limited | ACP supports a bounded subset of form questions when the adapter requests it; not all provider question tools map to it. |
-| [Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Conditional | Only in the default Claude subscription runtime, where Claude's project tools use the same durable question cards and answer delivery as Codex. Answers guide active work or resume the conversation after its turn finishes. Not available for API-key or site-funded Claude, or when a site runs Claude subscriptions inside the project. |
+| [Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Conditional | Only in the default Claude subscription runtime, where Claude's project tools use the same durable question cards and answer delivery as Codex. Answers guide active work or resume the conversation after its turn finishes. Not available for API-key Claude or when a site runs Claude subscriptions inside the project. |
 | [Dictate or use voice controls](/docs/ai/codex-chat) | Conditional | Unverified | Depends on the site's voice service, browser permission, and UI mode; a microphone icon is not evidence of provider feature parity. |
 
 ## Project work and tools
@@ -164,11 +164,11 @@ that recipient execution completed.
 | Feature and guide | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
 | [Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported | Includes objective editing, usage, pause/resume, stop, and automatic continuations; not a guaranteed provider spending cap. |
-| [Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Conditional | Scheduled prompts, one-shot watchers (CI, file, time) and approved scripts that run with the agent's own access. Needs project internet access; membership limits the number of sensors, their interval and wakes per day. Claude Code wakes need a subscription or site-funded credential, not an account API key. |
+| [Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Conditional | Scheduled prompts, one-shot watchers (CI, file, time) and approved scripts that run with the agent's own access. Needs project internet access; membership limits the number of sensors, their interval and wakes per day. Claude Code wakes work with a personal Claude subscription, not an account API key. |
 | [Failure and attention notifications](/docs/ai/codex-notifications) | Supported | Supported | Agents no longer send a notice when a turn finishes; failures, usage-limit pauses and questions that need you still notify. Channels and browser permission matter. |
 | [Account session inventory and stop controls](/docs/ai/codex-notifications) | Supported | Unverified | The Codex panel is a bounded inventory, not proof that every provider process has stopped. |
 | [Inspect durable chat activity and submission state](/docs/cli/command-reference) | Supported | Supported | Activity can outlive a browser connection. Unknown outcomes require inspection, not automatic retries. |
-| Automatically wake a finished turn when an independent background service exits | Not supported | Not supported | Wait for foreground work, explicitly check a terminal/service, use a separately configured schedule, or start the command with an exit watcher (\`cocalc sensor watch exit -- COMMAND\`) so its exit wakes the agent (for Claude Code, with a subscription or site-funded credential). |
+| Automatically wake a finished turn when an independent background service exits | Not supported | Not supported | Wait for foreground work, explicitly check a terminal/service, use a separately configured schedule, or start the command with an exit watcher (\`cocalc sensor watch exit -- COMMAND\`) so its exit wakes the agent (for Claude Code, with a personal Claude subscription). |
 
 ## Results and workbench
 

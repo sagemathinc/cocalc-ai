@@ -67,7 +67,7 @@ test("assessment distinguishes Claude ratings from full parity and unknown evide
   for (const phrase of [
     "describes that capability, not Claude Code as a whole",
     "Access options reviewed 2026-10-26",
-    "Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Conditional",
+    "Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Supported",
     "Live Agent Networks that guide busy recipients | Supported | Supported",
     "Agent-to-agent messaging in one project | Supported | Supported",
     "Return after a browser disconnect](/docs/ai/codex-conversations) | Supported | Supported",
