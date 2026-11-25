@@ -245,7 +245,48 @@ describeDb("fresh Claude readings for Auto", () => {
     expect(calls.map((c) => c.credential_id)).toEqual([ids[0]]);
   });
 
-  test("turned off after the pass chose it: no check, no record", async () => {
+  // Turned off while a pass works on the subscription: when the due query
+  // returns, during the claim, or during the project lookup. No request,
+  // and the check recorded before the pass (here an old one) is kept.
+  for (const [when, step] of [
+    ["the pass chose it", "FROM external_credentials c"],
+    ["the claim", "UPDATE external_credentials"],
+    ["the project lookup", "FROM projects p"],
+  ]) {
+    test(`turned off during ${when}: no request, the old record kept`, async () => {
+      const owner = randomUUID();
+      const old = { at: new Date(now - 5 * HOUR).toISOString(), ok: true };
+      const id = await credential(owner, {
+        claude_usage_history: usedAuto(HOUR),
+        claude_usage_probe: old,
+      });
+      await project(owner, await host(), "running", 0);
+      const { calls, deps: d } = deps(async () => ({
+        observed_at: new Date(now).toISOString(),
+      }));
+      let turnedOff = false;
+      d.query = async (sql, values) => {
+        const result = await query(sql, values);
+        if (!turnedOff && sql.includes(step)) {
+          turnedOff = true;
+          await query(
+            "UPDATE accounts SET other_settings=$2 WHERE account_id=$1",
+            [owner, { claude_usage_refresh: false }],
+          );
+        }
+        return result;
+      };
+      await expect(runClaudeUsageProbes(d, () => now)).resolves.toEqual({
+        checked: 0,
+        failed: 0,
+      });
+      expect(turnedOff).toBe(true);
+      expect(calls).toEqual([]);
+      expect(await probeRecord(id)).toEqual(old);
+    });
+  }
+
+  test("turned off during the project lookup with no record before: none after", async () => {
     const owner = randomUUID();
     const id = await credential(owner, {
       claude_usage_history: usedAuto(HOUR),
@@ -254,22 +295,26 @@ describeDb("fresh Claude readings for Auto", () => {
     const { calls, deps: d } = deps(async () => ({
       observed_at: new Date(now).toISOString(),
     }));
-    let turnedOff = false;
     d.query = async (sql, values) => {
       const result = await query(sql, values);
-      if (!turnedOff && sql.includes("FROM external_credentials c")) {
-        turnedOff = true;
+      if (sql.includes("FROM projects p"))
         await query(
           "UPDATE accounts SET other_settings=$2 WHERE account_id=$1",
-          [owner, { claude_usage_refresh: false }],
+          [owner, {}],
         );
-      }
       return result;
     };
     await runClaudeUsageProbes(d, () => now);
-    expect(turnedOff).toBe(true);
     expect(calls).toEqual([]);
     expect(await probeRecord(id)).toBeUndefined();
+    // Turned on again: checked at once, with no check inherited.
+    await query("UPDATE accounts SET other_settings=$2 WHERE account_id=$1", [
+      owner,
+      { claude_usage_refresh: true },
+    ]);
+    d.query = query;
+    await runClaudeUsageProbes(d, () => now);
+    expect(calls).toHaveLength(1);
   });
 
   test("malformed metadata counts as missing and cannot fail the query", async () => {

@@ -205,6 +205,32 @@ async function setProbe(
   return !!rowCount;
 }
 
+/** Puts back the check this pass's claim replaced (none: no key), while
+ * the claim is still the stored check. */
+async function restoreProbe(
+  query: Query,
+  id: string,
+  previous: unknown,
+  claim: unknown,
+): Promise<void> {
+  await query(
+    `UPDATE external_credentials
+        SET metadata = CASE WHEN $3::jsonb IS NULL
+                            THEN metadata - $2::text
+                            ELSE jsonb_set(metadata, ARRAY[$2::text],
+                                           $3::jsonb, true) END
+      WHERE id=$1 AND metadata->$2::text = $4::jsonb`,
+    [
+      id,
+      CLAUDE_USAGE_PROBE_METADATA_KEY,
+      previous === undefined || previous === null
+        ? null
+        : JSON.stringify(previous),
+      JSON.stringify(claim),
+    ],
+  );
+}
+
 /** Whether the account turned the checks on (asked again before each). */
 export async function claudeUsageRefreshOn(
   query: Query,
@@ -263,10 +289,18 @@ export async function runClaudeUsageProbes(
     // Turned off since the query: no check, and nothing recorded.
     if (!(await claudeUsageRefreshOn(deps.query, row.owner_account_id)))
       continue;
-    if (!(await setProbe(deps.query, row.id, { at }, previous))) continue;
+    const claim = { at };
+    if (!(await setProbe(deps.query, row.id, claim, previous))) continue;
     let error: string | undefined;
     try {
       const project = await projectFor(deps, row.owner_account_id);
+      // Asked again last, right before the request: turned off meanwhile
+      // (during the claim or the project lookup), nothing is sent and the
+      // claim is undone, as if this pass had not chosen it.
+      if (!(await claudeUsageRefreshOn(deps.query, row.owner_account_id))) {
+        await restoreProbe(deps.query, row.id, previous, claim);
+        continue;
+      }
       if (!project) throw Error("no project on a host of this bay");
       await deps.probe({
         ...project,
