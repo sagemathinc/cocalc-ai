@@ -29,7 +29,11 @@ test("agent guides are registered, linked from the introduction, and searchable"
     );
     assert.equal(
       entry.lastReviewed,
-      slug === "ai/my-agents" ? "2026-09-24" : "2026-09-07",
+      slug === "ai/my-agents"
+        ? "2026-09-24"
+        : slug === "ai/codex-notifications"
+          ? "2026-11-23"
+          : "2026-09-07",
     );
     assert.ok(entry.noActionReason);
     if (slug !== "ai/my-agents") {
@@ -45,6 +49,21 @@ test("agent guides are registered, linked from the introduction, and searchable"
     intro.body.split("\n").length < 80,
     "keep the starting guide short",
   );
+});
+
+test("the notifications guide describes only notices agents still send", () => {
+  const body = getDocsEntry("ai/codex-notifications").body;
+  // A finished turn no longer notifies; these controls were removed.
+  for (const removed of [
+    "Turn completed",
+    "Notify when Codex turns complete by default",
+    "Mute completion notifications for this thread",
+  ]) {
+    assert.ok(!body.includes(removed), removed);
+  }
+  for (const label of ["Needs attention", "Turn failed", "Codex and agents"]) {
+    assert.ok(body.includes(`**${label}**`), label);
+  }
 });
 
 test("agent guides keep distinct headings and valid internal links", () => {
