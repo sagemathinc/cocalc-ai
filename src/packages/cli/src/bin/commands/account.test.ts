@@ -328,6 +328,59 @@ test("account usage and subscriptions call their curated RPCs", async () => {
   ]);
 });
 
+test("account memory sends curator requests; deletes need revisions", async () => {
+  const calls: any[] = [];
+  const program = new Command();
+  program.exitOverride();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      calls.push(
+        await fn({
+          hub: { agent: { curateAgentMemory: async (opts) => opts } },
+        }),
+      );
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+  } as any);
+  const run = (...args: string[]) =>
+    program.parseAsync(["node", "test", "account", "memory", ...args]);
+  await run("list", "--scope", "@review");
+  await run("read", "@review/verdict");
+  await run(
+    "delete",
+    "@review/verdict",
+    "--expect-revision",
+    "0123456789abcdef",
+  );
+  await run(
+    "prune",
+    "--scope",
+    "@ops",
+    "--expiring-within",
+    "14d",
+    "--dry-run",
+  );
+  assert.deepEqual(calls, [
+    { op: "list", scope: "@review" },
+    { op: "read", name: "@review/verdict" },
+    {
+      op: "delete",
+      notes: [
+        { name: "@review/verdict", expected_revision: "0123456789abcdef" },
+      ],
+    },
+    { op: "prune", scope: "@ops", expiring_within: "14d", dry_run: true },
+  ]);
+  await assert.rejects(run("delete", "@review/verdict"), /--expect-revision/);
+  await assert.rejects(
+    run("prune", "--scope", "@ops"),
+    /--expiring-within, --unused-for/,
+  );
+});
+
 test("account membership resolves an explicit account identifier", async () => {
   let capturedArgs: any;
   let resolvedIdentifier: string | undefined;

@@ -162,6 +162,39 @@ export type AgentMemoryOwnerRequest =
   | { op: "namespace-delete"; name: string }
   | { op: "set-project-namespaces"; project_id: string; namespaces: string[] };
 
+/**
+ * The account's whole memory, for a caller holding the account capability
+ * memory:manage ("Read, edit or delete all agent memory": an agent's CoCalc
+ * access, or an API key). Notes are named in full: `global/name`,
+ * `namespace/name` or `@agent-name/name` (an agent's own scope); a scope is
+ * `global`, a namespace or `@agent-name`. Replacing or deleting a note needs
+ * the revision a read returned.
+ */
+export type AgentMemoryCuratorRequest =
+  | { op: "list"; scope?: string }
+  | { op: "read"; name: string }
+  | {
+      op: "write";
+      name: string;
+      description: string;
+      body: string;
+      /** Required to replace an existing note. */
+      expected_revision?: string;
+      expires_in?: string;
+    }
+  | {
+      op: "delete";
+      notes: { name: string; expected_revision: string }[];
+    }
+  | {
+      op: "prune";
+      scope: string;
+      expiring_within?: string;
+      unused_for?: string;
+      dry_run?: boolean;
+    }
+  | { op: "export"; scope?: string };
+
 /** The registered agent a request comes from, from its authenticated run. */
 export type AgentMemoryCaller = { agent_id: string; name: string };
 
@@ -181,6 +214,8 @@ export type AgentMemoryHomeRequest =
       report_off?: boolean;
     }
   | { kind: "owner"; request: AgentMemoryOwnerRequest }
+  /** A memory:manage caller (CoCalc access or an API key). */
+  | { kind: "curator"; request: AgentMemoryCuratorRequest }
   /** The account removed this agent from its Agents: drop its scope. */
   | { kind: "agent-retired"; agent_id: string };
 
@@ -559,6 +594,84 @@ export function validateAgentMemoryRequest(
       );
   }
   return r as AgentMemoryRequest;
+}
+
+/** A curator's note name: always qualified, as `scope/name`. */
+export function parseCuratorMemoryRef(ref: unknown): AgentMemoryRef {
+  const parsed = parseMemoryRef(ref);
+  if (parsed.agent === "self")
+    throw new Error(
+      "name an agent's note as @agent-name/<name> (agent/ means the caller's own scope)",
+    );
+  if (!parsed.agent && !parsed.namespace)
+    throw new Error(
+      `name the note in full: global/${parsed.name}, <namespace>/${parsed.name} or @agent-name/${parsed.name}`,
+    );
+  return parsed;
+}
+
+/** A curator's scope: `global`, a namespace or `@agent-name`. */
+export function validateCuratorMemoryScope(scope: unknown): string {
+  if (scope === AGENT_MEMORY_AGENT_SCOPE)
+    throw new Error("name an agent's scope as @agent-name");
+  return validateMemoryScopeName(scope);
+}
+
+export function validateAgentMemoryCuratorRequest(
+  request: unknown,
+): AgentMemoryCuratorRequest {
+  const r = request as Record<string, unknown>;
+  if (!r || typeof r !== "object") throw new Error("invalid memory request");
+  const allowed: Record<string, string[]> = {
+    list: ["op", "scope"],
+    read: ["op", "name"],
+    write: [
+      "op",
+      "name",
+      "description",
+      "body",
+      "expected_revision",
+      "expires_in",
+    ],
+    delete: ["op", "notes"],
+    prune: ["op", "scope", "expiring_within", "unused_for", "dry_run"],
+    export: ["op", "scope"],
+  };
+  const keys = allowed[`${r.op}`];
+  if (!keys) throw new Error("unsupported agent memory operation");
+  checkKeys(r, keys);
+  if (r.scope !== undefined || r.op === "prune")
+    validateCuratorMemoryScope(r.scope);
+  if (r.op === "read") parseCuratorMemoryRef(r.name);
+  if (r.op === "write") {
+    validateMemoryWrite(r as any);
+    parseCuratorMemoryRef(r.name);
+    if (r.expected_revision !== undefined)
+      validateMemoryRevision(r.expected_revision);
+    if (r.expires_in !== undefined) parseMemoryExpiry(r.expires_in);
+  }
+  if (r.op === "delete") {
+    for (const note of validateMemoryDeleteBatch(r.notes)) {
+      parseCuratorMemoryRef(note.name);
+      if (note.expected_revision === undefined)
+        throw new Error(
+          `deleting ${note.name} needs the revision a read returned`,
+        );
+    }
+  }
+  if (r.op === "prune") {
+    if (r.expiring_within === undefined && r.unused_for === undefined)
+      throw new Error(
+        "memory prune needs expiring_within (e.g. 14d) or unused_for (e.g. 30d)",
+      );
+    if (r.expiring_within !== undefined)
+      parseMemoryDuration(r.expiring_within, "expiring_within");
+    if (r.unused_for !== undefined)
+      parseMemoryDuration(r.unused_for, "unused_for");
+    if (r.dry_run !== undefined && typeof r.dry_run !== "boolean")
+      throw new Error("dry_run must be true or false");
+  }
+  return r as AgentMemoryCuratorRequest;
 }
 
 export function validateAgentMemoryOwnerRequest(

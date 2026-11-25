@@ -26,6 +26,9 @@ const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "system.getAiSubscriptionStatus": "ai-subscriptions:read",
   // Usage by agent: tokens by model of the key's own account's agent turns.
   "agent.agentUsage": "ai-subscriptions:read",
+  // Every agent's memory: read, write, delete and prune (never the owner's
+  // settings: enabling memory, namespaces, delete-all).
+  "agent.curateAgentMemory": "memory:manage",
 };
 
 const HUB_API_KEY_HELLO_WORLD = new Set(["system.ping"]);

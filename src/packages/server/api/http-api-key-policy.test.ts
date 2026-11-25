@@ -151,6 +151,42 @@ describe("HTTP API key policy audit", () => {
     }
   });
 
+  it("lets memory:manage curate all agent memory, in a solo project, never memory settings", async () => {
+    const curator = { ...principal, capabilities: ["memory:manage" as const] };
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: curator,
+        name: "agent.curateAgentMemory",
+        args: [{ op: "list" }],
+      }),
+    ).resolves.toBeUndefined();
+    expect(mockSoloCheck).toHaveBeenCalledTimes(1);
+    // Without the capability, no; and never the owner's settings.
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal,
+        name: "agent.curateAgentMemory",
+        args: [{ op: "list" }],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: curator,
+        name: "agent.manageAgentMemory",
+        args: [{ op: "delete-all" }],
+      }),
+    ).rejects.toThrow("API keys are not allowed");
+    // A shared project refuses it.
+    mockSoloCheck.mockRejectedValueOnce(new Error("project has collaborators"));
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: curator,
+        name: "agent.curateAgentMemory",
+        args: [{ op: "list" }],
+      }),
+    ).rejects.toThrow("project has collaborators");
+  });
+
   it("audits unreviewed hub RPC denials", async () => {
     await expect(
       assertHttpHubApiKeyAllowed({

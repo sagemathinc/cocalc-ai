@@ -1,4 +1,7 @@
-import type { AgentMemoryOwnerRequest } from "@cocalc/conat/agents/memory";
+import type {
+  AgentMemoryCuratorRequest,
+  AgentMemoryOwnerRequest,
+} from "@cocalc/conat/agents/memory";
 import {
   createLaunchpadAgentSdkBridge,
   type AgentActionEnvelope,
@@ -77,6 +80,15 @@ export async function manageAgentMemory(
   delete request.session_hash;
   delete request.browser_id;
   return await withMemoryHome(account_id, { kind: "owner", request });
+}
+/** The whole account's memory, for a memory:manage key or the owner. */
+export async function curateAgentMemory(
+  opts: { account_id?: string } & AgentMemoryCuratorRequest,
+) {
+  if (!opts.account_id) throw new Error("must be signed in");
+  const { withMemoryHome } = await import("@cocalc/server/agents/memory-home");
+  const { account_id, ...request } = opts as any;
+  return await withMemoryHome(account_id, { kind: "curator", request });
 }
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
 export const reportRpcTurnFailure = rpc.reportRpcTurnFailure;

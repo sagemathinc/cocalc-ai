@@ -1626,4 +1626,107 @@ describeDb("agent memory: authorship, agent scopes and expiry", () => {
     });
     expect(alone.account_bytes).toBeGreaterThan(0);
   });
+  test("a memory:manage caller reads, replaces, deletes and prunes any scope, with revisions", async () => {
+    const { memory, charges } = setup();
+    const account = await newAccount(memory, { namespaces: [{ name: "dev" }] });
+    await as(memory, account, OPS, note("agent/plan"));
+    await as(memory, account, OPS, note("agent/old"));
+    await as(memory, account, REVIEW, note("agent/verdict"));
+    await as(memory, account, OPS, note("shared"));
+    const curate = (request: Record<string, unknown>) =>
+      memory.curator(account, request as any) as Promise<any>;
+    // Every scope, named in full.
+    charges.length = 0;
+    expect(
+      (await curate({ op: "list" })).notes.map((n: any) => n.name),
+    ).toEqual(["@ops3/old", "@ops3/plan", "@review/verdict", "global/shared"]);
+    expect(
+      (await curate({ op: "list", scope: "@review" })).notes.map(
+        (n: any) => n.name,
+      ),
+    ).toEqual(["@review/verdict"]);
+    expect(charges).toEqual(["read:0", "read:0"]);
+    // Reading another agent's own note gives its revision...
+    const read = await curate({ op: "read", name: "@review/verdict" });
+    expect(read).toMatchObject({
+      name: "@review/verdict",
+      body: "about agent/verdict",
+      written_by: "review",
+    });
+    // ...which replacing and deleting need.
+    await expect(
+      curate({
+        op: "write",
+        name: "@review/verdict",
+        description: "d",
+        body: "rewritten",
+      }),
+    ).rejects.toThrow(/exists; to replace it, read it and pass the revision/);
+    const replaced = await curate({
+      op: "write",
+      name: "@review/verdict",
+      description: "the verdict note",
+      body: "rewritten",
+      expected_revision: read.revision,
+    });
+    expect(replaced).toMatchObject({
+      name: "@review/verdict",
+      saved: "updated",
+    });
+    const created = await curate({
+      op: "write",
+      name: "dev/new-fact",
+      description: "a fact",
+      body: "body",
+    });
+    expect(created.saved).toBe("created");
+    const plan = await curate({ op: "read", name: "@ops3/plan" });
+    charges.length = 0;
+    const deleted = await curate({
+      op: "delete",
+      notes: [
+        { name: "@ops3/plan", expected_revision: plan.revision },
+        // The revision from before the rewrite: refused.
+        { name: "@review/verdict", expected_revision: read.revision },
+        { name: "global/missing", expected_revision: plan.revision },
+      ],
+    });
+    expect(charges).toEqual(["delete:0"]);
+    expect(deleted.deleted).toBe(1);
+    expect(deleted.results).toEqual([
+      { name: "@ops3/plan", deleted: true },
+      {
+        name: "@review/verdict",
+        error: expect.stringMatching(/changed since you read it/),
+      },
+      { name: "global/missing", error: "no memory note named global/missing" },
+    ]);
+    // Prune any one scope: a dry run lists, the real run deletes.
+    await getPool().query(
+      `UPDATE agent_memory_notes SET expires_at = now() + interval '2 days'
+        WHERE account_id=$1 AND name='old'`,
+      [account],
+    );
+    const dry = await curate({
+      op: "prune",
+      scope: "@ops3",
+      expiring_within: "14d",
+      dry_run: true,
+    });
+    expect(dry.notes.map((n: any) => n.name)).toEqual(["@ops3/old"]);
+    expect(
+      await curate({ op: "prune", scope: "@ops3", expiring_within: "14d" }),
+    ).toEqual({ deleted: 1, notes: ["@ops3/old"] });
+    const exported = await curate({ op: "export" });
+    expect(exported.notes).toBe(3);
+    // Unknown scopes and agents are errors, and nothing works while memory is off.
+    await expect(curate({ op: "list", scope: "nope" })).rejects.toThrow(
+      /no memory namespace named nope/,
+    );
+    await expect(curate({ op: "list", scope: "@ghost" })).rejects.toThrow(
+      /no agent @ghost/,
+    );
+    await memory.owner(account, { op: "set-enabled", enabled: false });
+    await expect(curate({ op: "list" })).rejects.toThrow(/Agent memory is off/);
+  });
 });

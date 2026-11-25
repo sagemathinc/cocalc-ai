@@ -61,6 +61,9 @@ export const agent = {
   // Owner-only: enabling memory and viewing or deleting notes need a human
   // session, never an agent's credential.
   manageAgentMemory: authFirstRequireAccountWithBoundSession,
+  // The whole account's memory for a memory:manage API key (an agent's
+  // CoCalc access) or the signed-in owner; never memory settings.
+  curateAgentMemory: authFirstRequireAccount,
   nameAgent: authFirstRequireAccountWithBoundSession,
   retireNamedAgent: authFirstRequireAccountWithBoundSession,
   listAgentNetworks: authFirstRequireAccount,
@@ -527,6 +530,11 @@ export interface AgentApi {
   manageAgentMemory(
     opts: AgentHumanAuth &
       import("@cocalc/conat/agents/memory").AgentMemoryOwnerRequest,
+  ): Promise<any>;
+  curateAgentMemory(
+    opts: {
+      account_id?: string;
+    } & import("@cocalc/conat/agents/memory").AgentMemoryCuratorRequest,
   ): Promise<any>;
   nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
   retireNamedAgent(

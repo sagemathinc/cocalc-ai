@@ -20,6 +20,7 @@ import {
   searchMemoryNotes,
   validateAgentMemoryOwnerRequest,
   validateAgentMemoryRequest,
+  validateAgentMemoryCuratorRequest,
   validateMemoryWrite,
   type AgentMemoryIndexNote,
 } from "./memory";
@@ -755,4 +756,29 @@ describe("batch delete and prune requests", () => {
       prune({ expiring_within: "14d", namespace: "global" }),
     ).toThrow(/unknown/);
   });
+});
+
+test("a curator names notes and scopes in full, and deletes only with revisions", () => {
+  const ok = (r: Record<string, unknown>) =>
+    expect(() => validateAgentMemoryCuratorRequest(r)).not.toThrow();
+  const bad = (r: Record<string, unknown>, message: RegExp) =>
+    expect(() => validateAgentMemoryCuratorRequest(r)).toThrow(message);
+  ok({ op: "list" });
+  ok({ op: "list", scope: "@review" });
+  ok({ op: "read", name: "@review/verdict" });
+  ok({ op: "read", name: "global/prefs" });
+  ok({
+    op: "delete",
+    notes: [{ name: "dev/x", expected_revision: "0123456789abcdef" }],
+  });
+  ok({ op: "prune", scope: "global", unused_for: "90d", dry_run: true });
+  bad({ op: "read", name: "prefs" }, /name the note in full: global\/prefs/);
+  bad({ op: "read", name: "agent/plan" }, /@agent-name/);
+  bad({ op: "list", scope: "agent" }, /@agent-name/);
+  bad({ op: "delete", notes: [{ name: "dev/x" }] }, /needs the revision/);
+  bad({ op: "prune", unused_for: "30d" }, /namespace|scope|text/);
+  bad({ op: "prune", scope: "global" }, /expiring_within/);
+  // Memory settings are the owner's, never a curator's.
+  for (const op of ["set-enabled", "delete-all", "namespace-save", "move"])
+    bad({ op }, /unsupported/);
 });

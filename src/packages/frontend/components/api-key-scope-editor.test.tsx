@@ -145,6 +145,7 @@ test("an agent's key says which privileges need a project of its own", () => {
     "Read and manage my notifications",
     "Read my membership usage and limits",
     "Read the usage of my AI subscriptions (Claude, Codex)",
+    "Read, edit or delete all agent memory",
   ]) {
     expect(
       screen.getByRole("checkbox", {

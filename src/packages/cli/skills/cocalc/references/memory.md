@@ -129,3 +129,23 @@ picks notes by their stored expiry or last use without reading them (a read
 would keep them): run it with `--dry-run` first, check the list, then run it
 again without. Reads and exports keep working while writes are rate
 limited, and deletes have a budget of their own.
+
+**All of the account's memory.** If the person turned on "Read, edit or
+delete all agent memory" in your CoCalc access, `cocalc account memory`
+reaches every namespace and every agent's own scope. It works only while your
+project has no other collaborators. Name notes in full (`global/<name>`,
+`<namespace>/<name>`, `@agent-name/<name>`), and name a scope as `global`, a
+namespace or `@agent-name`:
+
+```bash
+cocalc account memory list [--scope <scope>]
+cocalc account memory read <name>                 # returns the revision
+cocalc account memory delete <name> --expect-revision <revision>   # or --stdin: "<name> <revision>" lines
+cocalc account memory prune --scope <scope> --expiring-within 14d --dry-run
+cocalc account memory write <name> --description "<one line>" --stdin [--expect-revision <revision>]
+cocalc account memory export [--scope <scope>]
+```
+
+Replacing or deleting a note there always needs the revision you read. Use
+it to tidy on the person's behalf, for example another agent's stale working
+state; never to rewrite what other agents decided.

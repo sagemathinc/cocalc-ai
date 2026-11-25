@@ -9,6 +9,7 @@ export const API_KEY_CAPABILITIES = [
   "notifications:manage",
   "usage:read",
   "ai-subscriptions:read",
+  "memory:manage",
   "project:create",
   "project:list",
   "project:read",
