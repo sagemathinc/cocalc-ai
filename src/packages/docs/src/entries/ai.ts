@@ -243,13 +243,13 @@ export const AI_ENTRIES: DocsEntry[] = [
       "/public/docs/codex-chat-3008e11e.webp",
       "Codex working in a CoCalc project",
     ),
-    lastReviewed: "2026-09-07",
+    lastReviewed: "2026-11-23",
     noActionReason:
       "This workflow uses controls in an existing chat or account; start from the linked Open Codex chat guide.",
     slug: "ai/codex-notifications",
     status: "ready",
     summary:
-      "Choose completion notifications and inspect or stop ongoing Codex sessions.",
+      "Choose how agents notify you when they need attention or a turn fails, and inspect or stop ongoing Codex sessions.",
     title: "Notifications and session activity",
   },
   {
