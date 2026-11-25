@@ -47,6 +47,12 @@ describeDb("fresh Claude readings for Auto", () => {
     metadata: Record<string, unknown> | string,
     revoked = false,
   ): Promise<string> {
+    // The owner turned the checks on, unless a test says otherwise.
+    await query(
+      `INSERT INTO accounts (account_id, other_settings) VALUES ($1,$2)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [owner, { claude_usage_refresh: true }],
+    );
     const id = randomUUID();
     await query(
       `INSERT INTO external_credentials
@@ -65,6 +71,15 @@ describeDb("fresh Claude readings for Auto", () => {
     return id;
   }
 
+  // Whether the credential has a check record at all (not even null).
+  async function hasProbeKey(id: string): Promise<boolean> {
+    const { rows } = await query(
+      "SELECT metadata ? 'claude_usage_probe' AS has FROM external_credentials WHERE id=$1",
+      [id],
+    );
+    return rows[0]?.has === true;
+  }
+
   async function probeRecord(id: string) {
     const { rows } = await query(
       "SELECT metadata->'claude_usage_probe' AS probe FROM external_credentials WHERE id=$1",
@@ -75,6 +90,7 @@ describeDb("fresh Claude readings for Auto", () => {
 
   beforeAll(async () => {
     await syncSchema({
+      accounts: SCHEMA.accounts,
       external_credentials: SCHEMA.external_credentials,
       projects: SCHEMA.projects,
       project_hosts: SCHEMA.project_hosts,
@@ -82,6 +98,7 @@ describeDb("fresh Claude readings for Auto", () => {
   });
   beforeEach(async () => {
     await query("DELETE FROM external_credentials");
+    await query("DELETE FROM accounts");
     await query("DELETE FROM projects");
     await query("DELETE FROM project_hosts");
   });
@@ -174,6 +191,140 @@ describeDb("fresh Claude readings for Auto", () => {
     );
     return project_id;
   }
+
+  test("off unless the owner turned it on: no check, no record", async () => {
+    const settings: [string, unknown][] = [
+      ["never set", {}],
+      ["off", { claude_usage_refresh: false }],
+      ["not exactly true", { claude_usage_refresh: "true" }],
+      ["no settings", null],
+    ];
+    const ids: string[] = [];
+    for (const [, other_settings] of settings) {
+      const owner = randomUUID();
+      ids.push(
+        await credential(owner, {
+          claude_usage: reading(6 * HOUR),
+          claude_usage_history: usedAuto(HOUR),
+        }),
+      );
+      await query("UPDATE accounts SET other_settings=$2 WHERE account_id=$1", [
+        owner,
+        other_settings,
+      ]);
+      await project(owner, await host(), "running", 0);
+    }
+    // Turned on, but the account was deleted; and no account row at all.
+    const deleted = randomUUID();
+    ids.push(
+      await credential(deleted, { claude_usage_history: usedAuto(HOUR) }),
+    );
+    await query("UPDATE accounts SET deleted=true WHERE account_id=$1", [
+      deleted,
+    ]);
+    await project(deleted, await host(), "running", 0);
+    const missing = randomUUID();
+    ids.push(
+      await credential(missing, { claude_usage_history: usedAuto(HOUR) }),
+    );
+    await query("DELETE FROM accounts WHERE account_id=$1", [missing]);
+    await project(missing, await host(), "running", 0);
+
+    expect(await dueClaudeUsageProbeRows(query, now)).toEqual([]);
+    const { calls, deps: d } = deps(async () => ({
+      observed_at: new Date(now).toISOString(),
+    }));
+    await expect(runClaudeUsageProbes(d, () => now)).resolves.toEqual({
+      checked: 0,
+      failed: 0,
+    });
+    expect(calls).toEqual([]);
+    for (const id of ids) expect(await hasProbeKey(id)).toBe(false);
+
+    // Turned on: checked as before.
+    const { rows } = await query(
+      "SELECT owner_account_id FROM external_credentials WHERE id=$1",
+      [ids[0]],
+    );
+    await query("UPDATE accounts SET other_settings=$2 WHERE account_id=$1", [
+      rows[0].owner_account_id,
+      { claude_usage_refresh: true },
+    ]);
+    await runClaudeUsageProbes(d, () => now);
+    expect(calls.map((c) => c.credential_id)).toEqual([ids[0]]);
+  });
+
+  // Turned off while a pass works on the subscription: when the due query
+  // returns, during the claim, or during the project lookup. No request,
+  // and the check recorded before the pass (here an old one) is kept.
+  for (const [when, step] of [
+    ["the pass chose it", "FROM external_credentials c"],
+    ["the claim", "UPDATE external_credentials"],
+    ["the project lookup", "FROM projects p"],
+  ]) {
+    test(`turned off during ${when}: no request, the old record kept`, async () => {
+      const owner = randomUUID();
+      const old = { at: new Date(now - 5 * HOUR).toISOString(), ok: true };
+      const id = await credential(owner, {
+        claude_usage_history: usedAuto(HOUR),
+        claude_usage_probe: old,
+      });
+      await project(owner, await host(), "running", 0);
+      const { calls, deps: d } = deps(async () => ({
+        observed_at: new Date(now).toISOString(),
+      }));
+      let turnedOff = false;
+      d.query = async (sql, values) => {
+        const result = await query(sql, values);
+        if (!turnedOff && sql.includes(step)) {
+          turnedOff = true;
+          await query(
+            "UPDATE accounts SET other_settings=$2 WHERE account_id=$1",
+            [owner, { claude_usage_refresh: false }],
+          );
+        }
+        return result;
+      };
+      await expect(runClaudeUsageProbes(d, () => now)).resolves.toEqual({
+        checked: 0,
+        failed: 0,
+      });
+      expect(turnedOff).toBe(true);
+      expect(calls).toEqual([]);
+      expect(await probeRecord(id)).toEqual(old);
+    });
+  }
+
+  test("turned off during the project lookup with no record before: none after", async () => {
+    const owner = randomUUID();
+    const id = await credential(owner, {
+      claude_usage_history: usedAuto(HOUR),
+    });
+    await project(owner, await host(), "running", 0);
+    const { calls, deps: d } = deps(async () => ({
+      observed_at: new Date(now).toISOString(),
+    }));
+    d.query = async (sql, values) => {
+      const result = await query(sql, values);
+      if (sql.includes("FROM projects p"))
+        await query(
+          "UPDATE accounts SET other_settings=$2 WHERE account_id=$1",
+          [owner, {}],
+        );
+      return result;
+    };
+    await runClaudeUsageProbes(d, () => now);
+    expect(calls).toEqual([]);
+    expect(await hasProbeKey(id)).toBe(false);
+    // Turned on again: checked at once, with no check inherited.
+    await query("UPDATE accounts SET other_settings=$2 WHERE account_id=$1", [
+      owner,
+      { claude_usage_refresh: true },
+    ]);
+    d.query = query;
+    await runClaudeUsageProbes(d, () => now);
+    expect(calls).toHaveLength(1);
+  });
 
   test("malformed metadata counts as missing and cannot fail the query", async () => {
     const owner = randomUUID();
@@ -352,7 +503,7 @@ describeDb("fresh Claude readings for Auto", () => {
       ...d,
       query: async (sql, values) => {
         const result = await query(sql, values);
-        if (!sql.includes("ORDER BY")) return result;
+        if (!sql.includes("FROM external_credentials c")) return result;
         return {
           ...result,
           rows: result.rows.map((row) => ({

@@ -8,7 +8,9 @@
 // or not lately here keeps an old reading, and the forecast misses that use.
 // The home bay checks such subscriptions with a one-word Haiku reply
 // (project-host/acp/claude-usage-probe.ts), at most once per
-// CLAUDE_USAGE_PROBE_AFTER_MS each, for accounts that use Auto.
+// CLAUDE_USAGE_PROBE_AFTER_MS each, for accounts that use Auto and turned
+// the checks on (CLAUDE_USAGE_REFRESH_SETTING). Each check is a request
+// through the subscription, so it is off unless the user turns it on.
 
 import {
   CLAUDE_POOL_EXCLUDED_METADATA_KEY,
@@ -19,6 +21,11 @@ import { isIsoTime } from "./claude-usage-sql";
 
 /** Credential metadata: the last check, { at (ISO), ok, error? }. */
 export const CLAUDE_USAGE_PROBE_METADATA_KEY = "claude_usage_probe";
+
+/** Account other_settings: the user's opt-in to these checks, off by
+ * default (in Claude Code settings). Without it, no check is ever sent
+ * through the account's subscriptions. */
+export const CLAUDE_USAGE_REFRESH_SETTING = "claude_usage_refresh";
 
 const HOUR_MS = 3600_000;
 /** A reading older than this is checked again (as is a check this old). */

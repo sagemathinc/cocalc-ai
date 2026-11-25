@@ -611,6 +611,7 @@ Table({
             low_credit_threshold_usd: 10,
             low_sponsored_compute_notifications: false,
             low_sponsored_compute_threshold_usd: 10,
+            claude_usage_refresh: false,
             cookie_consent: null,
           },
           display_name: "",

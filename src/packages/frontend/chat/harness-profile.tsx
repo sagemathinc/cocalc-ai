@@ -1,5 +1,6 @@
 import { Button, Input, Modal, Select, Space, Tag, Typography } from "antd";
 import { AgentMemoryButton } from "@cocalc/frontend/account/agent-memory-settings";
+import { ClaudeUsageRefreshSetting } from "@cocalc/frontend/account/claude-usage-refresh-setting";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import type { ReactNode, Ref } from "react";
 import {
@@ -1095,6 +1096,11 @@ function HarnessRuntimeSummaryContent({
         {claude && (
           <div style={{ marginBottom: 12 }}>
             <AgentMemoryButton />
+          </div>
+        )}
+        {claude && !lite && (
+          <div style={{ marginBottom: 12 }}>
+            <ClaudeUsageRefreshSetting />
           </div>
         )}
         {form}
