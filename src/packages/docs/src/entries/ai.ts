@@ -50,7 +50,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     slug: "ai/claude-code",
     status: "ready",
     summary:
-      "Use Claude Code in CoCalc: membership, subscription, or API-key access, project tools, billing, and permissions.",
+      "Use Claude Code in CoCalc: subscription or API-key access, project tools, billing, and permissions.",
     title: "Claude Code in CoCalc",
   },
   {
@@ -130,7 +130,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     searchKeywords:
       "Codex Claude Code Anthropic OpenAI ChatGPT Pro Max membership subscription payment method API key credentials",
     summary:
-      "Choose membership, subscription, or API-key access for Codex and Claude Code, and configure keys for project code.",
+      "Choose access for Codex (membership, subscription, or API key) and Claude Code (subscription or API key), and configure keys for project code.",
     title: "Connect AI access",
   },
   {

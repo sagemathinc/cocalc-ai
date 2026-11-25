@@ -10,7 +10,8 @@ test("Claude access options and security model are public and searchable in both
     // Not a preview since 2026-10-27 (William).
     assert.equal(entry.title, "Claude Code in CoCalc");
     assert.doesNotMatch(entry.body, /experimental preview/i);
-    assert.match(entry.body, /membership includes Claude/);
+    assert.doesNotMatch(entry.body, /membership includes Claude/);
+    assert.match(entry.body, /CoCalc membership does not include Claude/);
     assert.match(entry.body, /Account API key/);
     assert.match(entry.body, /Project API-key secret/);
     const access = registry.getDocsEntry("ai/connect-credentials");

@@ -248,6 +248,11 @@ site-key runtimes and are deliberately bypassed by exact funded turns.
 
 ### Site-funded Claude
 
+Site-funded Claude is disabled and not offered: CoCalc does not pay for or
+resell Claude usage. Users pay for Claude directly, with their own Claude
+subscription or Anthropic API key. The code path described below remains
+until it is removed.
+
 Claude Code agents can be site-funded too, on Claude Haiku 5.5. They draw on
 the same membership allowance and weekly pools as Codex (one included-AI
 budget), with their own switch, model and per-turn guards
