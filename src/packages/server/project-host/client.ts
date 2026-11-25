@@ -103,6 +103,11 @@ export async function getRoutedHostControlClient({
         await bridge.restartCloudflared({ host_id, restart }),
       runSyntheticRuntimeProbe: async () =>
         await bridge.runSyntheticRuntimeProbe({ host_id }),
+      probeClaudeSubscriptionUsage: async () => {
+        throw new Error(
+          "Claude usage checks run only on hosts of the account's home bay",
+        );
+      },
       applyExamRun: async (apply) =>
         await bridge.applyExamRun({ host_id, apply }),
       getExamRunStatus: async (get) =>
