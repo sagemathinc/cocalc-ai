@@ -44,12 +44,20 @@ import { startProviderRelaySession } from "../codex/site-funded-proxy";
 import { getClaudeSubscriptionCredential } from "./claude-subscription-registry";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import { podmanEnv } from "@cocalc/backend/podman/env";
+import {
+  getSessionInstructionsVersion,
+  setSessionInstructionsVersion,
+} from "@cocalc/lite/hub/sqlite/acp-session-instructions";
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
   return { ...actual, execFile: jest.fn(), spawn: jest.fn() };
 });
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: {} }));
+jest.mock("@cocalc/lite/hub/sqlite/acp-session-instructions", () => ({
+  getSessionInstructionsVersion: jest.fn(),
+  setSessionInstructionsVersion: jest.fn(),
+}));
 jest.mock("../codex/codex-project", () => ({
   createProjectCliTokenLease: jest.fn(),
   ensureProjectContainerRunning: jest.fn(async () => {}),
@@ -770,6 +778,18 @@ describe("launchClaudeSubscriptionInProject", () => {
     (execFile as unknown as jest.Mock).mockImplementation(
       (_cmd, _args, _opts, cb) => cb(null, "", ""),
     );
+  });
+
+  it("records each session's instructions where the controller does", async () => {
+    // A session moved here from the controller keeps its record: the
+    // project's instructions then differ from it and go with the next turn.
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    expect(proc.sessionInstructions?.get).toBe(getSessionInstructionsVersion);
+    expect(proc.sessionInstructions?.set).toBe(setSessionInstructionsVersion);
+    // nothing in the controller's settings or tools comes with it
+    expect(proc.systemPromptAppend).toBeUndefined();
+    expect(proc.projectToolServerName).toBeUndefined();
+    await proc.stop();
   });
 
   it("execs the adapter in the project with only a relay token", async () => {

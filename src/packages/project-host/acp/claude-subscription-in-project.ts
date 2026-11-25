@@ -57,6 +57,10 @@ import {
   renameBeneath,
   rmBeneath,
 } from "../beneath-copy";
+import {
+  getSessionInstructionsVersion,
+  setSessionInstructionsVersion,
+} from "@cocalc/lite/hub/sqlite/acp-session-instructions";
 import { getClaudeSubscriptionCredential } from "./claude-subscription-registry";
 import { claudeSubscriptionToken } from "./claude-subscription-token";
 
@@ -734,6 +738,13 @@ export async function launchClaudeSubscriptionInProject(
       sessionPolicy: "default",
       pinnedSettingsEnv: claudeRelaySettingsEnv(relay.baseUrl),
       subscriptionAuth: "oauth-token",
+      // The same record as the controller's (by session id, in the host's
+      // ACP database): a session moved here from the controller still holds
+      // the controller's instructions, so its next turn gets these once.
+      sessionInstructions: {
+        get: getSessionInstructionsVersion,
+        set: setSessionInstructionsVersion,
+      },
       // Asked before every turn: this account's credential, resolved again
       // now and handed to the relay, since the agent's own identity read
       // goes to Anthropic directly (not through the relay) and can fail.
