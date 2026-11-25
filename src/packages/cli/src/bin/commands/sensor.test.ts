@@ -16,12 +16,61 @@ import {
   SENSOR_LIMITS,
   sensorWatchScript,
 } from "@cocalc/conat/agents/sensors";
+import { Command } from "commander";
 import {
   agentWatch,
+  exitTerminalId,
   exitWatcherArgs,
+  registerSensorCommand,
   scheduledRunWarnings,
   watchedPath,
 } from "./sensor";
+
+test("an exit watcher's check can start its command again: the arguments it passes parse", async () => {
+  const id = "6f1c8a52-3b1e-4c43-9d2a-1f0e5b7c9a10";
+  assert.equal(exitTerminalId(id), "sensor-exit-6f1c8a52");
+  assert.equal(exitTerminalId(id, 2), "sensor-exit-6f1c8a52-r2");
+  assert.throws(() => exitTerminalId("../x", 1));
+  const seen: any[] = [];
+  const program = new Command().exitOverride();
+  registerSensorCommand(program, {
+    withContext: (async (cmd: Command, name: string) => {
+      seen.push({ name, opts: cmd.opts(), args: cmd.args });
+    }) as any,
+    emitSuccess: (() => undefined) as any,
+    globalsFrom: (() => ({})) as any,
+    resolveProjectFromArgOrContext: (async () => {
+      throw new Error("unused");
+    }) as any,
+    resolveProjectConatClient: (async () => {
+      throw new Error("unused");
+    }) as any,
+  });
+  // As sensorWatchScript runs it (after the global --json).
+  const command = "./wait-ci.sh 'a b' --hours 3";
+  await program.parseAsync(
+    [
+      "sensor",
+      "exit-restart",
+      "--id",
+      id,
+      "--attempt",
+      "1",
+      "--cwd",
+      "my dir",
+      "--",
+      command,
+    ],
+    { from: "user" },
+  );
+  assert.deepEqual(seen, [
+    {
+      name: "sensor exit-restart",
+      opts: { id, attempt: "1", cwd: "my dir" },
+      args: [command],
+    },
+  ]);
+});
 
 test("an exit watcher's command reports its output and exit code, and the watcher wakes on it", () => {
   const home = mkdtempSync(join(tmpdir(), "sensor-exit-"));

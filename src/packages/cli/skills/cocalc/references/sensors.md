@@ -28,9 +28,13 @@ that fails and is followed by a completed one within that time can be missed.
 
 `watch exit` wakes you with the command's exit code and the end of its
 output. If its terminal ends before the command does (the project restarts,
-or the terminal is closed or killed), it wakes you within a few minutes with
-`exit_code: null` and `reason: "terminal-ended"`: the command did not finish,
-so run it again (with a new watcher) if it still matters.
+or the terminal is closed or killed), the watcher starts the command again in
+a new terminal, in the same directory, up to 3 times; the wake's `restarts`
+says how many. Use `--no-restart` for a command that is not safe to run
+twice. When it is out of tries (or with `--no-restart`), it wakes you with
+`exit_code: null`, `reason: "terminal-ended"` and `rerun`, the command line
+that sets it up again. To stop a command for good, delete its watcher
+(`cocalc sensor delete <id>`) before you kill its terminal.
 
 `watch ci` needs this agent's GitHub connector and is refused without it.
 Without it, watch the checks with the project's own `gh` login instead:
