@@ -968,6 +968,171 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("counts the subagents a turn spawns, and no other thread", async () => {
+    const usage = (
+      threadId: string,
+      turnId: string,
+      total: Record<string, number>,
+      last: Record<string, number>,
+    ) => ({ threadId, turnId, tokenUsage: { total, last } });
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-main" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-main" } });
+          setImmediate(() => {
+            fake.sendNotification(
+              "thread/tokenUsage/updated",
+              usage(
+                "thr-main",
+                "turn-main",
+                { inputTokens: 100, outputTokens: 10 },
+                { inputTokens: 100, outputTokens: 10 },
+              ),
+            );
+            // The turn spawns a subagent ...
+            fake.sendNotification("item/started", {
+              threadId: "thr-main",
+              turnId: "turn-main",
+              item: {
+                type: "collabAgentToolCall",
+                id: "spawn-1",
+                tool: "spawnAgent",
+                status: "inProgress",
+                senderThreadId: "thr-main",
+                receiverThreadIds: ["thr-sub"],
+                // The subagent runs on another model than its parent.
+                model: "gpt-6.1-mini",
+              },
+            });
+            // ... which spawns another.
+            fake.sendNotification("item/started", {
+              threadId: "thr-sub",
+              turnId: "turn-sub",
+              item: {
+                type: "collabAgentToolCall",
+                id: "spawn-2",
+                tool: "spawnAgent",
+                status: "inProgress",
+                senderThreadId: "thr-sub",
+                receiverThreadIds: ["thr-subsub"],
+              },
+            });
+            fake.sendNotification(
+              "thread/tokenUsage/updated",
+              usage(
+                "thr-sub",
+                "turn-sub",
+                { inputTokens: 40, outputTokens: 4 },
+                { inputTokens: 40, outputTokens: 4 },
+              ),
+            );
+            fake.sendNotification(
+              "thread/tokenUsage/updated",
+              usage(
+                "thr-sub",
+                "turn-sub",
+                { inputTokens: 70, outputTokens: 9 },
+                { inputTokens: 30, outputTokens: 5 },
+              ),
+            );
+            fake.sendNotification(
+              "thread/tokenUsage/updated",
+              usage(
+                "thr-subsub",
+                "turn-subsub",
+                { inputTokens: 5, outputTokens: 1 },
+                { inputTokens: 5, outputTokens: 1 },
+              ),
+            );
+            // Another conversation's thread on the same app-server.
+            fake.sendNotification(
+              "thread/tokenUsage/updated",
+              usage(
+                "thr-other",
+                "turn-other",
+                { inputTokens: 999, outputTokens: 99 },
+                { inputTokens: 999, outputTokens: 99 },
+              ),
+            );
+            fake.sendNotification("item/completed", {
+              threadId: "thr-main",
+              turnId: "turn-main",
+              item: { type: "agentMessage", id: "m1", text: "done", phase: null },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-main", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+        authSource: "subscription",
+      }),
+    });
+    const recorded: any[] = [];
+    setAgentTurnUsageRecorder((_account_id, usage) => {
+      recorded.push(usage);
+    });
+    try {
+      await new CodexAppServerAgent().evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        prompt: "work",
+        chat: {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          path: "agent.chat",
+          thread_id: "thread-1",
+        } as any,
+        stream: async () => {},
+        config: { workingDirectory: "/tmp/project", model: "gpt-6.1-sol" } as any,
+      });
+    } finally {
+      setAgentTurnUsageRecorder();
+    }
+    expect(recorded).toHaveLength(1);
+    // Main 100/10 and the nested subagent 5/1 (no model given: the turn's)
+    // under the turn's model; the subagent 70/9 under its own; never the
+    // other thread. (Order is not significant.)
+    const byModel = [...recorded[0].models].sort((x: any, y: any) =>
+      x.model.localeCompare(y.model),
+    );
+    expect(byModel).toEqual([
+      {
+        model: "gpt-6.1-mini",
+        input_tokens: 70,
+        cached_input_tokens: 0,
+        cache_write_tokens: 0,
+        output_tokens: 9,
+        reasoning_output_tokens: 0,
+      },
+      {
+        model: "gpt-6.1-sol",
+        input_tokens: 105,
+        cached_input_tokens: 0,
+        cache_write_tokens: 0,
+        output_tokens: 11,
+        reasoning_output_tokens: 0,
+      },
+    ]);
+  });
+
   it("streams completed app-server agent messages when no delta was emitted", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
