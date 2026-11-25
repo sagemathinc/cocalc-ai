@@ -527,6 +527,8 @@ describe("exit watchers", () => {
       log: `~/.local/share/cocalc/sensors/exits/${id}.log`,
       beat: `~/.local/share/cocalc/sensors/exits/${id}.beat`,
       restarts: `~/.local/share/cocalc/sensors/exits/${id}.restarts`,
+      group: `~/.local/share/cocalc/sensors/exits/${id}.group`,
+      unknown: `~/.local/share/cocalc/sensors/exits/${id}.unknown`,
     });
     for (const watch of [
       { type: "exit", id: "../../etc/passwd", command: "x" },
@@ -589,11 +591,12 @@ describe("exit watchers", () => {
     ago(SENSOR_LIMITS.exitLostAfterSeconds + 30);
     const wake = parseSensorWake(run())!;
     expect(wake.summary).toMatch(
-      /^"make" stopped without an exit code: its terminal ended/,
+      /^"make" has no exit code: its terminal ended .* state is unknown; it may still be running\. Check before running it again: /,
     );
     expect(wake.data).toMatchObject({
       exit_code: null,
       reason: "terminal-ended",
+      state: "unknown",
       output_tail: "step 1 ok\n",
     });
     // A stale heartbeat with an exit code: it finished.
@@ -750,11 +753,12 @@ print(json.dumps({"ok": True}))
     const wake = parseSensorWake(run())!;
     expect(callList()).toHaveLength(SENSOR_LIMITS.exitMaxRestarts);
     expect(wake.summary).toMatch(
-      /^"\.\/wait-ci\.sh 'a b'" stopped without an exit code: .* It was started again 3 times/,
+      /^"\.\/wait-ci\.sh 'a b'" has no exit code: .* It was started again 3 times/,
     );
     expect(wake.data).toMatchObject({
       exit_code: null,
       reason: "terminal-ended",
+      state: "unknown",
       restarts: 3,
       rerun: `cocalc sensor watch exit --cwd 'my dir' -- ${command}`,
     });
@@ -763,6 +767,52 @@ print(json.dumps({"ok": True}))
     const done = parseSensorWake(run())!;
     expect(done.summary).toBe(`"./wait-ci.sh 'a b'" exited with code 0`);
     expect(done.data).toMatchObject({ exit_code: 0, restarts: 3 });
+  });
+
+  it("wakes, state unknown, and asks for no restart, when a restart found the earlier run may be alive", () => {
+    const home = mkdtempSync(join(tmpdir(), "watch-exit-refused-"));
+    const dir = join(home, ".local/share/cocalc/sensors/exits");
+    mkdirSync(dir, { recursive: true });
+    const bin = mkdtempSync(join(tmpdir(), "watch-exit-bin-"));
+    const calls = join(bin, "calls");
+    writeFileSync(
+      join(bin, "cocalc"),
+      `#!/bin/sh\necho "$@" >> ${JSON.stringify(calls)}\n`,
+      { mode: 0o755 },
+    );
+    const script = sensorWatchScript({
+      type: "exit",
+      id,
+      command: "make deploy",
+      restart: true,
+    })!;
+    const run = () =>
+      execFileSync("python3", ["-c", script], {
+        cwd: home,
+        env: { ...process.env, HOME: home, PATH: `${bin}:/usr/bin:/bin` },
+        encoding: "utf8",
+      });
+    // The first restart was asked for; the new terminal refused to run it.
+    const beat = join(dir, `${id}.beat`);
+    writeFileSync(beat, "");
+    const t = Date.now() / 1000 - SENSOR_LIMITS.exitLostAfterSeconds - 30;
+    utimesSync(beat, t, t);
+    writeFileSync(join(dir, `${id}.restarts`), "1\n");
+    writeFileSync(join(dir, `${id}.unknown`), "unknown\n");
+    const wake = parseSensorWake(run())!;
+    expect(wake.summary).toMatch(
+      /has no exit code: .* It was not started again: its earlier run may still be running\./,
+    );
+    expect(wake.data).toMatchObject({
+      exit_code: null,
+      reason: "terminal-ended",
+      state: "unknown",
+      restarts: 1,
+    });
+    expect(() => readFileSync(calls)).toThrow();
+    // Its exit code after all (only its heartbeat had died): that wins.
+    writeFileSync(join(dir, `${id}.json`), '{"exit_code": 0}\n');
+    expect(parseSensorWake(run())!.data).toMatchObject({ exit_code: 0 });
   });
 });
 

@@ -164,8 +164,10 @@ export type SensorWatch =
   /**
    * A command `cocalc sensor watch exit` started in a project terminal; it
    * records its exit code and output under sensorExitPaths(id). With
-   * restart, a command whose terminal ended (the project restarted) is
-   * started again in a new terminal, in cwd, up to exitMaxRestarts times.
+   * restart, a command whose terminal ended is started again in a new
+   * terminal, in cwd, up to exitMaxRestarts times, but only once the new
+   * terminal sees positive proof that the first run's process group is gone
+   * (the project restarted); otherwise it wakes, state unknown.
    */
   | {
       type: "exit";
@@ -221,6 +223,8 @@ export function sensorExitPaths(id: string): {
   log: string;
   beat: string;
   restarts: string;
+  group: string;
+  unknown: string;
 } {
   if (!isValidUUID(id)) throw new Error("exit watcher id must be a UUID");
   const dir = "~/.local/share/cocalc/sensors/exits";
@@ -231,6 +235,11 @@ export function sensorExitPaths(id: string): {
     beat: `${dir}/${id}.beat`,
     // One line per time the watcher started the command again.
     restarts: `${dir}/${id}.restarts`,
+    // The process group the command runs in (pid namespace, pgid, start
+    // time of its leader), which a restart checks is gone before it runs.
+    group: `${dir}/${id}.group`,
+    // A restart found that group may still be running, so did not run.
+    unknown: `${dir}/${id}.unknown`,
   };
 }
 
@@ -955,6 +964,7 @@ print(json.dumps({"wake": True, "summary": summary[:500], "data": data}))
 log = os.path.expanduser(${JSON.stringify(paths.log)})
 beat = os.path.expanduser(${JSON.stringify(paths.beat)})
 restarts_file = os.path.expanduser(${JSON.stringify(paths.restarts)})
+unknown = os.path.expanduser(${JSON.stringify(paths.unknown)})
 def exit_code():
     try:
         with open(status) as f:
@@ -971,7 +981,12 @@ def output_tail():
     except OSError:
         return ""
 done, code = exit_code()
-if not done:
+refused = False
+if not done and os.path.exists(unknown):
+    # A restart found the earlier run's process group may still be alive,
+    # so it did not start the command again: wake now.
+    refused = True
+elif not done:
     # Still running while its heartbeat is fresh. No heartbeat at all: not
     # started yet (or a command started before heartbeats existed).
     try:
@@ -990,10 +1005,13 @@ def restarts():
     except OSError:
         return 0
 if not done:
-    # Its terminal ended. Start it again in a new terminal (the same
-    # command, in the same directory), a few times, before waking.
+    # Its terminal ended, or its heartbeat stopped: that alone does not
+    # prove the command stopped. With restart, ask for it again in a new
+    # terminal (the same command, in the same directory), which runs it
+    # only if it sees the earlier run's process group is gone, a few times,
+    # before waking. Otherwise wake: its state is unknown.
     n = restarts()
-    if P.get("restart") and n < ${SENSOR_LIMITS.exitMaxRestarts}:
+    if P.get("restart") and not refused and n < ${SENSOR_LIMITS.exitMaxRestarts}:
         with open(restarts_file, "a") as f:
             f.write("%d\\n" % time.time())
         args = ["cocalc", "--json", "sensor", "exit-restart", "--id", P["id"], "--attempt", str(n + 1)]
@@ -1005,8 +1023,13 @@ if not done:
             print((r.stderr or r.stdout or "").strip()[-1000:], file=sys.stderr)
         sys.exit(0)
     again = "cocalc sensor watch exit " + ("--cwd %s " % shlex.quote(P["cwd"]) if P.get("cwd") else "") + "-- " + P["command"]
-    how = (" It was started again %d times, and its terminal ended each time." % n) if n else ""
-    print(json.dumps({"wake": True, "summary": "%s stopped without an exit code: its terminal ended before it finished (the project restarted, or the terminal was closed or killed).%s Run it again if it still matters: %s" % (shown, how, again[:300]), "data": {"exit_code": None, "reason": "terminal-ended", "restarts": n, "rerun": again, "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
+    if refused:
+        how = " It was not started again: its earlier run may still be running."
+    elif n:
+        how = " It was started again %d times, and its terminal ended each time." % n
+    else:
+        how = ""
+    print(json.dumps({"wake": True, "summary": "%s has no exit code: its terminal ended (or stopped reporting) before it finished, so the command's state is unknown; it may still be running.%s Check before running it again: %s" % (shown, how, again[:300]), "data": {"exit_code": None, "reason": "terminal-ended", "state": "unknown", "restarts": n, "rerun": again, "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
     sys.exit(0)
 print(json.dumps({"wake": True, "summary": "%s exited with code %s" % (shown, code), "data": {"exit_code": code, "restarts": restarts(), "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
 `

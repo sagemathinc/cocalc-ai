@@ -7,6 +7,7 @@ import {
   readFileSync,
   statSync,
   utimesSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -159,10 +160,144 @@ test("killed before its command exits, it stops its heartbeat, and the watcher w
       encoding: "utf8",
     }),
   )!;
-  assert.match(wake.summary, /stopped without an exit code/);
+  assert.match(wake.summary, /has no exit code/);
   assert.equal((wake.data as any).exit_code, null);
   assert.equal((wake.data as any).reason, "terminal-ended");
+  assert.equal((wake.data as any).state, "unknown");
   assert.match((wake.data as any).output_tail, /started/);
+});
+
+// The watcher's check cannot see the project's processes, and a stale
+// heartbeat does not prove the command stopped: a restart runs it only once
+// it sees, in the project, that the earlier run's process group is gone.
+async function startExitWatcher(home: string, id: string, command: string) {
+  const env = { ...process.env, HOME: home };
+  const args = withHome(home, () => exitWatcherArgs(command, id, 1));
+  const dir = join(home, ".local/share/cocalc/sensors/exits");
+  // A session and process group of its own, as in a project terminal.
+  const child = spawn("bash", args, { env, detached: true, stdio: "ignore" });
+  for (let i = 0; i < 50 && !existsSync(join(dir, `${id}.group`)); i++)
+    await sleep(100);
+  assert.ok(existsSync(join(dir, `${id}.group`)), "it records its group");
+  return { child, dir, env };
+}
+
+function withHome<T>(home: string, f: () => T): T {
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    return f();
+  } finally {
+    process.env.HOME = previousHome;
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function restartAttempt(home: string, id: string, command: string) {
+  const args = withHome(home, () =>
+    exitWatcherArgs(command, id, 1, /* guard */ true),
+  );
+  return spawnSync("bash", args, {
+    env: { ...process.env, HOME: home },
+    encoding: "utf8",
+    timeout: 20_000,
+  });
+}
+
+test("wrapper SIGKILLed, child still alive: a restart does not launch a second copy", async () => {
+  const home = mkdtempSync(join(tmpdir(), "sensor-exit-alive-"));
+  const id = "3c9e1f70-5d2a-4b8e-9f61-7a0c2e4b8d15";
+  const runs = join(home, "runs");
+  const command = `echo run >> ${JSON.stringify(runs)}; sleep 60`;
+  const { child, dir, env } = await startExitWatcher(home, id, command);
+  try {
+    for (let i = 0; i < 50 && !existsSync(runs); i++) await sleep(100);
+    assert.equal(readFileSync(runs, "utf8"), "run\n");
+    // Only the wrapper is killed: its command (sleep) keeps running.
+    process.kill(child.pid!, "SIGKILL");
+    await sleep(500);
+    assert.ok(groupAlive(child.pid!), "the command is still running");
+    const again = restartAttempt(home, id, command);
+    assert.equal(again.status, 0);
+    assert.match(again.stdout, /not started again/);
+    assert.equal(readFileSync(runs, "utf8"), "run\n", "no second launch");
+    assert.ok(existsSync(join(dir, `${id}.unknown`)));
+    // The watcher then wakes, state unknown, and asks for no restart.
+    const bin = mkdtempSync(join(tmpdir(), "sensor-exit-bin-"));
+    const calls = join(bin, "calls");
+    writeFileSync(
+      join(bin, "cocalc"),
+      `#!/bin/sh\necho "$@" >> ${JSON.stringify(calls)}\n`,
+      { mode: 0o755 },
+    );
+    const old = Date.now() / 1000 - SENSOR_LIMITS.exitLostAfterSeconds - 10;
+    utimesSync(join(dir, `${id}.beat`), old, old);
+    const script = sensorWatchScript({
+      type: "exit",
+      id,
+      command,
+      restart: true,
+    })!;
+    const wake = parseSensorWake(
+      execFileSync("python3", ["-c", script], {
+        cwd: home,
+        env: { ...env, PATH: `${bin}:/usr/bin:/bin` },
+        encoding: "utf8",
+      }),
+    )!;
+    assert.equal((wake.data as any).state, "unknown");
+    assert.match(wake.summary, /not started again/);
+    assert.equal(existsSync(calls), false);
+    assert.equal(readFileSync(runs, "utf8"), "run\n");
+  } finally {
+    try {
+      process.kill(-child.pid!, "SIGKILL");
+    } catch {}
+  }
+});
+
+test("the earlier run's whole group gone: a restart runs the command again", async () => {
+  const home = mkdtempSync(join(tmpdir(), "sensor-exit-gone-"));
+  const id = "8a4d2c61-0f3b-4e7a-b5c9-1d6e8f2a3b47";
+  const runs = join(home, "runs");
+  const { child, dir } = await startExitWatcher(
+    home,
+    id,
+    `echo run >> ${JSON.stringify(runs)}; sleep 60`,
+  );
+  for (let i = 0; i < 50 && !existsSync(runs); i++) await sleep(100);
+  // Everything in it ends, as when the project restarts.
+  process.kill(-child.pid!, "SIGKILL");
+  for (let i = 0; i < 50 && groupAlive(child.pid!); i++) await sleep(100);
+  assert.equal(groupAlive(child.pid!), false);
+  const again = restartAttempt(home, id, `echo run >> ${JSON.stringify(runs)}`);
+  assert.equal(again.status, 0);
+  assert.match(again.stdout, /\[exit 0\]/);
+  assert.equal(readFileSync(runs, "utf8"), "run\nrun\n");
+  assert.equal(existsSync(join(dir, `${id}.unknown`)), false);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, `${id}.json`), "utf8")), {
+    exit_code: 0,
+  });
+});
+
+test("a restart with no record of the earlier run does not run it", () => {
+  const home = mkdtempSync(join(tmpdir(), "sensor-exit-norecord-"));
+  const id = "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f";
+  const runs = join(home, "runs");
+  const again = restartAttempt(home, id, `echo run >> ${JSON.stringify(runs)}`);
+  assert.equal(again.status, 0);
+  assert.match(again.stdout, /not started again/);
+  assert.equal(existsSync(runs), false);
 });
 
 test("a file watcher's relative path means where the agent ran the command", () => {
