@@ -7,6 +7,7 @@
 // subscriptions, one picked for each turn (on the server). Here: which
 // subscriptions Auto may use, and how long they last at the recent rate.
 
+import { AgentUsageButton } from "@cocalc/frontend/agents/agent-usage";
 import { Checkbox, Typography } from "antd";
 import { useState } from "react";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
@@ -180,49 +181,55 @@ export function ClaudePoolForecast({
       </Typography.Text>
     );
   return (
-    <div style={{ fontSize: 12 }} role="status">
-      <div>
-        {summary.available} of {summary.members} subscription
-        {summary.members === 1 ? "" : "s"} with room now
-        {summary.nextAvailableAt != null && (
-          <>
-            ; next <TimeAgo date={new Date(summary.nextAvailableAt)} />
-          </>
+    <>
+      <div style={{ fontSize: 12 }} role="status">
+        <div>
+          {summary.available} of {summary.members} subscription
+          {summary.members === 1 ? "" : "s"} with room now
+          {summary.nextAvailableAt != null && (
+            <>
+              ; next <TimeAgo date={new Date(summary.nextAvailableAt)} />
+            </>
+          )}
+          . About {summary.remaining.toFixed(1)} of {summary.members} weekly
+          limits left.
+        </div>
+        {summary.usedPerDay != null && (
+          <div>{rateLine(summary, summary.usedPerDay)}</div>
         )}
-        . About {summary.remaining.toFixed(1)} of {summary.members} weekly
-        limits left.
-      </div>
-      {summary.usedPerDay != null && (
-        <div>{rateLine(summary, summary.usedPerDay)}</div>
-      )}
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {summary.usedPerDay == null ? (
-          "No usage rate is available to forecast from."
-        ) : summary.runsOutAt != null ? (
-          <>
-            At that rate, counting the resets on the way, every weekly limit is
-            reached <TimeAgo date={new Date(summary.runsOutAt)} /> (
-            {new Date(summary.runsOutAt).toLocaleString(undefined, {
-              weekday: "short",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-            ).
-          </>
-        ) : (
-          "At that rate, counting the resets on the way, they don't all run out within a week."
-        )}
-      </Typography.Text>
-      {paceLine(summary) && <div>{paceLine(summary)}</div>}
-      {summary.useFirst && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Next to reset: {summary.useFirst.name}, with{" "}
-          {Math.round(summary.useFirst.left * 100)}% left,{" "}
-          <TimeAgo date={new Date(summary.useFirst.resetsAt)} />: the room it
-          has left then is lost.
+          {summary.usedPerDay == null ? (
+            "No usage rate is available to forecast from."
+          ) : summary.runsOutAt != null ? (
+            <>
+              At that rate, counting the resets on the way, every weekly limit
+              is reached <TimeAgo date={new Date(summary.runsOutAt)} /> (
+              {new Date(summary.runsOutAt).toLocaleString(undefined, {
+                weekday: "short",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+              ).
+            </>
+          ) : (
+            "At that rate, counting the resets on the way, they don't all run out within a week."
+          )}
         </Typography.Text>
-      )}
-    </div>
+        {paceLine(summary) && <div>{paceLine(summary)}</div>}
+        {summary.useFirst && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Next to reset: {summary.useFirst.name}, with{" "}
+            {Math.round(summary.useFirst.left * 100)}% left,{" "}
+            <TimeAgo date={new Date(summary.useFirst.resetsAt)} />: the room it
+            has left then is lost.
+          </Typography.Text>
+        )}
+      </div>
+      {/* Which agents use it (this site's turns). */}
+      <div>
+        <AgentUsageButton size="small" />
+      </div>
+    </>
   );
 }
 

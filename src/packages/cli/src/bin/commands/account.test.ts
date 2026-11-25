@@ -295,6 +295,9 @@ test("account usage and subscriptions call their curated RPCs", async () => {
               getMembershipUsage: async (opts) => ({ usage: opts }),
               getAiSubscriptionStatus: async () => ({ claude: {} }),
             },
+            agent: {
+              agentUsage: async (opts) => ({ agentUsage: opts }),
+            },
           },
         }),
       );
@@ -307,10 +310,21 @@ test("account usage and subscriptions call their curated RPCs", async () => {
 
   await program.parseAsync(["node", "test", "account", "usage"]);
   await program.parseAsync(["node", "test", "account", "subscriptions"]);
+  await program.parseAsync(["node", "test", "account", "agent-usage"]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "account",
+    "agent-usage",
+    "--hours",
+    "168",
+  ]);
 
   assert.deepEqual(calls, [
     { usage: { refresh_usage_status: true } },
     { claude: {} },
+    { agentUsage: { hours: undefined } },
+    { agentUsage: { hours: 168 } },
   ]);
 });
 
