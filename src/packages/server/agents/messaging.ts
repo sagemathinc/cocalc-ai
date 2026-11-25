@@ -20,6 +20,7 @@ import { agentStore } from "./store";
 import { withOwnTurnStatus } from "@cocalc/conat/agents/agent-status";
 import { assertAgent, assertRun } from "./access";
 import { startAgentMessagingMaintenance } from "./maintenance";
+import { startClaudeUsageProbes } from "./claude-usage-probe";
 import { retireLegacyAgentMessagingAuthority } from "./session-cutover";
 import { withMemoryHome } from "./memory-home";
 import { agentSensorRequest } from "./sensors";
@@ -97,6 +98,9 @@ export async function startAgentMessaging(
     ? startAgentMessagingMaintenance()
     : undefined;
   const stopSensors = !external ? startSensorScheduler() : undefined;
+  const stopClaudeUsageProbes = !external
+    ? startClaudeUsageProbes()
+    : undefined;
   const subscription = await client.subscribe(
     external ? "agent-external.*.*" : "agent-messaging.*.*",
     {
@@ -193,6 +197,7 @@ export async function startAgentMessaging(
     closed = true;
     stopMaintenance?.();
     stopSensors?.();
+    stopClaudeUsageProbes?.();
     subscription.close();
     await requests;
     await Promise.allSettled(activeRpc);
