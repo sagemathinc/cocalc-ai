@@ -186,7 +186,7 @@ an independent copy of the files or software environment. Inviting someone who
 is not already a collaborator also invites them to its project. Each person can
 start turns and send guidance. A turn uses the initiating participant's payment
 selection: this may draw on a connected subscription, an account API key, a
-shared project key, or, for Codex, available CoCalc membership funding. Check the selected
+shared project key, or available CoCalc membership funding. Check the selected
 funding source before sending.
 
 ## Choose payment methods across your agents
@@ -198,8 +198,9 @@ that provider's default as well; other agents following the default use it too.
 Codex and Claude have separate choices.
 
 For Claude, **Project secret (ANTHROPIC_API_KEY)** uses a configured project
-key. Claude has no CoCalc Membership option: you pay for it with your own
-subscription or Anthropic key. Agents with project-managed credentials are not
+key. On cocalc.ai, Claude has no CoCalc Membership option: you pay for it
+with your own subscription or Anthropic key (a site administrator can enable
+site-funded Claude; it is off by default). Agents with project-managed credentials are not
 changed by this control.
 
 These choices belong to your account and are stored on the server, so a browser
@@ -374,13 +375,16 @@ For unavailable-model messages, see
 1. Open an agent and choose **Claude** in the runtime menu.
 2. Open Claude settings using its settings icon or payment method control.
 3. Choose a connected Claude Pro/Max
-   subscription, an account Anthropic API key, or a project API-key secret.
+   subscription, an account Anthropic API key, a project API-key secret, or
+   **CoCalc Membership** where your site's administrator has enabled
+   site-funded Claude (not offered on cocalc.ai).
 4. For subscription access, choose **Connect Claude Pro/Max** and complete
    the sign-in flow. For a project key, use the Claude API-key dialog.
 5. Check the selected payment method and available model before sending work.
    Changes apply to future turns, not work already admitted.
 
-You pay for Claude directly: CoCalc membership does not include Claude. A
+On cocalc.ai you pay for Claude directly: CoCalc membership does not include
+Claude unless your site's administrator has enabled site-funded Claude. A
 personal subscription uses that provider plan's allowance;
 API-key usage is billed by Anthropic. These modes have different credential
 and tool boundaries: see [Claude Code access and billing](/docs/ai/claude-code).

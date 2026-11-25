@@ -23,8 +23,10 @@ feature-by-feature comparison, including known messaging limitations.
 2. In the runtime menu below the request box, select **Claude**, then open its
    settings icon to configure Claude Code.
 3. Choose a payment method in settings: a connected Claude Pro/Max
-   subscription, an account API key, or a project API-key secret. You pay
-   for Claude directly; CoCalc membership does not include Claude.
+   subscription, an account API key, a project API-key secret, or **CoCalc
+   Membership** where your site's administrator has enabled site-funded
+   Claude (not offered on cocalc.ai). On cocalc.ai you pay for Claude
+   directly; CoCalc membership does not include Claude.
 4. For a project key, use the Claude API-key dialog. For a subscription, use
    **Connect Claude Pro/Max** and complete the sign-in flow.
    Never paste credentials or login codes into a chat message.
@@ -97,8 +99,12 @@ made; revoke or rotate the key with the provider when necessary.
 
 ### Who pays for Claude
 
-You pay for Claude directly, with your own Claude Pro/Max subscription or
-your own Anthropic API key. CoCalc membership does not include Claude usage.
+On cocalc.ai you pay for Claude directly, with your own Claude Pro/Max
+subscription or your own Anthropic API key; CoCalc membership does not
+include Claude usage. A site administrator can enable site-funded Claude (off
+by default, not offered on cocalc.ai). Where it is enabled, a **CoCalc
+Membership** option pays from the membership's included AI allowance through
+a CoCalc relay on the project host.
 
 ### Account API key
 
