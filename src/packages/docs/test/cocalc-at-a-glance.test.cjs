@@ -14,7 +14,7 @@ test("the overview and access guide both describe the integrated Claude connecto
   const { body } = getDocsEntry("ai/cocalc-access", COCALC_AI);
   assert.match(
     body,
-    /native Codex agents and with Claude Code agents\s+on sites that enable Claude Code/,
+    /native Codex agents and with Claude Code agents\.\s+Custom ACP harnesses/,
   );
   assert.match(body, /Custom ACP harnesses cannot use it/);
   assert.doesNotMatch(

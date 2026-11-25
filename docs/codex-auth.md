@@ -248,6 +248,9 @@ site-key runtimes and are deliberately bypassed by exact funded turns.
 
 ### Site-funded Claude
 
+Off by default; enabled by a site administrator (site setting
+`site_funded_claude_enabled`).
+
 Claude Code agents can be site-funded too, on Claude Haiku 5.5. They draw on
 the same membership allowance and weekly pools as Codex (one included-AI
 budget), with their own switch, model and per-turn guards

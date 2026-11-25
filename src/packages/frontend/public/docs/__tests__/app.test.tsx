@@ -487,7 +487,7 @@ describe("public/docs", () => {
     ).not.toBeNull();
     const body = screen.getByTestId("docs-markdown");
     expect(body.textContent).toMatch(
-      /Claude Code is integrated on sites that enable it/,
+      /Claude Code is integrated\.\s+It can use a Claude\s+Pro or Max subscription/,
     );
     expect(within(body).getByRole("link", { name: "Pricing" })).toHaveAttribute(
       "href",
