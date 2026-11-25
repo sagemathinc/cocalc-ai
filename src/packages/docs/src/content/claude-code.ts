@@ -178,6 +178,14 @@ at their limits, it waits for the first to have room. Auto's settings choose
 which subscriptions it may use and show how long your weekly limits last.
 Pinned agents never move.
 
+Claude reports a subscription's limits only with a model reply, so a
+subscription you also use elsewhere can show an old reading. To keep the
+readings fresh, turn on **Check my Claude subscriptions' limits for Auto** in
+Claude Code settings: CoCalc then sends a small request (a one-word reply)
+through each connected subscription whose reading is more than 4 hours old,
+which uses a little of that subscription's allowance. It is off by default,
+and while it is off CoCalc sends no such request.
+
 CoCalc checks credential authority when admitting and running work and before
 mediated project commands. Disconnect prevents future authorized use; it
 cannot undo completed work or provider usage. Provider-side session revocation

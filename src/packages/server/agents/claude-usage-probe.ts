@@ -5,8 +5,9 @@
 
 // Fresh Claude readings for Auto (util/ai/claude-usage-probe), run on the
 // home bay, where the credentials and their readings live. Every few minutes
-// one pass finds the subscriptions of accounts using Auto whose reading is
-// old and asks a host running one of the account's projects to check each
+// one pass finds the subscriptions with an old reading of accounts that use
+// Auto and turned the checks on (CLAUDE_USAGE_REFRESH_SETTING, off by
+// default), and asks a host running one of the account's projects to check each
 // (project-host/acp/claude-usage-probe.ts), which saves the reading as a
 // turn would. Each check is claimed on its credential first, so hub
 // processes of the bay never check the same subscription twice.
@@ -23,6 +24,7 @@ import {
   CLAUDE_USAGE_PROBE_FUTURE_MS,
   CLAUDE_USAGE_PROBE_MAX_RESET_MS,
   CLAUDE_USAGE_PROBE_METADATA_KEY,
+  CLAUDE_USAGE_REFRESH_SETTING,
   claudeUsageProbeDue,
 } from "@cocalc/util/ai/claude-usage-probe";
 import {
@@ -137,6 +139,12 @@ export async function dueClaudeUsageProbeRows(
                            ~ '^[0-9]{1,16}$'
                       THEN (h.metadata->'claude_usage_history'->-1->>'at')::bigint > $9
                       ELSE false END)
+        -- The owner turned the checks on: off by default, so nothing is
+        -- sent through the subscription of anyone who did not.
+        AND EXISTS (
+          SELECT 1 FROM accounts a
+           WHERE a.account_id=c.owner_account_id AND a.deleted IS NOT TRUE
+             AND a.other_settings->$11::text = 'true'::jsonb)
       ORDER BY ${READING_AT}
       LIMIT $10`,
     [
@@ -152,6 +160,7 @@ export async function dueClaudeUsageProbeRows(
       Math.floor((now + CLAUDE_USAGE_PROBE_MAX_RESET_MS) / 1000),
       now - CLAUDE_USAGE_PROBE_ACTIVE_MS,
       limit,
+      CLAUDE_USAGE_REFRESH_SETTING,
     ],
   );
   return rows as Candidate[];
@@ -196,6 +205,20 @@ async function setProbe(
   return !!rowCount;
 }
 
+/** Whether the account turned the checks on (asked again before each). */
+export async function claudeUsageRefreshOn(
+  query: Query,
+  account_id: string,
+): Promise<boolean> {
+  const { rows } = await query(
+    `SELECT 1 FROM accounts
+      WHERE account_id=$1 AND deleted IS NOT TRUE
+        AND other_settings->$2::text = 'true'::jsonb`,
+    [account_id, CLAUDE_USAGE_REFRESH_SETTING],
+  );
+  return rows.length > 0;
+}
+
 async function projectFor(
   deps: ClaudeUsageProbeDeps,
   account_id: string,
@@ -237,6 +260,9 @@ export async function runClaudeUsageProbes(
       );
       continue;
     }
+    // Turned off since the query: no check, and nothing recorded.
+    if (!(await claudeUsageRefreshOn(deps.query, row.owner_account_id)))
+      continue;
     if (!(await setProbe(deps.query, row.id, { at }, previous))) continue;
     let error: string | undefined;
     try {
