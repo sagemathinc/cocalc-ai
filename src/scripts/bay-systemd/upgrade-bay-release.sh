@@ -38,6 +38,25 @@ KEEP_REMOTE_ARTIFACTS=0
 CLEANUP_LOCAL_BUNDLE=0
 REPORT_DIR=""
 CLI_PATH="${SRC_ROOT}/packages/cli/dist/bin/cocalc.js"
+# After `host upgrade --wait` returns, hosts may still be reporting their new
+# software. Re-read until the state is unchanged on HOST_SETTLE_CONFIRMS
+# further reads in a row, at most HOST_SETTLE_TRIES reads. 0 tries = one read.
+HOST_SETTLE_TRIES=20
+HOST_SETTLE_INTERVAL=30
+HOST_SETTLE_CONFIRMS=2
+# Every host the upgrade targeted must report exactly this version
+# (--expect-host-version, required when hosts are upgraded).
+HOST_EXPECT_VERSION=""
+# One host id per line: the exact set `host upgrade` reported upgrading.
+HOST_TARGETS_FILE=""
+
+# Non-interactive ssh with a bounded connect and keepalives, so a stalled
+# connection fails instead of hanging the deploy. Override with
+# BAY_UPGRADE_SSH_OPTS (split on whitespace).
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
+if [[ -n "${BAY_UPGRADE_SSH_OPTS:-}" ]]; then
+  read -r -a SSH_OPTS <<<"${BAY_UPGRADE_SSH_OPTS}"
+fi
 
 REMOTE_WORK_DIR=""
 REMOTE_BUNDLE=""
@@ -122,6 +141,17 @@ Options:
   --scaffold-only             install/daemon-reload bay scaffold from the
                               bundle without rolling hub workers or restarting
                               application services
+  --host-settle-tries <n>     after the host upgrade, re-read the hosts'
+                              software state up to n times until it is
+                              unchanged on the confirming reads (default: 20;
+                              0 = a single read, no settle check)
+  --host-settle-interval <s>  seconds between those reads (default: 30)
+  --host-settle-confirms <n>  unchanged reads required after the first
+                              (default: 2)
+  --expect-host-version <v>   required unless --skip-host-upgrade: every
+                              host the upgrade reported upgrading must
+                              report exactly version v before the state
+                              counts as settled
   --keep-remote-artifacts     leave uploaded /tmp artifacts on the VM
   --cleanup-local-bundle      remove the local bundle after upload
   -h, --help                  show help
@@ -146,13 +176,17 @@ q() {
 }
 
 remote_exec() {
-  ssh "$REMOTE" "$@"
+  ssh "${SSH_OPTS[@]}" "$REMOTE" "$@"
+}
+
+remote_copy() {
+  scp "${SSH_OPTS[@]}" "$@"
 }
 
 remote_psql() {
   local flags="$1"
   shift || true
-  ssh "$REMOTE" \
+  ssh "${SSH_OPTS[@]}" "$REMOTE" \
     "sudo runuser -u $(q "$BAY_USER") -- env PGHOST=$(q "$REMOTE_PGHOST") PGPORT=$(q "$REMOTE_PGPORT") PGUSER=$(q "$REMOTE_PGUSER") PGDATABASE=$(q "$REMOTE_PGDATABASE") $(q "$REMOTE_PSQL") ${flags}"
 }
 
@@ -246,6 +280,14 @@ parse_args() {
         REPORT_DIR="$2"; shift 2 ;;
       --skip-host-upgrade)
         SKIP_HOST_UPGRADE=1; shift ;;
+      --host-settle-tries)
+        HOST_SETTLE_TRIES="$2"; shift 2 ;;
+      --host-settle-interval)
+        HOST_SETTLE_INTERVAL="$2"; shift 2 ;;
+      --host-settle-confirms)
+        HOST_SETTLE_CONFIRMS="$2"; shift 2 ;;
+      --expect-host-version)
+        HOST_EXPECT_VERSION="$2"; shift 2 ;;
       --keep-remote-artifacts)
         KEEP_REMOTE_ARTIFACTS=1; shift ;;
       --cleanup-local-bundle)
@@ -261,6 +303,9 @@ parse_args() {
 validate_args() {
   [[ -n "$REMOTE" ]] || die "--remote is required"
   [[ -n "$API_URL" ]] || die "--api is required"
+  [[ "$HOST_SETTLE_TRIES" =~ ^[0-9]+$ ]] || die "--host-settle-tries must be a whole number"
+  [[ "$HOST_SETTLE_INTERVAL" =~ ^[0-9]+$ ]] || die "--host-settle-interval must be a whole number of seconds"
+  [[ "$HOST_SETTLE_CONFIRMS" =~ ^[1-9][0-9]*$ ]] || die "--host-settle-confirms must be at least 1"
   local bundle_sources=0
   [[ "$BUILD_BUNDLE" -eq 1 ]] && bundle_sources=$((bundle_sources + 1))
   [[ -n "$BUNDLE_PATH" ]] && bundle_sources=$((bundle_sources + 1))
@@ -309,6 +354,8 @@ validate_args() {
     if [[ -z "$COOKIE_HEADER" && -z "$ADMIN_ACCOUNT_ID" && -z "$ADMIN_EMAIL" ]]; then
       die "host upgrade needs --cookie, --admin-account-id, --admin-email, or --skip-host-upgrade"
     fi
+    [[ -n "$HOST_EXPECT_VERSION" ]] \
+      || die "host upgrade needs --expect-host-version <version> (the version every upgraded host must report), or --skip-host-upgrade"
     if [[ "$BUILD_BUNDLE" -eq 1 && -z "$HOST_SOFTWARE_BUNDLE_PATH" ]]; then
       BUILD_HOST_SOFTWARE_BUNDLE=1
     fi
@@ -466,10 +513,10 @@ stage_release() {
   remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_SCRIPT_DIR")"
   if [[ "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ]]; then
     log "Upload bay partial deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
-    scp "$SCRIPT_DIR/bay-bootstrap-release.sh" "$REMOTE:${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh"
+    remote_copy "$SCRIPT_DIR/bay-bootstrap-release.sh" "$REMOTE:${REMOTE_SCRIPT_DIR}/bay-bootstrap-release.sh"
   else
     log "Upload bay scaffold to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
-    scp -r "$SCRIPT_DIR/." "$REMOTE:${REMOTE_SCRIPT_DIR}/"
+    remote_copy -r "$SCRIPT_DIR/." "$REMOTE:${REMOTE_SCRIPT_DIR}/"
   fi
   if [[ -n "$BUNDLE_URL" ]]; then
     log "Download bay bundle on target VM"
@@ -479,7 +526,7 @@ stage_release() {
     fi
   else
     log "Upload bay bundle to ${REMOTE}:${REMOTE_BUNDLE}"
-    scp "$BUNDLE_PATH" "$REMOTE:${REMOTE_BUNDLE}"
+    remote_copy "$BUNDLE_PATH" "$REMOTE:${REMOTE_BUNDLE}"
   fi
 
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
@@ -545,7 +592,7 @@ EOF
   REMOTE_HOST_SOFTWARE_BUNDLE="${REMOTE_WORK_DIR}/$(basename "$HOST_SOFTWARE_BUNDLE_PATH")"
 
   log "Upload project-host software bundle"
-  scp "$HOST_SOFTWARE_BUNDLE_PATH" "$REMOTE:${REMOTE_HOST_SOFTWARE_BUNDLE}"
+  remote_copy "$HOST_SOFTWARE_BUNDLE_PATH" "$REMOTE:${REMOTE_HOST_SOFTWARE_BUNDLE}"
 
   log "Stage project-host software into current bay release"
   remote_exec "sudo bash -s" <<EOF | tee "${REPORT_DIR}/stage-host-software.log"
@@ -1019,6 +1066,118 @@ upgrade_project_hosts() {
     --wait \
     --output json \
     | tee "${REPORT_DIR}/host-upgrade.json"
+  if grep -q '"ok"[[:space:]]*:[[:space:]]*false' "${REPORT_DIR}/host-upgrade.json"; then
+    die "host upgrade reported ok=false; see ${REPORT_DIR}/host-upgrade.json"
+  fi
+  HOST_TARGETS_FILE="${REPORT_DIR}/host-upgrade-targets.txt"
+  upgrade_targets "${REPORT_DIR}/host-upgrade.json" >"$HOST_TARGETS_FILE" \
+    || die "could not read the upgraded host set from ${REPORT_DIR}/host-upgrade.json"
+  log "Upgraded hosts: $(wc -l <"$HOST_TARGETS_FILE")"
+}
+
+# upgrade_targets <host-upgrade.json>: print the ids of the hosts that
+# `host upgrade --wait --output json` reports as upgraded, one per line,
+# sorted. Fails unless the output is ok, every host succeeded, every id is a
+# uuid, and there is at least one host.
+upgrade_targets() {
+  node - "$1" <<'NODE'
+const fs = require("fs");
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const out = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (out?.ok !== true) throw new Error("output is not ok");
+const data = out.data ?? {};
+const hosts = Array.isArray(data.hosts)
+  ? data.hosts
+  : data.host_id
+    ? [{ host_id: data.host_id, status: data.status }]
+    : [];
+if (hosts.length === 0) throw new Error("no host was upgraded");
+const ids = hosts.map((h) => {
+  if (h?.status !== "succeeded") throw new Error(`host ${h?.host_id}: status ${h?.status}`);
+  if (typeof h.host_id !== "string" || !uuid.test(h.host_id)) throw new Error("bad host id");
+  return h.host_id;
+});
+if (new Set(ids).size !== ids.length) throw new Error("duplicate host id");
+process.stdout.write(ids.sort().join("\n") + "\n");
+NODE
+}
+
+# settle_confirm <label> <file prefix> <predicate> <command...>
+# Runs the command up to HOST_SETTLE_TRIES times, HOST_SETTLE_INTERVAL seconds
+# apart, and keeps every read as <prefix>.read-<n>. A read is GOOD only if the
+# command exited 0 and `<predicate> <read file>` exits 0 (use `true` for no
+# predicate). Returns 0 once HOST_SETTLE_CONFIRMS good reads in a row are
+# byte-identical to the good read before them, with the settled output copied
+# to <prefix>.txt. Any read that is not good resets the run, so neither a
+# flapping state nor a stable wrong state passes. Returns 1 if it never settles,
+# and 2 if its own evidence (the settle log or the copy) cannot be written.
+# Every read is logged to <prefix>.settle.log with its rc, predicate rc and sha.
+settle_confirm() {
+  local label="$1" prefix="$2" predicate="$3"
+  shift 3
+  local tries="$HOST_SETTLE_TRIES" i rc prc sum prev="" same=0
+  [[ "$tries" -ge 1 ]] || tries=1
+  for ((i = 1; i <= tries; i++)); do
+    rc=0
+    "$@" >"${prefix}.read-${i}" 2>&1 || rc=$?
+    sum="$(sha256sum <"${prefix}.read-${i}")" || return 2
+    sum="${sum%% *}"
+    prc=-
+    if [[ "$rc" -eq 0 ]]; then
+      prc=0
+      "$predicate" "${prefix}.read-${i}" || prc=$?
+    fi
+    if [[ "$rc" -ne 0 || "$prc" -ne 0 ]]; then
+      prev=""; same=0
+    elif [[ "$sum" == "$prev" ]]; then
+      same=$((same + 1))
+    else
+      prev="$sum"; same=0
+    fi
+    printf '%s read %d/%d rc=%d predicate=%s sha256=%s unchanged=%d/%d\n' \
+      "$label" "$i" "$tries" "$rc" "$prc" "$sum" "$same" "$HOST_SETTLE_CONFIRMS" \
+      | tee -a "${prefix}.settle.log" || return 2
+    if [[ "$HOST_SETTLE_TRIES" -eq 0 && "$rc" -eq 0 && "$prc" == 0 ]] \
+      || [[ "$same" -ge "$HOST_SETTLE_CONFIRMS" ]]; then
+      cp "${prefix}.read-${i}" "${prefix}.txt" || return 2
+      return 0
+    fi
+    if [[ "$i" -lt "$tries" ]]; then
+      sleep "$HOST_SETTLE_INTERVAL"
+    fi
+  done
+  return 1
+}
+
+# Reads exactly the hosts in HOST_TARGETS_FILE (uuids, checked again here),
+# deleted or not, so a targeted host cannot drop out of the check.
+read_project_host_software() {
+  local ids
+  ids="$(awk '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ { printf "%s\x27%s\x27", sep, $0; sep = "," } !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ { exit 1 }' "$HOST_TARGETS_FILE")" \
+    || return 1
+  [[ -n "$ids" ]] || return 1
+  remote_psql "-Atq -v ON_ERROR_STOP=1" <<SQL
+SELECT
+  id::text || '|' ||
+  name || '|' ||
+  COALESCE(version, '') || '|' ||
+  COALESCE((metadata->'software')::text, '')
+FROM project_hosts
+WHERE id::text IN (${ids})
+ORDER BY id;
+SQL
+}
+
+# hosts_at_expected_version <read file>: exit 0 only if the read holds exactly
+# the hosts in HOST_TARGETS_FILE, each once, each at HOST_EXPECT_VERSION.
+hosts_at_expected_version() {
+  [[ -n "$HOST_EXPECT_VERSION" && -s "$HOST_TARGETS_FILE" ]] || return 1
+  awk -F'|' -v want="$HOST_EXPECT_VERSION" '
+    NR == FNR { if ($0 != "") { target[$0] = 1; nt++ }; next }
+    { n++ }
+    NF < 4 || !($1 in target) || seen[$1]++ || $3 != want { bad = 1 }
+    END { exit (nt == 0 || n != nt || bad) ? 1 : 0 }
+  ' "$HOST_TARGETS_FILE" "$1"
 }
 
 verify_project_hosts() {
@@ -1026,6 +1185,15 @@ verify_project_hosts() {
     log "Skip project host software verification"
     return 0
   fi
+  log "Wait until every upgraded host reports ${HOST_EXPECT_VERSION}, then confirm"
+  local rc=0
+  settle_confirm project-host-software "${REPORT_DIR}/project-host-software-settle" \
+    hosts_at_expected_version read_project_host_software || rc=$?
+  case "$rc" in
+    0) ;;
+    2) die "could not write the settle evidence under ${REPORT_DIR}" ;;
+    *) die "the upgraded hosts did not settle at ${HOST_EXPECT_VERSION} after ${HOST_SETTLE_TRIES} reads; see ${REPORT_DIR}/project-host-software-settle.*" ;;
+  esac
   log "Verify project host software state"
   remote_psql "-Atq" <<'SQL' | tee "${REPORT_DIR}/project-host-software.txt"
 SELECT
