@@ -34,7 +34,8 @@ type Entry = {
   timer?: ReturnType<typeof setTimeout>;
 };
 
-const writeToHomeBay: Write = async ({
+/** Save a subscription's reported limits to its credential metadata. */
+export const writeClaudeUsageToHomeBay: Write = async ({
   projectId,
   accountId,
   credentialId,
@@ -66,7 +67,7 @@ const writeToHomeBay: Write = async ({
  * another snapshot function and write, the same for Codex.
  */
 export function createClaudeUsageRecorder({
-  write = writeToHomeBay,
+  write = writeClaudeUsageToHomeBay,
   minIntervalMs = MIN_INTERVAL_MS,
   snapshot = claudeRateLimitSnapshot,
 }: {

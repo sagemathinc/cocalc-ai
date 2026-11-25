@@ -24,6 +24,8 @@ const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   // not the raw membership details (purchases, grants, licenses, events).
   "system.getMembershipUsage": "usage:read",
   "system.getAiSubscriptionStatus": "ai-subscriptions:read",
+  // Usage by agent: tokens by model of the key's own account's agent turns.
+  "agent.agentUsage": "ai-subscriptions:read",
   // Every agent's memory: read, write, delete and prune (never the owner's
   // settings: enabling memory, namespaces, delete-all).
   "agent.curateAgentMemory": "memory:manage",

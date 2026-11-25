@@ -19,6 +19,7 @@ describeDb("Agent Network retention", () => {
     "agent_external_inbox",
     "agent_external_inbox_attachments",
     "agent_external_inbox_reservations",
+    "agent_turn_usage",
   ];
   beforeAll(async () => {
     await syncSchema(
@@ -140,5 +141,28 @@ describeDb("Agent Network retention", () => {
     expect(result.report_executions).toBe(1);
     expect(result.network_mutations).toBe(1);
     expect(result.network_proposals).toBe(1);
+  });
+
+  test("agent turn usage is kept 90 days from when the hub stored it", async () => {
+    const account_id = randomUUID();
+    const insert = (received: string, ended: string) =>
+      db.query(
+        `INSERT INTO agent_turn_usage
+           (account_id,id,project_id,path_hash,thread_id,provider,payment,models,
+            outcome,started_at,ended_at,received_at)
+         VALUES ($1,gen_random_uuid(),$2,'h',$3,'claude','x','[]'::jsonb,'completed',
+                 now(),now()+$4::interval,now()-$5::interval)
+         RETURNING thread_id`,
+        [account_id, randomUUID(), `${received}/${ended}`, ended, received],
+      );
+    // Old receipt, whatever the host said about the turn's time.
+    await insert("91 days", "1000 days");
+    await insert("89 days", "0 days");
+    await cleanupAgentMessagingHistory();
+    const { rows } = await db.query(
+      "SELECT thread_id FROM agent_turn_usage WHERE account_id=$1",
+      [account_id],
+    );
+    expect(rows.map((r: any) => r.thread_id)).toEqual(["89 days/0 days"]);
   });
 });

@@ -93,6 +93,7 @@ export const agent = {
   resolveIdentity: authFirstRequireAccount,
   getPaymentSelections: authFirstRequireAccount,
   listPaymentSelections: authFirstRequireAccount,
+  agentUsage: authFirstRequireAccount,
   setPaymentSelections: authFirstRequireAccount,
   copyPaymentSelection: authFirstRequireAccount,
   resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
@@ -644,6 +645,12 @@ export interface AgentApi {
     /** Record that a turn is being sent with these selections. */
     touch?: boolean;
   }): Promise<AgentPaymentSelectionsResult>;
+  /** What this account's agents used (tokens by model) over the last
+   * `hours` (default 24), recorded on this site. */
+  agentUsage(opts: {
+    account_id?: string;
+    hours?: number;
+  }): Promise<import("@cocalc/util/ai/agent-turn-usage").AgentUsageReport>;
   /** All of this account's payment selections, for the Agents page. */
   listPaymentSelections(opts: {
     account_id?: string;

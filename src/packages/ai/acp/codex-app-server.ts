@@ -68,6 +68,13 @@ import {
   supportsCodexAttentionInput,
 } from "./codex-attention";
 import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
+import { recordAgentTurnUsage } from "./turn-usage";
+import {
+  codexTurnModelUsage,
+  mergeTurnModelUsage,
+  type AgentTurnUsageOutcome,
+  type CodexTokenTotals,
+} from "@cocalc/util/ai/agent-turn-usage";
 import {
   isRegExpWhitespace,
   trimTrailingChars,
@@ -1127,6 +1134,17 @@ export class AppServerClient {
   /** Account-level plan limits Codex reports (no thread or turn). */
   onRateLimits?: (params: unknown) => void;
 
+  private readonly notificationListeners = new Set<
+    (message: RpcNotification) => void
+  >();
+
+  /** Observe every notification, including ones no waiter takes (another
+   * thread's, say). Listeners must not throw or block. */
+  onNotification(listener: (message: RpcNotification) => void): () => void {
+    this.notificationListeners.add(listener);
+    return () => this.notificationListeners.delete(listener);
+  }
+
   private handleNotification(message: RpcNotification): void {
     if (message.method === "account/rateLimits/updated") {
       try {
@@ -1135,6 +1153,13 @@ export class AppServerClient {
         logger.debug("codex app-server: rate limits not recorded", {
           err: String(err),
         });
+      }
+    }
+    for (const listener of this.notificationListeners) {
+      try {
+        listener(message);
+      } catch {
+        // observers never affect delivery
       }
     }
     if (message.method === "serverRequest/resolved") {
@@ -1168,6 +1193,64 @@ export class AppServerClient {
         this.notifications.splice(index, 1);
       }
     }
+  }
+}
+
+type TurnTokenReports = Map<
+  string,
+  {
+    first: { total?: CodexTokenTotals; last?: CodexTokenTotals };
+    latest: { total?: CodexTokenTotals };
+  }
+>;
+
+/**
+ * Usage by agent: a turn's subagents run in their own threads, whose token
+ * reports carry their own turn ids. Learn them from this turn's spawn calls
+ * (by its thread, or by a subagent of it) and keep every other thread's
+ * reports; the turn then counts only its own subagents'.
+ */
+export function observeSubagentUsage(
+  message: RpcNotification,
+  turn: {
+    parentThread: () => string | undefined;
+    /** Subagent thread -> its model, when the spawn call says. */
+    subagents: Map<string, string | undefined>;
+    tokens: TurnTokenReports;
+  },
+): void {
+  const params = message.params ?? {};
+  const parent = turn.parentThread();
+  if (message.method === "thread/tokenUsage/updated") {
+    const threadId = typeof params.threadId === "string" ? params.threadId : "";
+    const total = params.tokenUsage?.total;
+    // The turn's own thread is counted by the turn loop.
+    if (!threadId || threadId === parent || !total) return;
+    const seen = turn.tokens.get(threadId);
+    if (seen) seen.latest = { total };
+    else
+      turn.tokens.set(threadId, {
+        first: { total, last: params.tokenUsage?.last },
+        latest: { total },
+      });
+    return;
+  }
+  const item = params.item;
+  if (
+    item?.type === "collabAgentToolCall" &&
+    typeof item.senderThreadId === "string" &&
+    (item.senderThreadId === parent || turn.subagents.has(item.senderThreadId))
+  ) {
+    for (const id of Array.isArray(item.receiverThreadIds)
+      ? item.receiverThreadIds
+      : [])
+      if (typeof id === "string" && id && id !== parent)
+        turn.subagents.set(
+          id,
+          typeof item.model === "string" && item.model
+            ? item.model
+            : turn.subagents.get(id),
+        );
   }
 }
 
@@ -3021,6 +3104,56 @@ export class CodexAppServerAgent implements AcpAgent {
     }
   }
 
+  /** What a turn used, for usage by agent; never fails the turn. */
+  private recordTurnUsage(
+    request: AcpEvaluateRequest,
+    turn: {
+      spawned: SpawnedCodexAppServer;
+      model?: string;
+      threads: Map<
+        string,
+        { first: { total?: CodexTokenTotals; last?: CodexTokenTotals }; latest: { total?: CodexTokenTotals } }
+      >;
+      startedAt: number;
+      outcome: AgentTurnUsageOutcome;
+      /** Model of each subagent thread, if known. */
+      threadModels?: Map<string, string | undefined>;
+    },
+  ): void {
+    try {
+      const path = request.chat?.path;
+      const thread_id = request.chat?.thread_id;
+      const project_id = request.chat?.project_id ?? request.project_id;
+      if (!path || !thread_id || !project_id) return;
+      // Each thread under its own model: a subagent may run on another one
+      // than its parent (the turn's model is the fallback).
+      const models = mergeTurnModelUsage(
+        [...turn.threads].flatMap(([threadId, { first, latest }]) =>
+          codexTurnModelUsage(
+            turn.threadModels?.get(threadId) ?? turn.model,
+            first,
+            latest,
+          ),
+        ),
+      );
+      const credential_id = turn.spawned.credentialId;
+      recordAgentTurnUsage(request.account_id, {
+        project_id,
+        path,
+        thread_id,
+        provider: "codex",
+        payment: authSourceForSpawned(turn.spawned) ?? "unknown",
+        ...(credential_id ? { credential_id } : {}),
+        models,
+        started_at: turn.startedAt,
+        ended_at: Date.now(),
+        outcome: turn.outcome,
+      });
+    } catch (error) {
+      logger.debug("codex turn usage not recorded", { error: `${error}` });
+    }
+  }
+
   private async evaluateOnce(
     request: AcpEvaluateRequest,
   ): Promise<"completed" | "interrupted"> {
@@ -3088,6 +3221,17 @@ export class CodexAppServerAgent implements AcpAgent {
     let finalResponse = "";
     let latestUsage: AcpStreamUsage | undefined;
     let completedGoalUsage: AcpStreamUsage | undefined;
+    // What this turn used, for usage by agent: the thread's token totals at
+    // the turn's first and latest report (a goal continuation stays in the
+    // thread), plus those of the subagent threads it spawned, observed on the
+    // client while the turn runs (their reports carry their own turn ids).
+    const turnStartedAt = Date.now();
+    const turnTokens = new Map<
+      string,
+      { first: { total?: CodexTokenTotals; last?: CodexTokenTotals }; latest: { total?: CodexTokenTotals } }
+    >();
+    let turnModel: string | undefined;
+    let turnOutcome: AgentTurnUsageOutcome = "failed";
     const cumulativeUsage = (
       usage?: AcpStreamUsage,
     ): AcpStreamUsage | undefined => {
@@ -3203,6 +3347,16 @@ export class CodexAppServerAgent implements AcpAgent {
       }
     };
 
+    // Subagents of this turn: spawned by its thread (or by one of them),
+    // with the model each was started on.
+    const subagentThreads = new Map<string, string | undefined>();
+    const stopSubagentUsage = client.onNotification((message) =>
+      observeSubagentUsage(message, {
+        parentThread: () => currentThreadId,
+        subagents: subagentThreads,
+        tokens: turnTokens,
+      }),
+    );
     try {
       if (request.chat)
         connectorContext =
@@ -3306,6 +3460,7 @@ export class CodexAppServerAgent implements AcpAgent {
         normalizeCodexSessionId(session_id);
       const resumeId = requestedThreadKey ? session.sessionId : undefined;
       const model = this.effectiveModel(effectiveConfig);
+      turnModel = model;
       const serviceTier = this.resolveAppServerServiceTier(
         effectiveConfig,
         model,
@@ -4090,6 +4245,17 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           }
           case "thread/tokenUsage/updated": {
+            const tokenUsage = notification.params?.tokenUsage;
+            if (tokenUsage?.total) {
+              const key = `${notification.params?.threadId ?? actualThreadId ?? ""}`;
+              const seen = turnTokens.get(key);
+              if (seen) seen.latest = { total: tokenUsage.total };
+              else
+                turnTokens.set(key, {
+                  first: { total: tokenUsage.total, last: tokenUsage.last },
+                  latest: { total: tokenUsage.total },
+                });
+            }
             const usage = notification.params?.tokenUsage?.last;
             if (usage) {
               latestUsage = {
@@ -4387,6 +4553,7 @@ export class CodexAppServerAgent implements AcpAgent {
       runtimeHealthy = true;
       fundedFinishStatus = "committed";
       fundedFinishOutcome = "turn completed";
+      turnOutcome = "completed";
     } catch (err) {
       if (quotaPollTimer) {
         clearInterval(quotaPollTimer);
@@ -4394,6 +4561,7 @@ export class CodexAppServerAgent implements AcpAgent {
       if (maxTurnTimer) {
         clearTimeout(maxTurnTimer);
       }
+      if (runningEntry?.interrupted) turnOutcome = "interrupted";
       if (runningEntry?.interrupted && !quotaStopReason) {
         runtime.managerState = "interrupted";
         runtimeHealthy = true;
@@ -4508,6 +4676,22 @@ export class CodexAppServerAgent implements AcpAgent {
         withTurnFailure(failed, { kind: "limit", scope: "cocalc" });
       throw failed;
     } finally {
+      stopSubagentUsage();
+      this.recordTurnUsage(request, {
+        spawned,
+        model: turnModel,
+        // The turn's thread (keyed as reported, or as the thread it runs
+        // in) and its subagents; other threads' reports are not this turn's.
+        threads: new Map(
+          [...turnTokens].filter(
+            ([threadId]) =>
+              threadId === currentThreadId || subagentThreads.has(threadId),
+          ),
+        ),
+        startedAt: turnStartedAt,
+        outcome: turnOutcome,
+        threadModels: subagentThreads,
+      });
       await spawned.endConnectorTurn?.().catch((error) => {
         logger.warn("managed CoCalc connector revocation unconfirmed", {
           error: String(error),

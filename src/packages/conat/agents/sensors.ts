@@ -67,6 +67,14 @@ export const SENSOR_LIMITS = {
   /** No exit code and no mark for this long: its terminal ended (the
    * project restarted, or the terminal was closed or killed). */
   exitLostAfterSeconds: 120,
+  /** Times an exit watcher starts its command again after its terminal
+   * ended, before it wakes saying so. */
+  exitMaxRestarts: 3,
+  /** The longest command an exit watcher keeps (to start it again), in
+   * UTF-8 bytes. */
+  maxExitCommandLength: 2_000,
+  /** The longest working directory an exit watcher keeps, in UTF-8 bytes. */
+  maxExitCwdBytes: 1_000,
   /** Wakes held while an earlier one is queued, combined into the next. */
   maxCoalescedWakes: 20,
   /** A queued wake older than this no longer holds back later ones. */
@@ -155,9 +163,19 @@ export type SensorWatch =
   | { type: "at"; at: string; note: string }
   /**
    * A command `cocalc sensor watch exit` started in a project terminal; it
-   * records its exit code and output under sensorExitPaths(id).
+   * records its exit code and output under sensorExitPaths(id). With
+   * restart, a command whose terminal ended is started again in a new
+   * terminal, in cwd, up to exitMaxRestarts times, but only once the new
+   * terminal sees positive proof that the first run's process group is gone
+   * (the project restarted); otherwise it wakes, state unknown.
    */
-  | { type: "exit"; id: string; command: string }
+  | {
+      type: "exit";
+      id: string;
+      command: string;
+      cwd?: string;
+      restart?: boolean;
+    }
   /**
    * The turn this agent's message started on another agent: wakes when it
    * ends (or the message was not delivered), from `agent rpc inspect`.
@@ -204,6 +222,9 @@ export function sensorExitPaths(id: string): {
   status: string;
   log: string;
   beat: string;
+  restarts: string;
+  group: string;
+  unknown: string;
 } {
   if (!isValidUUID(id)) throw new Error("exit watcher id must be a UUID");
   const dir = "~/.local/share/cocalc/sensors/exits";
@@ -212,6 +233,13 @@ export function sensorExitPaths(id: string): {
     status: `${dir}/${id}.json`,
     log: `${dir}/${id}.log`,
     beat: `${dir}/${id}.beat`,
+    // One line per time the watcher started the command again.
+    restarts: `${dir}/${id}.restarts`,
+    // The process group the command runs in (pid namespace, pgid, start
+    // time of its leader), which a restart checks is gone before it runs.
+    group: `${dir}/${id}.group`,
+    // A restart found that group may still be running, so did not run.
+    unknown: `${dir}/${id}.unknown`,
   };
 }
 
@@ -455,6 +483,24 @@ function bytes(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+function isOneLine(value: string, maxBytes: number): boolean {
+  return (
+    !!value.trim() && !LINE_CONTROL_RE.test(value) && bytes(value) <= maxBytes
+  );
+}
+
+/**
+ * Whether an exit watcher can keep this command and working directory
+ * exactly as given, as validateSensorWatch requires for one that starts
+ * its command again.
+ */
+export function exitWatchKeepsWhole(command: string, cwd?: string): boolean {
+  return (
+    isOneLine(command, SENSOR_LIMITS.maxExitCommandLength) &&
+    (cwd == null || isOneLine(cwd, SENSOR_LIMITS.maxExitCwdBytes))
+  );
+}
+
 function boundedInt(
   value: unknown,
   name: string,
@@ -665,11 +711,27 @@ export function validateSensorWatch(
     title = `Reminder: ${note}`.slice(0, 90);
     expires = at + 3_600_000;
   } else if (w.type === "exit") {
-    onlyFields(w, ["type", "id", "command"]);
+    onlyFields(w, ["type", "id", "command", "cwd", "restart"]);
     if (typeof w.id !== "string" || !isValidUUID(w.id))
       throw new Error("an exit watcher needs the UUID of its command");
-    const command = oneLine(w.command, "command", 200);
-    watch = { type: "exit", id: w.id, command };
+    const command = oneLine(
+      w.command,
+      "command",
+      SENSOR_LIMITS.maxExitCommandLength,
+    );
+    const cwd =
+      w.cwd != null
+        ? oneLine(w.cwd, "cwd", SENSOR_LIMITS.maxExitCwdBytes)
+        : undefined;
+    if (w.restart != null && typeof w.restart !== "boolean")
+      throw new Error("restart must be true or false");
+    watch = {
+      type: "exit",
+      id: w.id,
+      command,
+      ...(cwd ? { cwd } : {}),
+      ...(w.restart ? { restart: true } : {}),
+    };
     title = `Exit of ${command}`.slice(0, 90);
   } else if (w.type === "agent-turn") {
     onlyFields(w, ["type", "attempt_id", "agent_network_id", "target", "name"]);
@@ -765,7 +827,7 @@ export function validateSensorWatch(
 
 /** The script a ci, file or exit watcher runs; parameters are embedded as JSON. */
 export function sensorWatchScript(watch: SensorWatch): string | undefined {
-  const params = `import json, os, re, subprocess, sys, time\nP = json.loads(${JSON.stringify(JSON.stringify(watch))})\n`;
+  const params = `import json, os, re, shlex, subprocess, sys, time\nP = json.loads(${JSON.stringify(JSON.stringify(watch))})\n`;
   if (watch.type === "ci")
     return (
       params +
@@ -901,6 +963,8 @@ print(json.dumps({"wake": True, "summary": summary[:500], "data": data}))
       `status = os.path.expanduser(${JSON.stringify(paths.status)})
 log = os.path.expanduser(${JSON.stringify(paths.log)})
 beat = os.path.expanduser(${JSON.stringify(paths.beat)})
+restarts_file = os.path.expanduser(${JSON.stringify(paths.restarts)})
+unknown = os.path.expanduser(${JSON.stringify(paths.unknown)})
 def exit_code():
     try:
         with open(status) as f:
@@ -917,7 +981,12 @@ def output_tail():
     except OSError:
         return ""
 done, code = exit_code()
-if not done:
+refused = False
+if not done and os.path.exists(unknown):
+    # A restart found the earlier run's process group may still be alive,
+    # so it did not start the command again: wake now.
+    refused = True
+elif not done:
     # Still running while its heartbeat is fresh. No heartbeat at all: not
     # started yet (or a command started before heartbeats existed).
     try:
@@ -928,10 +997,41 @@ if not done:
         sys.exit(0)
     # It may have finished just now, after the first look.
     done, code = exit_code()
+shown = json.dumps(P["command"] if len(P["command"]) <= 200 else P["command"][:200] + "...")
+def restarts():
+    try:
+        with open(restarts_file) as f:
+            return len(f.read().split())
+    except OSError:
+        return 0
 if not done:
-    print(json.dumps({"wake": True, "summary": "%s stopped without an exit code: its terminal ended before it finished (the project restarted, or the terminal was closed or killed). Run it again if it still matters." % json.dumps(P["command"]), "data": {"exit_code": None, "reason": "terminal-ended", "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
+    # Its terminal ended, or its heartbeat stopped: that alone does not
+    # prove the command stopped. With restart, ask for it again in a new
+    # terminal (the same command, in the same directory), which runs it
+    # only if it sees the earlier run's process group is gone, a few times,
+    # before waking. Otherwise wake: its state is unknown.
+    n = restarts()
+    if P.get("restart") and not refused and n < ${SENSOR_LIMITS.exitMaxRestarts}:
+        with open(restarts_file, "a") as f:
+            f.write("%d\\n" % time.time())
+        args = ["cocalc", "--json", "sensor", "exit-restart", "--id", P["id"], "--attempt", str(n + 1)]
+        if P.get("cwd"):
+            args += ["--cwd", P["cwd"]]
+        r = subprocess.run(args + ["--", P["command"]], capture_output=True, text=True, timeout=55)
+        if r.returncode != 0:
+            # Counted: the next check tries again, until it gives up.
+            print((r.stderr or r.stdout or "").strip()[-1000:], file=sys.stderr)
+        sys.exit(0)
+    again = "cocalc sensor watch exit " + ("--cwd %s " % shlex.quote(P["cwd"]) if P.get("cwd") else "") + "-- " + P["command"]
+    if refused:
+        how = " It was not started again: its earlier run may still be running."
+    elif n:
+        how = " It was started again %d times, and its terminal ended each time." % n
+    else:
+        how = ""
+    print(json.dumps({"wake": True, "summary": "%s has no exit code: its terminal ended (or stopped reporting) before it finished, so the command's state is unknown; it may still be running.%s Check before running it again: %s" % (shown, how, again[:300]), "data": {"exit_code": None, "reason": "terminal-ended", "state": "unknown", "restarts": n, "rerun": again, "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
     sys.exit(0)
-print(json.dumps({"wake": True, "summary": "%s exited with code %s" % (json.dumps(P["command"]), code), "data": {"exit_code": code, "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
+print(json.dumps({"wake": True, "summary": "%s exited with code %s" % (shown, code), "data": {"exit_code": code, "restarts": restarts(), "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
 `
     );
   }

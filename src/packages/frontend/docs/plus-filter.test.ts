@@ -116,6 +116,21 @@ describe("feature-gated docs", () => {
     ).toContain("projects.virtual-machines");
   });
 
+  it("adds the site-funded Claude docs feature only when the site enables it", () => {
+    expect(getPublicDocsAccess({}).features).not.toContain(
+      "site-funded-claude",
+    );
+    expect(
+      getPublicDocsAccess({ site_funded_claude_enabled: false }).features,
+    ).not.toContain("site-funded-claude");
+    expect(
+      getPublicDocsAccess({ site_funded_claude_enabled: true }).features,
+    ).toContain("site-funded-claude");
+    expect(getPublicDocsAccess({ compute_vm_enabled: true }).features).toEqual([
+      "compute-vms",
+    ]);
+  });
+
   it("derives VM documentation access from public site configuration", () => {
     expect(
       getDocsEntry(

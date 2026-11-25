@@ -109,6 +109,17 @@ export interface AgentPaymentSelectionsApi {
   pickClaudePool(
     opts: AgentPaymentHomeRequest & ClaudePoolPickRequest,
   ): Promise<ClaudePoolPickResult>;
+  /** Store what this account's agent turns used (hosts report them;
+   * util/ai/agent-turn-usage). Telemetry, revalidated by the home bay. */
+  recordTurnUsage(
+    opts: AgentPaymentHomeRequest & {
+      rows: Array<{ usage: unknown; host_id?: string }>;
+    },
+  ): Promise<{ recorded: number }>;
+  /** This account's usage by agent over the last `hours`. */
+  turnUsageReport(
+    opts: AgentPaymentHomeRequest & { hours: number },
+  ): Promise<import("@cocalc/util/ai/agent-turn-usage").AgentUsageReport>;
 }
 
 export function agentPaymentSelectionsSubject(bay_id: string): string {

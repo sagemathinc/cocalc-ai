@@ -5,6 +5,7 @@ import os from "node:os";
 
 let spawnMock: jest.Mock;
 let queryMock: jest.Mock;
+let recordAgentTurnUsageForAccountMock: jest.Mock = jest.fn(async () => 0);
 let isAdminMock: jest.Mock;
 let getClusterAccountsByIdsDirectMock: jest.Mock;
 let isBannedMock: jest.Mock;
@@ -129,6 +130,12 @@ jest.mock("node:child_process", () => {
     spawn: (...args: any[]) => spawnMock(...args),
   };
 });
+
+jest.mock("@cocalc/server/agents/payment-selections", () => ({
+  __esModule: true,
+  recordAgentTurnUsageForAccount: (...args: any[]) =>
+    recordAgentTurnUsageForAccountMock(...args),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -10195,3 +10202,111 @@ function safeJson(value: string): any {
     return undefined;
   }
 }
+
+describe("hosts.recordAgentTurnUsage", () => {
+  const HOST_UUID = "00000000-0000-4000-8000-000000000401";
+  const OWNER = "00000000-0000-4000-8000-000000000402";
+  const OTHER = "00000000-0000-4000-8000-000000000405";
+  const PROJECT_UUID = "00000000-0000-4000-8000-000000000403";
+  const usage = (over: Record<string, unknown> = {}) => ({
+    project_id: PROJECT_UUID,
+    path: "a.chat",
+    thread_id: "t1",
+    provider: "claude",
+    payment: "account-subscription",
+    models: [
+      {
+        model: "claude-opus-5-5",
+        input_tokens: 1,
+        cached_input_tokens: 2,
+        cache_write_tokens: 3,
+        output_tokens: 4,
+        reasoning_output_tokens: 0,
+      },
+    ],
+    started_at: Date.now() - 60_000,
+    ended_at: Date.now() - 1_000,
+    outcome: "completed",
+    ...over,
+  });
+
+  beforeEach(() => {
+    recordAgentTurnUsageForAccountMock = jest.fn(
+      async (_owner: string, rows: unknown[]) => rows.length,
+    );
+  });
+
+  it("stores revalidated turns for owners of the host's projects", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("SELECT owning_bay_id"))
+        return params[2] === OWNER
+          ? { rows: [{ owning_bay_id: null }], rowCount: 1 }
+          : { rows: [], rowCount: 0 };
+      throw Error(`unexpected query ${sql}`);
+    });
+    resolveProjectReferenceAllowRemoteMock = jest.fn(async () => undefined);
+    const { recordAgentTurnUsage } = await import("./hosts");
+    await expect(
+      recordAgentTurnUsage({
+        host_id: HOST_UUID,
+        reports: [
+          { owner_account_id: OWNER, usage: usage({ prompt: "secret" }) },
+          { owner_account_id: OWNER, usage: usage({ thread_id: "t2" }) },
+          // Not a collaborator on the host's project: dropped.
+          { owner_account_id: OTHER, usage: usage() },
+          // Invalid: dropped.
+          { owner_account_id: OWNER, usage: usage({ models: [] }) },
+          // Dated far in the future: dropped.
+          {
+            owner_account_id: OWNER,
+            usage: usage({ ended_at: Date.now() + 365 * 86_400_000 }),
+          },
+          { owner_account_id: "nope", usage: usage() },
+        ],
+      }),
+    ).resolves.toEqual({ recorded: 2 });
+    expect(recordAgentTurnUsageForAccountMock).toHaveBeenCalledTimes(1);
+    const [owner, rows] = recordAgentTurnUsageForAccountMock.mock.calls[0];
+    expect(owner).toBe(OWNER);
+    expect(rows.map((r: any) => r.usage.thread_id)).toEqual(["t1", "t2"]);
+    expect(rows[0].usage).not.toHaveProperty("prompt");
+    expect(rows[0].host_id).toBe(HOST_UUID);
+    // One authorization query for the owner/project pair, one for OTHER.
+    expect(
+      queryMock.mock.calls.filter(([sql]) => sql.includes("SELECT owning_bay_id")),
+    ).toHaveLength(2);
+  });
+
+  it("bounds a report and requires a host", async () => {
+    const { recordAgentTurnUsage } = await import("./hosts");
+    await expect(
+      recordAgentTurnUsage({ reports: [] } as any),
+    ).rejects.toThrow("host_id");
+    await expect(
+      recordAgentTurnUsage({
+        host_id: HOST_UUID,
+        reports: Array.from({ length: 51 }, () => ({
+          owner_account_id: OWNER,
+          usage: usage(),
+        })),
+      }),
+    ).rejects.toThrow("too many");
+  });
+
+  it("does not fail the report when one owner's home bay is unreachable", async () => {
+    queryMock = jest.fn(async () => ({
+      rows: [{ owning_bay_id: null }],
+      rowCount: 1,
+    }));
+    recordAgentTurnUsageForAccountMock = jest.fn(async () => {
+      throw Error("home bay down");
+    });
+    const { recordAgentTurnUsage } = await import("./hosts");
+    await expect(
+      recordAgentTurnUsage({
+        host_id: HOST_UUID,
+        reports: [{ owner_account_id: OWNER, usage: usage() }],
+      }),
+    ).resolves.toEqual({ recorded: 0 });
+  });
+});

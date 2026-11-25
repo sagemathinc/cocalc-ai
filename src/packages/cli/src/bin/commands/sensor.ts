@@ -18,6 +18,7 @@ import type { Command } from "commander";
 import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
 import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import {
+  exitWatchKeepsWhole,
   parseSensorWake,
   SENSOR_LIMITS,
   SENSOR_WATCH_AGENT_UNTIL,
@@ -205,19 +206,52 @@ export function watchedPath(path: string, cwd = process.cwd()): string {
  * The command is an argument, never spliced into the script. While it runs,
  * a loop touches the heartbeat file, and stops once this shell is gone: if
  * the terminal ends first (the project restarts, the terminal is closed or
- * killed), the heartbeat goes stale with no exit code, and the watcher wakes
- * saying so instead of waiting until it gives up.
+ * killed), the heartbeat goes stale with no exit code, and the watcher asks
+ * for it again (exit-restart) or wakes saying so, instead of waiting until
+ * it gives up.
+ *
+ * A stale heartbeat does not prove the command stopped: only this shell (or
+ * its heartbeat loop) may have been killed. So the shell records its process
+ * group, and a restart (`guard`) runs the command only with positive proof
+ * that the earlier run's group is gone: another pid namespace (the project
+ * container restarted), no process left in the group, or its number now
+ * taken by a new leader. Otherwise it leaves the unknown file and does not
+ * run, and the watcher wakes: the command's state is unknown. Nor does it
+ * run when the earlier run finished meanwhile (its exit code is recorded):
+ * the watcher reports that exit code.
  */
+/** The project terminal an exit watcher's command runs in; a restart gets
+ * a new one. */
+export function exitTerminalId(id: string, attempt: number = 0): string {
+  sensorExitPaths(id); // a UUID
+  return `sensor-exit-${id.slice(0, 8)}${attempt ? `-r${attempt}` : ""}`;
+}
+
 export function exitWatcherArgs(
   command: string,
   id: string,
   heartbeatSeconds: number = SENSOR_LIMITS.exitHeartbeatSeconds,
+  guard: boolean = false,
 ): string[] {
   const home = homedir();
   const abs = (path: string) => path.replace(/^~/, home);
   const paths = sensorExitPaths(id);
   const script = [
+    // F: the fields of /proc/PID/stat after the command name; F[2] is the
+    // process group, F[19] the start time.
+    'st() { local s; { s=$(< "/proc/$1/stat"); } 2>/dev/null || return 1; s=${s##*) }; read -r -a F <<< "$s"; }',
+    "ns=$(readlink /proc/self/ns/pid 2>/dev/null)",
+    // Whether the process group recorded in the file $1 is gone, for certain.
+    'gone() { local ns0 pg0 t0 p; read -r ns0 pg0 t0 2>/dev/null < "$1" || return 1; [[ $pg0 =~ ^[0-9]+$ ]] || return 1; if [ "$ns0" != - ] && [ -n "$ns" ] && [ "$ns0" != "$ns" ]; then return 0; fi; if st "$pg0"; then [ -n "$t0" ] && [ "${F[19]}" != "$t0" ] && return 0; return 1; fi; for p in /proc/[0-9]*; do st "${p#/proc/}" && [ "${F[2]}" = "$pg0" ] && return 1; done; return 0; }',
     'mkdir -p -- "$2"',
+    'if [ "$9" = 1 ] && ! gone "$7"; then echo unknown > "$8"; echo "[not started again: its earlier run may still be running]"; exit 0; fi',
+    // The earlier run's shell writes its exit code before it (and so its
+    // group) ends: with the group gone, a missing exit code means it never
+    // finished. If it did finish, the watcher's next check reports that.
+    // So a restart never starts while an exit code is recorded.
+    'if [ "$9" = 1 ] && [ -e "$4" ]; then echo "[not started again: its earlier run finished]"; exit 0; fi',
+    'pg=; lt=; if st $$; then pg=${F[2]}; st "$pg" && lt=${F[19]}; fi',
+    `printf '%s %s %s\\n' "\${ns:--}" "$pg" "$lt" > "$7.tmp" && mv -- "$7.tmp" "$7"`,
     'touch -- "$5"',
     // (Joined by "; ", so the & ends its own command here.) Its sleep runs
     // in the background so TERM interrupts the wait at once; with /dev/null
@@ -239,6 +273,9 @@ export function exitWatcherArgs(
     abs(paths.status),
     abs(paths.beat),
     `${Math.max(1, Math.round(heartbeatSeconds))}`,
+    abs(paths.group),
+    abs(paths.unknown),
+    guard ? "1" : "0",
   ];
 }
 
@@ -520,10 +557,14 @@ export function registerSensorCommand(
   watch
     .command("exit")
     .description(
-      "run a command in a project terminal (it keeps running after your turn) and wake once when it exits, with its exit code and the end of its output; if the terminal ends first (the project restarts, or the terminal is closed or killed), wake within minutes with exit_code null and reason terminal-ended, so you can run it again",
+      `run a command in a project terminal (it keeps running after your turn) and wake once when it exits, with its exit code and the end of its output; if the terminal ends first, start it again in a new terminal only when the earlier run is certainly gone (the project restarted; up to ${SENSOR_LIMITS.exitMaxRestarts} times; --no-restart to never), else wake with exit_code null, reason terminal-ended and state unknown`,
     )
     .argument("<command...>", "the command and its arguments, after --")
     .option("--cwd <path>", "working directory in the project")
+    .option(
+      "--no-restart",
+      "if its terminal ends first, wake (state unknown) instead of starting it again, even after a project restart",
+    )
     .option("--hours <n>", "give up after this many hours (default 24)")
     .option(
       "--delivery <mode>",
@@ -535,17 +576,39 @@ export function registerSensorCommand(
         if (!command) throw new Error("give the command after --");
         const id = randomUUID();
         const api = globalsFrom(cmd).api;
+        const cwd = `${opts.cwd ?? ""}`.trim() || undefined;
+        // Only a command the watcher keeps whole can be started again.
+        let restart =
+          opts.restart !== false && exitWatchKeepsWhole(command, cwd);
         // The watcher first: nothing runs if it cannot be set.
-        const set: any = await sendIdentityMessage(
-          {
-            action: "sensor",
-            op: "watch",
-            watch: { type: "exit", id, command: command.slice(0, 200) },
-            ...extra(opts),
-          },
-          api,
-        );
-        const terminal_id = `sensor-exit-${id.slice(0, 8)}`;
+        const short = { type: "exit", id, command: command.slice(0, 200) };
+        const setWatch = (watch: object) =>
+          sendIdentityMessage(
+            { action: "sensor", op: "watch", watch, ...extra(opts) },
+            api,
+          );
+        let set: any;
+        if (restart) {
+          try {
+            set = await setWatch({
+              ...short,
+              command,
+              ...(cwd ? { cwd } : {}),
+              restart: true,
+            });
+          } catch (err) {
+            // A hub from before restarts: a watcher that only wakes.
+            if (
+              !/unknown sensor spec field|command must be at most/.test(
+                `${(err as any)?.message ?? err}`,
+              )
+            )
+              throw err;
+            restart = false;
+          }
+        }
+        if (!restart) set = await setWatch(short);
+        const terminal_id = exitTerminalId(id);
         try {
           await spawnProjectTerminalSession({
             ctx,
@@ -554,7 +617,7 @@ export function registerSensorCommand(
             id: terminal_id,
             command: "bash",
             args: exitWatcherArgs(command, id),
-            cwd: `${opts.cwd ?? ""}`.trim() || undefined,
+            cwd,
           });
         } catch (err) {
           // It never started, so nothing will exit: remove the watcher.
@@ -570,8 +633,43 @@ export function registerSensorCommand(
           ...set,
           terminal_id,
           output_file: sensorExitPaths(id).log,
-          message: `Running in project terminal ${terminal_id}. You will get one [Sensor wake] turn when it exits, with its exit code and the end of its output (or, if the terminal ends first, for example because the project restarted, a wake saying it stopped without an exit code). You can end your turn now.`,
+          message: `Running in project terminal ${terminal_id}. You will get one [Sensor wake] turn when it exits, with its exit code and the end of its output.${restart ? ` If the terminal ends first, the command is started again in a new terminal (up to ${SENSOR_LIMITS.exitMaxRestarts} times) only when the earlier run is certainly gone (the project restarted); otherwise you get a wake saying its state is unknown.` : " If the terminal ends first, you get a wake saying it has no exit code and its state is unknown."} You can end your turn now.`,
         };
+      }),
+    );
+  // What an exit watcher's check runs to start its command again after the
+  // command's terminal ended (the project restarted).
+  sensor
+    .command("exit-restart", { hidden: true })
+    .description("start an exit watcher's command again in a new terminal")
+    .argument("<command...>", "the command, after --")
+    .requiredOption("--id <uuid>", "the exit watcher's command id")
+    .requiredOption("--attempt <n>", "which restart this is")
+    .option("--cwd <path>", "working directory in the project")
+    .action(async (commandParts: string[], opts, cmd) =>
+      deps.withContext(cmd, "sensor exit-restart", async (ctx: any) => {
+        const command = commandParts.join(" ").trim();
+        if (!command) throw new Error("give the command after --");
+        const attempt = Number(opts.attempt);
+        if (!Number.isInteger(attempt) || attempt < 1 || attempt > 100)
+          throw new Error("--attempt must be a small positive integer");
+        const terminal_id = exitTerminalId(opts.id, attempt);
+        await spawnProjectTerminalSession({
+          ctx,
+          resolveProjectFromArgOrContext: deps.resolveProjectFromArgOrContext,
+          resolveProjectConatClient: deps.resolveProjectConatClient,
+          id: terminal_id,
+          command: "bash",
+          // Runs the command only if the earlier run's group is gone.
+          args: exitWatcherArgs(
+            command,
+            opts.id,
+            SENSOR_LIMITS.exitHeartbeatSeconds,
+            true,
+          ),
+          cwd: `${opts.cwd ?? ""}`.trim() || undefined,
+        });
+        return { terminal_id, attempt };
       }),
     );
   sensor

@@ -37,6 +37,9 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { pickClaudePool } from "./claude-pool";
+import { agentUsageReport, insertAgentTurnUsage } from "./turn-usage";
+
+const MAX_TURN_USAGE_ROWS = 50;
 
 const logger = getLogger("server:agents:payment-selections");
 
@@ -315,7 +318,40 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
     const { home_bay_id: _home, ...request } = opts;
     return await pickClaudePool(request);
   },
+
+  async turnUsageReport(opts) {
+    await assertHome(opts.account_id, opts.home_bay_id);
+    return await agentUsageReport({
+      account_id: opts.account_id,
+      hours: opts.hours,
+    });
+  },
+
+  async recordTurnUsage(opts) {
+    await assertHome(opts.account_id, opts.home_bay_id);
+    const rows = Array.isArray(opts.rows)
+      ? opts.rows.slice(0, MAX_TURN_USAGE_ROWS)
+      : [];
+    return {
+      recorded: await insertAgentTurnUsage({
+        account_id: opts.account_id,
+        rows,
+      }),
+    };
+  },
 };
+
+/** Host-reported agent turn usage for one account, in its home bay. */
+export async function recordAgentTurnUsageForAccount(
+  account_id: string,
+  rows: Array<{ usage: unknown; host_id?: string }>,
+): Promise<number> {
+  if (!rows.length) return 0;
+  const { recorded } = await withHome(account_id, (api, home_bay_id) =>
+    api.recordTurnUsage({ account_id, home_bay_id, rows }),
+  );
+  return recorded;
+}
 
 /** Attach this account's payment selections to its named agents (home bay). */
 export async function loadAgentPayments(
@@ -483,3 +519,11 @@ export const pickClaudePoolSubscription: AgentApi["pickClaudePoolSubscription"] 
   };
 
 export type { AgentPaymentTarget };
+
+/** Hub API: the signed-in account's usage by agent (its home bay's records). */
+export const agentUsage: AgentApi["agentUsage"] = async (opts) => {
+  const account_id = opts.account_id!;
+  return withHome(account_id, (api, home_bay_id) =>
+    api.turnUsageReport({ account_id, home_bay_id, hours: opts.hours ?? 24 }),
+  );
+};

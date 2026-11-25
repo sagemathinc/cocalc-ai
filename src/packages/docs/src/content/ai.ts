@@ -4,55 +4,66 @@
  */
 
 export const CODEX_CHAT_BODY = String.raw`
-## What Codex chat is for
+## Start work with Codex
 
-Codex chat is the integrated agent interface in CoCalc-ai. A project chat thread
-can include humans and Codex, and Codex can use project-aware tools to inspect
-files, run commands, work with notebooks, and make changes.
+Ask Codex to build, analyze, or change something in your CoCalc project. It can
+inspect files, run software, and return results in the conversation. You and
+your collaborators can review those results and continue with another request.
 
-## Open Codex
+1. Open **Agents**, choose **New agent**, and enter your request.
+2. Choose **Codex** in the runtime menu. Check the selected project, working
+   directory, model, and payment source before starting.
+3. Include the relevant inputs, the result you want, and how it should be
+   checked. For example, ask for an application with specific controls and
+   require the agent to exercise those controls.
+4. Choose **Start agent**. See [Use the Agents workspace](/docs/ai/my-agents)
+   for the first-project flow and the full set of controls.
 
-1. Open the project.
-2. Open the Agents or chat area.
-3. Start a Codex thread.
-4. Ask a concrete task, including relevant files and constraints.
+You can also continue an existing Codex conversation from its project chat.
+Starting work can use model allowance and project compute. A working directory
+helps the agent locate files; it does not restrict its access to the project.
 
-Claude Code is also integrated, on sites that enable it. For other
-terminal-native agents such as opencode, install and run them
-inside a normal project terminal with compatible software and permissions.
-Hosted project images and local CoCalc Plus can provide different operating
-systems and installed tools; terminal-native agents provide their own interface.
+## Review the result and ask for changes
 
-On phones, open **Chat tools** using the ellipsis button, then choose
+Ask for the deliverable to appear as a card in the conversation. Open it beside
+the chat, inspect the result, and describe the next change. Use **Open in project**
+when you want to inspect or edit the underlying files and software yourself.
+
+A saved file preview shows the current saved file. For an interactive app,
+ask the agent to open it in the project browser and share its browser card;
+then try the controls. See [reviewing results and building an app](/docs/ai/my-agents)
+for the complete workflow. For code changes, ask the agent to run the relevant
+checks and report their output, including any failures.
+
+Continue in the same conversation to revise the work. If you need to recover
+earlier file contents, use [TimeTravel](/docs/files/timetravel) or
+[Git](/docs/files/git), as appropriate for the file. Stopping an agent does not
+undo changes it already made.
+
+## Choose the next guide
+
+- [Connect model access and choose funding](/docs/ai/connect-credentials).
+- [Configure models and defaults](/docs/ai/codex-settings).
+- [Guide running work, queue requests, and fork a conversation](/docs/ai/codex-conversations).
+- [Set continuing goals and answer questions](/docs/ai/codex-goals).
+- [Schedule work or respond to events](/docs/ai/codex-automation).
+- [Connect agents through Agent Networks](/docs/ai/agent-features#agent-networks).
+- [Use memory across sessions](/docs/ai/agent-memory).
+- [Give an agent access to other projects](/docs/ai/cocalc-access).
+- [Ask for help with an editor selection](/docs/ai/editor-agent).
+- [Set notifications and inspect sessions](/docs/ai/codex-notifications).
+
+On phones, open **Chat tools** with the ellipsis button, then choose
 **Thread actions** to open the thread menu.
 
-## Find the right guide
+## Other agents
 
-- [Compare all integrated agent features](/docs/ai/agent-features).
-- [Start and review work in Agents](/docs/ai/my-agents).
-- [Use Claude Code](/docs/ai/claude-code).
-- [Let agents remember notes across sessions](/docs/ai/agent-memory).
-- [Connect access and choose funding](/docs/ai/connect-credentials).
-- [Give an agent access to other CoCalc projects](/docs/ai/cocalc-access).
-- [Configure models, access, and defaults](/docs/ai/codex-settings).
-- [Steer, queue, and fork conversations](/docs/ai/codex-conversations).
-- [Manage goals and answer questions](/docs/ai/codex-goals).
-- [Watch for events with sensors](/docs/ai/codex-automation).
-- [Set notifications and inspect sessions](/docs/ai/codex-notifications).
-- [Use Agent from an editor](/docs/ai/editor-agent).
-
-## Give better tasks
-
-Name files, describe the desired outcome, and ask Codex to validate changes.
-For live notebooks, ask Codex to use the live notebook APIs. For UI actions,
-docs action ids such as \`settings.environment.secrets\` let agents open the
-right panel directly.
-
-## Why this matters in CoCalc
-
-CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
-what Codex changes, keep terminals and notebooks running, use TimeTravel, and
-share the same project state with collaborators.
+[Claude Code](/docs/ai/claude-code) is also integrated.
+Use the [feature comparison](/docs/ai/agent-features) for the differences in
+goals, tools, access, and controls. Other terminal agents, such as opencode,
+can run in a project terminal when compatible with its software and permissions;
+they provide their own interface. Hosted project images and local CoCalc Plus
+can have different operating systems and installed tools.
 `;
 
 export const MY_AGENTS_BODY = String.raw`
@@ -73,8 +84,7 @@ checks that would make the result useful.
 
 When CoCalc opens the request box for you, it asks **What would you like to work
 on?** There is no name or project to choose. Below the box, the runtime menu
-starts at **Codex**; choose **Claude** there for Claude Code, where the site
-enables it. For Codex, the model, thinking level, and
+starts at **Codex**; choose **Claude** there for Claude Code. For Codex, the model, thinking level, and
 payment source buttons work as in the new-agent form described below. If CoCalc
 asks you to verify your email, do that first. When you start typing, CoCalc
 prepares a project and starts it, which can start project compute; the chat and
@@ -93,8 +103,8 @@ box. They start from the agent you had selected, if any.
    no project, CoCalc says **Your first project will be created
    automatically**, and titles that project from the first line of your
    request, or **My first project** if there is no request.
-3. In the runtime menu, choose **Claude** for Claude Code, where the site
-   enables it; see [Use Claude Code](/docs/ai/claude-code).
+3. In the runtime menu, choose **Claude** for Claude Code; see
+   [Use Claude Code](/docs/ai/claude-code).
    For Codex, click the model, thinking level, or payment source button to
    change it. When **CoCalc Membership** pays, whether chosen directly or
    automatically, the thinking level is fixed. Access, funding, project
@@ -122,11 +132,6 @@ the chat to inspect it beside your request, then ask the same agent for a
 specific correction or another version. **Artifacts** in the sidebar helps you
 find artifacts from named agents. Use **Open in project** when you need the
 underlying files, software, or complete project view.
-
-![A saved dispatch review image open beside its agent conversation in a fresh CoCalc project with fictional data](/public/docs/agents-workspace-dispatch-review-20260924.jpg)
-
-This example shows a reviewable image result beside the conversation. The
-underlying file remains in the project.
 
 ## Turn a recurring task into an app
 
@@ -198,9 +203,7 @@ that provider's default as well; other agents following the default use it too.
 Codex and Claude have separate choices.
 
 For Claude, **Project secret (ANTHROPIC_API_KEY)** uses a configured project
-key. **CoCalc Membership (Claude Haiku 5.5)**, when your site offers it, pays
-from your membership's included AI allowance, the same allowance as Codex's
-**CoCalc Membership** option. Agents with project-managed credentials are not
+key. Agents with project-managed credentials are not
 changed by this control.
 
 These choices belong to your account and are stored on the server, so a browser
@@ -311,6 +314,11 @@ an agent runs.
 
 ## Connect access for Codex
 
+On hosted CoCalc, ChatGPT device sign-in, subscription usage checks, and Codex
+turns using **ChatGPT Plan** need the project to reach OpenAI. Choose a project
+with internet access for sign-in. This is separate from signing the CoCalc CLI
+into your CoCalc account.
+
 1. Open Codex or the AI settings area.
 2. Choose **Sign in with ChatGPT** or configure an OpenAI API key.
 3. Complete the device authorization or key setup flow.
@@ -350,8 +358,11 @@ usage** appears when ChatGPT Plan is the resolved payment source. Click
 and reset timing for each reported usage window; they are not a per-thread
 spending total. Missing or unchecked usage data does not mean the allowance
 is zero. The displayed account and plan help identify the connection. Hosted
-usage checks and device sign-in need an available project; open one when
-prompted and retry.
+usage checks and device sign-in need an available project with internet access.
+If you see **This project has no internet access**, choose a project with internet
+access. If you enable internet access for the same project, restart the
+project before signing in again. Refreshing usage or repeating sign-in in the
+same offline project cannot confirm the connection.
 
 **Connection not verified** means a stored credential was found but the live
 check did not confirm access. **Sign-in needs refresh** means that connection
@@ -374,16 +385,14 @@ For unavailable-model messages, see
 
 1. Open an agent and choose **Claude** in the runtime menu.
 2. Open Claude settings using its settings icon or payment method control.
-3. Choose **CoCalc Membership** if offered, a connected Claude Pro/Max
+3. Choose a payment method, such as a connected Claude Pro/Max
    subscription, an account Anthropic API key, or a project API-key secret.
 4. For subscription access, choose **Connect Claude Pro/Max** and complete
    the sign-in flow. For a project key, use the Claude API-key dialog.
-   Membership funding does not require your own Anthropic credential.
 5. Check the selected payment method and available model before sending work.
    Changes apply to future turns, not work already admitted.
 
-Membership-funded Claude uses its included model and the AI allowance shared
-with Codex; higher membership tiers include a larger allowance. A personal subscription uses that provider plan's allowance;
+A personal subscription uses that provider plan's allowance;
 API-key usage is billed by Anthropic. These modes have different credential
 and tool boundaries: see [Claude Code access and billing](/docs/ai/claude-code).
 In particular, an account API key does not authorize agent-authored network
@@ -777,7 +786,11 @@ There are three kinds:
 - **Watchers**: CoCalc's own one-shot checks that an agent sets for itself
   (for example "wake me when the CI checks on this pull request finish", or
   "run this build in a terminal and wake me when it exits"). They need no
-  approval; they wake the agent once, or give up after a day.
+  approval. They send one wake when the condition is met or the wait expires.
+  Event watchers wait up to 24 hours by default; the agent can choose 1–72
+  hours. A reminder set for a particular time uses that time instead.
+  [Set a watcher](/docs/cli/scheduled-agents#wait-for-something-set-a-watcher)
+  explains the commands and delivery options.
 - **Scripts**: a small program the agent writes to watch something over time,
   such as new GitHub issues. You approve the exact script first.
 
@@ -856,24 +869,28 @@ Schedule a prompt for the same job instead.
 export const CODEX_NOTIFICATIONS_BODY = String.raw`
 Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used the agent before.
 
-## Get a notification when a turn finishes
+## Get notified when an agent needs you
 
-In account settings, find **Notifications** and **Codex and agents**.
-**Notify when Codex turns complete by default** sets the preference for threads
-that inherit the account default. The channel table separately controls
-**Inbox**, **Toast**, **Browser**, and **Email** for **Needs attention**,
-**Turn completed**, and **Turn failed**.
+CoCalc does not notify you when an agent's turn finishes successfully. Check
+the chat to see finished work. For every agent, CoCalc notifies you when an
+agent needs your attention, for example to answer a question or approve an
+action, and when a turn fails. A turn paused by a usage limit gets a shared
+notice instead, described below.
 
-To set a thread's completion preference:
+In account settings, open **Communication** and find **Codex and agents** under
+**Notifications**. Its table has two rows, **Needs attention** and
+**Turn failed**. Each row has its own **Inbox**, **Toast**, **Browser**, and
+**Email** controls. **Email** can be **Off**, **Immediately**,
+**Daily digest**, or **After 5 minutes unresolved**. These settings apply to all
+of your agent threads; there is no per-thread setting for agent notices.
+**Mute chat** in a thread's menu stops notices about collaborators' new replies
+in that thread; it does not affect agent notices. Changing a setting does not
+withdraw a notice already produced.
 
-1. Open its menu and choose **Behavior...**.
-2. In **Edit Thread Behavior**, clear **Mute completion notifications for this thread**
-   to request notices, or check it to mute them.
-3. Confirm the dialog. Changing this checkbox saves an explicit preference for that thread.
-
-Set the preference before starting work when possible. A turn's completion can
-race with a settings change, and changing settings does not withdraw a notice
-already produced.
+When a usage limit pauses agents, CoCalc sends one notice for all of them
+instead of an error notice for each. It says that their turns are paused and
+resume automatically when the limit resets. The **Needs attention** and
+**Turn failed** rows do not apply to this notice.
 
 Delivery depends on the enabled channels and site settings. CoCalc can show a
 toast while its page is visible or a browser notification while it is hidden.
@@ -881,10 +898,14 @@ Browser delivery also needs browser permission; use **Enable browser notificatio
 and **Test notification** in account settings. CoCalc suppresses the extra toast
 or browser alert when you are directly watching that thread.
 
-In CoCalc, successful completion uses **Codex turn finished**; an error uses
-**Codex turn ended with an error**. Browser notifications use the generic title
-**Codex finished**; open CoCalc to inspect the outcome. A completion notice does
-not establish that every background command or descendant agent has stopped. Inspect the account's
+In CoCalc, a failed turn's notice names the agent, for example
+**Codex turn ended with an error**. Browser notifications use generic titles,
+such as **Agent needs your attention**, **Agent turn paused**, or
+**Agent turn finished**, which is also the title for a failed turn. When the
+thread belongs to a named agent, toasts and browser notifications start with
+its name, for example **@helper · Agent turn finished**. Open CoCalc to inspect
+the outcome. The end of a turn does not establish that every
+background command or descendant agent has stopped. Inspect the account's
 Codex sessions panel when you need to confirm remaining activity.
 
 ## Inspect and stop Codex sessions

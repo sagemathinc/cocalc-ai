@@ -109,13 +109,14 @@ describe("HTTP API key policy audit", () => {
     for (const name of [
       "system.getMembershipUsage",
       "system.getAiSubscriptionStatus",
+      "agent.agentUsage",
     ]) {
       await expect(
         assertHttpHubApiKeyAllowed({ principal: reader, name, args: [{}] }),
       ).resolves.toBeUndefined();
     }
-    // Both are solo-project privileges for an agent's key.
-    expect(mockSoloCheck).toHaveBeenCalledTimes(2);
+    // All are solo-project privileges for an agent's key.
+    expect(mockSoloCheck).toHaveBeenCalledTimes(3);
     // Each needs its own capability.
     await expect(
       assertHttpHubApiKeyAllowed({
@@ -128,6 +129,13 @@ describe("HTTP API key policy audit", () => {
       assertHttpHubApiKeyAllowed({
         principal: { ...principal, capabilities: ["ai-subscriptions:read"] },
         name: "system.getMembershipUsage",
+        args: [{}],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: { ...principal, capabilities: ["usage:read"] },
+        name: "agent.agentUsage",
         args: [{}],
       }),
     ).rejects.toThrow();

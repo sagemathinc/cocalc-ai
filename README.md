@@ -1,13 +1,16 @@
 # CoCalc-AI
 
-CoCalc-AI is a complete rewrite of CoCalc. This repository is the codebase for the next generation of CoCalc products:
+CoCalc provides workspaces where people and their AI agents work with software, data, and computing resources. Agents use the project's tools; people can review results from chat and open the underlying files and applications when needed.
+
+CoCalc-AI is a complete rewrite of CoCalc. This repository powers [CoCalc.ai](https://cocalc.ai), the hosted service, and the following products and deployment architectures:
 
 - [CoCalc Plus](https://software.cocalc.ai/software/cocalc-plus/index.html): a local, single-user CoCalc runtime
+- [CoCalc Star](https://cocalc.ai/docs/self-hosting/cocalc-star): a shared CoCalc site distributed as one Docker container
 - [CoCalc Launchpad](https://software.cocalc.ai/software/cocalc-launchpad/index.html): a multi-user CoCalc with project hosts
 - [CoCalc CLI:](https://software.cocalc.ai/software/cocalc/index.html) the operator and agent CLI used to drive projects, browsers, workspaces, and automation
 - `CoCalc Rocket`: the multi-bay scalable architecture built on the same core ideas as Launchpad
 
-The relaunch is AI-native: Codex is integrated as a first-class agent runtime, browser automation is built into the platform, and the same project/workspace concepts are intended to work across local, self-hosted, and large-scale deployments.
+The relaunch is AI-native: Codex and Claude Code are integrated agent runtimes, browser automation is built into the platform, and the same project/workspace concepts are intended to work across local, self-hosted, and large-scale deployments.
 
 Short illustrated guides for using CoCalc-AI are published at
 [sagemathinc.github.io/cocalc-guides](https://sagemathinc.github.io/cocalc-guides/).
@@ -17,21 +20,25 @@ flowchart TD
     A["CoCalc-AI<br/>one codebase"]:::core
 
     A --> P["CoCalc Plus<br/>local, single-user"]
+    A --> D["CoCalc Star<br/>shared site, one container"]
     A --> L["CoCalc Launchpad<br/>multi-user, project-host"]
     A --> C["CoCalc CLI<br/>browser + ops + automation"]
     A --> R["CoCalc Rocket<br/>multi-bay scale-out"]
 
     P --> S["Workspaces"]
+    D --> S
     L --> S
     C --> S
     R --> S
 
-    P --> G["Codex agents"]
+    P --> G["Codex and Claude Code agents"]
+    D --> G
     L --> G
     C --> G
     R --> G
 
-    P --> T["Notebooks • Files • Terminals • Apps"]
+    P --> T["Apps • Files • Terminals • Notebooks"]
+    D --> T
     L --> T
     C --> T
     R --> T
@@ -43,24 +50,33 @@ flowchart TD
 
 At a product level, CoCalc-AI combines:
 
-- computational documents and notebooks
-- files, terminals, app servers, and browser-based IDE workflows
+- project-scoped agent workflows with Codex and Claude Code
 - real-time collaboration
-- project-scoped agent workflows
+- files, terminals, app servers, and browser-based IDE workflows
 - durable project infrastructure: root filesystems, backups, snapshots, and project and host placement
+- computational documents and notebooks
 
 Compared to the older CoCalc architecture, the important shift is this:
 
 - Plus is the fast local single-user path
+- Star packages a shared site in one Docker container
 - Launchpad is the current multi-user project-host architecture
 - Rocket is the scale-out target
-- Codex and agent tooling are core part of the platform, not an add-on
+- Codex, Claude Code, and agent tooling are core parts of the platform
+
+For current setup instructions and runtime differences, see
+[Agent features: Codex and Claude Code](https://cocalc.ai/docs/ai/agent-features)
+and [Work with Claude Code](https://cocalc.ai/docs/ai/claude-code).
 
 ## Product Surface
 
 ### CoCalc Plus
 
 Single-user, local-first CoCalc. This is the lightweight path for running CoCalc on one machine without the full multi-host control plane.
+
+### CoCalc Star
+
+A shared CoCalc site in one Docker container, with separate project environments and persistent state in a Docker volume. See the [installation guide](https://cocalc.ai/docs/self-hosting/cocalc-star) for requirements, setup, upgrades, and backups. Packaging and release scripts live in [src/scripts/star](./src/scripts/star).
 
 ### CoCalc Launchpad
 
@@ -287,7 +303,7 @@ If you are new to this repository, start here:
 2. [docs/architecture.md](./docs/architecture.md)  
    Current project-host architecture.
 3. [docs/agents.md](./docs/agents.md)  
-   How Codex/ACP fits into CoCalc today.
+   Codex/ACP architecture and links to the current agent user guides.
 4. [docs/api.md](./docs/api.md)  
    Browser automation and agentic browser API.
 5. [docs/browser-debugging.md](./docs/browser-debugging.md)  

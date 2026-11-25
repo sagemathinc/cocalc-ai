@@ -262,6 +262,8 @@ import {
 } from "@cocalc/server/projects/change-tracking";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { is_valid_email_address, isValidUUID } from "@cocalc/util/misc";
+import { parseAgentTurnUsage } from "@cocalc/util/ai/agent-turn-usage";
+import { recordAgentTurnUsageForAccount } from "@cocalc/server/agents/payment-selections";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import {
@@ -3541,6 +3543,61 @@ export async function recordCodexSubscriptionUsage({
       value: history,
     });
   return saved;
+}
+
+/** At most this many turns per report (the host batches 50). */
+const MAX_AGENT_TURN_USAGE_REPORTS = 50;
+
+export async function recordAgentTurnUsage({
+  host_id,
+  reports,
+}: {
+  host_id?: string;
+  reports: Array<{ owner_account_id: string; usage: unknown }>;
+}): Promise<{ recorded: number }> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!Array.isArray(reports)) throw new Error("reports must be an array");
+  if (reports.length > MAX_AGENT_TURN_USAGE_REPORTS)
+    throw new Error("too many turn usage reports");
+  // Trusted-host attribution, as for subscription usage: a host reports only
+  // for owners of projects it runs. A host can at worst misstate the numbers.
+  const allowed = new Map<string, boolean>();
+  const byOwner = new Map<string, Array<{ usage: unknown; host_id: string }>>();
+  for (const report of reports) {
+    const owner = report?.owner_account_id;
+    const usage = parseAgentTurnUsage(report?.usage);
+    if (!usage || !isValidUUID(owner)) continue;
+    const key = `${owner}/${usage.project_id}`;
+    if (!allowed.has(key)) {
+      allowed.set(
+        key,
+        await assertHostCredentialProjectAccess({
+          host_id,
+          project_id: usage.project_id,
+          owner_account_id: owner,
+        }).then(
+          () => true,
+          () => false,
+        ),
+      );
+    }
+    if (!allowed.get(key)) continue;
+    const rows = byOwner.get(owner) ?? [];
+    rows.push({ usage, host_id });
+    byOwner.set(owner, rows);
+  }
+  let recorded = 0;
+  for (const [owner, rows] of byOwner) {
+    try {
+      recorded += await recordAgentTurnUsageForAccount(owner, rows);
+    } catch (error) {
+      logger.debug("agent turn usage not stored", {
+        owner_account_id: owner,
+        error: `${error}`,
+      });
+    }
+  }
+  return { recorded };
 }
 
 export async function touchExternalCredential({

@@ -66,6 +66,11 @@ export {
 } from "./codex-site-key-governor";
 export { codexAuthJsonToAppServerLogin } from "./codex-auth-json";
 export {
+  recordAgentTurnUsage,
+  setAgentTurnUsageRecorder,
+  type AgentTurnUsageRecorder,
+} from "./turn-usage";
+export {
   TURN_MENTION_FILE_ENV,
   turnMentionFilePath,
 } from "./turn-mention-file";

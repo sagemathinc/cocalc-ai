@@ -4,9 +4,10 @@
  */
 
 export const RESEARCH_HANDOFF_BODY = String.raw`
-Build a small analysis, check its saved output, and leave a collaborator enough
-context to continue. This example uses Essential CoCalc, the focused interface
-for one project or file at a time, and a Python notebook with no extra packages.
+Build a small analysis, check its saved output, and leave enough context for a
+collaborator to continue and for an agent to review the work. This example uses
+Essential CoCalc, the focused interface for one project or file at a time, and a
+Python notebook with no extra packages.
 
 ## Open your project in Essential
 
