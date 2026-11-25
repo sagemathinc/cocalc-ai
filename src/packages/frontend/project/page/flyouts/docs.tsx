@@ -87,16 +87,23 @@ export function ProjectDocsPanel({
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const computeVmEnabled =
     useTypedRedux("customize", "compute_vm_enabled") === true;
+  const siteFundedClaudeEnabled =
+    useTypedRedux("customize", "site_funded_claude_enabled") === true;
   const docsAccess = useMemo<DocsAccess>(
     () =>
       lite
         ? { includeAdmin: false, includeSignedIn: false, product: "plus" }
         : {
-            features: computeVmEnabled ? ["compute-vms"] : [],
+            features: [
+              ...(computeVmEnabled ? ["compute-vms" as const] : []),
+              ...(siteFundedClaudeEnabled
+                ? ["site-funded-claude" as const]
+                : []),
+            ],
             includeAdmin: isAdmin,
             includeSignedIn: !!accountId,
           },
-    [accountId, computeVmEnabled, isAdmin],
+    [accountId, computeVmEnabled, isAdmin, siteFundedClaudeEnabled],
   );
   const docsPrivateState = useDocsPrivateState(accountId);
   const [requestedEntry, setRequestedEntry] = useState<DocsEntry | undefined>();

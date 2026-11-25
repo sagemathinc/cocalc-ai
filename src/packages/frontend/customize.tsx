@@ -197,6 +197,7 @@ export interface CustomizeState {
   cli_connector_github_enabled?: boolean;
   cli_connector_cloudflare_enabled?: boolean;
   compute_vm_enabled?: boolean;
+  site_funded_claude_enabled?: boolean;
   "project_hosts_google-cloud_enabled"?: boolean;
   project_hosts_gcp_surcharge_percent?: number;
   project_hosts_hyperstack_enabled?: boolean;
