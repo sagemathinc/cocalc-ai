@@ -41,8 +41,7 @@ test("agent feature reference is ordered, public, and searchable in both catalog
 test("feature matrix renders as tables with valid detailed-guide links", () => {
   const entry = full.getDocsEntry(slug);
   const tokens = new MarkdownIt().parse(entry.body, {});
-  // Keep the detailed comparison while allowing a separate task-navigation table.
-  assert.ok(tokens.filter((t) => t.type === "table_open").length >= 7);
+  assert.equal(tokens.filter((t) => t.type === "table_open").length, 7);
   assert.ok(tokens.filter((t) => t.type === "tr_open").length >= 60);
   const headings = [...entry.body.matchAll(/^#{2,3} (.+)$/gm)].map((m) => m[1]);
   assert.equal(new Set(headings).size, headings.length);
@@ -63,27 +62,25 @@ test("feature matrix renders as tables with valid detailed-guide links", () => {
   }
 });
 
-test("assessment retains provider differences and separates source from live evidence", () => {
+test("assessment distinguishes Claude preview ratings from full parity and unknown evidence", () => {
   const body = full.getDocsEntry(slug).body;
   for (const phrase of [
-    "does not assert tool parity across payment",
-    "2026-09-28",
-    "2026-10-26",
-    "does not claim a new live",
-    "Choose API-key or membership funding](/docs/ai/connect-credentials) | Available | Conditional",
-    "Live Agent Networks that guide busy recipients | Available | Available",
-    "Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Available | Available",
-    "Agent-to-agent messaging across projects | Available | Unverified",
-    "Continuing goals with optional token budgets](/docs/ai/codex-goals) | Available | Not supported",
-    "Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Available | Unverified",
+    "describes that capability, not Claude Code as a whole",
+    "Access options reviewed 2026-10-26",
+    "Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Conditional",
+    "Live Agent Networks that guide busy recipients | Supported | Preview",
+    "Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Preview",
+    "Agent-to-agent messaging across projects | Supported | Unverified",
+    "Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported",
+    "Sensors: approved scripts that wake the agent](/docs/ai/codex-automation) | Supported | Unverified",
     "Accepted means admitted, not completed",
     "live-verified",
     "not a copy of project files",
     "approval is not execution",
   ])
     assert.ok(body.includes(phrase), phrase);
-  // Feature-specific qualifications should not label the entire integration a preview.
-  assert.doesNotMatch(body, /Claude\s+preview|\| Preview \|/i);
+  // Preview is a per-capability rating; Claude Code as a whole is not one.
+  assert.doesNotMatch(body, /Claude\s+preview/i);
   const claude = full.getDocsEntry("ai/claude-code").body;
   assert.match(claude, /still need live qualification/);
   assert.match(claude, /stored payment selection/);
