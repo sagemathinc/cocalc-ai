@@ -41,6 +41,7 @@ export interface PublicConfig {
   account_id?: string;
   cocalc_product?: string;
   compute_vm_enabled?: boolean;
+  site_funded_claude_enabled?: boolean;
   cookie_banner_enabled?: boolean;
   cookie_banner_text?: string;
   dns?: string;
@@ -179,7 +180,12 @@ export function getPublicSignUpLabel(config?: PublicConfig): string {
 
 export function getPublicDocsAccess(config?: PublicConfig): DocsAccess {
   return {
-    features: config?.compute_vm_enabled === true ? ["compute-vms"] : [],
+    features: [
+      ...(config?.compute_vm_enabled === true ? ["compute-vms" as const] : []),
+      ...(config?.site_funded_claude_enabled === true
+        ? ["site-funded-claude" as const]
+        : []),
+    ],
     includeAdmin: config?.is_admin === true,
     includeSignedIn:
       config?.is_authenticated === true || config?.is_admin === true,

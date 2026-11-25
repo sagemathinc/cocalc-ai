@@ -34,6 +34,7 @@ import {
 import { getLaunchpadCloudflaredStatus } from "@cocalc/server/launchpad/onprem-sshd";
 import { getProjectRuntimeConfiguration } from "@cocalc/server/launchpad/project-runtime";
 import { computeVmUiEnabled } from "@cocalc/server/compute/config";
+import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 
 const logger = getLogger("hub:webapp-config");
 
@@ -288,6 +289,9 @@ export class WebappConfiguration {
         is_rocket: isRocketProduct(),
         project_runtime: getProjectRuntimeConfiguration(),
         compute_vm_enabled: computeVmUiEnabled(this.data.all),
+        site_funded_claude_enabled: to_bool(
+          this.data.all.site_funded_claude_enabled,
+        ),
         launchpad_cloudflare_tunnel_status: cloudflareStatus,
       },
     };
