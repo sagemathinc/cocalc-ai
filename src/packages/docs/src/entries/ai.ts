@@ -5,6 +5,7 @@
 
 import type { DocsEntry } from "../types";
 import { CLAUDE_CODE_BODY } from "../content/claude-code";
+import { CLAUDE_MEMBERSHIP_BODY } from "../content/claude-membership";
 import { CLAUDE_SUBSCRIPTION_IN_PROJECT_BODY } from "../content/claude-subscription-in-project";
 import { AGENT_FEATURES_BODY } from "../content/agent-features";
 import { AGENT_MEMORY_BODY } from "../content/agent-memory";
@@ -28,7 +29,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     body: AGENT_FEATURES_BODY.trim(),
     category: "AI",
     id: "ai.agent-features",
-    lastReviewed: "2026-09-28",
+    lastReviewed: "2026-11-23",
     noActionReason:
       "This reference compares workflows; follow its linked guides to configure or start work.",
     slug: "ai/agent-features",
@@ -50,8 +51,25 @@ export const AI_ENTRIES: DocsEntry[] = [
     slug: "ai/claude-code",
     status: "ready",
     summary:
-      "Use Claude Code in CoCalc: membership, subscription, or API-key access, project tools, billing, and permissions.",
+      "Use Claude Code in CoCalc: subscription or API-key access, project tools, billing, and permissions.",
     title: "Claude Code in CoCalc",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CLAUDE_MEMBERSHIP_BODY.trim(),
+    category: "AI",
+    id: "ai.claude-membership",
+    lastReviewed: "2026-11-25",
+    noActionReason:
+      "Choose CoCalc Membership as the payment method in Claude settings; nothing to start here.",
+    requiredFeatures: ["site-funded-claude"],
+    searchKeywords:
+      "Claude Code CoCalc Membership included Claude site-funded allowance relay Haiku",
+    slug: "ai/claude-membership",
+    status: "ready",
+    summary:
+      "Run Claude Code agents on your membership's included AI allowance, through a CoCalc relay.",
+    title: "Included Claude with CoCalc Membership",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],
@@ -130,7 +148,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     searchKeywords:
       "Codex Claude Code Anthropic OpenAI ChatGPT Pro Max membership subscription payment method API key credentials",
     summary:
-      "Choose membership, subscription, or API-key access for Codex and Claude Code, and configure keys for project code.",
+      "Choose subscription, API-key or, where available, membership access for Codex and Claude Code, and configure keys for project code.",
     title: "Connect AI access",
   },
   {

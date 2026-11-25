@@ -10,7 +10,14 @@ test("Claude access options and security model are public and searchable in both
     // Not a preview since 2026-10-27 (William).
     assert.equal(entry.title, "Claude Code in CoCalc");
     assert.doesNotMatch(entry.body, /experimental preview/i);
-    assert.match(entry.body, /membership includes Claude/);
+    // Site-funded Claude has its own entry, shown only where a site enables it.
+    assert.doesNotMatch(entry.body, /CoCalc Membership \(Claude Haiku/);
+    assert.equal(registry.getDocsEntry("ai/claude-membership"), undefined);
+    const membership = registry.getDocsEntry("ai/claude-membership", {
+      features: ["site-funded-claude"],
+    });
+    assert.ok(membership);
+    assert.match(membership.body, /membership includes AI usage/);
     assert.match(entry.body, /Account API key/);
     assert.match(entry.body, /Project API-key secret/);
     const access = registry.getDocsEntry("ai/connect-credentials");

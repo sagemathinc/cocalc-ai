@@ -58,7 +58,7 @@ On phones, open **Chat tools** with the ellipsis button, then choose
 
 ## Other agents
 
-[Claude Code](/docs/ai/claude-code) is also integrated on sites that enable it.
+[Claude Code](/docs/ai/claude-code) is also integrated.
 Use the [feature comparison](/docs/ai/agent-features) for the differences in
 goals, tools, access, and controls. Other terminal agents, such as opencode,
 can run in a project terminal when compatible with its software and permissions;
@@ -84,8 +84,7 @@ checks that would make the result useful.
 
 When CoCalc opens the request box for you, it asks **What would you like to work
 on?** There is no name or project to choose. Below the box, the runtime menu
-starts at **Codex**; choose **Claude** there for Claude Code, where the site
-enables it. For Codex, the model, thinking level, and
+starts at **Codex**; choose **Claude** there for Claude Code. For Codex, the model, thinking level, and
 payment source buttons work as in the new-agent form described below. If CoCalc
 asks you to verify your email, do that first. When you start typing, CoCalc
 prepares a project and starts it, which can start project compute; the chat and
@@ -104,8 +103,8 @@ box. They start from the agent you had selected, if any.
    no project, CoCalc says **Your first project will be created
    automatically**, and titles that project from the first line of your
    request, or **My first project** if there is no request.
-3. In the runtime menu, choose **Claude** for Claude Code, where the site
-   enables it; see [Use Claude Code](/docs/ai/claude-code).
+3. In the runtime menu, choose **Claude** for Claude Code; see
+   [Use Claude Code](/docs/ai/claude-code).
    For Codex, click the model, thinking level, or payment source button to
    change it. When **CoCalc Membership** pays, whether chosen directly or
    automatically, the thinking level is fixed. Access, funding, project
@@ -204,9 +203,7 @@ that provider's default as well; other agents following the default use it too.
 Codex and Claude have separate choices.
 
 For Claude, **Project secret (ANTHROPIC_API_KEY)** uses a configured project
-key. **CoCalc Membership (Claude Haiku 5.5)**, when your site offers it, pays
-from your membership's included AI allowance, the same allowance as Codex's
-**CoCalc Membership** option. Agents with project-managed credentials are not
+key. Agents with project-managed credentials are not
 changed by this control.
 
 These choices belong to your account and are stored on the server, so a browser
@@ -388,16 +385,14 @@ For unavailable-model messages, see
 
 1. Open an agent and choose **Claude** in the runtime menu.
 2. Open Claude settings using its settings icon or payment method control.
-3. Choose **CoCalc Membership** if offered, a connected Claude Pro/Max
+3. Choose a payment method, such as a connected Claude Pro/Max
    subscription, an account Anthropic API key, or a project API-key secret.
 4. For subscription access, choose **Connect Claude Pro/Max** and complete
    the sign-in flow. For a project key, use the Claude API-key dialog.
-   Membership funding does not require your own Anthropic credential.
 5. Check the selected payment method and available model before sending work.
    Changes apply to future turns, not work already admitted.
 
-Membership-funded Claude uses its included model and the AI allowance shared
-with Codex; higher membership tiers include a larger allowance. A personal subscription uses that provider plan's allowance;
+A personal subscription uses that provider plan's allowance;
 API-key usage is billed by Anthropic. These modes have different credential
 and tool boundaries: see [Claude Code access and billing](/docs/ai/claude-code).
 In particular, an account API key does not authorize agent-authored network

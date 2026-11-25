@@ -12,8 +12,7 @@ export const COCALC_AT_A_GLANCE_BODY = String.raw`
 
 CoCalc is made by SageMath, Inc. Each CoCalc project is a Linux environment with
 files, notebooks, terminals, and installed software, where people and AI agents
-work on the same files. Codex is built in, and Claude Code is integrated too
-on sites that enable it.
+work on the same files. Codex is built in, and Claude Code is integrated too.
 
 CoCalc.ai is the hosted service. To run CoCalc on a computer or server you
 control, see [Where to run CoCalc](/products).
@@ -45,8 +44,8 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
 
 - Codex is the built-in agent. It works with project files, terminals, and
   notebooks.
-- Claude Code is integrated on sites that enable it. It can use CoCalc
-  membership, a Claude Pro or Max subscription, or an Anthropic API key. Codex
+- Claude Code is integrated. It can use a Claude
+  Pro or Max subscription or an Anthropic API key. Codex
   and Claude Code agents can work side by side in the same project.
 - Agents can message each other in Agent Networks. To connect two agents,
   mention a named agent with @ in another agent's conversation and choose
@@ -89,7 +88,7 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
   [Pricing](/pricing).
 - Codex can use a membership's included AI allowance when the site and your
   account provide one. Claude Code can use your personal Claude Pro or Max
-  subscription, or a membership-funded option where the site offers one.
+  subscription or your own Anthropic API key.
 
 ## Find a page by task
 
