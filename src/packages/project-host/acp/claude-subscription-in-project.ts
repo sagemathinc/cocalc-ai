@@ -560,6 +560,20 @@ export async function launchClaudeSubscriptionInProject(
   // Fail now, with a clear message, rather than at the first request.
   let token = await tokenOf();
   let checkedAt = Date.now();
+  // The one way the token is renewed: the relay's periodic recheck and each
+  // turn's host proof both use it, so the proof attests exactly the token the
+  // relay sends next.
+  // Concurrent callers share one resolution.
+  let refreshing: Promise<void> | undefined;
+  const refreshToken = (): Promise<void> =>
+    (refreshing ??= (async () => {
+      try {
+        token = await tokenOf();
+        checkedAt = Date.now();
+      } finally {
+        refreshing = undefined;
+      }
+    })());
 
   await ensureProjectContainerRunning({ projectId, accountId });
   const name = `project-${projectId}`;
@@ -591,14 +605,13 @@ export async function launchClaudeSubscriptionInProject(
     allowedMethods: ["POST"],
     credentialHeader: "authorization",
     credentialValue: async () => {
-      if (Date.now() - checkedAt > CREDENTIAL_RECHECK_MS) {
-        token = await tokenOf();
-        checkedAt = Date.now();
-      }
+      if (Date.now() - checkedAt > CREDENTIAL_RECHECK_MS) await refreshToken();
       return `Bearer ${token}`;
     },
     tokenPrefix: RELAY_TOKEN_PREFIX,
   });
+  // Until this launch is released (its relay closed).
+  let relayOpen = true;
 
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
   try {
@@ -710,6 +723,7 @@ export async function launchClaudeSubscriptionInProject(
     const { closed, stop } = superviseInProjectProcess({
       proc,
       release: async () => {
+        relayOpen = false;
         relay.close();
         await lease.close().catch(() => {});
       },
@@ -720,6 +734,23 @@ export async function launchClaudeSubscriptionInProject(
       sessionPolicy: "default",
       pinnedSettingsEnv: claudeRelaySettingsEnv(relay.baseUrl),
       subscriptionAuth: "oauth-token",
+      // Asked before every turn: this account's credential, resolved again
+      // now and handed to the relay, since the agent's own identity read
+      // goes to Anthropic directly (not through the relay) and can fail.
+      hostSubscriptionIdentity: async ({ nonce }) => {
+        // Only while this launch's relay serves the turn. Revoked: throws.
+        // Replaced under the same id: the relay sends the new token next.
+        if (!relayOpen) return undefined;
+        await refreshToken();
+        if (!relayOpen) return undefined;
+        return {
+          kind: "in-project-relay",
+          projectId,
+          accountId,
+          credentialId,
+          nonce,
+        };
+      },
       // The harness calls these around every turn of the qualified Claude
       // Code harness (endConnectorTurn in its finally): a turn makes the
       // relay session usable, and its end starts the fixed time after which
