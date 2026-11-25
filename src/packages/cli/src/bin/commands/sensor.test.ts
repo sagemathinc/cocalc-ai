@@ -280,6 +280,8 @@ test("the earlier run's whole group gone: a restart runs the command again", asy
   process.kill(-child.pid!, "SIGKILL");
   for (let i = 0; i < 50 && groupAlive(child.pid!); i++) await sleep(100);
   assert.equal(groupAlive(child.pid!), false);
+  // A genuine restart: the earlier run recorded no exit code.
+  assert.equal(existsSync(join(dir, `${id}.json`)), false);
   const again = restartAttempt(home, id, `echo run >> ${JSON.stringify(runs)}`);
   assert.equal(again.status, 0);
   assert.match(again.stdout, /\[exit 0\]/);
@@ -288,6 +290,40 @@ test("the earlier run's whole group gone: a restart runs the command again", asy
   assert.deepEqual(JSON.parse(readFileSync(join(dir, `${id}.json`), "utf8")), {
     exit_code: 0,
   });
+});
+
+test("the earlier run finished just before a restart: no second launch, its exit code reported", async () => {
+  const home = mkdtempSync(join(tmpdir(), "sensor-exit-finished-"));
+  const id = "5e7f9a1b-2c3d-4e5f-8a9b-0c1d2e3f4a5b";
+  const runs = join(home, "runs");
+  const command = `echo run >> ${JSON.stringify(runs)}; exit 4`;
+  const { child, dir, env } = await startExitWatcher(home, id, command);
+  const status = join(dir, `${id}.json`);
+  for (let i = 0; i < 50 && groupAlive(child.pid!); i++) await sleep(100);
+  assert.equal(groupAlive(child.pid!), false, "it finished, group and all");
+  assert.deepEqual(JSON.parse(readFileSync(status, "utf8")), { exit_code: 4 });
+  // The watcher saw no exit code a moment before, and asked for a restart.
+  const again = restartAttempt(home, id, command);
+  assert.equal(again.status, 0);
+  assert.match(again.stdout, /not started again: its earlier run finished/);
+  assert.equal(readFileSync(runs, "utf8"), "run\n", "no second launch");
+  assert.deepEqual(JSON.parse(readFileSync(status, "utf8")), { exit_code: 4 });
+  assert.equal(existsSync(join(dir, `${id}.unknown`)), false);
+  // The next check reports the real exit code.
+  const script = sensorWatchScript({
+    type: "exit",
+    id,
+    command,
+    restart: true,
+  })!;
+  const wake = parseSensorWake(
+    execFileSync("python3", ["-c", script], {
+      cwd: home,
+      env,
+      encoding: "utf8",
+    }),
+  )!;
+  assert.equal((wake.data as any).exit_code, 4);
 });
 
 test("a restart with no record of the earlier run does not run it", () => {

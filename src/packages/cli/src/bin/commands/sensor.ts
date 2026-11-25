@@ -216,7 +216,9 @@ export function watchedPath(path: string, cwd = process.cwd()): string {
  * that the earlier run's group is gone: another pid namespace (the project
  * container restarted), no process left in the group, or its number now
  * taken by a new leader. Otherwise it leaves the unknown file and does not
- * run, and the watcher wakes: the command's state is unknown.
+ * run, and the watcher wakes: the command's state is unknown. Nor does it
+ * run when the earlier run finished meanwhile (its exit code is recorded):
+ * the watcher reports that exit code.
  */
 /** The project terminal an exit watcher's command runs in; a restart gets
  * a new one. */
@@ -243,6 +245,11 @@ export function exitWatcherArgs(
     'gone() { local ns0 pg0 t0 p; read -r ns0 pg0 t0 2>/dev/null < "$1" || return 1; [[ $pg0 =~ ^[0-9]+$ ]] || return 1; if [ "$ns0" != - ] && [ -n "$ns" ] && [ "$ns0" != "$ns" ]; then return 0; fi; if st "$pg0"; then [ -n "$t0" ] && [ "${F[19]}" != "$t0" ] && return 0; return 1; fi; for p in /proc/[0-9]*; do st "${p#/proc/}" && [ "${F[2]}" = "$pg0" ] && return 1; done; return 0; }',
     'mkdir -p -- "$2"',
     'if [ "$9" = 1 ] && ! gone "$7"; then echo unknown > "$8"; echo "[not started again: its earlier run may still be running]"; exit 0; fi',
+    // The earlier run's shell writes its exit code before it (and so its
+    // group) ends: with the group gone, a missing exit code means it never
+    // finished. If it did finish, the watcher's next check reports that.
+    // So a restart never starts while an exit code is recorded.
+    'if [ "$9" = 1 ] && [ -e "$4" ]; then echo "[not started again: its earlier run finished]"; exit 0; fi',
     'pg=; lt=; if st $$; then pg=${F[2]}; st "$pg" && lt=${F[19]}; fi',
     `printf '%s %s %s\\n' "\${ns:--}" "$pg" "$lt" > "$7.tmp" && mv -- "$7.tmp" "$7"`,
     'touch -- "$5"',
