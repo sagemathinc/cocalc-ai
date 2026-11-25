@@ -199,8 +199,8 @@ Codex and Claude have separate choices.
 
 For Claude, **Project secret (ANTHROPIC_API_KEY)** uses a configured project
 key. On cocalc.ai, Claude has no CoCalc Membership option: you pay for it
-with your own subscription or Anthropic key (a site administrator can enable
-site-funded Claude; it is off by default). Agents with project-managed credentials are not
+with your own subscription or Anthropic key. On another site, an administrator
+may enable site-funded Claude (off by default). Agents with project-managed credentials are not
 changed by this control.
 
 These choices belong to your account and are stored on the server, so a browser
@@ -384,7 +384,8 @@ For unavailable-model messages, see
    Changes apply to future turns, not work already admitted.
 
 On cocalc.ai you pay for Claude directly: CoCalc membership does not include
-Claude unless your site's administrator has enabled site-funded Claude. A
+Claude. On another site, an administrator may enable site-funded Claude (off by
+default). A
 personal subscription uses that provider plan's allowance;
 API-key usage is billed by Anthropic. These modes have different credential
 and tool boundaries: see [Claude Code access and billing](/docs/ai/claude-code).
