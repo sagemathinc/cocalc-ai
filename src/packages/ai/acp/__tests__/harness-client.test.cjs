@@ -870,7 +870,7 @@ function hostProof(overrides = {}) {
   });
 }
 
-async function inProjectProofClient(t, flags, extra) {
+async function inProjectProofClient(t, flags, extra, sessionId) {
   const child = spawn(
     process.execPath,
     [...profile.args, "--claude-adapter", "--in-project", ...flags],
@@ -918,7 +918,7 @@ async function inProjectProofClient(t, flags, extra) {
     "claude-subscription-controller",
   );
   t.after(() => client.dispose());
-  await client.open();
+  await client.open(sessionId);
   return client;
 }
 
@@ -1076,6 +1076,121 @@ test("the controller path ignores a host proof: a silent controller agent still 
     /not reported a verifiable subscription identity/,
   );
   assert.equal(asked, 0);
+});
+
+test("the project's instructions cancel the controller's and name the built-in tools", () => {
+  const {
+    harnessSessionGuidance,
+    harnessProjectSessionInstructions,
+    PROJECT_MODE_SESSION_NOTE,
+  } = require("../../dist/acp/harness-context");
+  // what a new session in the project starts with: no controller tools
+  const guidance = harnessSessionGuidance(false);
+  assert.doesNotMatch(
+    guidance,
+    /mcp__|cocalc_project_|project_exec|\/workspace/,
+  );
+  const instructions = harnessProjectSessionInstructions();
+  assert.ok(instructions.startsWith(`${guidance}\n\n`));
+  assert.ok(instructions.endsWith(PROJECT_MODE_SESSION_NOTE));
+  // the controller's rule, named as no longer valid
+  const rule =
+    "Project files and CLI commands are accessible only through the project tools described in these instructions.";
+  assert.ok(harnessSessionGuidance(true).includes(rule));
+  assert.ok(
+    PROJECT_MODE_SESSION_NOTE.includes(`"${rule}" None of that applies`),
+  );
+  assert.match(PROJECT_MODE_SESSION_NOTE, /those tools are not attached/);
+  assert.match(
+    PROJECT_MODE_SESSION_NOTE,
+    /built-in tools \(Bash, Read, Edit, Write\)/,
+  );
+  // no release-specific server name is presented as available
+  assert.doesNotMatch(PROJECT_MODE_SESSION_NOTE, /cocalc_project_[0-9a-f]{12}/);
+});
+
+test("in the project, a session moved from the controller gets the project's instructions once", async (t) => {
+  const { createHash } = require("node:crypto");
+  const {
+    harnessProjectSessionInstructions,
+  } = require("../../dist/acp/harness-context");
+  const current = createHash("sha256")
+    .update(harnessProjectSessionInstructions())
+    .digest("hex");
+  // the controller recorded its own instructions for this session
+  const versions = new Map([["fixture-session", "controller-version"]]);
+  const sets = [];
+  const store = {
+    get: (id) => versions.get(id),
+    set: (id, version) => {
+      sets.push([id, version]);
+      versions.set(id, version);
+    },
+  };
+  const firstLine = async (client) => {
+    const events = [];
+    await client.prompt("hello", async (event) => events.push(event));
+    return events
+      .filter((event) => event.type === "message")
+      .map((event) => event.text)
+      .join("");
+  };
+  const resumeOnce = async () => {
+    const client = await inProjectProofClient(
+      t,
+      ["--subscription-status", "--echo-prompt-start"],
+      { hostSubscriptionIdentity: hostProof(), sessionInstructions: store },
+      "fixture-session",
+    );
+    const lines = [await firstLine(client), await firstLine(client)];
+    await client.dispose();
+    return lines;
+  };
+  // the first turn after the move carries them; the next is plain
+  assert.deepEqual(await resumeOnce(), [
+    "[CoCalc session instructions update]",
+    "hello",
+  ]);
+  assert.deepEqual(sets, [["fixture-session", current]]);
+  // resumed again: recorded, so not sent again
+  assert.deepEqual(await resumeOnce(), ["hello", "hello"]);
+  assert.deepEqual(sets, [["fixture-session", current]]);
+});
+
+test("in the project, a new session starts with the project's instructions recorded", async (t) => {
+  const { createHash } = require("node:crypto");
+  const {
+    harnessProjectSessionInstructions,
+  } = require("../../dist/acp/harness-context");
+  const sets = [];
+  const client = await inProjectProofClient(
+    t,
+    ["--subscription-status", "--echo-prompt-start"],
+    {
+      hostSubscriptionIdentity: hostProof(),
+      sessionInstructions: {
+        get: () => undefined,
+        set: (id, version) => sets.push([id, version]),
+      },
+    },
+  );
+  const events = [];
+  await client.prompt("hello", async (event) => events.push(event));
+  assert.equal(
+    events
+      .filter((event) => event.type === "message")
+      .map((event) => event.text)
+      .join(""),
+    "hello",
+  );
+  assert.deepEqual(sets, [
+    [
+      "fixture-session",
+      createHash("sha256")
+        .update(harnessProjectSessionInstructions())
+        .digest("hex"),
+    ],
+  ]);
 });
 
 test("a resumed session gets newer CoCalc instructions with its next turn, once", async (t) => {

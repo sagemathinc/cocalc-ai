@@ -21,6 +21,7 @@ import { claudeParentToolUseId } from "./claude-subagents";
 import { harnessQuestionForm } from "./harness-questions";
 import {
   harnessHasSessionGuidance,
+  harnessProjectSessionInstructions,
   harnessSessionGuidance,
 } from "./harness-context";
 import type { Readable, Writable } from "node:stream";
@@ -992,7 +993,12 @@ export class AcpHarnessClient {
           ? [this.process.systemPromptAppend, harnessSessionGuidance(true)]
               .filter(Boolean)
               .join("\n\n")
-          : "";
+          : // A subscription session in the project may have been resumed
+            // from the controller, whose instructions it still holds.
+            this.subscription() &&
+              harnessHasSessionGuidance(this.binding.profile)
+            ? harnessProjectSessionInstructions()
+            : "";
       this.instructionsUpdate = undefined;
       // A subscription agent in the project needs its route pinned (see
       // HarnessProcess.pinnedSettingsEnv): without it, refuse to start.

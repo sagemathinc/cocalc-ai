@@ -33,6 +33,25 @@ When the turn context says workbench is not enabled: ${artifactPublicationGuidan
 }
 
 /**
+ * A Claude subscription session that ran in the isolated controller can be
+ * resumed in the project (its transcript is moved there). Its system prompt
+ * still holds the controller's instructions, which say to reach the project
+ * only through tools that are not attached in the project.
+ */
+export const PROJECT_MODE_SESSION_NOTE = `[CoCalc project mode]
+This session runs inside the CoCalc project itself, not in an isolated subscription controller. Earlier instructions or turns in this conversation may describe a controller: a project tool server with mcp__cocalc_project_* tools (project_exec, project_read_file and others), a /workspace scratch directory, or the rule "Project files and CLI commands are accessible only through the project tools described in these instructions." None of that applies any more, and those tools are not attached. Your built-in tools (Bash, Read, Edit, Write) are how you reach the project's files and run its commands: use them directly, in the turn context's project working directory.
+[/CoCalc project mode]`;
+
+/**
+ * The instructions of a Claude subscription session run in the project: the
+ * session guidance it starts with, and the note for one resumed from the
+ * controller. Sent once to a resumed session that has not had them.
+ */
+export function harnessProjectSessionInstructions(): string {
+  return `${harnessSessionGuidance(false)}\n\n${PROJECT_MODE_SESSION_NOTE}`;
+}
+
+/**
  * Only Claude Code reads `_meta.systemPrompt`. Other (custom) ACP harnesses
  * may ignore unknown metadata, so they keep the session guidance inline.
  */
