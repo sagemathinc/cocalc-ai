@@ -11,7 +11,7 @@ export type DocsAudience =
   | "teams";
 
 export type DocsEntryStatus = "draft" | "ready";
-export type DocsFeature = "compute-vms";
+export type DocsFeature = "compute-vms" | "site-funded-claude";
 export type DocsProduct = "cocalc" | "plus";
 export type DocsSiteProfile = "cocalc-ai";
 export type DocsVisibility = "public" | "signed-in" | "admin";

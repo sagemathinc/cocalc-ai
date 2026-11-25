@@ -197,6 +197,23 @@ assertCasePreservesVisibility(
   { features: ["compute-vms"] },
   ["public", "compute"],
 );
+const siteFundedClaudeEntry = entry({
+  id: "site-funded-claude",
+  requiredFeatures: ["site-funded-claude"],
+  title: "Use Markdown",
+});
+assertCasePreservesVisibility(
+  "site-funded Claude off",
+  [publicEntry, siteFundedClaudeEntry],
+  {},
+  ["public"],
+);
+assertCasePreservesVisibility(
+  "site-funded Claude on",
+  [publicEntry, siteFundedClaudeEntry],
+  { features: ["site-funded-claude"] },
+  ["public", "site-funded-claude"],
+);
 assertCasePreservesVisibility(
   "site profile",
   [

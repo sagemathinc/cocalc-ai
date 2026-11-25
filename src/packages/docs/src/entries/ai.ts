@@ -5,6 +5,7 @@
 
 import type { DocsEntry } from "../types";
 import { CLAUDE_CODE_BODY } from "../content/claude-code";
+import { CLAUDE_MEMBERSHIP_BODY } from "../content/claude-membership";
 import { CLAUDE_SUBSCRIPTION_IN_PROJECT_BODY } from "../content/claude-subscription-in-project";
 import { AGENT_FEATURES_BODY } from "../content/agent-features";
 import { AGENT_MEMORY_BODY } from "../content/agent-memory";
@@ -28,15 +29,15 @@ export const AI_ENTRIES: DocsEntry[] = [
     body: AGENT_FEATURES_BODY.trim(),
     category: "AI",
     id: "ai.agent-features",
-    lastReviewed: "2026-09-28",
+    lastReviewed: "2026-11-23",
     noActionReason:
       "This reference compares workflows; follow its linked guides to configure or start work.",
     slug: "ai/agent-features",
     status: "ready",
     searchKeywords:
-      "Codex Claude Code feature comparison matrix parity Agent Networks agent-to-agent messaging cross-project workbench artifacts goals schedules subagents",
+      "Codex Claude Code feature comparison matrix parity Agent Networks agent-to-agent messaging cross-project workbench artifacts goals schedules subagents build applications results compute connectors browser APIs",
     summary:
-      "Compare Codex and Claude Code workflows, payment methods, prerequisites, and current limitations.",
+      "Find a workflow, then compare Codex and Claude Code tools, access, coordination, and results.",
     title: "Agent features: Codex and Claude Code",
   },
   {
@@ -50,8 +51,25 @@ export const AI_ENTRIES: DocsEntry[] = [
     slug: "ai/claude-code",
     status: "ready",
     summary:
-      "Use Claude Code in CoCalc: membership, subscription, or API-key access, project tools, billing, and permissions.",
+      "Use Claude Code in CoCalc: subscription or API-key access, project tools, billing, and permissions.",
     title: "Claude Code in CoCalc",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CLAUDE_MEMBERSHIP_BODY.trim(),
+    category: "AI",
+    id: "ai.claude-membership",
+    lastReviewed: "2026-11-25",
+    noActionReason:
+      "Choose CoCalc Membership as the payment method in Claude settings; nothing to start here.",
+    requiredFeatures: ["site-funded-claude"],
+    searchKeywords:
+      "Claude Code CoCalc Membership included Claude site-funded allowance relay Haiku",
+    slug: "ai/claude-membership",
+    status: "ready",
+    summary:
+      "Run Claude Code agents on your membership's included AI allowance, through a CoCalc relay.",
+    title: "Included Claude with CoCalc Membership",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],
@@ -130,7 +148,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     searchKeywords:
       "Codex Claude Code Anthropic OpenAI ChatGPT Pro Max membership subscription payment method API key credentials",
     summary:
-      "Choose membership, subscription, or API-key access for Codex and Claude Code, and configure keys for project code.",
+      "Choose subscription, API-key or, where available, membership access for Codex and Claude Code, and configure keys for project code.",
     title: "Connect AI access",
   },
   {
@@ -154,8 +172,10 @@ export const AI_ENTRIES: DocsEntry[] = [
     lastReviewed: "2026-09-07",
     slug: "ai/codex-chat",
     status: "ready",
+    searchKeywords:
+      "Codex agent task application analyze build artifact review results browser chat revise",
     summary:
-      "Use Codex inside a durable project workspace with files, terminals, and notebooks.",
+      "Start a task with Codex, review its results beside the chat, and continue with changes.",
     title: "Open Codex chat",
   },
   {
@@ -243,13 +263,13 @@ export const AI_ENTRIES: DocsEntry[] = [
       "/public/docs/codex-chat-3008e11e.webp",
       "Codex working in a CoCalc project",
     ),
-    lastReviewed: "2026-09-07",
+    lastReviewed: "2026-11-23",
     noActionReason:
       "This workflow uses controls in an existing chat or account; start from the linked Open Codex chat guide.",
     slug: "ai/codex-notifications",
     status: "ready",
     summary:
-      "Choose completion notifications and inspect or stop ongoing Codex sessions.",
+      "Choose how agents notify you when they need attention or a turn fails, and inspect or stop ongoing Codex sessions.",
     title: "Notifications and session activity",
   },
   {

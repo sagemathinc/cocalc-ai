@@ -67,8 +67,10 @@ export const DOCUMENTATION_ENTRIES: DocsEntry[] = [
     lastReviewed: "2026-05-24",
     slug: "documentation/browser",
     status: "ready",
+    searchKeywords:
+      "documentation search private notes starred learned export import CLI skill-context version bundled agents",
     summary:
-      "Search version-matched CoCalc-ai docs from the public site or inside a project.",
+      "Find a guide, save private notes, and retrieve documentation with the CoCalc CLI.",
     title: "Use the docs browser",
   },
   {

@@ -154,7 +154,5 @@ test("internal links and a browser history route show their article", async () =
   );
   fireEvent.popState(window);
   await waitFor(() => expect(screen.getByRole("searchbox")).toHaveValue(""));
-  expect(
-    screen.getByRole("heading", { name: "Choose compute for research" }),
-  ).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Choose compute" })).toBeVisible();
 });

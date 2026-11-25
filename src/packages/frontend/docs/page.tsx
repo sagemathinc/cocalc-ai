@@ -78,14 +78,19 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const computeVmEnabled =
     useTypedRedux("customize", "compute_vm_enabled") === true;
+  const siteFundedClaudeEnabled =
+    useTypedRedux("customize", "site_funded_claude_enabled") === true;
   const docsAccess = useMemo<DocsAccess>(
     () => ({
-      features: computeVmEnabled ? ["compute-vms"] : [],
+      features: [
+        ...(computeVmEnabled ? ["compute-vms" as const] : []),
+        ...(siteFundedClaudeEnabled ? ["site-funded-claude" as const] : []),
+      ],
       includeAdmin: isAdmin,
       includeSignedIn: !!accountId,
       siteProfile: docsSiteProfileFromLocation(),
     }),
-    [accountId, computeVmEnabled, isAdmin],
+    [accountId, computeVmEnabled, isAdmin, siteFundedClaudeEnabled],
   );
   const docsPrivateState = useDocsPrivateState(accountId);
   const actionAvailability = useMemo(

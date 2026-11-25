@@ -18,7 +18,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
-  TimeAgo: ({ date }: { date: string }) => <span>at {date}</span>,
+  TimeAgo: ({ date }: { date: string | Date }) => (
+    <span>at {String(date)}</span>
+  ),
 }));
 
 const hour = 3600;
@@ -188,9 +190,15 @@ test("with Auto: which subscriptions it uses, and how long they last", async () 
     (screen.getByRole("radio", { name: /Auto/ }) as HTMLInputElement).checked,
   ).toBe(true);
   // Both subscriptions have room; office has used 60% of its week.
-  expect(screen.getByRole("status").textContent).toMatch(
+  const status = screen.getByRole("status").textContent;
+  expect(status).toMatch(
     /2 of 2 subscriptions with room now\. About 1\.4 of 2 weekly limits left/,
   );
+  // The rate, and how fast the subscriptions renew (2 a week), to compare.
+  expect(status).toMatch(
+    /Estimated at about \d+\.\d+ weekly limits a day from the current weeks' averages \(likely high until there is more recent history\); 2 subscriptions renew about 0\.29 a day\./,
+  );
+  expect(status).toMatch(/counting the resets on the way/);
   const office = screen.getByRole("checkbox", { name: "office" });
   expect((office as HTMLInputElement).checked).toBe(true);
   // API keys are never in Auto.
@@ -203,6 +211,96 @@ test("with Auto: which subscriptions it uses, and how long they last", async () 
   await waitFor(() => expect(onCredentials).toHaveBeenCalled());
   const rows = (onCredentials.mock.calls[0] as any[])[0];
   expect(rows[0].metadata.claude_pool_excluded).toBe(true);
+});
+
+test("with recent readings, the rate is measured over them", () => {
+  // office's week went from 30% to 60% over the last 24 hours.
+  const withHistory = credentials.map((row: any) =>
+    row.id === office
+      ? {
+          ...row,
+          metadata: {
+            ...row.metadata,
+            claude_usage_history: [
+              {
+                at: (now - 24 * hour) * 1000,
+                week: 0.3,
+                resets_at: now + 72 * hour,
+              },
+              {
+                at: (now - 12 * hour) * 1000,
+                week: 0.45,
+                resets_at: now + 72 * hour,
+              },
+            ],
+          },
+        }
+      : row,
+  );
+  render(
+    <ClaudeCredentialList
+      credentials={withHistory}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  expect(screen.getByRole("status").textContent).toMatch(
+    /Using about 0\.30 weekly limits a day \(over the last 24 hours\); 2 subscriptions renew about 0\.29 a day\. At that rate, 3 subscriptions like these would keep up; you have 2\./,
+  );
+});
+
+test("a measured rate of zero is a rate: used earlier, idle lately", () => {
+  // office's week is at 60%, but unchanged over the last 12 hours.
+  const idle = credentials.map((row: any) =>
+    row.id === office
+      ? {
+          ...row,
+          metadata: {
+            ...row.metadata,
+            claude_usage_history: [
+              {
+                at: (now - 12 * hour) * 1000,
+                week: 0.6,
+                resets_at: now + 72 * hour,
+              },
+            ],
+          },
+        }
+      : row,
+  );
+  render(
+    <ClaudeCredentialList
+      credentials={idle}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  const status = screen.getByRole("status").textContent ?? "";
+  expect(status).toMatch(
+    /Using about 0\.00 weekly limits a day \(over the last 12 hours\)/,
+  );
+  expect(status).toMatch(/they don't all run out within a week/);
+  expect(status).not.toMatch(/No usage rate/);
+});
+
+test("with no usage to go by, there is no rate and no forecast", () => {
+  const unused = credentials.map((row: any) => {
+    const { claude_usage: _unused, ...metadata } = row.metadata;
+    return { ...row, metadata };
+  });
+  render(
+    <ClaudeCredentialList
+      credentials={unused}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  const status = screen.getByRole("status").textContent ?? "";
+  expect(status).toMatch(/No usage rate is available to forecast from\./);
+  expect(status).not.toMatch(/weekly limits a day|At that rate/);
 });
 
 test("an Auto with nothing left to use says so", () => {
@@ -218,4 +316,54 @@ test("an Auto with nothing left to use says so", () => {
     />,
   );
   expect(screen.getByText(/Auto has no subscription to use/)).toBeTruthy();
+});
+
+test("subscriptions needed: each renews one weekly limit a week", () => {
+  const { claudePoolSubscriptionsNeeded } = require("../claude-pool");
+  expect(claudePoolSubscriptionsNeeded(1.6)).toBe(12);
+  expect(claudePoolSubscriptionsNeeded(9 / 7)).toBe(9);
+  expect(claudePoolSubscriptionsNeeded(0.3)).toBe(3);
+  expect(claudePoolSubscriptionsNeeded(0)).toBe(1);
+});
+
+test("how much more the pool could take, and which subscription goes first", () => {
+  render(
+    <ClaudeCredentialList
+      credentials={credentials}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  const status = screen.getByRole("status").textContent ?? "";
+  expect(status).toMatch(
+    /Up to about \d+\.\d+ weekly limits a day would last the coming week, counting the resets on the way and what each subscription loses unused when it resets\./,
+  );
+  expect(status).toMatch(
+    /Next to reset: \S+, with \d+% left, at .*: the room it has left then is lost\./,
+  );
+});
+
+test("the pace line compares the most that lasts with the recent rate", () => {
+  const { paceLine } = require("../claude-pool");
+  const base = { members: 10, available: 10, remaining: 3.85 };
+  expect(paceLine({ ...base, maxPerDay: 1.98, usedPerDay: 1.02 })).toBe(
+    "Up to about 2.0 weekly limits a day would last the coming week, counting the resets on the way and what each subscription loses unused when it resets. That is about 1.9 times the recent rate: there is room to use more.",
+  );
+  expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 1.6 })).toMatch(
+    /That is less than the recent rate\.$/,
+  );
+  expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 1.0 })).toMatch(
+    /That is about the recent rate\.$/,
+  );
+  // A measured rate of zero is not "about" any pace.
+  expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 0 })).toMatch(
+    /Nothing was used lately: there is room to use more\.$/,
+  );
+  expect(paceLine({ ...base, maxPerDay: 1.0, usedPerDay: 0 })).not.toMatch(
+    /about the recent rate|times/,
+  );
+  // Without a rate to compare with, there is nothing to pace against.
+  expect(paceLine({ ...base, maxPerDay: 0.5 })).toBeUndefined();
+  expect(paceLine(base)).toBeUndefined();
 });
