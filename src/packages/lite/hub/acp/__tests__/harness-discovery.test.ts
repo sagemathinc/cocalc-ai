@@ -111,11 +111,20 @@ test("fork clones native context without loading or configuring the source", asy
     threadId: "thread",
     sessionId: request.session_id,
   });
-  expect(client.fork).toHaveBeenCalledWith(request.session_id);
+  expect(client.fork).toHaveBeenCalledWith(request.session_id, {
+    upToMessageId: undefined,
+  });
   expect(client.open).not.toHaveBeenCalled();
   expect(client.configure).not.toHaveBeenCalled();
   expect(client.prompt).not.toHaveBeenCalled();
   expect(client.dispose).toHaveBeenCalledTimes(1);
+});
+
+test("fork up to a message passes the fork point to the harness", async () => {
+  await forkHarnessSession(request, { upToMessageId: "msg_01" });
+  expect(client.fork).toHaveBeenCalledWith(request.session_id, {
+    upToMessageId: "msg_01",
+  });
 });
 
 test("turn launcher forwards the execution-time session rather than a stale admission snapshot", async () => {

@@ -1741,6 +1741,16 @@ test("agent adapter persists streaming and stop before summary and reuses its se
   assert.equal(launches(), 1);
 });
 
+test("a completed turn's summary names its last assistant message, for copies", async (t) => {
+  const { agent, request, events } = adapter(t, ["--message-ids"]);
+  await agent.evaluate(request);
+  assert.match(events.at(-1).lastMessageId, /^msg_fixture_\d+$/);
+  // Without message ids from the harness, there is none.
+  const plain = adapter(t);
+  await plain.agent.evaluate(plain.request);
+  assert.equal("lastMessageId" in plain.events.at(-1), false);
+});
+
 test("a completed turn is persisted (turnCompleted) before its summary", async (t) => {
   const seen = [];
   let events;
@@ -3530,6 +3540,11 @@ test("native session forks negotiate support, preserve the source and never load
         sessionId: "forked-fixture-session",
       });
       assert.equal(client.sessionId, undefined);
+      // Up to a message: the fork point goes in the adapter's _meta field.
+      assert.deepEqual(
+        await client.fork("source-session", { upToMessageId: "msg_01abc" }),
+        { sessionId: "forked-at-1-msg_01abc" },
+      );
     }
     await client.dispose();
   }

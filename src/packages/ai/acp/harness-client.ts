@@ -648,8 +648,16 @@ export class AcpHarnessClient {
     return harnessSessionControls(this.session ?? {});
   }
 
-  /** Clone persisted native context without loading it or starting inference. */
-  async fork(sessionId: string): Promise<{ sessionId: string }> {
+  /**
+   * Clone persisted native context without loading it or starting inference.
+   * With upToMessageId (an assistant message's ACP message id), the copy ends
+   * at that message: Claude Code's adapter takes the fork point in the
+   * _meta.jetbrains.air.fork field it defines for this.
+   */
+  async fork(
+    sessionId: string,
+    { upToMessageId }: { upToMessageId?: string } = {},
+  ): Promise<{ sessionId: string }> {
     this.assertRuntimeOpen();
     if (this.session || this.active || this.opening)
       throw new HarnessError("unavailable", "ACP fork requires a fresh client");
@@ -668,6 +676,15 @@ export class AcpHarnessClient {
             this.sessionPolicy === "claude-subscription-controller"
               ? "/workspace"
               : this.binding.profile.cwd,
+          ...(upToMessageId
+            ? {
+                _meta: {
+                  jetbrains: {
+                    air: { fork: { version: 1, messageId: upToMessageId } },
+                  },
+                },
+              }
+            : {}),
         }),
         "session/fork",
         false,

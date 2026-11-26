@@ -80,7 +80,10 @@ export async function discoverHarnessControls(request: AcpRequest) {
   });
 }
 
-export async function forkHarnessSession(request: AcpRequest) {
+export async function forkHarnessSession(
+  request: AcpRequest,
+  { upToMessageId }: { upToMessageId?: string } = {},
+) {
   if (!request.session_id)
     throw Error("This agent has no saved context to copy yet");
   return await withTemporaryHarness(
@@ -92,9 +95,39 @@ export async function forkHarnessSession(request: AcpRequest) {
         profile: prepared.runtime!.profile,
         credential: prepared.harness_credential!,
       });
-      return await client.fork(request.session_id!);
+      return await client.fork(request.session_id!, { upToMessageId });
     },
     true,
+  );
+}
+
+/**
+ * Where to copy an agent whose turn is running: the last assistant message of
+ * its latest completed turn in the same session. Only Claude Code's adapter
+ * takes a fork point; other harnesses, and an agent with no completed turn in
+ * this session, must wait.
+ */
+export function runningForkPoint({
+  claude,
+  sessionId,
+  forkPoint,
+}: {
+  claude: boolean;
+  sessionId: string;
+  forkPoint: unknown;
+}): string {
+  const point = forkPoint as { session_id?: unknown; message_id?: unknown };
+  if (
+    claude &&
+    point?.session_id === sessionId &&
+    typeof point.message_id === "string" &&
+    point.message_id.trim()
+  )
+    return point.message_id.trim();
+  throw Error(
+    claude
+      ? "This agent has no completed turn to copy yet; wait for its running turn to finish"
+      : "Wait for this agent's running turn to finish before copying it",
   );
 }
 

@@ -285,6 +285,9 @@ export interface ChatThreadConfigRecord {
   // The context generation the saved session (agent_session_id, or
   // acp_config.sessionId) belongs to; see storedSessionInContext.
   agent_session_generation?: string;
+  // The last assistant message of the latest completed turn of that session:
+  // copying the agent while a turn runs copies it up to there.
+  agent_session_fork_point?: { session_id: string; message_id: string };
   // The latest "Context cleared" line (id and date); see threadContext.
   context_generation?: string;
   context_cleared_at?: string;

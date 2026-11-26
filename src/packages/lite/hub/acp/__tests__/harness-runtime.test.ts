@@ -8,6 +8,7 @@ import {
   harnessProfileKey,
   assertConfiguredHarnessRuntime,
   harnessForkSource,
+  runningForkPoint,
 } from "../harness-runtime";
 import {
   pinCodexCredentialAtAdmission,
@@ -142,6 +143,25 @@ test("fork source must match the saved native ID and complete runtime snapshot",
     },
   ])
     expect(() => harnessForkSource({ ...source, ...patch })).toThrow();
+});
+test("a running agent is copied up to its last completed turn, only for Claude Code", () => {
+  const forkPoint = { session_id: "s1", message_id: "msg_01" };
+  expect(runningForkPoint({ claude: true, sessionId: "s1", forkPoint })).toBe(
+    "msg_01",
+  );
+  // No completed turn in this session (none yet, or one of an older session).
+  for (const point of [
+    undefined,
+    { session_id: "s0", message_id: "msg_01" },
+    { session_id: "s1", message_id: " " },
+  ])
+    expect(() =>
+      runningForkPoint({ claude: true, sessionId: "s1", forkPoint: point }),
+    ).toThrow(/no completed turn to copy yet/);
+  // Other harnesses take no fork point: they still wait.
+  expect(() =>
+    runningForkPoint({ claude: false, sessionId: "s1", forkPoint }),
+  ).toThrow(/Wait for this agent's running turn to finish/);
 });
 // SQLite table modules initialize once per process; share one isolated database.
 beforeAll(() => initAcpDatabase({ filename: ":memory:" }));

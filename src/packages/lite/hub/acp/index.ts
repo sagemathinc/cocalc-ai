@@ -388,6 +388,7 @@ import {
   discoverHarnessControls,
   forkHarnessSession,
   harnessForkSource,
+  runningForkPoint,
   assertAnswerHarnessProfile,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
@@ -3661,9 +3662,19 @@ export class ChatStreamWriter {
           this.threadId = liveThreadId;
           this.registerThreadKey(liveThreadId);
           this.timeTravel?.setThreadId(liveThreadId);
-          void this.persistSessionId(liveThreadId).catch((err) => {
-            logger.debug("persistSessionId(summary) failed", err);
-          });
+          // A completed turn's last message is where a copy made during a
+          // later turn ends.
+          const forkMessageId =
+            this.finishedBy === "summary" &&
+            typeof payload.lastMessageId === "string" &&
+            payload.lastMessageId.trim()
+              ? payload.lastMessageId.trim()
+              : undefined;
+          void this.persistSessionId(liveThreadId, forkMessageId).catch(
+            (err) => {
+              logger.debug("persistSessionId(summary) failed", err);
+            },
+          );
         }
       }
       this.finished = true;
@@ -5060,7 +5071,10 @@ export class ChatStreamWriter {
     }
   }
 
-  public async persistSessionId(sessionId: string): Promise<void> {
+  public async persistSessionId(
+    sessionId: string,
+    forkMessageId?: string,
+  ): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) return;
     const threadId = this.resolvedThreadId();
@@ -5070,11 +5084,29 @@ export class ChatStreamWriter {
     const sameContext = () => !this.contextClearedSinceStart();
     const currentRow = preferredThreadConfigRow(this.syncdb, threadId);
     if (this.runtimeKind === "acp") {
-      if (this.recordField(currentRow, "agent_session_id") !== sessionId)
+      const forkPoint: any = this.toPlainRecord(
+        this.recordField(currentRow, "agent_session_fork_point"),
+      );
+      const newForkPoint =
+        forkMessageId &&
+        (forkPoint?.session_id !== sessionId ||
+          forkPoint?.message_id !== forkMessageId);
+      if (
+        this.recordField(currentRow, "agent_session_id") !== sessionId ||
+        newForkPoint
+      )
         await this.patchThreadConfig(
           {
             agent_session_id: sessionId,
             agent_session_generation: this.contextGeneration,
+            ...(newForkPoint
+              ? {
+                  agent_session_fork_point: {
+                    session_id: sessionId,
+                    message_id: forkMessageId,
+                  },
+                }
+              : {}),
           },
           false,
           sameContext,
@@ -13683,17 +13715,13 @@ async function handleAcpControlRequestNow(
   }
   const client = conatClient;
   if (request.action === "fork_harness_v1") {
-    if (
+    const running =
       hasRunningAcpJobForThread({ project_id, path, thread_id }) ||
       listRunningAcpTurnLeases().some(
         (turn) =>
           turn.project_id === project_id &&
           turn.path === path &&
           turn.thread_id === thread_id,
-      )
-    )
-      throw Error(
-        "Wait for this agent's running turn to finish before copying it",
       );
     const source = await withChatSyncDB({
       client,
@@ -13704,16 +13732,29 @@ async function handleAcpControlRequestNow(
         const value: any = syncdbField(row, "agent_runtime");
         // Never copy a session from before the latest clear.
         const context = hubThreadContext(syncdb, thread_id);
-        return harnessForkSource({
-          runtime: value?.toJS?.() ?? value,
-          sessionId: storedSessionInContext(row, context)
-            ? syncdbField(row, "agent_session_id")
-            : undefined,
-          expectedRuntime: request.expected_runtime,
-          expectedSessionId: request.expected_session_id,
-        });
+        const forkPoint: any = syncdbField(row, "agent_session_fork_point");
+        return {
+          ...harnessForkSource({
+            runtime: value?.toJS?.() ?? value,
+            sessionId: storedSessionInContext(row, context)
+              ? syncdbField(row, "agent_session_id")
+              : undefined,
+            expectedRuntime: request.expected_runtime,
+            expectedSessionId: request.expected_session_id,
+          }),
+          forkPoint: forkPoint?.toJS?.() ?? forkPoint,
+        };
       },
     });
+    // A running Claude Code agent is copied up to its last completed turn;
+    // the running turn's partial transcript is left out.
+    const upToMessageId = running
+      ? runningForkPoint({
+          claude: isQualifiedClaudeCodeProfile(source.runtime.profile),
+          sessionId: source.sessionId,
+          forkPoint: source.forkPoint,
+        })
+      : undefined;
     const result = await forkHarnessSession(
       await withClaudePoolControlCredential({
         project_id,
@@ -13724,6 +13765,7 @@ async function handleAcpControlRequestNow(
         prompt: "",
         chat: { project_id, path, thread_id },
       } as AcpRequest),
+      { upToMessageId },
     );
     return { ok: true, forked_session_id: result.sessionId };
   }

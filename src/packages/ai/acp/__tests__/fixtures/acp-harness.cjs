@@ -104,6 +104,11 @@ const update = (text, sessionId = "fixture-session") =>
       update: {
         sessionUpdate: "agent_message_chunk",
         content: { type: "text", text },
+        // --message-ids: tag chunks with an ACP message id, as
+        // Claude Code's adapter does (its API message id).
+        ...(process.argv.includes("--message-ids")
+          ? { messageId: `msg_fixture_${counter}` }
+          : {}),
       },
     },
   });
@@ -202,11 +207,17 @@ lineReader.on("line", (line) => {
         message.params.cwd,
         process.argv.includes("--claude-adapter") ? "/workspace" : "/tmp",
       );
-      return result(message.id, {
-        sessionId: process.argv.includes("--fork-same-id")
-          ? message.params.sessionId
-          : "forked-fixture-session",
-      });
+      {
+        // A fork point, as Claude Code's adapter takes it.
+        const upTo = message.params._meta?.jetbrains?.air?.fork;
+        return result(message.id, {
+          sessionId: process.argv.includes("--fork-same-id")
+            ? message.params.sessionId
+            : upTo
+              ? `forked-at-${upTo.version}-${upTo.messageId}`
+              : "forked-fixture-session",
+        });
+      }
     case "session/new":
     case "session/load":
     case "session/resume":
