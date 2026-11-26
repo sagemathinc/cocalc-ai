@@ -1,0 +1,17 @@
+# The main program's sections, in order (see assemble.py).
+main/00-header.py
+main/01-load-config.py
+main/02-project-host-derived-port.py
+main/03-build-bootstrap-connection.py
+main/04-apt-update-install.py
+main/05-btrfs-scrub-script.py
+main/06-parse-subid-entries.py
+main/07-repair-host-data-ownership.py
+main/08-remove-old-bootstrap-state.py
+main/09-setup-shared-scratch.py
+main/10-configure-podman.py
+main/11-fetch-master-conat-token.py
+main/12-point-link-at.py
+main/13-set-root-node-bind-service-capability.py
+main/14-configure-runtime-sudoers.py
+main/15-changed-fingerprint-parts.py

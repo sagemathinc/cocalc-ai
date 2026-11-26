@@ -1,5 +1,30 @@
 # Bootstrap Python Publisher
 
+## Source layout
+
+`bootstrap.py` is generated from the files under `parts/` and committed, so
+everything that reads or ships it (the publisher, the host and control-plane
+bundles, the star tarball and the hub route) keeps using this one file.
+
+- `parts/main/*.py`: the top-level program, in the order listed in
+  `parts/manifest.txt`.
+- `parts/embedded/*`: programs that bootstrap.py writes to hosts, stored in
+  their own language. `*.sh.pystr` files are bash kept as Python string-literal
+  source (with its escapes), because those literals are not raw strings.
+
+Edit the parts, then regenerate and check:
+
+```
+python3 assemble.py --write
+python3 assemble.py --check
+python3 assemble.test.py
+```
+
+CI runs the check and the tests (`pnpm test:bootstrap-parts`, part of
+`pnpm test:checks`). Pending changes on other branches to bootstrap.py need to
+be ported into the split files.
+
+
 `bootstrap.py` is served to project hosts during bootstrap. It is now published
 to the software bucket so updates don't require rebuilding the hub bundle.
 
