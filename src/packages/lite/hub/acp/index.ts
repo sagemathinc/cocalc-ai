@@ -388,7 +388,7 @@ import {
   discoverHarnessControls,
   forkHarnessSession,
   harnessForkSource,
-  runningForkPoint,
+  harnessForkPoint,
   assertAnswerHarnessProfile,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
@@ -2471,6 +2471,7 @@ export class ChatStreamWriter {
   private readonly timeTravelOps = new Set<Promise<void>>();
   private timeTravelDisposePromise?: Promise<void>;
   private leaseFinalized = false;
+  private summarySessionSave?: Promise<void>;
   private leaseHeartbeatTimer?: NodeJS.Timeout;
   private lastActivityAt = Date.now();
   private terminalStorageTimeoutMs = ACP_TERMINAL_STORAGE_TIMEOUT_MS;
@@ -3007,6 +3008,13 @@ export class ChatStreamWriter {
         // A finished turn is not a notification: the sidebar shows unseen
         // results. Only failures, which need someone, notify.
         this.setThreadState("complete");
+        // The completed turn's fork point, bounded like the terminal save.
+        if (this.summarySessionSave)
+          await withTimeout({
+            phase: "terminal-session",
+            timeoutMs: this.terminalStorageTimeoutMs,
+            promise: this.summarySessionSave,
+          }).catch((err) => logger.debug("summary session save", err));
         this.finalizeLease("completed");
         return;
       default:
@@ -3670,11 +3678,14 @@ export class ChatStreamWriter {
             payload.lastMessageId.trim()
               ? payload.lastMessageId.trim()
               : undefined;
-          void this.persistSessionId(liveThreadId, forkMessageId).catch(
-            (err) => {
-              logger.debug("persistSessionId(summary) failed", err);
-            },
-          );
+          // Saved before the turn's lease is released (finalizeFinishedTurn),
+          // so the next turn never runs before its point is readable.
+          this.summarySessionSave = this.persistSessionId(
+            liveThreadId,
+            forkMessageId,
+          ).catch((err) => {
+            logger.debug("persistSessionId(summary) failed", err);
+          });
         }
       }
       this.finished = true;
@@ -13715,7 +13726,7 @@ async function handleAcpControlRequestNow(
   }
   const client = conatClient;
   if (request.action === "fork_harness_v1") {
-    const running =
+    const running = () =>
       hasRunningAcpJobForThread({ project_id, path, thread_id }) ||
       listRunningAcpTurnLeases().some(
         (turn) =>
@@ -13746,15 +13757,21 @@ async function handleAcpControlRequestNow(
         };
       },
     });
-    // A running Claude Code agent is copied up to its last completed turn;
-    // the running turn's partial transcript is left out.
-    const upToMessageId = running
-      ? runningForkPoint({
-          claude: isQualifiedClaudeCodeProfile(source.runtime.profile),
-          sessionId: source.sessionId,
-          forkPoint: source.forkPoint,
-        })
-      : undefined;
+    // Claude Code is copied up to its last completed turn whenever that is
+    // known, running or not: a turn that starts while the copy is made can't
+    // reach into it. Without a known point, only an idle agent is copied.
+    const claude = isQualifiedClaudeCodeProfile(source.runtime.profile);
+    const upToMessageId = harnessForkPoint({
+      claude,
+      sessionId: source.sessionId,
+      forkPoint: source.forkPoint,
+    });
+    if (!upToMessageId && running())
+      throw Error(
+        claude
+          ? "This agent has no completed turn to copy yet; wait for its running turn to finish"
+          : "Wait for this agent's running turn to finish before copying it",
+      );
     const result = await forkHarnessSession(
       await withClaudePoolControlCredential({
         project_id,
@@ -13767,6 +13784,11 @@ async function handleAcpControlRequestNow(
       } as AcpRequest),
       { upToMessageId },
     );
+    // Copied whole: a turn that started meanwhile may be in the copy.
+    if (!upToMessageId && running())
+      throw Error(
+        "This agent started a turn while it was being copied; try again",
+      );
     return { ok: true, forked_session_id: result.sessionId };
   }
   if (request.action === "discover_harness_v1") {

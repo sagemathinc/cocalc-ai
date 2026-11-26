@@ -104,12 +104,11 @@ export async function forkHarnessSession(
 }
 
 /**
- * Where to copy an agent whose turn is running: the last assistant message of
- * its latest completed turn in the same session. Only Claude Code's adapter
- * takes a fork point; other harnesses, and an agent with no completed turn in
- * this session, must wait.
+ * Where a copy of an agent ends: the last assistant message of its latest
+ * completed turn in the same session. Only Claude Code's adapter takes a fork
+ * point; otherwise, or with no completed turn in this session, undefined.
  */
-export function runningForkPoint({
+export function harnessForkPoint({
   claude,
   sessionId,
   forkPoint,
@@ -117,7 +116,7 @@ export function runningForkPoint({
   claude: boolean;
   sessionId: string;
   forkPoint: unknown;
-}): string {
+}): string | undefined {
   const point = forkPoint as { session_id?: unknown; message_id?: unknown };
   if (
     claude &&
@@ -126,11 +125,7 @@ export function runningForkPoint({
     point.message_id.trim()
   )
     return point.message_id.trim();
-  throw Error(
-    claude
-      ? "This agent has no completed turn to copy yet; wait for its running turn to finish"
-      : "Wait for this agent's running turn to finish before copying it",
-  );
+  return undefined;
 }
 
 /** Bind a copy to the authoritative saved thread, never a caller-selected ID. */
