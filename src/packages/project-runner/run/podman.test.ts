@@ -1100,7 +1100,7 @@ describe("project-runner podman orphan fallback", () => {
       expect(helperCalls("cleanup-project-cgroup")).toHaveLength(2);
     });
 
-    it("keeps the helper's rejection in a failed stop's error", async () => {
+    it("names a rejected helper call in a failed stop's error without its raw output", async () => {
       noBrowserContainers();
       mockExecuteCode.mockImplementation(async ({ args }) => {
         if (args?.includes("cleanup-project-cgroup")) {
@@ -1109,10 +1109,25 @@ describe("project-runner podman orphan fallback", () => {
         return ok;
       });
 
-      await expect(stop({ project_id: project1 })).rejects.toThrow(
-        "the project container stopped, but cleanup of the project's processes could not be confirmed (killed command 'sudo -n cleanup-project-cgroup')",
+      const err = await stop({ project_id: project1 }).catch((e) => e);
+      expect(err.message).toBe(
+        "the project container stopped, but cleanup of the project's processes could not be confirmed (the cleanup did not finish in time); starting the project again retries it",
       );
+      expect(err.message).not.toContain("sudo");
       expect(helperCalls("cleanup-project-cgroup")).toHaveLength(2);
+    });
+
+    it("names an unrecognized helper failure generically", async () => {
+      noBrowserContainers();
+      mockExecuteCode.mockImplementation(async ({ args }) =>
+        args?.includes("cleanup-project-cgroup")
+          ? { exit_code: 1, stdout: "", stderr: "internal helper detail\n" }
+          : ok,
+      );
+
+      const err = await stop({ project_id: project1 }).catch((e) => e);
+      expect(err.message).toContain("(the cleanup helper reported an error)");
+      expect(err.message).not.toContain("internal helper detail");
     });
 
     it("retries the cleanup once when a stop finds the host cgroup lock busy", async () => {
@@ -1135,8 +1150,9 @@ describe("project-runner podman orphan fallback", () => {
         args?.includes("cleanup-project-cgroup") ? lockBusy : ok,
       );
 
-      await expect(stop({ project_id: project1 })).rejects.toThrow(
-        "the project container stopped, but cleanup of the project's processes could not be confirmed (project cgroup lock timeout)",
+      const err = await stop({ project_id: project1 }).catch((e) => e);
+      expect(err.message).toBe(
+        "the project container stopped, but cleanup of the project's processes could not be confirmed (the host was busy starting or stopping another project); starting the project again retries it",
       );
       expect(helperCalls("cleanup-project-cgroup")).toHaveLength(2);
     });
