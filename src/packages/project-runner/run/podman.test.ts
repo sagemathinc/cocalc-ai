@@ -1036,6 +1036,118 @@ describe("project-runner podman orphan fallback", () => {
     );
   });
 
+  describe("an earlier stop whose cgroup cleanup was not confirmed", () => {
+    const refused = {
+      exit_code: 1,
+      stdout: "",
+      stderr: "Managed job containment unavailable or cleanup unconfirmed\n",
+    };
+    const lockBusy = {
+      exit_code: 1,
+      stdout: "",
+      stderr: "project cgroup lock timeout\n",
+    };
+    const ok = { exit_code: 0, stdout: "", stderr: "" };
+
+    function helperCalls(subcommand: string) {
+      return mockExecuteCode.mock.calls.filter(([opts]) =>
+        opts?.args?.includes(subcommand),
+      );
+    }
+
+    function startProject() {
+      return start({
+        project_id: project1,
+        localPath: async () => ({
+          home: `/tmp/project-${project1}`,
+          quota_applied: true,
+        }),
+        config: {
+          image: "docker.io/library/ubuntu:latest",
+          ssh_port: 30123,
+          http_port: 45123,
+        },
+      });
+    }
+
+    it("retries the cleanup once when a stop finds the host cgroup lock busy", async () => {
+      noBrowserContainers();
+      const cleanup = [lockBusy, ok];
+      mockExecuteCode.mockImplementation(async ({ args }) =>
+        args?.includes("cleanup-project-cgroup") ? cleanup.shift() : ok,
+      );
+
+      await stop({ project_id: project1 });
+
+      const calls = helperCalls("cleanup-project-cgroup");
+      expect(calls).toHaveLength(2);
+      expect(calls[0][0]).toMatchObject({ timeout: 30 });
+    });
+
+    it("reports a stop as failed when the cleanup cannot be confirmed", async () => {
+      noBrowserContainers();
+      mockExecuteCode.mockImplementation(async ({ args }) =>
+        args?.includes("cleanup-project-cgroup") ? lockBusy : ok,
+      );
+
+      await expect(stop({ project_id: project1 })).rejects.toThrow(
+        "the project container stopped, but cleanup of the project's processes could not be confirmed (project cgroup lock timeout)",
+      );
+      expect(helperCalls("cleanup-project-cgroup")).toHaveLength(2);
+    });
+
+    it("cleans up and retries a start once when job admission is refused", async () => {
+      mockProjectStartPodman(project1);
+      const attach = [refused, ok];
+      mockExecuteCode.mockImplementation(async ({ args }) =>
+        args?.includes("attach-prepared-project-runtime") ? attach.shift() : ok,
+      );
+
+      await expect(startProject()).resolves.toMatchObject({
+        state: "running",
+      });
+
+      const attachCalls = helperCalls("attach-prepared-project-runtime");
+      expect(attachCalls).toHaveLength(2);
+      expect(attachCalls[0][0]).toMatchObject({ timeout: 30 });
+      // The failed first start removed its container and confirmed the
+      // cleanup before the second start launched a new one.
+      expect(helperCalls("cleanup-project-cgroup")).toHaveLength(1);
+      expect(mockPodman).toHaveBeenCalledWith(
+        ["rm", "-f", "-t", "0", `project-${project1}`],
+        { timeout: 10 },
+      );
+    });
+
+    it("does not retry a start when its cleanup is not confirmed", async () => {
+      mockProjectStartPodman(project1);
+      mockExecuteCode.mockImplementation(async ({ args }) =>
+        args?.includes("attach-prepared-project-runtime")
+          ? refused
+          : args?.includes("cleanup-project-cgroup")
+            ? lockBusy
+            : ok,
+      );
+
+      await expect(startProject()).rejects.toThrow(
+        "a previous run of this project did not finish cleaning up its processes",
+      );
+      expect(helperCalls("attach-prepared-project-runtime")).toHaveLength(1);
+    });
+
+    it("retries a start only once", async () => {
+      mockProjectStartPodman(project1);
+      mockExecuteCode.mockImplementation(async ({ args }) =>
+        args?.includes("attach-prepared-project-runtime") ? refused : ok,
+      );
+
+      await expect(startProject()).rejects.toThrow(
+        "try starting the project again in a minute",
+      );
+      expect(helperCalls("attach-prepared-project-runtime")).toHaveLength(2);
+    });
+  });
+
   it("removes a partial container when podman create fails", async () => {
     mockProjectStartPodman(project1);
     const defaultPodman = mockPodman.getMockImplementation()!;

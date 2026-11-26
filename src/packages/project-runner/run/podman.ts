@@ -146,6 +146,17 @@ const START_FAILURE_DETAIL_MAX_BYTES = 12_000;
 const VERIFY_PROJECT_POOL_TIMEOUT_S = 10;
 const VERIFY_PROJECT_IO_TIMEOUT_S = 10;
 const ATTACH_PROJECT_CGROUP_TIMEOUT_S = 10;
+// Above the helper's own worst cases, so a slow but successful helper is not
+// reported as a failure: finalization waits up to 15 s for the host cgroup
+// lock before activating job admission, and cleanup waits up to 5 s for it,
+// then 2 s for the startup leaf and 10 s for the job scopes to empty.
+const FINALIZE_PROJECT_RUNTIME_TIMEOUT_S = 30;
+const CLEANUP_PROJECT_CGROUP_TIMEOUT_S = 30;
+const CLEANUP_PROJECT_CGROUP_RETRY_DELAY_MS = 1000;
+// The managed-job helper's only stderr line on any failure; when finalization
+// fails with it, job admission refused to open for this project.
+const MANAGED_JOB_CONTAINMENT_ERROR =
+  "Managed job containment unavailable or cleanup unconfirmed";
 const RECONCILE_PROJECT_NETWORK_TIMEOUT_S = 30;
 const PROJECT_STARTUP_CPU_WEIGHT = "10000";
 const PROJECT_STARTUP_IO_WEIGHT = "10000";
@@ -1246,13 +1257,29 @@ async function attachPreparedProjectRuntime({
       cpu_weight,
       io_weight,
     ],
-    timeout: ATTACH_PROJECT_CGROUP_TIMEOUT_S,
+    timeout: FINALIZE_PROJECT_RUNTIME_TIMEOUT_S,
     err_on_exit: false,
   });
   if (result.exit_code != null && result.exit_code !== 0) {
-    throw Error(
-      `failed to finalize project runtime cgroup for ${project_id}: ${result.stderr || result.stdout || `helper exited ${result.exit_code}`}`,
+    const detail = `${result.stderr || result.stdout || `helper exited ${result.exit_code}`}`;
+    throw new ProjectRuntimeFinalizeError(
+      `failed to finalize project runtime cgroup for ${project_id}: ${detail}`,
+      detail.includes(MANAGED_JOB_CONTAINMENT_ERROR),
     );
+  }
+}
+
+// Job admission is refused when a previous stop of the project did not
+// confirm its cleanup (its state is still "stopping", or "active" for a dead
+// generation). The failed start's own cleanup can resolve that.
+class ProjectRuntimeFinalizeError extends Error {
+  // Set by the failed start once its cleanup of the project cgroup confirmed.
+  cleanupConfirmed = false;
+  constructor(
+    message: string,
+    readonly admissionRefused: boolean,
+  ) {
+    super(message);
   }
 }
 
@@ -1444,7 +1471,13 @@ export async function reconcileProjectNetworkLimits(): Promise<void> {
   }
 }
 
-async function cleanupProjectCgroup(project_id: string): Promise<void> {
+// Kills and removes the project's cgroup and job scopes and closes its job
+// admission. The helper confirms the scopes are empty before it reports
+// success, so only exit 0 means the cleanup happened. Returns the failure
+// detail, or undefined on success.
+async function cleanupProjectCgroupOnce(
+  project_id: string,
+): Promise<string | undefined> {
   const result = await executeCode({
     command: "sudo",
     args: [
@@ -1453,16 +1486,35 @@ async function cleanupProjectCgroup(project_id: string): Promise<void> {
       "cleanup-project-cgroup",
       project_id,
     ],
-    timeout: ATTACH_PROJECT_CGROUP_TIMEOUT_S,
+    timeout: CLEANUP_PROJECT_CGROUP_TIMEOUT_S,
     err_on_exit: false,
   });
-  if (result.exit_code != null && result.exit_code !== 0) {
-    logger.warn("stop: failed to clean project cgroup", {
-      project_id,
-      exit_code: result.exit_code,
-      stderr: `${result.stderr ?? ""}`.trim(),
-    });
+  if (result.exit_code === 0) {
+    return undefined;
   }
+  return (
+    `${result.stderr ?? ""}`.trim() ||
+    `${result.stdout ?? ""}`.trim() ||
+    `helper exited ${result.exit_code ?? "without a code"}`
+  );
+}
+
+// One retry: a failure is usually the host cgroup lock being busy for a
+// moment. Throws if the cleanup still cannot be confirmed, since the
+// project's processes are then not known to be gone.
+async function cleanupProjectCgroup(project_id: string): Promise<void> {
+  let detail = await cleanupProjectCgroupOnce(project_id);
+  if (detail == null) return;
+  logger.warn("failed to clean project cgroup; retrying once", {
+    project_id,
+    detail,
+  });
+  await wait(CLEANUP_PROJECT_CGROUP_RETRY_DELAY_MS);
+  detail = await cleanupProjectCgroupOnce(project_id);
+  if (detail == null) return;
+  throw Error(
+    `cleanup of the project's processes could not be confirmed (${detail}); starting the project again retries it`,
+  );
 }
 
 function tryKillPid(pid: number, signal: NodeJS.Signals): void {
@@ -2072,13 +2124,49 @@ export async function start(opts: StartOptions): Promise<StartResult> {
   const lockRequestedAt = Date.now();
   return await withProjectLifecycleLock(opts.project_id, async () => {
     const lifecycleLockWait = Date.now() - lockRequestedAt;
-    const result = await startUnlocked(opts);
+    const result = await startUnlockedResolvingStaleAdmission(opts);
     result.phase_timings_ms = {
       ...result.phase_timings_ms,
       lifecycle_lock_wait: lifecycleLockWait,
     };
     return result;
   });
+}
+
+// A previous stop that could not confirm its cleanup leaves job admission
+// closed, and the next start then fails to finalize. That failed start cleans
+// the project cgroup up; only when that cleanup is confirmed is the start
+// retried, once. Containment is never assumed: anything else fails the start.
+async function startUnlockedResolvingStaleAdmission(
+  opts: StartOptions,
+): Promise<StartResult> {
+  try {
+    return await startUnlocked(opts);
+  } catch (err) {
+    if (!isRefusedAdmission(err) || !err.cleanupConfirmed) {
+      throw explainRefusedAdmission(err);
+    }
+    logger.warn(
+      "start: job admission was refused after an unconfirmed earlier cleanup; cleaned up, retrying the start once",
+      { project_id: opts.project_id, err: err.message },
+    );
+  }
+  try {
+    return await startUnlocked(opts);
+  } catch (err) {
+    throw explainRefusedAdmission(err);
+  }
+}
+
+function isRefusedAdmission(err: unknown): err is ProjectRuntimeFinalizeError {
+  return err instanceof ProjectRuntimeFinalizeError && err.admissionRefused;
+}
+
+function explainRefusedAdmission(err: unknown): unknown {
+  if (!isRefusedAdmission(err)) return err;
+  return Error(
+    `${err.message} -- a previous run of this project did not finish cleaning up its processes, and that cleanup could not be confirmed yet; try starting the project again in a minute`,
+  );
 }
 
 // Container states that hold no mount in use.
@@ -2893,12 +2981,17 @@ async function startUnlocked({
         err: `${cleanupErr}`,
       });
     });
-    await cleanupProjectCgroup(project_id).catch((cleanupErr) => {
+    const cleanupDetail = await cleanupProjectCgroupOnce(project_id).catch(
+      (cleanupErr) => `${cleanupErr}`,
+    );
+    if (cleanupDetail != null) {
       logger.warn("start: failed to clean project cgroup after error", {
         project_id,
-        err: `${cleanupErr}`,
+        err: cleanupDetail,
       });
-    });
+    } else if (err instanceof ProjectRuntimeFinalizeError) {
+      err.cleanupConfirmed = true;
+    }
     throw err;
   } finally {
     starting.delete(project_id);
@@ -3007,7 +3100,10 @@ async function stopUnlocked({ project_id }: { project_id: string }) {
       }
       await cleanupProjectSecretsHostPath(project_id);
       await cleanupProjectBrowserRunHostPath(project_id);
-      await cleanupProjectCgroup(project_id);
+      // Never report a stop whose processes are not known to be gone.
+      await cleanupProjectCgroup(project_id).catch((err) => {
+        throw Error(`the project container stopped, but ${err.message}`);
+      });
     } catch (err) {
       logger.debug("stop", { err });
       throw err;
