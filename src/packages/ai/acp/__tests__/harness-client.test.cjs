@@ -17,9 +17,7 @@ const {
 } = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
-const {
-  setAgentTurnUsageRecorder,
-} = require("../../dist/acp/turn-usage.js");
+const { setAgentTurnUsageRecorder } = require("../../dist/acp/turn-usage.js");
 const {
   harnessPrompt,
   harnessSessionGuidance,
@@ -953,7 +951,9 @@ for (const [label, flags] of [
     const client = await inProjectProofClient(t, flags, {
       hostSubscriptionIdentity: async ({ nonce }) => {
         if (revoked)
-          throw Error("Claude subscription credential is unavailable or revoked");
+          throw Error(
+            "Claude subscription credential is unavailable or revoked",
+          );
         return hostProof()({ nonce });
       },
     });
@@ -4403,12 +4403,16 @@ test("session/load has its own budget: default, configured and never below the r
   assert.equal(DEFAULT_SESSION_LOAD_TIMEOUT_MS, 180_000);
   assert.equal(resolveSessionLoadTimeoutMs(30_000, {}), 180_000);
   assert.equal(
-    resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: "600000" }),
+    resolveSessionLoadTimeoutMs(30_000, {
+      COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: "600000",
+    }),
     600_000,
   );
   for (const bad of ["", "abc", "0", "-5"]) {
     assert.equal(
-      resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: bad }),
+      resolveSessionLoadTimeoutMs(30_000, {
+        COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: bad,
+      }),
       180_000,
       bad,
     );
@@ -4416,14 +4420,18 @@ test("session/load has its own budget: default, configured and never below the r
   // Above the largest timer delay Node would fire at once: capped instead.
   for (const huge of ["2147483648", "9999999999", "1e12"]) {
     assert.equal(
-      resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: huge }),
+      resolveSessionLoadTimeoutMs(30_000, {
+        COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: huge,
+      }),
       2_147_483_647,
       huge,
     );
   }
   // A configured value below the general request timeout never shortens it.
   assert.equal(
-    resolveSessionLoadTimeoutMs(30_000, { COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: "1000" }),
+    resolveSessionLoadTimeoutMs(30_000, {
+      COCALC_ACP_SESSION_LOAD_TIMEOUT_MS: "1000",
+    }),
     30_000,
   );
 });
@@ -4464,7 +4472,8 @@ test("session/load still times out at its own configured budget", async (t) => {
   const previous = process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS;
   process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS = "500";
   t.after(() => {
-    if (previous === undefined) delete process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS;
+    if (previous === undefined)
+      delete process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS;
     else process.env.COCALC_ACP_SESSION_LOAD_TIMEOUT_MS = previous;
   });
   // Request timeout 300 ms, load budget 500 ms, replay 3 s: the load must fail.
@@ -4485,13 +4494,19 @@ test("an agent that offers session/resume is resumed without the history replay"
   const client = await startDelayedLoad(t, 300, 5000, ["--resume-cap"]);
   const started = Date.now();
   await client.open("fixture-session");
-  assert.ok(Date.now() - started < 1000, `resume took ${Date.now() - started} ms`);
+  assert.ok(
+    Date.now() - started < 1000,
+    `resume took ${Date.now() - started} ms`,
+  );
   await client.dispose();
 });
 
 test("a slow session/resume gets the session/load budget, not the request timeout", async (t) => {
   // Request timeout 300 ms; session/resume answers after 1.2 s (slow storage).
-  const client = await startDelayedLoad(t, 300, 0, ["--resume-cap", "--resume-delay-ms=1200"]);
+  const client = await startDelayedLoad(t, 300, 0, [
+    "--resume-cap",
+    "--resume-delay-ms=1200",
+  ]);
   await client.open("fixture-session");
   await client.dispose();
 });
@@ -4501,7 +4516,10 @@ test("without session/resume the client still falls back to session/load", async
   const client = await startDelayedLoad(t, 300, 1200);
   const started = Date.now();
   await client.open("fixture-session");
-  assert.ok(Date.now() - started >= 1000, "expected the slow session/load path");
+  assert.ok(
+    Date.now() - started >= 1000,
+    "expected the slow session/load path",
+  );
   await client.dispose();
 });
 

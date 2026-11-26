@@ -1079,7 +1079,8 @@ export class AcpHarnessClient {
         // answers, and onUpdate ignores that phase. session/resume restores the
         // same session without the replay, so prefer it whenever the agent
         // offers it: a long conversation then resumes in constant time.
-        const resume = !!this.info.agentCapabilities?.sessionCapabilities?.resume;
+        const resume =
+          !!this.info.agentCapabilities?.sessionCapabilities?.resume;
         if (!resume && !this.info.agentCapabilities?.loadSession)
           throw new HarnessError(
             "unsupported",

@@ -116,16 +116,22 @@ const lineReader = readline.createInterface({ input: process.stdin });
 // --load-delay-ms=N: answer session/load only after N ms, like an agent that
 // replays a long saved history before it can respond.
 const loadDelayMs = Number(
-  (process.argv.find((arg) => arg.startsWith("--load-delay-ms=")) ?? "=0").split("=")[1],
+  (
+    process.argv.find((arg) => arg.startsWith("--load-delay-ms=")) ?? "=0"
+  ).split("=")[1],
 );
 // --new-delay-ms=N: the same for session/new (a slow agent that is not replaying).
 const newDelayMs = Number(
-  (process.argv.find((arg) => arg.startsWith("--new-delay-ms=")) ?? "=0").split("=")[1],
+  (process.argv.find((arg) => arg.startsWith("--new-delay-ms=")) ?? "=0").split(
+    "=",
+  )[1],
 );
 // --resume-delay-ms=N: the same for session/resume (reading the saved session
 // on slow storage, without a replay).
 const resumeDelayMs = Number(
-  (process.argv.find((arg) => arg.startsWith("--resume-delay-ms=")) ?? "=0").split("=")[1],
+  (
+    process.argv.find((arg) => arg.startsWith("--resume-delay-ms=")) ?? "=0"
+  ).split("=")[1],
 );
 lineReader.on("line", (line) => {
   const message = JSON.parse(line);
@@ -139,7 +145,11 @@ lineReader.on("line", (line) => {
           : 0;
   if (delayMs > 0 && !message.delayedLoad) {
     setTimeout(
-      () => lineReader.emit("line", JSON.stringify({ ...message, delayedLoad: true })),
+      () =>
+        lineReader.emit(
+          "line",
+          JSON.stringify({ ...message, delayedLoad: true }),
+        ),
       delayMs,
     );
     return;
@@ -186,7 +196,9 @@ lineReader.on("line", (line) => {
                 sessionCapabilities: {
                   ...(process.argv.includes("--fork") ? { fork: {} } : {}),
                   // --resume-cap: offers session/resume (no history replay).
-                  ...(process.argv.includes("--resume-cap") ? { resume: {} } : {}),
+                  ...(process.argv.includes("--resume-cap")
+                    ? { resume: {} }
+                    : {}),
                 },
               }
             : {}),

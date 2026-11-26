@@ -17,7 +17,8 @@ export type HarnessLaunchFactory = (
 type Factory = HarnessLaunchFactory;
 let launcher: Factory | undefined;
 let authorityValidator:
-  ((binding: HarnessBinding) => Promise<void>) | undefined;
+  | ((binding: HarnessBinding) => Promise<void>)
+  | undefined;
 const discovering = new Map<
   string,
   { projectId: string; finished: Promise<void> }
@@ -55,7 +56,8 @@ export function getHarnessLauncher(): Factory | undefined {
 }
 
 let rateLimitRecorder:
-  ((binding: HarnessBinding, rateLimit: unknown) => void) | undefined;
+  | ((binding: HarnessBinding, rateLimit: unknown) => void)
+  | undefined;
 
 /** Where a turn's reported subscription limits go (the project host). */
 export function setHarnessRateLimitRecorder(
