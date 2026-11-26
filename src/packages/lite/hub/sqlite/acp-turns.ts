@@ -75,6 +75,31 @@ function init(): void {
   }
   ensureAcpTableMigrated(TABLE);
   installThreadSuccessorFence(TABLE);
+  installTurnStartSequence(db);
+}
+
+/**
+ * A per-thread count of turn starts, bumped by triggers whenever a lease row
+ * is inserted or (re)started, whichever code path writes it. Unlike the
+ * started_at times it never repeats: it does not depend on the clock.
+ */
+function installTurnStartSequence(db: ReturnType<typeof getAcpDatabase>) {
+  db.exec(`CREATE TABLE IF NOT EXISTS acp_thread_turn_starts (
+      project_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      PRIMARY KEY (project_id, path, thread_id)
+    )`);
+  const bump = `INSERT INTO acp_thread_turn_starts (project_id, path, thread_id, seq)
+      VALUES (NEW.project_id, NEW.path, NEW.thread_id, 1)
+      ON CONFLICT(project_id, path, thread_id) DO UPDATE SET seq = seq + 1;`;
+  db.exec(`CREATE TRIGGER IF NOT EXISTS ${TABLE}_start_seq_insert
+      AFTER INSERT ON ${TABLE} WHEN NEW.thread_id IS NOT NULL
+      BEGIN ${bump} END`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS ${TABLE}_start_seq_update
+      AFTER UPDATE OF started_at ON ${TABLE} WHEN NEW.thread_id IS NOT NULL
+      BEGIN ${bump} END`);
 }
 
 let initialized = false;
@@ -299,9 +324,8 @@ export function listRunningAcpTurnLeases({
 }
 
 /**
- * A mark that changes whenever a turn of the thread starts: the latest lease
- * start, and how many leases started then. Lease rows outlive their turn, so
- * a turn that started and ended between two reads still changes it.
+ * A mark that changes whenever a turn of the thread starts, including one
+ * that started and ended between two reads: its turn-start sequence.
  */
 export function acpThreadTurnStartMark({
   project_id,
@@ -315,18 +339,11 @@ export function acpThreadTurnStartMark({
   ensureInit();
   const row = getAcpDatabase()
     .prepare(
-      `SELECT MAX(started_at) AS latest,
-              SUM(CASE WHEN started_at = (
-                SELECT MAX(started_at) FROM ${TABLE}
-                WHERE project_id = ? AND path = ? AND thread_id = ?
-              ) THEN 1 ELSE 0 END) AS at_latest
-       FROM ${TABLE}
+      `SELECT seq FROM acp_thread_turn_starts
        WHERE project_id = ? AND path = ? AND thread_id = ?`,
     )
-    .get(project_id, path, thread_id, project_id, path, thread_id) as
-    | { latest?: number | null; at_latest?: number | null }
-    | undefined;
-  return `${row?.latest ?? ""}:${row?.at_latest ?? 0}`;
+    .get(project_id, path, thread_id) as { seq?: number } | undefined;
+  return `${row?.seq ?? 0}`;
 }
 
 export function countRunningAcpTurnLeasesForWorker(

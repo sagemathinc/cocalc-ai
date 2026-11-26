@@ -3,7 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
+import {
+  closeAcpDatabase,
+  getAcpDatabase,
+  initAcpDatabase,
+} from "../../sqlite/acp-database";
 import {
   acpThreadTurnStartMark,
   finalizeAcpTurnLease,
@@ -48,6 +52,41 @@ describe("acpThreadTurnStartMark", () => {
     const second = startTurn("2026-11-26T00:01:00.000Z");
     finalizeAcpTurnLease({ key: second, state: "completed" });
     expect(acpThreadTurnStartMark(thread)).not.toBe(first);
+  });
+
+  it("changes even when the clock goes back or repeats", () => {
+    const now = jest.spyOn(Date, "now");
+    try {
+      now.mockReturnValue(Date.parse("2030-01-01T00:00:00Z"));
+      const key = startTurn("2026-11-26T01:00:00.000Z");
+      const late = acpThreadTurnStartMark(thread);
+      // A later turn whose start time is below the earlier maximum.
+      now.mockReturnValue(Date.parse("2026-11-26T01:00:00Z"));
+      startTurn("2026-11-26T01:01:00.000Z");
+      const back = acpThreadTurnStartMark(thread);
+      expect(back).not.toBe(late);
+      // The same lease row restarted in the same millisecond.
+      startTurn(key.message_date);
+      expect(acpThreadTurnStartMark(thread)).not.toBe(back);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("counts lease starts written by the turn ledger too", () => {
+    const before = acpThreadTurnStartMark(thread);
+    getAcpDatabase()
+      .prepare(
+        `INSERT INTO acp_turns (project_id, path, message_date, thread_id, state, owner_instance_id, started_at, heartbeat_at)
+         VALUES (?, ?, ?, ?, 'running', 'w', 1, 1)`,
+      )
+      .run(
+        thread.project_id,
+        thread.path,
+        "2026-11-26T02:00:00.000Z",
+        thread.thread_id,
+      );
+    expect(acpThreadTurnStartMark(thread)).not.toBe(before);
   });
 
   it("ignores turns of other threads", () => {
