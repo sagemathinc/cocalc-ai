@@ -357,12 +357,13 @@ export function createAgentMemory(
         ? deps.accountLimits(account_id)
         : Promise.resolve(agentMemoryAccountLimits(undefined))
     ).catch((err) => {
-      // The defaults, rather than failing memory over a membership lookup.
+      // The defaults, rather than failing memory over a membership lookup;
+      // kept like a result, so a check later in the request (inside its
+      // transaction) does not look them up again.
       logger.warn("agent memory limits unavailable; using defaults", {
         account_id,
         err: `${err}`,
       });
-      limitsCache.delete(account_id);
       return agentMemoryAccountLimits(undefined);
     });
     if (limitsCache.size > 10_000) limitsCache.clear();
@@ -1696,6 +1697,7 @@ export function createAgentMemory(
       | { notes: number; index: string; off?: true; max_notes?: number }
       | undefined
     > {
+      const limits = await accountLimits(account_id);
       const settings = await settingsOf(account_id);
       // A host that asks gets { off: true }, so its agents can mention that
       // memory exists; older hosts keep getting nothing.
@@ -1738,7 +1740,7 @@ export function createAgentMemory(
       for (const row of rows) counts[row.namespace] += 1;
       return {
         notes: rows.length,
-        max_notes: (await accountLimits(account_id)).maxNotes,
+        max_notes: limits.maxNotes,
         index: buildMemoryIndex({
           notes,
           total: rows.length,

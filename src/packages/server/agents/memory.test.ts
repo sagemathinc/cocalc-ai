@@ -923,16 +923,33 @@ describeDb("agent memory", () => {
   });
 
   test("memory keeps working with the default limits when they can't be looked up", async () => {
-    const { memory } = setup({
-      accountLimits: async () => {
-        throw new Error("membership unavailable");
-      },
+    let lookups = 0;
+    const accountLimits = async () => {
+      lookups += 1;
+      throw new Error("membership unavailable");
+    };
+    const account = await newAccount(setup({ accountLimits }).memory, {
+      namespaces: [{ name: "dev" }],
     });
-    const account = await newAccount(memory);
+    // A fresh hub: the failed lookup is made once, at the request's start,
+    // and its defaults serve the checks inside the transaction (no second
+    // lookup while it holds a connection and the account's lock).
+    const { memory } = setup({ accountLimits });
+    lookups = 0;
     expect(await write(memory, account, P1, "a")).toMatchObject({
       saved: "created",
     });
+    expect(lookups).toBe(1);
+    expect(
+      await memory.agent(account, P1, {
+        action: "memory",
+        op: "move",
+        name: "a",
+        to: "global",
+      }),
+    ).toMatchObject({ to: "global" });
     expect((await memory.turnIndex(account, P1))!.max_notes).toBe(2000);
+    expect(lookups).toBe(1);
   });
 
   test("a move fits when the account is exactly full", async () => {
