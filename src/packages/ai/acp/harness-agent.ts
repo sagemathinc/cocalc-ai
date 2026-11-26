@@ -496,6 +496,9 @@ export class HarnessAgent implements AcpAgent {
         type: "summary",
         finalResponse,
         threadId: client.sessionId,
+        // Where a copy made while a later turn runs ends: this turn's last
+        // assistant message.
+        ...(lastMessageId ? { lastMessageId } : {}),
       });
       fundedEnd = { status: "committed" };
     } catch (error) {

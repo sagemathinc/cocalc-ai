@@ -75,6 +75,31 @@ function init(): void {
   }
   ensureAcpTableMigrated(TABLE);
   installThreadSuccessorFence(TABLE);
+  installTurnStartSequence(db);
+}
+
+/**
+ * A per-thread count of turn starts, bumped by triggers whenever a lease row
+ * is inserted or (re)started, whichever code path writes it. Unlike the
+ * started_at times it never repeats: it does not depend on the clock.
+ */
+function installTurnStartSequence(db: ReturnType<typeof getAcpDatabase>) {
+  db.exec(`CREATE TABLE IF NOT EXISTS acp_thread_turn_starts (
+      project_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      PRIMARY KEY (project_id, path, thread_id)
+    )`);
+  const bump = `INSERT INTO acp_thread_turn_starts (project_id, path, thread_id, seq)
+      VALUES (NEW.project_id, NEW.path, NEW.thread_id, 1)
+      ON CONFLICT(project_id, path, thread_id) DO UPDATE SET seq = seq + 1;`;
+  db.exec(`CREATE TRIGGER IF NOT EXISTS ${TABLE}_start_seq_insert
+      AFTER INSERT ON ${TABLE} WHEN NEW.thread_id IS NOT NULL
+      BEGIN ${bump} END`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS ${TABLE}_start_seq_update
+      AFTER UPDATE OF started_at ON ${TABLE} WHEN NEW.thread_id IS NOT NULL
+      BEGIN ${bump} END`);
 }
 
 let initialized = false;
@@ -296,6 +321,29 @@ export function listRunningAcpTurnLeases({
   }
   query += " ORDER BY heartbeat_at ASC";
   return db.prepare(query).all(...params) as AcpTurnLeaseRow[];
+}
+
+/**
+ * A mark that changes whenever a turn of the thread starts, including one
+ * that started and ended between two reads: its turn-start sequence.
+ */
+export function acpThreadTurnStartMark({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): string {
+  ensureInit();
+  const row = getAcpDatabase()
+    .prepare(
+      `SELECT seq FROM acp_thread_turn_starts
+       WHERE project_id = ? AND path = ? AND thread_id = ?`,
+    )
+    .get(project_id, path, thread_id) as { seq?: number } | undefined;
+  return `${row?.seq ?? 0}`;
 }
 
 export function countRunningAcpTurnLeasesForWorker(

@@ -104,6 +104,11 @@ const update = (text, sessionId = "fixture-session") =>
       update: {
         sessionUpdate: "agent_message_chunk",
         content: { type: "text", text },
+        // --message-ids: tag chunks with an ACP message id, as
+        // Claude Code's adapter does (its API message id).
+        ...(process.argv.includes("--message-ids")
+          ? { messageId: `msg_fixture_${counter}` }
+          : {}),
       },
     },
   });
@@ -111,16 +116,22 @@ const lineReader = readline.createInterface({ input: process.stdin });
 // --load-delay-ms=N: answer session/load only after N ms, like an agent that
 // replays a long saved history before it can respond.
 const loadDelayMs = Number(
-  (process.argv.find((arg) => arg.startsWith("--load-delay-ms=")) ?? "=0").split("=")[1],
+  (
+    process.argv.find((arg) => arg.startsWith("--load-delay-ms=")) ?? "=0"
+  ).split("=")[1],
 );
 // --new-delay-ms=N: the same for session/new (a slow agent that is not replaying).
 const newDelayMs = Number(
-  (process.argv.find((arg) => arg.startsWith("--new-delay-ms=")) ?? "=0").split("=")[1],
+  (process.argv.find((arg) => arg.startsWith("--new-delay-ms=")) ?? "=0").split(
+    "=",
+  )[1],
 );
 // --resume-delay-ms=N: the same for session/resume (reading the saved session
 // on slow storage, without a replay).
 const resumeDelayMs = Number(
-  (process.argv.find((arg) => arg.startsWith("--resume-delay-ms=")) ?? "=0").split("=")[1],
+  (
+    process.argv.find((arg) => arg.startsWith("--resume-delay-ms=")) ?? "=0"
+  ).split("=")[1],
 );
 lineReader.on("line", (line) => {
   const message = JSON.parse(line);
@@ -134,7 +145,11 @@ lineReader.on("line", (line) => {
           : 0;
   if (delayMs > 0 && !message.delayedLoad) {
     setTimeout(
-      () => lineReader.emit("line", JSON.stringify({ ...message, delayedLoad: true })),
+      () =>
+        lineReader.emit(
+          "line",
+          JSON.stringify({ ...message, delayedLoad: true }),
+        ),
       delayMs,
     );
     return;
@@ -181,7 +196,9 @@ lineReader.on("line", (line) => {
                 sessionCapabilities: {
                   ...(process.argv.includes("--fork") ? { fork: {} } : {}),
                   // --resume-cap: offers session/resume (no history replay).
-                  ...(process.argv.includes("--resume-cap") ? { resume: {} } : {}),
+                  ...(process.argv.includes("--resume-cap")
+                    ? { resume: {} }
+                    : {}),
                 },
               }
             : {}),
@@ -202,11 +219,17 @@ lineReader.on("line", (line) => {
         message.params.cwd,
         process.argv.includes("--claude-adapter") ? "/workspace" : "/tmp",
       );
-      return result(message.id, {
-        sessionId: process.argv.includes("--fork-same-id")
-          ? message.params.sessionId
-          : "forked-fixture-session",
-      });
+      {
+        // A fork point, as Claude Code's adapter takes it.
+        const upTo = message.params._meta?.jetbrains?.air?.fork;
+        return result(message.id, {
+          sessionId: process.argv.includes("--fork-same-id")
+            ? message.params.sessionId
+            : upTo
+              ? `forked-at-${upTo.version}-${upTo.messageId}`
+              : "forked-fixture-session",
+        });
+      }
     case "session/new":
     case "session/load":
     case "session/resume":

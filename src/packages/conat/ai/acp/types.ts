@@ -562,6 +562,8 @@ export type AcpStreamPayload =
       finalResponse: string;
       usage?: AcpStreamUsage | null;
       threadId?: string | null;
+      /** The ACP message id of the turn's last assistant message, if known. */
+      lastMessageId?: string | null;
     }
   | {
       type: "error";

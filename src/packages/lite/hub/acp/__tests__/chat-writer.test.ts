@@ -1223,6 +1223,87 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("saves a completed turn's fork point before it finalizes the lease", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    writer.runtimeKind = "acp";
+    // The session save is slow: the lease waits for it.
+    let releaseSessionSave: (() => void) | undefined;
+    const saved: string[] = [];
+    writer.persistSessionId = (sessionId: string, messageId?: string) =>
+      new Promise<void>((resolve) => {
+        releaseSessionSave = () => {
+          saved.push(`${sessionId}:${messageId}`);
+          resolve();
+        };
+      });
+    const pending = writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      threadId: "session-1",
+      lastMessageId: "msg_01",
+      seq: 0,
+    } as AcpStreamMessage);
+    await delay(200);
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toHaveLength(0);
+    releaseSessionSave?.();
+    await pending;
+    expect(saved).toEqual(["session-1:msg_01"]);
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [expect.objectContaining({ state: "completed" })],
+      ]),
+    );
+    (writer as any).dispose?.(true);
+  });
+
+  it("a session save that hangs does not hold the lease forever", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    writer.terminalStorageTimeoutMs = 5;
+    writer.persistSessionId = () => new Promise<void>(() => {});
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      threadId: "session-1",
+      lastMessageId: "msg_01",
+      seq: 0,
+    } as AcpStreamMessage);
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [expect.objectContaining({ state: "completed" })],
+      ]),
+    );
+    (writer as any).dispose?.(true);
+    await writer.waitUntilDisposed();
+  });
+
   it("finalizes the lease as completed when verified terminal summary save times out", async () => {
     const { syncdb, setCurrent } = makeFakeSyncDB();
     setCurrent({

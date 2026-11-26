@@ -17,7 +17,8 @@ export type HarnessLaunchFactory = (
 type Factory = HarnessLaunchFactory;
 let launcher: Factory | undefined;
 let authorityValidator:
-  ((binding: HarnessBinding) => Promise<void>) | undefined;
+  | ((binding: HarnessBinding) => Promise<void>)
+  | undefined;
 const discovering = new Map<
   string,
   { projectId: string; finished: Promise<void> }
@@ -55,7 +56,8 @@ export function getHarnessLauncher(): Factory | undefined {
 }
 
 let rateLimitRecorder:
-  ((binding: HarnessBinding, rateLimit: unknown) => void) | undefined;
+  | ((binding: HarnessBinding, rateLimit: unknown) => void)
+  | undefined;
 
 /** Where a turn's reported subscription limits go (the project host). */
 export function setHarnessRateLimitRecorder(
@@ -80,7 +82,10 @@ export async function discoverHarnessControls(request: AcpRequest) {
   });
 }
 
-export async function forkHarnessSession(request: AcpRequest) {
+export async function forkHarnessSession(
+  request: AcpRequest,
+  { upToMessageId }: { upToMessageId?: string } = {},
+) {
   if (!request.session_id)
     throw Error("This agent has no saved context to copy yet");
   return await withTemporaryHarness(
@@ -92,10 +97,72 @@ export async function forkHarnessSession(request: AcpRequest) {
         profile: prepared.runtime!.profile,
         credential: prepared.harness_credential!,
       });
-      return await client.fork(request.session_id!);
+      return await client.fork(request.session_id!, { upToMessageId });
     },
     true,
   );
+}
+
+/**
+ * Where a copy of an agent ends: the last assistant message of its latest
+ * completed turn in the same session. Only Claude Code's adapter takes a fork
+ * point; otherwise, or with no completed turn in this session, undefined.
+ */
+export function harnessForkPoint({
+  claude,
+  sessionId,
+  forkPoint,
+}: {
+  claude: boolean;
+  sessionId: string;
+  forkPoint: unknown;
+}): string | undefined {
+  const point = forkPoint as { session_id?: unknown; message_id?: unknown };
+  if (
+    claude &&
+    point?.session_id === sessionId &&
+    typeof point.message_id === "string" &&
+    point.message_id.trim()
+  )
+    return point.message_id.trim();
+  return undefined;
+}
+
+/**
+ * Copy an agent's session without a partly run turn in it. Claude Code is
+ * copied up to its last completed turn whenever that is known, running or
+ * not: a turn that starts meanwhile can't reach into it. Without a point the
+ * copy is whole, so no turn may run while it is made, even one that starts
+ * and ends before the copy does: the turn-start mark is read first and
+ * compared after.
+ */
+export async function forkWithoutPartialTurn<T>({
+  claude,
+  upToMessageId,
+  running,
+  turnMark,
+  fork,
+}: {
+  claude: boolean;
+  upToMessageId?: string;
+  running: () => boolean;
+  turnMark: () => string;
+  fork: (upToMessageId?: string) => Promise<T>;
+}): Promise<T> {
+  if (upToMessageId) return await fork(upToMessageId);
+  const before = turnMark();
+  if (running())
+    throw Error(
+      claude
+        ? "This agent has no completed turn to copy yet; wait for its running turn to finish"
+        : "Wait for this agent's running turn to finish before copying it",
+    );
+  const result = await fork(undefined);
+  if (running() || turnMark() !== before)
+    throw Error(
+      "This agent started a turn while it was being copied; try again",
+    );
+  return result;
 }
 
 /** Bind a copy to the authoritative saved thread, never a caller-selected ID. */
