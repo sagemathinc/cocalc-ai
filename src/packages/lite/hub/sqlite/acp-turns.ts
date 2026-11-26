@@ -298,6 +298,37 @@ export function listRunningAcpTurnLeases({
   return db.prepare(query).all(...params) as AcpTurnLeaseRow[];
 }
 
+/**
+ * A mark that changes whenever a turn of the thread starts: the latest lease
+ * start, and how many leases started then. Lease rows outlive their turn, so
+ * a turn that started and ended between two reads still changes it.
+ */
+export function acpThreadTurnStartMark({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): string {
+  ensureInit();
+  const row = getAcpDatabase()
+    .prepare(
+      `SELECT MAX(started_at) AS latest,
+              SUM(CASE WHEN started_at = (
+                SELECT MAX(started_at) FROM ${TABLE}
+                WHERE project_id = ? AND path = ? AND thread_id = ?
+              ) THEN 1 ELSE 0 END) AS at_latest
+       FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND thread_id = ?`,
+    )
+    .get(project_id, path, thread_id, project_id, path, thread_id) as
+    | { latest?: number | null; at_latest?: number | null }
+    | undefined;
+  return `${row?.latest ?? ""}:${row?.at_latest ?? 0}`;
+}
+
 export function countRunningAcpTurnLeasesForWorker(
   owner_instance_id: string,
 ): number {

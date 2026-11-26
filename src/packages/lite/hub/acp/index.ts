@@ -209,6 +209,7 @@ import {
   heartbeatAcpTurnLease,
   countRunningAcpTurnLeasesForWorker,
   listRecentTerminalAcpTurnLeases,
+  acpThreadTurnStartMark,
   listRunningAcpTurnLeases,
   startAcpTurnLease,
   updateAcpTurnLeaseSessionId,
@@ -389,6 +390,7 @@ import {
   forkHarnessSession,
   harnessForkSource,
   harnessForkPoint,
+  forkWithoutPartialTurn,
   assertAnswerHarnessProfile,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
@@ -13757,38 +13759,30 @@ async function handleAcpControlRequestNow(
         };
       },
     });
-    // Claude Code is copied up to its last completed turn whenever that is
-    // known, running or not: a turn that starts while the copy is made can't
-    // reach into it. Without a known point, only an idle agent is copied.
     const claude = isQualifiedClaudeCodeProfile(source.runtime.profile);
-    const upToMessageId = harnessForkPoint({
+    const result = await forkWithoutPartialTurn({
       claude,
-      sessionId: source.sessionId,
-      forkPoint: source.forkPoint,
+      upToMessageId: harnessForkPoint({
+        claude,
+        sessionId: source.sessionId,
+        forkPoint: source.forkPoint,
+      }),
+      running,
+      turnMark: () => acpThreadTurnStartMark({ project_id, path, thread_id }),
+      fork: async (upToMessageId) =>
+        await forkHarnessSession(
+          await withClaudePoolControlCredential({
+            project_id,
+            account_id: request.account_id,
+            runtime: source.runtime,
+            session_id: source.sessionId,
+            harness_credential: request.harness_credential,
+            prompt: "",
+            chat: { project_id, path, thread_id },
+          } as AcpRequest),
+          { upToMessageId },
+        ),
     });
-    if (!upToMessageId && running())
-      throw Error(
-        claude
-          ? "This agent has no completed turn to copy yet; wait for its running turn to finish"
-          : "Wait for this agent's running turn to finish before copying it",
-      );
-    const result = await forkHarnessSession(
-      await withClaudePoolControlCredential({
-        project_id,
-        account_id: request.account_id,
-        runtime: source.runtime,
-        session_id: source.sessionId,
-        harness_credential: request.harness_credential,
-        prompt: "",
-        chat: { project_id, path, thread_id },
-      } as AcpRequest),
-      { upToMessageId },
-    );
-    // Copied whole: a turn that started meanwhile may be in the copy.
-    if (!upToMessageId && running())
-      throw Error(
-        "This agent started a turn while it was being copied; try again",
-      );
     return { ok: true, forked_session_id: result.sessionId };
   }
   if (request.action === "discover_harness_v1") {

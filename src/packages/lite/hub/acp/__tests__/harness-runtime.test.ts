@@ -9,6 +9,7 @@ import {
   assertConfiguredHarnessRuntime,
   harnessForkSource,
   harnessForkPoint,
+  forkWithoutPartialTurn,
 } from "../harness-runtime";
 import {
   pinCodexCredentialAtAdmission,
@@ -163,6 +164,70 @@ test("a copy ends at the last completed turn of the same session, only for Claud
     harnessForkPoint({ claude: false, sessionId: "s1", forkPoint }),
   ).toBeUndefined();
 });
+describe("forkWithoutPartialTurn", () => {
+  const forked = { sessionId: "copy" };
+  it("with a point, copies up to it whether or not a turn runs", async () => {
+    const fork = jest.fn(async () => forked);
+    await expect(
+      forkWithoutPartialTurn({
+        claude: true,
+        upToMessageId: "msg_01",
+        running: () => true,
+        turnMark: () => {
+          throw Error("not needed");
+        },
+        fork,
+      }),
+    ).resolves.toBe(forked);
+    expect(fork).toHaveBeenCalledWith("msg_01");
+  });
+
+  it("without a point, refuses while a turn runs", async () => {
+    const fork = jest.fn(async () => forked);
+    for (const claude of [true, false])
+      await expect(
+        forkWithoutPartialTurn({
+          claude,
+          running: () => true,
+          turnMark: () => "1:1",
+          fork,
+        }),
+      ).rejects.toThrow(
+        claude ? /no completed turn to copy yet/ : /Wait for this agent/,
+      );
+    expect(fork).not.toHaveBeenCalled();
+  });
+
+  it("without a point, fails if a turn started and ended during the fork", async () => {
+    let mark = "1:1";
+    await expect(
+      forkWithoutPartialTurn({
+        claude: true,
+        running: () => false,
+        turnMark: () => mark,
+        fork: async () => {
+          // A short turn starts and ends while the transcript is copied.
+          mark = "2:1";
+          return forked;
+        },
+      }),
+    ).rejects.toThrow(/started a turn while it was being copied/);
+  });
+
+  it("without a point, copies an idle agent whole", async () => {
+    const fork = jest.fn(async () => forked);
+    await expect(
+      forkWithoutPartialTurn({
+        claude: false,
+        running: () => false,
+        turnMark: () => "1:1",
+        fork,
+      }),
+    ).resolves.toBe(forked);
+    expect(fork).toHaveBeenCalledWith(undefined);
+  });
+});
+
 // SQLite table modules initialize once per process; share one isolated database.
 beforeAll(() => initAcpDatabase({ filename: ":memory:" }));
 afterAll(() => closeAcpDatabase());

@@ -128,6 +128,43 @@ export function harnessForkPoint({
   return undefined;
 }
 
+/**
+ * Copy an agent's session without a partly run turn in it. Claude Code is
+ * copied up to its last completed turn whenever that is known, running or
+ * not: a turn that starts meanwhile can't reach into it. Without a point the
+ * copy is whole, so no turn may run while it is made, even one that starts
+ * and ends before the copy does: the turn-start mark is read first and
+ * compared after.
+ */
+export async function forkWithoutPartialTurn<T>({
+  claude,
+  upToMessageId,
+  running,
+  turnMark,
+  fork,
+}: {
+  claude: boolean;
+  upToMessageId?: string;
+  running: () => boolean;
+  turnMark: () => string;
+  fork: (upToMessageId?: string) => Promise<T>;
+}): Promise<T> {
+  if (upToMessageId) return await fork(upToMessageId);
+  const before = turnMark();
+  if (running())
+    throw Error(
+      claude
+        ? "This agent has no completed turn to copy yet; wait for its running turn to finish"
+        : "Wait for this agent's running turn to finish before copying it",
+    );
+  const result = await fork(undefined);
+  if (running() || turnMark() !== before)
+    throw Error(
+      "This agent started a turn while it was being copied; try again",
+    );
+  return result;
+}
+
 /** Bind a copy to the authoritative saved thread, never a caller-selected ID. */
 export function harnessForkSource({
   runtime,
