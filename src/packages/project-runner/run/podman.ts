@@ -1519,9 +1519,22 @@ async function cleanupProjectCgroup(project_id: string): Promise<void> {
   await wait(CLEANUP_PROJECT_CGROUP_RETRY_DELAY_MS);
   detail = await cleanupProjectCgroupOnce(project_id);
   if (detail == null) return;
+  // The helper's own diagnostics stay in the host log; the error, which
+  // reaches users, names only the kind of failure.
+  logger.warn("failed to clean project cgroup", { project_id, detail });
   throw Error(
-    `cleanup of the project's processes could not be confirmed (${detail}); starting the project again retries it`,
+    `cleanup of the project's processes could not be confirmed (${describeCleanupFailure(detail)}); starting the project again retries it`,
   );
+}
+
+function describeCleanupFailure(detail: string): string {
+  if (/lock[- ]timeout/i.test(detail)) {
+    return "the host was busy starting or stopping another project";
+  }
+  if (/killed command|timed out|timeout/i.test(detail)) {
+    return "the cleanup did not finish in time";
+  }
+  return "the cleanup helper reported an error";
 }
 
 function tryKillPid(pid: number, signal: NodeJS.Signals): void {
