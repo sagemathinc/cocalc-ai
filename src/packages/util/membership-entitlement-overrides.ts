@@ -294,6 +294,20 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Most watchers one of your agents may have active at once.",
     },
+    agent_memory_max_notes: {
+      label: "Agent memory notes per account",
+      unit: "notes",
+      adminDescription:
+        "Most agent memory notes one account may keep, in all namespaces and every agent's own scope together. Unset: 2000. Each namespace still holds at most 500 notes and each agent's own scope 100: those bound what one search reads.",
+      userDescription: "Most agent memory notes your account may keep in all.",
+    },
+    agent_memory_max_mb: {
+      label: "Agent memory size per account",
+      unit: "MB",
+      adminDescription:
+        "Most agent memory one account may keep, in megabytes of note text. Unset: 8.",
+      userDescription: "Most agent memory your account may keep.",
+    },
     blob_account_total_bytes: {
       label: "Blob storage per account",
       unit: "GB",

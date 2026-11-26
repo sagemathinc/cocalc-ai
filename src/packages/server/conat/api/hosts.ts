@@ -3142,7 +3142,13 @@ export async function getAgentMemoryContext({
   chat_path?: string;
   thread_id?: string;
   report_off?: boolean;
-}): Promise<{ notes: number; index: string; off?: true } | null> {
+}): Promise<{
+  notes: number;
+  index: string;
+  off?: true;
+  /** The account's note limit (its membership may raise it). */
+  max_notes?: number;
+} | null> {
   if (!host_id) throw new Error("host_id must be specified");
   if (!project_id) throw new Error("project_id must be specified");
   if (!isValidUUID(owner_account_id))

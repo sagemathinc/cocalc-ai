@@ -554,6 +554,18 @@ export function buildEntitlementOverrideSchemaDoc() {
             .adminDescription,
       }),
       fieldDoc({
+        path: "usage_limits.agent_memory_max_notes",
+        ...descriptions.usage_limits.agent_memory_max_notes,
+        description:
+          descriptions.usage_limits.agent_memory_max_notes.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.agent_memory_max_mb",
+        ...descriptions.usage_limits.agent_memory_max_mb,
+        description:
+          descriptions.usage_limits.agent_memory_max_mb.adminDescription,
+      }),
+      fieldDoc({
         path: "usage_limits.blob_account_total_bytes",
         ...descriptions.usage_limits.blob_account_total_bytes,
         unit: "bytes",

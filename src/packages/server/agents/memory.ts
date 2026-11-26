@@ -24,6 +24,7 @@ import {
   AGENT_MEMORY_AGENT_SCOPE,
   AGENT_MEMORY_GLOBAL,
   AGENT_MEMORY_LIMITS,
+  agentMemoryAccountLimits,
   agentMemoryMarkdown,
   agentMemoryNamespace,
   agentOfMemoryNamespace,
@@ -45,6 +46,7 @@ import {
   validateMemoryNamespace,
   validateMemoryNamespaceDescription,
   validateMemoryWrite,
+  type AgentMemoryAccountLimits,
   type AgentMemoryCaller,
   type AgentMemoryCuratorRequest,
   type AgentMemoryNamespace,
@@ -113,6 +115,11 @@ export type AgentMemoryDeps = {
    * reports can be seen by the project's other members. Absent means no.
    */
   soloProject?(account_id: string, project_id: string): Promise<boolean>;
+  /**
+   * The account's note and size limits: its membership's, or the defaults.
+   * Absent means the defaults.
+   */
+  accountLimits?(account_id: string): Promise<AgentMemoryAccountLimits>;
   /** Rate limits for agent operations; the owner is never charged. */
   charge(
     account_id: string,
@@ -179,6 +186,13 @@ export const defaultAgentMemoryDeps: AgentMemoryDeps = {
   soloProject: async (account_id, project_id) => {
     const { isSoloProject } = await import("./cocalc-connector-scope");
     return await isSoloProject(account_id, project_id);
+  },
+  accountLimits: async (account_id) => {
+    const { resolveMembershipForAccount } =
+      await import("@cocalc/server/membership/resolve");
+    return agentMemoryAccountLimits(
+      (await resolveMembershipForAccount(account_id)).effective_limits,
+    );
   },
 };
 
@@ -324,6 +338,38 @@ export function createAgentMemory(
   deps: AgentMemoryDeps = defaultAgentMemoryDeps,
 ) {
   const pool = () => deps.pool();
+
+  // The account's limits, looked up at the start of each request (before
+  // any transaction) and kept a minute, so checks inside a transaction
+  // never wait for another database connection.
+  const LIMITS_TTL_MS = 60_000;
+  const limitsCache = new Map<
+    string,
+    { at: number; value: Promise<AgentMemoryAccountLimits> }
+  >();
+  function accountLimits(
+    account_id: string,
+  ): Promise<AgentMemoryAccountLimits> {
+    const cached = limitsCache.get(account_id);
+    if (cached && Date.now() - cached.at < LIMITS_TTL_MS) return cached.value;
+    const value = (
+      deps.accountLimits
+        ? deps.accountLimits(account_id)
+        : Promise.resolve(agentMemoryAccountLimits(undefined))
+    ).catch((err) => {
+      // The defaults, rather than failing memory over a membership lookup;
+      // kept like a result, so a check later in the request (inside its
+      // transaction) does not look them up again.
+      logger.warn("agent memory limits unavailable; using defaults", {
+        account_id,
+        err: `${err}`,
+      });
+      return agentMemoryAccountLimits(undefined);
+    });
+    if (limitsCache.size > 10_000) limitsCache.clear();
+    limitsCache.set(account_id, { at: Date.now(), value });
+    return value;
+  }
 
   async function transaction<T>(
     account_id: string,
@@ -702,6 +748,7 @@ export function createAgentMemory(
     owner: boolean,
   ) {
     const now = await usage(db, account_id, namespace);
+    const { maxNotes, maxAccountBytes } = await accountLimits(account_id);
     const full = (what: string) =>
       new Error(
         `agent memory ${what}; merge notes on the same topic into one, or delete stale ones first (memory export keeps a copy)`,
@@ -722,23 +769,21 @@ export function createAgentMemory(
         }`,
       );
     const accountFull =
-      (add.accountNotes > 0 &&
-        now.notes + add.accountNotes > AGENT_MEMORY_LIMITS.maxNotes) ||
-      (add.bytes > 0 &&
-        now.bytes + add.bytes > AGENT_MEMORY_LIMITS.maxAccountBytes);
+      (add.accountNotes > 0 && now.notes + add.accountNotes > maxNotes) ||
+      (add.bytes > 0 && now.bytes + add.bytes > maxAccountBytes);
     if (!accountFull) return;
     if (!owner)
       throw new Error(
         `agent memory has no room for this note: the account reached its limit of ${
-          now.notes + add.accountNotes > AGENT_MEMORY_LIMITS.maxNotes
-            ? `${AGENT_MEMORY_LIMITS.maxNotes} notes`
-            : `${AGENT_MEMORY_LIMITS.maxAccountBytes / 1_000_000} MB`
+          now.notes + add.accountNotes > maxNotes
+            ? `${maxNotes} notes`
+            : `${maxAccountBytes / 1_000_000} MB`
         }, which every namespace and every agent's own scope (agent/) count toward. Delete stale notes (several at once: memory delete a b c; your own scope: memory prune --expiring-within 14d --dry-run first), or the account owner can tidy it in Settings > AI`,
       );
     throw full(
-      now.notes + add.accountNotes > AGENT_MEMORY_LIMITS.maxNotes
-        ? `already has ${AGENT_MEMORY_LIMITS.maxNotes} notes`
-        : `would exceed ${AGENT_MEMORY_LIMITS.maxAccountBytes / 1_000_000} MB`,
+      now.notes + add.accountNotes > maxNotes
+        ? `already has ${maxNotes} notes`
+        : `would exceed ${maxAccountBytes / 1_000_000} MB`,
     );
   }
 
@@ -1120,6 +1165,7 @@ export function createAgentMemory(
     ): Promise<unknown> {
       validateAgentMemoryRequest(request);
       if (!isValidUUID(project_id)) throw new Error("invalid project");
+      const limits = await accountLimits(account_id);
       const settings = await settingsOf(account_id);
       // A batch (delete-many, prune) is one request; a dry run only reads.
       const kind: AgentMemoryUsageKind =
@@ -1369,8 +1415,8 @@ export function createAgentMemory(
                 ? (projectNamespaces[0]?.name ?? GLOBAL)
                 : undefined,
             limits: {
-              account_notes: AGENT_MEMORY_LIMITS.maxNotes,
-              account_bytes: AGENT_MEMORY_LIMITS.maxAccountBytes,
+              account_notes: limits.maxNotes,
+              account_bytes: limits.maxAccountBytes,
               namespace_notes: AGENT_MEMORY_LIMITS.maxNotesPerNamespace,
               agent_notes: AGENT_MEMORY_LIMITS.maxNotesPerAgent,
               description_bytes: AGENT_MEMORY_LIMITS.maxDescriptionBytes,
@@ -1647,7 +1693,11 @@ export function createAgentMemory(
       project_id: string,
       agent?: AgentMemoryCaller,
       { reportOff = false }: { reportOff?: boolean } = {},
-    ): Promise<{ notes: number; index: string; off?: true } | undefined> {
+    ): Promise<
+      | { notes: number; index: string; off?: true; max_notes?: number }
+      | undefined
+    > {
+      const limits = await accountLimits(account_id);
       const settings = await settingsOf(account_id);
       // A host that asks gets { off: true }, so its agents can mention that
       // memory exists; older hosts keep getting nothing.
@@ -1690,6 +1740,7 @@ export function createAgentMemory(
       for (const row of rows) counts[row.namespace] += 1;
       return {
         notes: rows.length,
+        max_notes: limits.maxNotes,
         index: buildMemoryIndex({
           notes,
           total: rows.length,
@@ -1787,6 +1838,7 @@ export function createAgentMemory(
       request: AgentMemoryCuratorRequest,
     ): Promise<any> {
       validateAgentMemoryCuratorRequest(request);
+      await accountLimits(account_id);
       await deps.charge(
         account_id,
         request.op === "write"
@@ -2055,6 +2107,7 @@ export function createAgentMemory(
       request: AgentMemoryOwnerRequest,
     ): Promise<any> {
       validateAgentMemoryOwnerRequest(request);
+      await accountLimits(account_id);
       const db = pool();
       switch (request.op) {
         case "status": {

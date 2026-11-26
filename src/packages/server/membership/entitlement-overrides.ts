@@ -86,6 +86,8 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "sensor_max_wakes_per_day",
   "sensor_max_active_watchers",
   "sensor_max_active_watchers_per_agent",
+  "agent_memory_max_notes",
+  "agent_memory_max_mb",
   "blob_account_total_bytes",
   "blob_account_count",
   "blob_project_total_bytes",
@@ -335,6 +337,18 @@ const OVERRIDE_EFFECT_FIELDS = [
     key: "sensor_max_active_watchers_per_agent",
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .sensor_max_active_watchers_per_agent,
+  },
+  {
+    section: "usage_limits",
+    key: "agent_memory_max_notes",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .agent_memory_max_notes,
+  },
+  {
+    section: "usage_limits",
+    key: "agent_memory_max_mb",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .agent_memory_max_mb,
   },
   {
     section: "usage_limits",

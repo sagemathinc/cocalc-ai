@@ -432,6 +432,8 @@ export const MODELED_TIER_JSON_KEYS = {
     "sensor_max_wakes_per_day",
     "sensor_max_active_watchers",
     "sensor_max_active_watchers_per_agent",
+    "agent_memory_max_notes",
+    "agent_memory_max_mb",
   ],
 } as const;
 
@@ -607,6 +609,12 @@ export function tierToFormValues(tier: Partial<Tier>) {
     usage_limit_sensor_max_active_watchers_per_agent: normalizedOptionalNumber(
       tier.usage_limits?.sensor_max_active_watchers_per_agent,
     ),
+    usage_limit_agent_memory_max_notes: normalizedOptionalNumber(
+      tier.usage_limits?.agent_memory_max_notes,
+    ),
+    usage_limit_agent_memory_max_mb: normalizedOptionalNumber(
+      tier.usage_limits?.agent_memory_max_mb,
+    ),
     active: !tier.disabled,
   };
 }
@@ -778,6 +786,16 @@ export function buildMembershipTierPayload(values): AdminMembershipTierPayload {
     usage_limits,
     "sensor_max_active_watchers_per_agent",
     values.usage_limit_sensor_max_active_watchers_per_agent,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "agent_memory_max_notes",
+    values.usage_limit_agent_memory_max_notes,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "agent_memory_max_mb",
+    values.usage_limit_agent_memory_max_mb,
   );
 
   return pick(
@@ -2374,6 +2392,22 @@ export function MembershipTiers() {
                   <Form.Item
                     name="usage_limit_sensor_max_active_watchers_per_agent"
                     label="Active watchers / agent"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_agent_memory_max_notes"
+                    label="Agent memory notes / account"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_agent_memory_max_mb"
+                    label="Agent memory MB / account"
                   >
                     <InputNumber min={0} step={1} precision={0} />
                   </Form.Item>

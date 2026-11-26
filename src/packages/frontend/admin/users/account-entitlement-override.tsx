@@ -483,6 +483,19 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
       MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
         .sensor_max_active_watchers_per_agent.adminDescription,
   },
+  ...(["agent_memory_max_notes", "agent_memory_max_mb"] as const).map(
+    (key) => ({
+      id: key,
+      section: "usage_limits" as const,
+      key,
+      label:
+        MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits[key].label,
+      unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits[key].unit,
+      description:
+        MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits[key]
+          .adminDescription,
+    }),
+  ),
   {
     id: "rootfs_count",
     section: "usage_limits",

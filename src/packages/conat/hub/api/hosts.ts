@@ -2453,7 +2453,9 @@ export interface Hosts {
   }) => Promise<ProjectBackupConfig>;
   // A host asks whether its pressure monitor is watch-only: the bay answers
   // from its own row for the calling host.
-  getPressurePolicy: (opts?: { host_id?: string }) => Promise<HostPressurePolicy>;
+  getPressurePolicy: (opts?: {
+    host_id?: string;
+  }) => Promise<HostPressurePolicy>;
   getProjectOwnerEffectiveLimits: (opts: {
     host_id?: string;
     project_id?: string;
@@ -2581,7 +2583,13 @@ export interface Hosts {
     chat_path?: string;
     thread_id?: string;
     report_off?: boolean;
-  }) => Promise<{ notes: number; index: string; off?: true } | null>;
+  }) => Promise<{
+    notes: number;
+    index: string;
+    off?: true;
+    /** The account's note limit (its membership may raise it). */
+    max_notes?: number;
+  } | null>;
   // Claude subscription limits reported during a turn, saved on the
   // credential. The owner is owner_account_id: host auth strips account_id.
   recordClaudeSubscriptionUsage: (opts: {
