@@ -45,12 +45,27 @@ describe("acpThreadTurnStartMark", () => {
     const key = startTurn("2026-11-26T00:00:00.000Z");
     const first = acpThreadTurnStartMark(thread);
     expect(first).not.toBe(empty);
-    // Ending a turn does not change it.
-    finalizeAcpTurnLease({ key, state: "completed" });
+    // Ending a turn does not change it (and it did end).
+    finalizeAcpTurnLease({
+      key,
+      state: "completed",
+      owner_instance_id: "worker",
+    });
+    expect(
+      getAcpDatabase()
+        .prepare(
+          "SELECT state FROM acp_turns WHERE project_id = ? AND path = ? AND message_date = ?",
+        )
+        .get(key.project_id, key.path, key.message_date),
+    ).toEqual({ state: "completed" });
     expect(acpThreadTurnStartMark(thread)).toBe(first);
     // A turn that starts and ends between two reads does.
     const second = startTurn("2026-11-26T00:01:00.000Z");
-    finalizeAcpTurnLease({ key: second, state: "completed" });
+    finalizeAcpTurnLease({
+      key: second,
+      state: "completed",
+      owner_instance_id: "worker",
+    });
     expect(acpThreadTurnStartMark(thread)).not.toBe(first);
   });
 
