@@ -88,6 +88,10 @@ export async function curateAgentMemory(
   if (!opts.account_id) throw new Error("must be signed in");
   const { withMemoryHome } = await import("@cocalc/server/agents/memory-home");
   const { account_id, ...request } = opts as any;
+  // The hub binds the caller's session (null for an API key); it is not a
+  // field of the memory request, which rejects unknown fields.
+  delete request.session_hash;
+  delete request.browser_id;
   return await withMemoryHome(account_id, { kind: "curator", request });
 }
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
