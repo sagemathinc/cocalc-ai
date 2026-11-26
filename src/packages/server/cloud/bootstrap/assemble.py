@@ -60,20 +60,42 @@ class PartsError(ValueError):
     pass
 
 
-def regular_file(path: Path, under: Path) -> bytes:
-    """The bytes of `path`, a regular file (not a symlink) directly in `under`."""
-    if path.parent != under:
-        raise PartsError(f"{path} is not directly in {under}")
+def real_dir(path: Path) -> Path:
+    """`path` itself, which must be a real directory (not a symlink)."""
     try:
         info = os.lstat(path)
     except FileNotFoundError:
+        raise PartsError(f"missing directory: {path}") from None
+    if not stat.S_ISDIR(info.st_mode):
+        raise PartsError(f"not a real directory: {path}")
+    return path
+
+
+def regular_file(path: Path, under: Path) -> bytes:
+    """The bytes of `path`, a regular file (not a symlink) directly in `under`.
+
+    `under` must be a real directory. The file is opened with O_NOFOLLOW and
+    checked on the open descriptor, so what is read is what was checked. The
+    parts are repository sources: this guards against a part reaching outside
+    parts/ by a link, not against a local user changing parts/ while it runs.
+    """
+    if path.parent != under:
+        raise PartsError(f"{path} is not directly in {under}")
+    real_dir(under)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
         raise PartsError(f"missing part: {path}") from None
-    if not stat.S_ISREG(info.st_mode):
-        raise PartsError(f"not a regular file: {path}")
-    return path.read_bytes()
+    except OSError as err:  # ELOOP: the part is a symlink
+        raise PartsError(f"not a regular file: {path} ({err.strerror})") from None
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise PartsError(f"not a regular file: {path}")
+        return f.read()
 
 
 def manifest_sections(parts: Path = PARTS) -> list[str]:
+    real_dir(parts)
     raw = regular_file(parts / "manifest.txt", parts)
     if b"\r" in raw:
         raise PartsError("manifest.txt must use \\n line endings")
@@ -89,7 +111,7 @@ def manifest_sections(parts: Path = PARTS) -> list[str]:
     if not names:
         raise PartsError("manifest.txt lists no sections")
     listed = {name.split("/", 1)[1] for name in names}
-    present = {p.name for p in (parts / "main").iterdir()}
+    present = {p.name for p in real_dir(parts / "main").iterdir()}
     if present - listed:
         raise PartsError(f"main sections not in the manifest: {sorted(present - listed)}")
     return names
@@ -118,7 +140,7 @@ def assemble(parts: Path = PARTS) -> bytes:
     duplicates = sorted({name for name in used if used.count(name) > 1})
     if duplicates:
         raise PartsError(f"embedded files included more than once: {duplicates}")
-    present = {p.name for p in embedded_dir.iterdir()}
+    present = {p.name for p in real_dir(embedded_dir).iterdir()}
     unused = sorted(present - set(used))
     if unused:
         raise PartsError(f"embedded files never included: {unused}")

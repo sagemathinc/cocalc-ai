@@ -201,6 +201,27 @@ class Rejects(unittest.TestCase):
         os.symlink(target, parts / "main" / "00-a.py")
         self.assertRejects(parts)
 
+    def test_symlinked_embedded_directory(self):
+        parts = self.make()
+        outside = parts.parent / "elsewhere"
+        (parts / "embedded").rename(outside)
+        os.symlink(outside, parts / "embedded")
+        self.assertRejects(parts)
+
+    def test_symlinked_main_directory(self):
+        parts = self.make()
+        outside = parts.parent / "elsewhere"
+        (parts / "main").rename(outside)
+        os.symlink(outside, parts / "main")
+        self.assertRejects(parts)
+
+    def test_symlinked_parts_directory(self):
+        parts = self.make()
+        outside = parts.parent / "elsewhere"
+        parts.rename(outside)
+        os.symlink(outside, parts)
+        self.assertRejects(parts)
+
 
 if __name__ == "__main__":
     unittest.main()
