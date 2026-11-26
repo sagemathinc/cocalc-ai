@@ -384,8 +384,41 @@ export function podmanExecFailureReason(
   return `podman exec failed${detail}`;
 }
 
-/** Runs claudeManagedPolicyCheck in the project container. */
+/** Tries of the managed-settings check that run out of time, in all. */
+const MANAGED_POLICY_CHECK_ATTEMPTS = 3;
+const MANAGED_POLICY_TIMEOUT_MESSAGE =
+  "Could not check the project for Claude Code managed settings in time; try again.";
+
+/**
+ * Runs claudeManagedPolicyCheck in the project container. A check that runs
+ * out of time (a busy host, a container just started) is tried again, up to
+ * MANAGED_POLICY_CHECK_ATTEMPTS times in all; any other failure, and a
+ * managed policy found, are final.
+ */
 async function checkNoManagedPolicy(
+  launcher: { command: string; argsPrefix: string[] },
+  name: string,
+): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await checkNoManagedPolicyOnce(launcher, name);
+    } catch (err) {
+      if (
+        (err as Error)?.message !== MANAGED_POLICY_TIMEOUT_MESSAGE ||
+        attempt >= MANAGED_POLICY_CHECK_ATTEMPTS
+      )
+        throw err;
+      logger.warn(
+        "Claude Code managed-settings check timed out; trying again",
+        {
+          attempt,
+        },
+      );
+    }
+  }
+}
+
+async function checkNoManagedPolicyOnce(
   launcher: { command: string; argsPrefix: string[] },
   name: string,
 ): Promise<void> {
@@ -437,9 +470,7 @@ async function checkNoManagedPolicy(
     stderrBytes: Buffer.byteLength(failure.stderr),
   });
   if (failure.killed && failure.signal === "SIGKILL")
-    throw Error(
-      "Could not check the project for Claude Code managed settings in time; try again.",
-    );
+    throw Error(MANAGED_POLICY_TIMEOUT_MESSAGE);
   throw Error(
     `Could not check the project for Claude Code managed settings (${reason}).`,
   );

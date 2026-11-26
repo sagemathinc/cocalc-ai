@@ -893,6 +893,54 @@ describe("launchClaudeSubscriptionInProject", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it("tries a managed-policy check that ran out of time twice more", async () => {
+    const timedOut = (_cmd: any, _args: any, _opts: any, cb: any) =>
+      cb(
+        Object.assign(Error("killed"), { killed: true, signal: "SIGKILL" }),
+        "",
+        "",
+      );
+    // Two timeouts, then the check passes: it starts.
+    (execFile as unknown as jest.Mock)
+      .mockImplementationOnce(timedOut)
+      .mockImplementationOnce(timedOut);
+    const proc = await launchClaudeSubscriptionInProject(binding, conversation);
+    expect(execFile).toHaveBeenCalledTimes(3);
+    expect(spawn).toHaveBeenCalled();
+    await proc.stop();
+  });
+
+  it("gives up after three managed-policy checks that ran out of time", async () => {
+    (execFile as unknown as jest.Mock).mockImplementation(
+      (_cmd, _args, _opts, cb) =>
+        cb(
+          Object.assign(Error("killed"), { killed: true, signal: "SIGKILL" }),
+          "",
+          "",
+        ),
+    );
+    await expect(
+      launchClaudeSubscriptionInProject(binding, conversation),
+    ).rejects.toThrow(/managed settings in time/);
+    expect(execFile).toHaveBeenCalledTimes(3);
+    expect(startProviderRelaySession).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("does not try again when a managed policy is found or podman fails", async () => {
+    for (const code of [78, 125]) {
+      (execFile as unknown as jest.Mock).mockReset();
+      (execFile as unknown as jest.Mock).mockImplementation(
+        (_cmd, _args, _opts, cb) =>
+          cb(Object.assign(Error(`exit ${code}`), { code }), "", ""),
+      );
+      await expect(
+        launchClaudeSubscriptionInProject(binding, conversation),
+      ).rejects.toThrow(/managed settings|managed polic/i);
+      expect(execFile).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("runs every podman exec with the podman environment of the project containers", async () => {
     const proc = await launchClaudeSubscriptionInProject(binding, conversation);
     await proc.beginConnectorTurn!({ path: "a.chat" } as any);
