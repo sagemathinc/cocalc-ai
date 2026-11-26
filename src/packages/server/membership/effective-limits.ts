@@ -199,6 +199,12 @@ export function normalizeMembershipEffectiveLimits(
     sensor_max_active_watchers_per_agent: normalizeNonNegativeInteger(
       usageLimits?.sensor_max_active_watchers_per_agent,
     ),
+    agent_memory_max_notes: normalizeNonNegativeInteger(
+      usageLimits?.agent_memory_max_notes,
+    ),
+    agent_memory_max_mb: normalizeNonNegativeInteger(
+      usageLimits?.agent_memory_max_mb,
+    ),
     blob_account_total_bytes: normalizeNonNegativeInteger(
       usageLimits?.blob_account_total_bytes,
     ),

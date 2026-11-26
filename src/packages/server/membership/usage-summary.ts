@@ -67,6 +67,8 @@ const LIMIT_FIELDS = [
   "sensor_max_wakes_per_day",
   "sensor_max_active_watchers",
   "sensor_max_active_watchers_per_agent",
+  "agent_memory_max_notes",
+  "agent_memory_max_mb",
   "blob_account_total_bytes",
   "blob_account_count",
   "blob_project_total_bytes",

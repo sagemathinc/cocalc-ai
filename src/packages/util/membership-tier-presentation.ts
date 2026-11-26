@@ -440,6 +440,20 @@ function buildMembershipTierDetailGroups({
       label: "Active watchers per agent",
       value: formatLimitCount(usageLimits.sensor_max_active_watchers_per_agent),
     });
+  if (usageLimits.agent_memory_max_notes != null)
+    add({
+      group: "ai-automation",
+      key: "agent_memory_max_notes",
+      label: "Agent memory notes",
+      value: formatLimitCount(usageLimits.agent_memory_max_notes),
+    });
+  if (usageLimits.agent_memory_max_mb != null)
+    add({
+      group: "ai-automation",
+      key: "agent_memory_max_mb",
+      label: "Agent memory size",
+      value: `${usageLimits.agent_memory_max_mb} MB`,
+    });
 
   add({
     group: "collaboration",

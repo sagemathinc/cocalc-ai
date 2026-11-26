@@ -17,6 +17,10 @@ import {
   createAgentMemory,
   defaultAgentMemoryDeps,
 } from "./memory";
+import {
+  agentMemoryAccountLimits,
+  type AgentMemoryAccountLimits,
+} from "@cocalc/conat/agents/memory";
 
 // Identity "encryption" for the default first-version reader.
 jest.mock("@cocalc/database/settings/secret-settings", () => ({
@@ -45,7 +49,11 @@ class LegacyStore {
   }
 }
 
-function setup() {
+function setup({
+  accountLimits,
+}: {
+  accountLimits?: (account_id: string) => Promise<AgentMemoryAccountLimits>;
+} = {}) {
   const legacy = new LegacyStore();
   let beforeCharge: (() => Promise<void>) | undefined;
   let encryptGate: { text: string; wait: Promise<void> } | undefined;
@@ -73,6 +81,7 @@ function setup() {
       },
     },
     assertWritable: writable,
+    accountLimits,
     charge: async (_account, op, bytes = 0) => {
       charges.push(`${op}:${bytes}`);
       const hook = beforeCharge;
@@ -875,6 +884,57 @@ describeDb("agent memory", () => {
     expect(error).not.toMatch(/hidden|480|8\.16/);
   });
 
+  test("the account's membership sets its note and size limits", async () => {
+    const limits = new Map<string, AgentMemoryAccountLimits>();
+    const accountLimits = async (account_id: string) =>
+      limits.get(account_id) ?? agentMemoryAccountLimits(undefined);
+    const small = await newAccount(setup({ accountLimits }).memory);
+    const large = await newAccount(setup({ accountLimits }).memory, {
+      namespaces: [{ name: "hidden" }],
+    });
+    limits.set(small, agentMemoryAccountLimits({ agent_memory_max_notes: 2 }));
+    limits.set(large, agentMemoryAccountLimits({ agent_memory_max_mb: 20 }));
+    // A hub looks the limits up again after a minute; a new one at once.
+    const { memory } = setup({ accountLimits });
+    await write(memory, small, P1, "a");
+    await write(memory, small, P1, "b");
+    await expect(write(memory, small, P1, "c")).rejects.toThrow(
+      /the account reached its limit of 2 notes/,
+    );
+    expect(
+      (
+        (await memory.agent(small, P1, {
+          action: "memory",
+          op: "namespaces",
+        })) as any
+      ).limits,
+    ).toMatchObject({ account_notes: 2, account_bytes: 8_000_000 });
+    expect((await memory.turnIndex(small, P1))!.max_notes).toBe(2);
+
+    // A larger size limit: 8.16 MB of notes, then one more.
+    await getPool().query(
+      `INSERT INTO agent_memory_notes (account_id, namespace, name, description, body, bytes)
+       SELECT $1, 'hidden', 'n-' || i, 'x', 'x', 17000 FROM generate_series(1, 480) AS i`,
+      [large],
+    );
+    expect(await write(memory, large, P1, "one-more")).toMatchObject({
+      saved: "created",
+    });
+  });
+
+  test("memory keeps working with the default limits when they can't be looked up", async () => {
+    const { memory } = setup({
+      accountLimits: async () => {
+        throw new Error("membership unavailable");
+      },
+    });
+    const account = await newAccount(memory);
+    expect(await write(memory, account, P1, "a")).toMatchObject({
+      saved: "created",
+    });
+    expect((await memory.turnIndex(account, P1))!.max_notes).toBe(2000);
+  });
+
   test("a move fits when the account is exactly full", async () => {
     const { memory } = setup();
     const account = await newAccount(memory, { namespaces: [{ name: "dev" }] });
@@ -1609,6 +1669,7 @@ describeDb("agent memory: authorship, agent scopes and expiry", () => {
       assertWritable: async () => {},
       charge: async () => {},
       soloProject: async (_account, project) => solo.has(project),
+      accountLimits: async () => agentMemoryAccountLimits(undefined),
     });
     const account = await newAccount(memory);
     await as(memory, account, OPS, note("agent/mine"));

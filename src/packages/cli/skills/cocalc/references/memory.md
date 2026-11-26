@@ -53,9 +53,10 @@ cocalc project chat memory export [--out notes.md]
   exactly one. Write `global/<name>` for facts that apply everywhere, such as
   the user's general preferences. In a project with namespaces, every name
   comes back in full (`global/name` too): use names as listed.
-- Memory keeps up to 2,000 notes, 500 per namespace (the global notes count
-  as one) and 100 in each agent's own scope; every agent's own scope counts
-  toward the 2,000. `namespaces` (or `stats`) shows the counts and limits,
+- Memory keeps up to 2,000 notes by default (a membership can allow more),
+  500 per namespace (the global notes count as one) and 100 in each agent's
+  own scope; every agent's own scope counts toward the account's total.
+  `namespaces` (or `stats`) shows the counts and the account's limits,
   and in a project only the account's owner is in, the whole account's
   totals. A "no room" error names the limit reached. Move a lesson from your own scope to a namespace or global when it
   is worth keeping for everyone: it then no longer expires.
@@ -110,8 +111,8 @@ stay visible; hundreds of single-event notes push each other out of view.
   the owner creates namespaces and attaches them to projects.
 
 **Tidy before you hit the limits.** The 500-note limit per namespace is there
-to keep each namespace curated; the account limits (2,000 notes, 8 MB, and
-rates) also bound the service's work, since a search reads every visible
+to keep each namespace curated; the account limits (2,000 notes and 8 MB
+by default, and rates) also bound the service's work, since a search reads every visible
 note. When a namespace is nearly full: merge notes on the same topic into one, move
 working state to your own scope, and delete notes that are stale or wrong. If
 it fills with notes of one area (for example durable review lessons, or

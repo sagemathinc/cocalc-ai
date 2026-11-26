@@ -482,7 +482,13 @@ type AgentMemoryContextProvider = (opts: {
   /** The turn's chat, so the index can list its agent's own notes. */
   chatPath?: string;
   threadId?: string;
-}) => Promise<{ notes: number; index: string; off?: true } | null>;
+}) => Promise<{
+  notes: number;
+  index: string;
+  off?: true;
+  /** The account's note limit (its membership may raise it). */
+  max_notes?: number;
+} | null>;
 let agentMemoryContextProvider: AgentMemoryContextProvider | undefined;
 
 export function setAgentMemoryContextProvider(
@@ -524,6 +530,7 @@ async function loadAgentMemoryContext(
       context: agentMemoryTurnContext(
         result.index,
         '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"',
+        result.max_notes,
       ),
       event: { type: "memory", state: "loaded", notes: result.notes },
     };

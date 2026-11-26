@@ -6,6 +6,7 @@ import {
   parseMemoryExpiry,
   validateMemoryNamespace,
   agentMemoryTurnContext,
+  agentMemoryAccountLimits,
   buildMemoryIndex,
   detectSecret,
   isUnusedMemoryNote,
@@ -362,6 +363,36 @@ test("the index never exceeds its byte cap, even with huge descriptions", () => 
       }),
     ),
   ).toBeLessThanOrEqual(AGENT_MEMORY_LIMITS.maxIndexBytes);
+});
+
+test("an account's limits come from its membership, else the defaults", () => {
+  const defaults = {
+    maxNotes: AGENT_MEMORY_LIMITS.maxNotes,
+    maxAccountBytes: AGENT_MEMORY_LIMITS.maxAccountBytes,
+  };
+  expect(agentMemoryAccountLimits(undefined)).toEqual(defaults);
+  expect(agentMemoryAccountLimits({})).toEqual(defaults);
+  expect(
+    agentMemoryAccountLimits({
+      agent_memory_max_notes: 10_000,
+      agent_memory_max_mb: 40,
+    }),
+  ).toEqual({ maxNotes: 10_000, maxAccountBytes: 40_000_000 });
+  // Zero is a limit; nonsense is ignored.
+  expect(agentMemoryAccountLimits({ agent_memory_max_notes: 0 }).maxNotes).toBe(
+    0,
+  );
+  for (const bad of [-1, "5000", NaN, null])
+    expect(
+      agentMemoryAccountLimits({
+        agent_memory_max_notes: bad,
+        agent_memory_max_mb: bad,
+      }),
+    ).toEqual(defaults);
+  // The turn context states the account's own limit.
+  expect(agentMemoryTurnContext("", "cocalc", 10_000)).toContain(
+    "Memory keeps up to 10000 notes, 500 per namespace",
+  );
 });
 
 test("the turn context names every command and keeps the notes as data", () => {
