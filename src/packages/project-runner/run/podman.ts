@@ -1478,17 +1478,24 @@ export async function reconcileProjectNetworkLimits(): Promise<void> {
 async function cleanupProjectCgroupOnce(
   project_id: string,
 ): Promise<string | undefined> {
-  const result = await executeCode({
-    command: "sudo",
-    args: [
-      "-n",
-      "/usr/local/sbin/cocalc-runtime-storage",
-      "cleanup-project-cgroup",
-      project_id,
-    ],
-    timeout: CLEANUP_PROJECT_CGROUP_TIMEOUT_S,
-    err_on_exit: false,
-  });
+  let result: Awaited<ReturnType<typeof executeCode>>;
+  try {
+    result = await executeCode({
+      command: "sudo",
+      args: [
+        "-n",
+        "/usr/local/sbin/cocalc-runtime-storage",
+        "cleanup-project-cgroup",
+        project_id,
+      ],
+      timeout: CLEANUP_PROJECT_CGROUP_TIMEOUT_S,
+      err_on_exit: false,
+    });
+  } catch (err) {
+    // executeCode rejects (often with a plain string) on a timeout or when
+    // the helper cannot be launched, even with err_on_exit: false.
+    return `${(err as Error)?.message ?? err}`.trim() || "helper call failed";
+  }
   if (result.exit_code === 0) {
     return undefined;
   }
@@ -2141,9 +2148,9 @@ async function startUnlockedResolvingStaleAdmission(
   opts: StartOptions,
 ): Promise<StartResult> {
   try {
-    return await startUnlocked(opts);
+    return await startUnlocked(opts, { mayRetry: true });
   } catch (err) {
-    if (!isRefusedAdmission(err) || !err.cleanupConfirmed) {
+    if (!isRetryableRefusal(err)) {
       throw explainRefusedAdmission(err);
     }
     logger.warn(
@@ -2152,7 +2159,7 @@ async function startUnlockedResolvingStaleAdmission(
     );
   }
   try {
-    return await startUnlocked(opts);
+    return await startUnlocked(opts, { mayRetry: false });
   } catch (err) {
     throw explainRefusedAdmission(err);
   }
@@ -2162,10 +2169,16 @@ function isRefusedAdmission(err: unknown): err is ProjectRuntimeFinalizeError {
   return err instanceof ProjectRuntimeFinalizeError && err.admissionRefused;
 }
 
+function isRetryableRefusal(err: unknown): err is ProjectRuntimeFinalizeError {
+  return isRefusedAdmission(err) && err.cleanupConfirmed;
+}
+
 function explainRefusedAdmission(err: unknown): unknown {
   if (!isRefusedAdmission(err)) return err;
   return Error(
-    `${err.message} -- a previous run of this project did not finish cleaning up its processes, and that cleanup could not be confirmed yet; try starting the project again in a minute`,
+    err.cleanupConfirmed
+      ? `${err.message} -- job admission still could not be confirmed after cleaning up this project's processes; try starting the project again in a minute`
+      : `${err.message} -- a previous run of this project did not finish cleaning up its processes, and that cleanup could not be confirmed yet; try starting the project again in a minute`,
   );
 }
 
@@ -2292,12 +2305,12 @@ async function projectMountSources({
   return views;
 }
 
-async function startUnlocked({
-  project_id,
-  config = {},
-  localPath,
-  sshServers: _sshServers,
-}: StartOptions): Promise<StartResult> {
+async function startUnlocked(
+  { project_id, config = {}, localPath, sshServers: _sshServers }: StartOptions,
+  // Whether the caller retries a refused admission whose cleanup confirmed;
+  // such a failure is then not reported as the start's outcome.
+  { mayRetry }: { mayRetry: boolean },
+): Promise<StartResult> {
   logger.debug("start", {
     project_id,
     config: redactConfigurationForLog(config),
@@ -2953,7 +2966,6 @@ async function startUnlocked({
       phase_timings_ms: timings.phase_timings_ms,
     };
   } catch (err) {
-    report({ type: "start-project", error: err });
     // Undo only what this start mounted: a start refused because the rootfs
     // or the views may still be in use must not take them down itself.
     if (mountedHere.rootfs) {
@@ -2991,6 +3003,11 @@ async function startUnlocked({
       });
     } else if (err instanceof ProjectRuntimeFinalizeError) {
       err.cleanupConfirmed = true;
+    }
+    // Progress events publish asynchronously, so an attempt that will be
+    // retried must not report an error that could land after its success.
+    if (!(mayRetry && isRetryableRefusal(err))) {
+      report({ type: "start-project", error: explainRefusedAdmission(err) });
     }
     throw err;
   } finally {

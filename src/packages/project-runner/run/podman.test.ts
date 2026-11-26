@@ -143,6 +143,11 @@ jest.mock("./conat-client", () => ({
   getConatClient: jest.fn(),
 }));
 
+const mockLroProgress = jest.fn();
+jest.mock("@cocalc/conat/lro/progress", () => ({
+  lroProgress: (...args: any[]) => mockLroProgress(...args),
+}));
+
 import getPort from "@cocalc/backend/get-port";
 import { mountArg } from "@cocalc/backend/podman";
 import { mount as mountRootFs } from "./rootfs";
@@ -1066,9 +1071,49 @@ describe("project-runner podman orphan fallback", () => {
           image: "docker.io/library/ubuntu:latest",
           ssh_port: 30123,
           http_port: 45123,
+          lro_op_id: "op-1",
         },
       });
     }
+
+    function reportedErrors() {
+      return mockLroProgress.mock.calls
+        .map(([opts]) => opts)
+        .filter((opts) => opts?.op_id === "op-1" && opts.error != null)
+        .map((opts) => `${opts.error?.message ?? opts.error}`);
+    }
+
+    it("retries the cleanup once when the helper call itself rejects", async () => {
+      noBrowserContainers();
+      let calls = 0;
+      mockExecuteCode.mockImplementation(async ({ args }) => {
+        if (!args?.includes("cleanup-project-cgroup")) return ok;
+        calls += 1;
+        if (calls === 1) {
+          throw "killed command 'sudo -n cleanup-project-cgroup'";
+        }
+        return ok;
+      });
+
+      await stop({ project_id: project1 });
+
+      expect(helperCalls("cleanup-project-cgroup")).toHaveLength(2);
+    });
+
+    it("keeps the helper's rejection in a failed stop's error", async () => {
+      noBrowserContainers();
+      mockExecuteCode.mockImplementation(async ({ args }) => {
+        if (args?.includes("cleanup-project-cgroup")) {
+          throw "killed command 'sudo -n cleanup-project-cgroup'";
+        }
+        return ok;
+      });
+
+      await expect(stop({ project_id: project1 })).rejects.toThrow(
+        "the project container stopped, but cleanup of the project's processes could not be confirmed (killed command 'sudo -n cleanup-project-cgroup')",
+      );
+      expect(helperCalls("cleanup-project-cgroup")).toHaveLength(2);
+    });
 
     it("retries the cleanup once when a stop finds the host cgroup lock busy", async () => {
       noBrowserContainers();
@@ -1117,6 +1162,8 @@ describe("project-runner podman orphan fallback", () => {
         ["rm", "-f", "-t", "0", `project-${project1}`],
         { timeout: 10 },
       );
+      // The recovered attempt is not reported as an error.
+      expect(reportedErrors()).toEqual([]);
     });
 
     it("does not retry a start when its cleanup is not confirmed", async () => {
@@ -1129,10 +1176,13 @@ describe("project-runner podman orphan fallback", () => {
             : ok,
       );
 
-      await expect(startProject()).rejects.toThrow(
-        "a previous run of this project did not finish cleaning up its processes",
-      );
+      const message =
+        "a previous run of this project did not finish cleaning up its processes, and that cleanup could not be confirmed yet";
+      await expect(startProject()).rejects.toThrow(message);
       expect(helperCalls("attach-prepared-project-runtime")).toHaveLength(1);
+      const errors = reportedErrors();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain(message);
     });
 
     it("retries a start only once", async () => {
@@ -1141,10 +1191,14 @@ describe("project-runner podman orphan fallback", () => {
         args?.includes("attach-prepared-project-runtime") ? refused : ok,
       );
 
-      await expect(startProject()).rejects.toThrow(
-        "try starting the project again in a minute",
-      );
+      const message =
+        "job admission still could not be confirmed after cleaning up this project's processes; try starting the project again in a minute";
+      await expect(startProject()).rejects.toThrow(message);
       expect(helperCalls("attach-prepared-project-runtime")).toHaveLength(2);
+      // Only the final attempt reports its failure.
+      const errors = reportedErrors();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain(message);
     });
   });
 
