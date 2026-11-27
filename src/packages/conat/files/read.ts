@@ -375,12 +375,14 @@ export async function* readFile({
   const principal =
     fileReadPrincipal(account_id ? { account_id } : cn.info?.user) ??
     (cn.info?.user?.hub_id ? `project:${project_id}` : "unattributed");
-  // With admissionWaitMs, waits that long for a free slot rather than failing
-  // at once (see ReadAdmission.acquireWait).
+  // With admissionWaitMs, waits for a free slot rather than failing at once
+  // (see ReadAdmission.acquireWait), and retries a busy reader (below), both
+  // within one deadline.
+  const deadline = Date.now() + Math.min(maxWait, admissionWaitMs);
   const release =
     admissionWaitMs > 0
       ? await consumers.acquireWait(project_id, principal, subject, {
-          timeoutMs: Math.min(maxWait, admissionWaitMs),
+          timeoutMs: Math.max(0, deadline - Date.now()),
           signal,
         })
       : consumers.acquire(project_id, principal, subject);
@@ -400,7 +402,6 @@ export async function* readFile({
   // A waiting read also retries while the project's reader answers busy
   // before sending anything: the reader frees its slot slightly after this
   // side does, and other processes may be reading from the project too.
-  const deadline = Date.now() + Math.min(maxWait, admissionWaitMs);
   let backoff = 50;
   try {
     for (;;) {
@@ -491,6 +492,8 @@ export async function* readFile({
         signal?.addEventListener("abort", done, { once: true });
       });
       signal?.throwIfAborted();
+      // Never start a request after the deadline.
+      if (Date.now() >= deadline) throw Error(PRODUCER_BUSY);
       backoff = Math.min(2 * backoff, 1000);
     }
   } finally {

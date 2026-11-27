@@ -15,6 +15,7 @@ import {
   READ_PROTOCOL,
 } from "./read-flow";
 import { handleFileDownload } from "./file-download";
+import { PRODUCER_BUSY } from "./read-admission";
 import { projectSubject } from "../names";
 
 jest.setTimeout(20000);
@@ -377,6 +378,100 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
       controllers.forEach((controller) => controller.abort());
       await Promise.allSettled(pending);
       await until(() => blocked.every((stream) => stream.destroyed));
+    }
+  });
+
+  // A reader that always answers busy, as one does at its cap.
+  async function busyReader(service: string) {
+    const requests: number[] = [];
+    const sub = await producer.subscribe(
+      projectSubject({ project_id, service: `files:read${service}` }),
+    );
+    void (async () => {
+      for await (const mesg of sub) {
+        requests.push(Date.now());
+        mesg.respondSync(null, { headers: { error: PRODUCER_BUSY } });
+      }
+    })();
+    return { requests, close: () => sub.close() };
+  }
+
+  it("a waiting read retries a busy reader, but never past its deadline", async () => {
+    const busy = await busyReader(":always-busy");
+    try {
+      const start = Date.now();
+      await expect(
+        readFile({
+          client: consumer,
+          project_id,
+          name: ":always-busy",
+          path: source,
+          admissionWaitMs: 400,
+        }).next(),
+      ).rejects.toThrow(PRODUCER_BUSY);
+      const elapsed = Date.now() - start;
+      expect(elapsed).toBeGreaterThanOrEqual(390);
+      expect(elapsed).toBeLessThan(800);
+      expect(busy.requests.length).toBeGreaterThan(1);
+      // no request at or after the deadline
+      expect(busy.requests.every((t) => t < start + 400)).toBe(true);
+      const count = busy.requests.length;
+      await sleep(300);
+      expect(busy.requests.length).toBe(count);
+    } finally {
+      busy.close();
+    }
+  });
+
+  it("waiting for a local slot and for a busy reader share one deadline", async () => {
+    await close({ project_id, name });
+    const blocked: PassThrough[] = [];
+    await createServer({
+      client: producer,
+      project_id,
+      name,
+      maxActiveStreams: 128,
+      createReadStream: () => {
+        const stream = new PassThrough();
+        blocked.push(stream);
+        return stream;
+      },
+    });
+    const busy = await busyReader(":busy-later");
+    const controllers = Array.from({ length: 4 }, () => new AbortController());
+    // fill this process's 4 slots for the project (any service name)
+    const holding = controllers.map((controller) =>
+      readFile({
+        client: consumer,
+        project_id,
+        name,
+        path: source,
+        signal: controller.signal,
+      }).next(),
+    );
+    try {
+      await until(() => blocked.length === 4);
+      const start = Date.now();
+      const waiting = readFile({
+        client: consumer,
+        project_id,
+        name: ":busy-later",
+        path: source,
+        admissionWaitMs: 800,
+      }).next();
+      const failed = expect(waiting).rejects.toThrow(PRODUCER_BUSY);
+      await sleep(500);
+      expect(busy.requests).toHaveLength(0); // still waiting for a local slot
+      controllers[0].abort();
+      await failed;
+      // one shared 800 ms budget, not 500 ms + a fresh 800 ms
+      expect(Date.now() - start).toBeLessThan(1150);
+      expect(busy.requests.every((t) => t < start + 800)).toBe(true);
+    } finally {
+      controllers.forEach((controller) => controller.abort());
+      await Promise.allSettled(holding);
+      await until(() => blocked.every((stream) => stream.destroyed));
+      busy.close();
     }
   });
 
