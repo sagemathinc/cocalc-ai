@@ -1,4 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
+import { executePodman } from "@cocalc/backend/podman";
 import { AGENT_RPC_REPORT_VERSION } from "@cocalc/conat/agents/rpc-reports";
 import {
   buildHostBaseMetadata,
@@ -732,22 +733,17 @@ async function readRuntimeLogTail(
 async function runPodmanCommand(
   args: string[],
 ): Promise<{ stdout: string; stderr: string; exit_code: number }> {
-  let result = await executeCode({
-    command: "podman",
-    args,
+  let result = await executePodman(args, {
     timeout: 30,
-    env: podmanEnv(),
     err_on_exit: false,
   });
   if (result.exit_code === 0) return result;
   if (containerMissingError(String(result.stderr ?? result.stdout ?? ""))) {
     return result;
   }
-  result = await executeCode({
-    command: "sudo",
-    args: ["-n", "podman", ...args],
+  result = await executePodman(args, {
+    sudo: true,
     timeout: 30,
-    env: podmanEnv(),
     err_on_exit: false,
   });
   return result;
@@ -773,14 +769,20 @@ async function runDiagnosticCommand({
   let executedCommand = command;
   let executedArgs = args;
   let result: { stdout: string; stderr: string; exit_code: number };
+  // podman goes through its wrapper (the launch rules), never executeCode
+  const run = (command: string, args: string[]) =>
+    command === "podman"
+      ? executePodman(args, { timeout, env, err_on_exit: false })
+      : command === "sudo" && args[0] === "-n" && args[1] === "podman"
+        ? executePodman(args.slice(2), {
+            sudo: true,
+            timeout,
+            env,
+            err_on_exit: false,
+          })
+        : executeCode({ command, args, timeout, env, err_on_exit: false });
   try {
-    result = await executeCode({
-      command,
-      args,
-      timeout,
-      env,
-      err_on_exit: false,
-    });
+    result = await run(command, args);
   } catch (err) {
     return diagnosticCommandError({
       command: executedCommand,
@@ -792,13 +794,7 @@ async function runDiagnosticCommand({
     executedCommand = "sudo";
     executedArgs = ["-n", command, ...args];
     try {
-      result = await executeCode({
-        command: executedCommand,
-        args: executedArgs,
-        timeout,
-        env,
-        err_on_exit: false,
-      });
+      result = await run(executedCommand, executedArgs);
     } catch (err) {
       return diagnosticCommandError({
         command: executedCommand,

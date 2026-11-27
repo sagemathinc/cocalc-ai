@@ -79,6 +79,8 @@ jest.mock("@cocalc/project-runner/run/podman", () => ({
 }));
 
 jest.mock("@cocalc/backend/podman", () => ({
+  // the real wrappers, over this test's child_process mocks
+  ...jest.requireActual("@cocalc/backend/podman"),
   mountArg: jest.fn(),
 }));
 
@@ -273,6 +275,40 @@ describe("initCodexProjectRunner", () => {
 
   afterEach(() => {
     setCodexProjectSpawner(null);
+  });
+
+  it("Codex is refused on a separate or invalid host, without any podman call", async () => {
+    const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    try {
+      const { initCodexProjectRunner, spawnCodexInProjectContainer } =
+        await import("./codex/codex-project");
+      initCodexProjectRunner();
+      for (const mode of ["separate", "invalid"]) {
+        process.env.COCALC_PROJECT_RUNTIME_UID_MODE = mode;
+        await expect(
+          getCodexProjectSpawner()!.spawnCodexAppServer!({
+            projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+            accountId: "00000000-0000-4000-8000-000000000001",
+            agentSessionKey: "thread-1\0turn-1",
+            cwd: "/home/user",
+            env: {},
+          }),
+        ).rejects.toThrow("not available on this host yet");
+        await expect(
+          spawnCodexInProjectContainer({
+            projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+            accountId: "00000000-0000-4000-8000-000000000001",
+            cwd: "/home/user",
+            args: [],
+          } as any),
+        ).rejects.toThrow("not available on this host yet");
+      }
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(execFileMock).not.toHaveBeenCalled();
+    } finally {
+      if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+    }
   });
 
   it("attaches late registration to the next turn without replacing the app-server", async () => {

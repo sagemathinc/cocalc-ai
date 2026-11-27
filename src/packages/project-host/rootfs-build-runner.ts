@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -20,7 +20,8 @@ import {
 import { join, posix } from "node:path";
 
 import getLogger from "@cocalc/backend/logger";
-import { podmanEnv } from "@cocalc/backend/podman/env";
+import { spawnPodman } from "@cocalc/backend/podman";
+import { execLaunchPolicy } from "@cocalc/project-runner/run/podman-launch";
 import type {
   HostRootfsBuildCancelResponse,
   HostRootfsBuildLogResponse,
@@ -43,6 +44,14 @@ const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const STALE_HEARTBEAT_MS = HEARTBEAT_INTERVAL_MS * 4;
 const ROOTFS_BUILD_USER = "0:0";
+
+// Execs into the project's own container: they run under its user namespace
+// (on a separate host, the separate map), so the gate allows them there.
+function rootfsBuildExecPolicy(project_id: string) {
+  return execLaunchPolicy(`project-${project_id}`, {
+    userArgs: ["-u", ROOTFS_BUILD_USER],
+  });
+}
 const ROOTFS_BUILD_HOME = "/root";
 const ROOTFS_BUILD_LOGNAME = "root";
 
@@ -545,9 +554,9 @@ async function signalRootfsBuildProcess({
     `${pid}`,
   ];
   return await new Promise((resolve) => {
-    const child = spawn("podman", args, {
-      env: podmanEnv(),
+    const child = spawnPodman(args, {
       stdio: "ignore",
+      policy: rootfsBuildExecPolicy(project_id),
     });
     child.on("error", () => resolve(false));
     child.on("close", (code) => resolve(code === 0));
@@ -612,10 +621,10 @@ export async function startRootfsBuild(
   });
 
   const args = podmanExecArgs(opts.project_id, opts, paths);
-  const child = spawn("podman", args, {
+  const child = spawnPodman(args, {
     detached: true,
-    env: podmanEnv(),
     stdio: "ignore",
+    policy: rootfsBuildExecPolicy(opts.project_id),
   });
   status.pid = child.pid;
   const startResponse: HostRootfsBuildStatusResponse = {

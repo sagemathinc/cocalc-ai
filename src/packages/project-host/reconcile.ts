@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnPodman } from "@cocalc/backend/podman";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
@@ -111,12 +111,9 @@ export async function getContainerStates(): Promise<ContainerProbeResult> {
       resolve({ ok: false, states });
       return;
     }
-    const child = spawn(
-      "podman",
+    const child = spawnPodman(
       ["ps", "-a", "--format", "{{.Names}}|{{.ID}}|{{.State}}|{{.Ports}}"],
-      {
-        env,
-      },
+      { env },
     );
     let stdout = "";
     let stderr = "";

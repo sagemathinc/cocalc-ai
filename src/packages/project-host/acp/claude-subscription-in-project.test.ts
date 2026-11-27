@@ -868,6 +868,25 @@ describe("launchClaudeSubscriptionInProject", () => {
     expect(lease.close).toHaveBeenCalled();
   });
 
+  it("is refused on a separate or invalid host, before any podman call or credential", async () => {
+    const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    try {
+      for (const mode of ["separate", "separate\n"]) {
+        process.env.COCALC_PROJECT_RUNTIME_UID_MODE = mode;
+        await expect(
+          launchClaudeSubscriptionInProject(binding, conversation),
+        ).rejects.toThrow("not available on this host yet");
+      }
+      expect(execFile).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+      expect(startProviderRelaySession).not.toHaveBeenCalled();
+      expect(createProjectCliTokenLease).not.toHaveBeenCalled();
+    } finally {
+      if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+    }
+  });
+
   it("refuses a project with a Claude Code managed policy before any credential exists", async () => {
     (execFile as unknown as jest.Mock).mockImplementation(
       (_cmd, _args, _opts, cb) =>

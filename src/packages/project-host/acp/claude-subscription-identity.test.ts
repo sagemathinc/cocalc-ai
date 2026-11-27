@@ -75,6 +75,8 @@ jest.mock("@cocalc/project-runner/run/podman", () => ({
 }));
 jest.mock("@cocalc/backend/podman/env", () => ({ podmanEnv: () => ({}) }));
 jest.mock("@cocalc/backend/podman", () => ({
+  // the real wrappers, over this test's child_process mocks
+  ...jest.requireActual("@cocalc/backend/podman"),
   mountArg: ({ source, target }) => `mount:${source}:${target}`,
 }));
 
@@ -212,6 +214,26 @@ test.each([
   );
   expect(createProjectCliTokenLease).not.toHaveBeenCalled();
   expect(spawn).not.toHaveBeenCalled();
+});
+
+test("the controller is refused on a separate or invalid host, without any podman call", async () => {
+  const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+  const { execFile, spawn } = jest.requireMock("node:child_process");
+  jest.mocked(execFile).mockClear?.();
+  jest.mocked(spawn).mockClear?.();
+  try {
+    for (const mode of ["separate", "Separate"]) {
+      process.env.COCALC_PROJECT_RUNTIME_UID_MODE = mode;
+      await expect(launch(binding, conversation)).rejects.toThrow(
+        "not available on this host yet",
+      );
+    }
+    expect(execFile).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  } finally {
+    if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+  }
 });
 
 test("unregistered chat does not inherit another agent identity", async () => {

@@ -54,10 +54,14 @@ describe("runtime identity", () => {
       mode: "keep-id",
     });
     expect(
+      configuredRuntimeUidMode({ COCALC_PROJECT_RUNTIME_UID_MODE: "separate" }),
+    ).toEqual({ configured: "separate", mode: "separate" });
+    // exactly as set: surrounding whitespace makes it invalid
+    expect(
       configuredRuntimeUidMode({
         COCALC_PROJECT_RUNTIME_UID_MODE: " separate ",
       }),
-    ).toEqual({ configured: "separate", mode: "separate" });
+    ).toEqual({ configured: " separate " });
     expect(
       configuredRuntimeUidMode({ COCALC_PROJECT_RUNTIME_UID_MODE: "sideways" }),
     ).toEqual({ configured: "sideways" });
@@ -94,6 +98,43 @@ describe("runtime identity", () => {
       "131073 327680 4128768",
     ].join("\n");
     expect(separateInnerId(parseIdMap(reordered)!)).toMatchObject({
+      reason: "map-collision",
+    });
+  });
+
+  it("finds the inner id for a runtime user with several subordinate ranges", async () => {
+    // two subordinate uid lines of other sizes, apart from each other, then
+    // the block: the namespace has the same total, so the same inner id
+    const twoRanges = [
+      "0 3000 1",
+      "1 300000 1000000",
+      "1000001 5000000 3194304",
+      "4194305 1073741824 65536",
+    ].join("\n");
+    expect(separateInnerId(parseIdMap(twoRanges)!)).toEqual({
+      inner: 4194305,
+    });
+    const ok = await resolveRuntimeIdentity(
+      inputs({ uidMap: twoRanges, gidMap: twoRanges }),
+    );
+    expect(ok.mode).toBe("separate");
+    expect(ok.usernsArgs).toContain("2001:4194305:1");
+    // ranges that add up to less than the container map uses put the block's
+    // inner id inside a container range: refused, never a shared inner id
+    const short = [
+      "0 3000 1",
+      "1 300000 65536",
+      "65537 400000 1000000",
+      "1065537 1073741824 65536",
+    ].join("\n");
+    expect(separateInnerId(parseIdMap(short)!)).toMatchObject({
+      reason: "map-collision",
+    });
+    const refused = await resolveRuntimeIdentity(
+      inputs({ uidMap: short, gidMap: short }),
+    );
+    expect(refused.status).toMatchObject({
+      effective: "keep-id",
       reason: "map-collision",
     });
   });

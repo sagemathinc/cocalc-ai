@@ -458,6 +458,30 @@ describe("runRootfsTrivyScan", () => {
     expect(calls.some((args) => args[0] === "run")).toBe(false);
   });
 
+  it("is refused on a separate or invalid host, without any podman call", async () => {
+    const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    try {
+      for (const mode of ["separate", "separte"]) {
+        process.env.COCALC_PROJECT_RUNTIME_UID_MODE = mode;
+        const { runner, calls } = podmanStub();
+        await expect(
+          runRootfsTrivyScan({
+            scan_run_id: "scan-1",
+            target,
+            rootfs_path: "/rootfs",
+            trivy_cache_dir: "/trivy-cache",
+            scanner_image: PINNED,
+            command_runner: runner,
+          }),
+        ).rejects.toThrow("not available on this host yet");
+        expect(calls).toEqual([]);
+      }
+    } finally {
+      if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+    }
+  });
+
   it("refuses a tag-only image without running podman", async () => {
     const { runner, calls } = podmanStub();
     await expect(

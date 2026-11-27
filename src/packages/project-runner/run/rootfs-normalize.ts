@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { executePodman } from "@cocalc/backend/podman";
 import { readFile, writeFile } from "node:fs/promises";
 import { executeCode } from "@cocalc/backend/execute-code";
-import { podmanEnv } from "@cocalc/backend/podman/env";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("project-runner:rootfs-preflight");
@@ -255,9 +255,8 @@ export async function preflightPulledOciImage({
   });
   let stdout = "";
   try {
-    const result = await executeCode({
-      command: "podman",
-      args: [
+    const result = await executePodman(
+      [
         "unshare",
         "bash",
         "-lc",
@@ -334,11 +333,12 @@ printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","gli
         "cocalc-pulled-image-preflight",
         image,
       ],
-      err_on_exit: true,
-      verbose: false,
-      timeout: 10 * 60,
-      env: podmanEnv(),
-    });
+      {
+        err_on_exit: true,
+        verbose: false,
+        timeout: 10 * 60,
+      },
+    );
     stdout = `${result.stdout ?? ""}`.trim();
   } catch (err) {
     throw new Error(`failed OCI image preflight for '${image}': ${err}`);

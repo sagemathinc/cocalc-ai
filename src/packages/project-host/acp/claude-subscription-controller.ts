@@ -6,7 +6,6 @@
 import { randomUUID } from "node:crypto";
 import { CLAUDE_PROJECT_MCP_NAME } from "./claude-project-tool-source";
 import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tools";
-import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { kindBeneath, listBeneath, mkdirBeneath } from "../beneath-copy";
@@ -19,9 +18,13 @@ import type {
   HarnessProcess,
   HarnessTurnPublicationContext,
 } from "@cocalc/ai/acp/harness";
-import { mountArg } from "@cocalc/backend/podman";
+import {
+  execFilePodman,
+  mountArg,
+  spawnPodmanPiped,
+} from "@cocalc/backend/podman";
+import { sideLaunchPolicy } from "@cocalc/project-runner/run/podman-launch";
 import getLogger from "@cocalc/backend/logger";
-import { podmanEnv } from "@cocalc/backend/podman/env";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
 import { CLAUDE_CODE_INSTALL_ROOT } from "@cocalc/util/ai/qualified-harnesses";
@@ -396,6 +399,11 @@ export async function launchClaudeSubscriptionController(
   const token = claudeSubscriptionToken(registered.payload);
   // claude.ai connectors need a scope the inference-only token lacks.
   const claudeAiConnectors = token ? false : credential.claudeAiConnectors;
+  // The launch gate: refused on a separate host (no podman call at all).
+  const launchPolicy = sideLaunchPolicy("claude-controller", "create", {
+    hostUid: process.getuid!(),
+    hostGid: process.getgid!(),
+  });
   await ensureProjectContainerRunning({ projectId, accountId });
   const skill = await getBuiltinClaudeSkillText();
   const systemPromptAppend = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
@@ -445,12 +453,12 @@ ${skill}
       });
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
-      execFile(
-        launcher.command,
-        [...launcher.argsPrefix, ...args],
+      execFilePodman(
+        args,
         {
+          launcher,
+          policy: args[0] === "create" ? launchPolicy : undefined,
           cwd: "/",
-          env: podmanEnv(),
           timeout: 30_000,
           killSignal: "SIGKILL",
           maxBuffer: 1024 * 1024,
@@ -675,10 +683,9 @@ ${skill}
     }
     launched = true;
     credentialSync?.start();
-    const proc = spawn(
-      launcher.command,
-      [...launcher.argsPrefix, "start", "--attach", "--interactive", name],
-      { cwd: "/", env: podmanEnv(), stdio: ["pipe", "pipe", "pipe"] },
+    const proc = spawnPodmanPiped(
+      ["start", "--attach", "--interactive", name],
+      { launcher, cwd: "/" },
     );
     const closed = new Promise<void>((resolve) => {
       proc.once("close", resolve);

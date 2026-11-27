@@ -31,6 +31,7 @@ import {
   type RuntimeIdentity,
   type RuntimeUidModeStatus,
 } from "./runtime-identity";
+import type { RuntimeUidCheck } from "./runtime-uid-check";
 
 const logger = getLogger("project-runner:runtime-host");
 
@@ -329,6 +330,15 @@ class Cached<T> {
 
 const cachedProbe = new Cached<string | undefined>();
 const cachedMaps = new Cached<{ uidMap: string; gidMap: string }>();
+
+/** Rootless Podman's live uid map (cached like the decision's), if readable. */
+export async function liveRuntimeUidMap(): Promise<string | undefined> {
+  try {
+    return (await cachedMaps.get(liveMaps)).uidMap;
+  } catch {
+    return undefined;
+  }
+}
 let lastStatus: RuntimeUidModeStatus | undefined;
 
 /** The last decision, for health and the heartbeat. */
@@ -341,33 +351,75 @@ export function noteRuntimeUidModeStatus(status: RuntimeUidModeStatus): void {
   lastStatus = status;
 }
 
-// Sidecar launch paths (sandbox exec, browsers, ...) still run as keep-id
-// until R1 PR3; until then a separate host is only partly separate.
-const SIDECARS_SEPARATE = false;
+// The latest self-check of the host's processes (runtime-uid-check.ts), set
+// by the monitor (runtime-uid-monitor.ts).
+let lastCheck: RuntimeUidCheck | undefined;
+
+export function noteRuntimeUidCheck(check: RuntimeUidCheck): void {
+  lastCheck = check;
+}
+
+export function lastRuntimeUidCheck(): RuntimeUidCheck | undefined {
+  return lastCheck;
+}
+
+// How often the self-check runs; a check older than two intervals is stale.
+export const RUNTIME_UID_CHECK_INTERVAL_MS = 60_000;
 
 export interface RuntimeUidModeReport extends RuntimeUidModeStatus {
   label: string;
 }
 
-/** How health shows a decision: never plain "separate" while partial. */
+/**
+ * How health shows the host's mode. Plain "separate (verified ...)" only when
+ * the decision is separate, the self-check found no violation and nothing
+ * unknown, no old-mode container runs, and the check is fresh. Otherwise:
+ * "separate (unverified)", "separate (violation)", "transition (...)" (old
+ * keep-id containers on a separate host), "mixed (...)" (separate containers
+ * on a keep-id host) or "refused (reason)".
+ */
 export function runtimeUidModeLabel(
   status: RuntimeUidModeStatus,
-  sidecarsSeparate = SIDECARS_SEPARATE,
+  {
+    check,
+    now = new Date(),
+    intervalMs = RUNTIME_UID_CHECK_INTERVAL_MS,
+  }: { check?: RuntimeUidCheck; now?: Date; intervalMs?: number } = {},
 ): string {
-  if (status.effective === "separate") {
-    return sidecarsSeparate ? "separate" : "separate (partial)";
+  const configured = status.configured;
+  if (configured === "keep-id") {
+    const separate = check?.old_mode_containers ?? 0;
+    return separate > 0
+      ? `mixed (${separate} separate container${separate === 1 ? "" : "s"} running)`
+      : "keep-id";
   }
-  if (status.configured !== "keep-id") {
-    return `keep-id (fallback: ${status.reason ?? "unknown"})`;
+  if (configured !== "separate") return "refused (mode-invalid)";
+  if (status.effective !== "separate") {
+    return `refused (${status.reason ?? "unknown"})`;
   }
-  return "keep-id";
+  if (check == null) return "separate (unverified)";
+  if (check.old_mode_containers > 0) {
+    const n = check.old_mode_containers;
+    return `transition (${n} old-mode container${n === 1 ? "" : "s"} running)`;
+  }
+  if ((check.violations ?? 0) > 0) return "separate (violation)";
+  const age = now.getTime() - new Date(check.checked_at).getTime();
+  if (check.unknown > 0 || !(age >= 0 && age <= 2 * intervalMs)) {
+    return "separate (unverified)";
+  }
+  return `separate (verified ${Math.round(age / 1000)} s ago)`;
 }
 
-/** For the heartbeat: null until the first project start decides. */
-export function runtimeUidModeReport(): RuntimeUidModeReport | null {
+/** For the heartbeat: null until the first decision (startup or a start). */
+export function runtimeUidModeReport(
+  now = new Date(),
+): RuntimeUidModeReport | null {
   const status = lastStatus;
   if (status == null) return null;
-  return { ...status, label: runtimeUidModeLabel(status) };
+  return {
+    ...status,
+    label: runtimeUidModeLabel(status, { check: lastCheck, now }),
+  };
 }
 
 /**
@@ -408,8 +460,9 @@ const HOST_INPUTS: RuntimeHostInputs = {
 };
 
 /**
- * Keep-id or separate for the next start. Fallbacks are warned on every start
- * so an operator who configured separate sees why it isn't in effect.
+ * Keep-id or separate for the next start. A host configured for separate
+ * whose decision is keep-id refuses the start (the launch gate in
+ * podman-launch.ts); the reason is logged here on every start.
  */
 export async function runtimeIdentityForStart({
   sharedScratch,
@@ -432,10 +485,16 @@ export async function runtimeIdentityForStart({
       return await checkHostPreconditions(inputs.host(sharedScratch));
     },
   });
+  const previous = lastStatus;
   lastStatus = identity.status;
-  if (identity.status.configured !== "keep-id" && identity.mode === "keep-id") {
+  if (
+    identity.status.configured !== "keep-id" &&
+    identity.mode === "keep-id" &&
+    JSON.stringify(previous) !== JSON.stringify(identity.status)
+  ) {
+    // once per change (the monitor evaluates every minute)
     logger.warn(
-      "separate runtime uid configured but not in effect",
+      "separate runtime uid configured but unavailable; starts are refused",
       identity.status,
     );
   }

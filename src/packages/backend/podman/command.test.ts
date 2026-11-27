@@ -1,4 +1,9 @@
 import podman from "./command";
+import { mintPodmanLaunchPolicy } from "./launch-policy-mint";
+
+// Tests of the wrapper itself: launches carry a policy, as from the gate.
+const policy = (verb: "run" | "create") =>
+  mintPodmanLaunchPolicy({ kind: "project", verb, usernsArgs: [] });
 
 const executeCodeMock = jest.fn();
 const podmanEnvMock = jest.fn(() => ({
@@ -57,7 +62,10 @@ describe("podman command wrapper", () => {
         exit_code: 0,
       });
 
-    const result = await podman(["run", "--rm", "example"], { timeout: 30 });
+    const result = await podman(["run", "--rm", "example"], {
+      timeout: 30,
+      policy: policy("run"),
+    });
 
     expect(result).toEqual({
       stdout: "container-id\n",
@@ -104,7 +112,10 @@ describe("podman command wrapper", () => {
         exit_code: 0,
       });
 
-    const result = await podman(["run", "--rm", "example"], { timeout: 30 });
+    const result = await podman(["run", "--rm", "example"], {
+      timeout: 30,
+      policy: policy("run"),
+    });
 
     expect(result).toEqual({
       stdout: "container-id\n",
@@ -138,7 +149,10 @@ describe("podman command wrapper", () => {
 
     let err = "";
     try {
-      await podman(["create", ...Array(2000).fill("-e X=1")], { timeout: 30 });
+      await podman(["create", ...Array(2000).fill("-e X=1")], {
+        timeout: 30,
+        policy: policy("create"),
+      });
     } catch (e) {
       err = `${e}`;
     }
@@ -157,6 +171,7 @@ describe("podman command wrapper", () => {
     });
 
     await podman(["run", "example"], {
+      policy: policy("run"),
       timeout: 30,
       launcher: {
         command: "bash",

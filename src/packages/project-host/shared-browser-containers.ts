@@ -38,6 +38,7 @@ import getLogger from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import { data } from "@cocalc/backend/data";
 import { mountArg, podman } from "@cocalc/backend/podman";
+import { sideLaunchPolicy } from "@cocalc/project-runner/run/podman-launch";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import {
@@ -52,10 +53,6 @@ import {
   mount as mountRootFs,
   unmount as unmountRootFs,
 } from "@cocalc/project-runner/run/rootfs";
-import {
-  DEFAULT_PROJECT_RUNTIME_GID,
-  DEFAULT_PROJECT_RUNTIME_UID,
-} from "@cocalc/util/project-runtime";
 import {
   isSharedBrowserAppId,
   SHARED_BROWSER_APP_ID,
@@ -271,6 +268,8 @@ async function startContainer(
     ...rest
   }: ReturnType<typeof validateStartRequest>,
 ): Promise<SharedBrowserContainerInfo> {
+  // The launch gate: refused on a separate host (no podman call at all).
+  const launchPolicy = sideLaunchPolicy("shared-browser", "run");
   const runRoot = projectBrowserRunHostPath(project_id);
   if (!existsSync(runRoot))
     throw Error(
@@ -315,9 +314,7 @@ async function startContainer(
     "--cgroups=disabled",
     "--detach",
     "--rm",
-    `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
-    "--user",
-    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+    ...launchPolicy.usernsArgs,
     network === "project"
       ? `--network=container:project-${project_id}`
       : ownNetworkArgument(networkArgument(), await pastaMapsGuestAddr()),
@@ -382,6 +379,7 @@ async function startContainer(
   try {
     await podman(args, {
       launcher: await browserLauncher(project_id),
+      policy: launchPolicy,
       timeout: 120,
     });
     await verifyProjectContainerInPool({ project_id, name });

@@ -13,10 +13,13 @@ separate: the project user is PROJECT_RUNTIME_SEPARATE_UID, a uid from a
 dedicated subordinate block of the runtime user. The container's files reach
 it through idmapped views (root helper `project-view`), so files on disk keep
 their owner. A host gets there in steps, and a project start uses separate
-only when all of them are done; otherwise it starts as keep-id, as today, and
-the reason is reported:
+only when all of them are done. Otherwise the decision is keep-id with the
+reason below, and on a host configured for separate the launch gate
+(podman-launch.ts) refuses the start rather than run it as keep-id:
 
-- mode-off / mode-invalid: COCALC_PROJECT_RUNTIME_UID_MODE isn't "separate";
+- mode-off / mode-invalid: COCALC_PROJECT_RUNTIME_UID_MODE isn't exactly
+  "separate" (unset or exactly "keep-id" is mode-off; anything else, even
+  with surrounding whitespace, is invalid);
 - helper-old: the installed root helper doesn't report the project-view and
   overlay-idmap capabilities (`cocalc-runtime-storage project-view probe`).
   This is a capability probe, never a HELPER_SCHEMA_VERSION comparison: schema
@@ -83,7 +86,8 @@ export function configuredRuntimeUidMode(
   configured: string;
   mode?: ProjectRuntimeUidMode;
 } {
-  const configured = `${env.COCALC_PROJECT_RUNTIME_UID_MODE ?? ""}`.trim();
+  // Exactly as set: a value with whitespace or a typo is invalid.
+  const configured = `${env.COCALC_PROJECT_RUNTIME_UID_MODE ?? ""}`;
   if (!configured) return { configured: "keep-id", mode: "keep-id" };
   return (PROJECT_RUNTIME_UID_MODES as readonly string[]).includes(configured)
     ? { configured, mode: configured as ProjectRuntimeUidMode }

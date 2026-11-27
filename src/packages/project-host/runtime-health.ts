@@ -3,6 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { executePodman } from "@cocalc/backend/podman";
 import { executeCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
@@ -108,13 +109,13 @@ function classifyRuntimeProbeFailure(
 }
 
 export async function probeProjectHostPodmanRuntime(): Promise<void> {
-  const { exit_code, stderr, stdout } = await executeCode({
-    command: "podman",
-    args: ["ps", "-a", "--format", "json"],
-    timeout: probeTimeoutSeconds(),
-    env: podmanEnv(),
-    err_on_exit: false,
-  });
+  const { exit_code, stderr, stdout } = await executePodman(
+    ["ps", "-a", "--format", "json"],
+    {
+      timeout: probeTimeoutSeconds(),
+      err_on_exit: false,
+    },
+  );
   if (exit_code !== 0) {
     throw new Error(
       `podman ps failed (exit ${exit_code}): ${`${stderr || stdout || ""}`.trim()}`,
@@ -180,11 +181,19 @@ export async function captureProjectHostRuntimeDiagnostics(): Promise<
   const results = await Promise.all(
     commands.map(async ({ name, ...opts }) => {
       try {
-        const result = await executeCode({
-          ...opts,
-          timeout: DIAGNOSTIC_TIMEOUT_SECONDS,
-          err_on_exit: false,
-        });
+        // podman goes through its wrapper (the launch rules)
+        const result =
+          opts.command === "podman"
+            ? await executePodman(opts.args, {
+                env: opts.env,
+                timeout: DIAGNOSTIC_TIMEOUT_SECONDS,
+                err_on_exit: false,
+              })
+            : await executeCode({
+                ...opts,
+                timeout: DIAGNOSTIC_TIMEOUT_SECONDS,
+                err_on_exit: false,
+              });
         return {
           name,
           exit_code: result.exit_code,

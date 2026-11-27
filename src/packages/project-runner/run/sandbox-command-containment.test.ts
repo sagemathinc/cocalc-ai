@@ -1,3 +1,4 @@
+import { mintPodmanLaunchPolicy } from "@cocalc/backend/podman/launch-policy-mint";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
@@ -15,6 +16,15 @@ jest.mock("@cocalc/backend/podman/env", () => ({
   podmanEnv: () => ({ PATH: "/usr/bin" }),
 }));
 
+// a policy as the launch gate makes it for an exec into the container
+const execPolicy = (container: string) =>
+  mintPodmanLaunchPolicy({
+    kind: "exec-project",
+    verb: "exec",
+    usernsArgs: [],
+    container,
+  });
+
 function fixture(onCleanupConfirmed?: () => void) {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
@@ -28,6 +38,7 @@ function fixture(onCleanupConfirmed?: () => void) {
   const result = runContainedSandboxCommand({
     project_id: "00000000-0000-4000-8000-000000000001",
     args: ["exec", "project-fixture", "command"],
+    policy: execPolicy("project-fixture"),
     signal: controller.signal,
     timeoutMs: 10000,
     onOutput: output,
@@ -210,6 +221,7 @@ test("cancellation before admission needs no scope and does not spawn", async ()
     await runContainedSandboxCommand({
       project_id: "fixture",
       args: [],
+      policy: execPolicy("x"),
       signal: abort.signal,
       timeoutMs: 1000,
       onOutput: jest.fn(),

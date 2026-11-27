@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
@@ -12,7 +11,11 @@ import { isAbsolute, join } from "node:path";
 import { gzipSync } from "node:zlib";
 
 import getLogger from "@cocalc/backend/logger";
-import { podmanEnv } from "@cocalc/backend/podman/env";
+import {
+  execFilePodman,
+  type PodmanLaunchPolicy,
+} from "@cocalc/backend/podman";
+import { sideLaunchPolicy } from "@cocalc/project-runner/run/podman-launch";
 import {
   DEFAULT_TRIVY_CACHE_DIR,
   DEFAULT_TRIVY_SCANNER_IMAGE,
@@ -123,7 +126,12 @@ export type RootfsTrivyScanResult = {
 export type CommandRunner = (
   command: string,
   args: string[],
-  opts: { timeout_ms: number; error_context?: string },
+  opts: {
+    timeout_ms: number;
+    error_context?: string;
+    // the launch gate's decision, for the scan's podman run
+    policy?: PodmanLaunchPolicy;
+  },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 const provisioningState: RootfsTrivyScannerProvisioningState = {};
@@ -160,19 +168,17 @@ async function pathExists(path: string): Promise<boolean> {
 function defaultCommandRunner(
   command: string,
   args: string[],
-  opts: { timeout_ms: number; error_context?: string },
+  opts: Parameters<CommandRunner>[2],
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(
-      command,
+    execFilePodman(
       args,
       {
+        launcher: { command, argsPrefix: [] },
+        policy: opts.policy,
         timeout: opts.timeout_ms,
         maxBuffer: 8 * 1024 * 1024,
-        env: {
-          ...podmanEnv(),
-          PODMAN_SYSTEMD_UNIT: "cocalc-rootfs-scan",
-        },
+        env: { PODMAN_SYSTEMD_UNIT: "cocalc-rootfs-scan" },
       },
       (err, stdout, stderr) => {
         if (!err) {
@@ -563,6 +569,9 @@ export async function runRootfsTrivyScan({
   // Fails closed: an unpinned image, a database without valid provenance,
   // or an image that doesn't match its digest here is never used.
   assertPinnedScannerImage(scanner_image);
+  // The launch gate: the scan runs untrusted content, and is refused on a
+  // separate host until it has ids of its own (no podman call at all).
+  const launchPolicy = sideLaunchPolicy("rootfs-scan", "run");
   // The whole scan holds the cache's lock, from reading the provenance until
   // the container is done: a database refresh (which swaps db/) waits, so the
   // recorded manifest digest is the database the scan actually read.
@@ -595,6 +604,7 @@ export async function runRootfsTrivyScan({
       await command_runner(podman_binary, podman_args, {
         timeout_ms,
         error_context: "podman rootfs scan",
+        policy: launchPolicy,
       });
       const reportStat = await stat(reportPath);
       if (reportStat.size > max_report_bytes) {

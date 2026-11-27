@@ -15,7 +15,7 @@ Maybe.  Perhaps we'll have two modes.
 
 */
 
-import { mountArg } from "@cocalc/backend/podman";
+import { executePodman, mountArg } from "@cocalc/backend/podman";
 import {
   existsBeneathHome,
   readFileBeneathHome,
@@ -77,10 +77,7 @@ import {
   getConmonContainerProcessLists,
   getConmonContainerProcesses,
 } from "@cocalc/backend/podman/conmon";
-import {
-  configuredContainerRuntimeCurrent,
-  podmanEnv,
-} from "@cocalc/backend/podman/env";
+import { configuredContainerRuntimeCurrent } from "@cocalc/backend/podman/env";
 import {
   type LocalPathFunction,
   type SshServersFunction,
@@ -122,6 +119,8 @@ import {
 } from "./runtime-host";
 import { checkDaemonStateAfterSeparateStart } from "./runtime-hardening";
 import { keepIdUsernsArgs, type RuntimeIdentity } from "./runtime-identity";
+import { projectLaunchPolicy } from "./podman-launch";
+import { scheduleRuntimeUidCheck } from "./runtime-uid-monitor";
 import { projectPoolCgroupPath } from "./project-pool-cgroup";
 import { projectSeccompProfilePath } from "./project-seccomp";
 
@@ -1127,13 +1126,13 @@ async function collectStartFailureDetail(name: string): Promise<string> {
 }
 
 async function inspectContainerPids(name: string): Promise<number[]> {
-  const { stdout } = await executeCode({
-    command: "podman",
-    args: ["inspect", "--format", "{{.State.Pid}} {{.State.ConmonPid}}", name],
-    timeout: STOP_INSPECT_TIMEOUT_S,
-    err_on_exit: false,
-    env: podmanEnv(),
-  });
+  const { stdout } = await executePodman(
+    ["inspect", "--format", "{{.State.Pid}} {{.State.ConmonPid}}", name],
+    {
+      timeout: STOP_INSPECT_TIMEOUT_S,
+      err_on_exit: false,
+    },
+  );
   const conmonContainers = await getConmonContainers(name);
   const out = `${stdout ?? ""}`.trim();
   if (!out) {
@@ -1177,13 +1176,13 @@ async function inspectContainerSandboxPath(
   name: string,
 ): Promise<string | undefined> {
   try {
-    const { stdout } = await executeCode({
-      command: "podman",
-      args: ["inspect", "--format", "{{.NetworkSettings.SandboxKey}}", name],
-      timeout: STOP_INSPECT_TIMEOUT_S,
-      err_on_exit: false,
-      env: podmanEnv(),
-    });
+    const { stdout } = await executePodman(
+      ["inspect", "--format", "{{.NetworkSettings.SandboxKey}}", name],
+      {
+        timeout: STOP_INSPECT_TIMEOUT_S,
+        err_on_exit: false,
+      },
+    );
     return `${stdout ?? ""}`.trim() || undefined;
   } catch (err) {
     logger.warn("start: failed to inspect project network namespace", {
@@ -2144,7 +2143,11 @@ export async function start(opts: StartOptions): Promise<StartResult> {
   const lockRequestedAt = Date.now();
   return await withProjectLifecycleLock(opts.project_id, async () => {
     const lifecycleLockWait = Date.now() - lockRequestedAt;
-    const result = await startUnlockedResolvingStaleAdmission(opts);
+    // the runtime uid self-check runs again after each start, whatever its
+    // outcome
+    const result = await startUnlockedResolvingStaleAdmission(opts).finally(
+      scheduleRuntimeUidCheck,
+    );
     result.phase_timings_ms = {
       ...result.phase_timings_ms,
       lifecycle_lock_wait: lifecycleLockWait,
@@ -2241,7 +2244,8 @@ async function umountViewsIfAny(project_id: string): Promise<void> {
 /**
  * The start's runtime identity. Separate only if, beyond the host-wide gates
  * (runtime-host.ts), this project's dirs are where the root helper accepts
- * view sources; otherwise keep-id, with the reason.
+ * view sources; otherwise keep-id with the reason, which the launch gate
+ * (podman-launch.ts) refuses on a host configured for separate.
  */
 async function separateIdentityForStart({
   project_id,
@@ -2283,7 +2287,7 @@ async function separateIdentityForStart({
     reason: "host-unsafe" as const,
     detail: wrong.join("; ").slice(0, 500),
   };
-  logger.warn("separate runtime uid not used for this start", {
+  logger.warn("separate runtime uid unavailable for this start; refusing it", {
     project_id,
     ...status,
   });
@@ -2446,6 +2450,12 @@ async function startUnlocked(
           sharedScratch: sharedScratchMount?.source,
         }),
     );
+    // The launch gate: a host configured for separate (or misconfigured)
+    // refuses here, before any mount or podman create, instead of starting
+    // the project as keep-id.
+    const launchPolicy = projectLaunchPolicy(identity, {
+      extraUserArgs: ["--user", "0:0"],
+    });
     const separate = identity.mode === "separate" ? identity : undefined;
     if (separate != null) {
       await timings.measure("prepare_separate_runtime", async () => {
@@ -2886,6 +2896,7 @@ async function startUnlocked(
         async () =>
           await podman(args, {
             launcher: projectStartupPodmanLauncher(project_id),
+            policy: launchPolicy,
           }),
       );
       await timings.measure(
@@ -3040,7 +3051,10 @@ export async function stop(opts: { project_id?: string; force?: boolean }) {
   }
   return await withProjectLifecycleLock(
     opts.project_id,
-    async () => await stopUnlocked({ project_id: opts.project_id! }),
+    async () =>
+      await stopUnlocked({ project_id: opts.project_id! }).finally(
+        scheduleRuntimeUidCheck,
+      ),
   );
 }
 

@@ -23,11 +23,12 @@ project's other collaborators: the user is to be warned before any turn in a
 project with other collaborators.
 */
 
-import { spawn, execFile, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import getLogger from "@cocalc/backend/logger";
-import { podmanEnv } from "@cocalc/backend/podman/env";
+import { execFilePodman, spawnPodmanPiped } from "@cocalc/backend/podman";
+import { execLaunchPolicy } from "@cocalc/project-runner/run/podman-launch";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import {
   CLAUDE_CODE_INSTALL_ROOT,
@@ -344,6 +345,16 @@ export function claudeInProjectBackgroundWorkScript(
 
 const MANAGED_POLICY_CHECK_TIMEOUT_MS = 15_000;
 
+// The user Claude runs as in the project container, and the gate's decision
+// for each exec: an agent feature, refused on a separate host for now.
+const CLAUDE_EXEC_USER = `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`;
+function claudeExecPolicy(container: string) {
+  return execLaunchPolicy(container, {
+    userArgs: ["-u", CLAUDE_EXEC_USER],
+    feature: "acp-harness",
+  });
+}
+
 /**
  * One line of text from inside a project container (which the project's user
  * controls) made safe for host logs and a chat-visible error: no terminal
@@ -393,25 +404,22 @@ async function checkNoManagedPolicy(
     | undefined
     | { code: unknown; signal: unknown; killed: boolean; stderr: string }
   >((resolve) =>
-    execFile(
-      launcher.command,
+    execFilePodman(
       [
-        ...launcher.argsPrefix,
         "exec",
         "-u",
-        `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+        CLAUDE_EXEC_USER,
         name,
         "/bin/sh",
         "-c",
         claudeManagedPolicyCheck(),
       ],
       {
+        launcher,
+        policy: claudeExecPolicy(name),
         cwd: "/",
         timeout: MANAGED_POLICY_CHECK_TIMEOUT_MS,
         killSignal: "SIGKILL",
-        // The podman binary, containers.conf and runtime dir the project
-        // containers were created with (as every other podman call here).
-        env: podmanEnv(),
       },
       (error, _stdout, stderr) =>
         resolve(
@@ -579,8 +587,11 @@ export async function launchClaudeSubscriptionInProject(
       }
     })());
 
-  await ensureProjectContainerRunning({ projectId, accountId });
   const name = `project-${projectId}`;
+  // The launch gate: agents are refused on a separate host for now (no
+  // podman call at all).
+  claudeExecPolicy(name);
+  await ensureProjectContainerRunning({ projectId, accountId });
   const launcher = projectPoolPodmanLauncher(projectId);
   // A managed policy in the container would outrank the relay route pinned
   // in the session's settings: refuse before any credential exists. The
@@ -676,42 +687,30 @@ export async function launchClaudeSubscriptionInProject(
       "exec",
       "-i",
       "-u",
-      `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+      CLAUDE_EXEC_USER,
       "--workdir",
       profile.cwd,
     ];
     // Values of credential-like names go by name only (pushPodmanEnv).
     const spawnEnv = pushPodmanEnv(execArgs, env);
     execArgs.push(name, "/bin/sh", "-c", claudeInProjectScript(pidFile));
-    const proc = spawn(
-      launcher.command,
-      [...launcher.argsPrefix, ...execArgs],
-      {
-        cwd: "/",
-        env: spawnEnv,
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
+    const proc = spawnPodmanPiped(execArgs, {
+      launcher,
+      policy: claudeExecPolicy(name),
+      cwd: "/",
+      env: spawnEnv,
+    });
     const lease = cliLease;
     const inContainer = (script: string) =>
       new Promise<string>((resolve, reject) => {
-        execFile(
-          launcher.command,
-          [
-            ...launcher.argsPrefix,
-            "exec",
-            "-u",
-            `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
-            name,
-            "/bin/sh",
-            "-c",
-            script,
-          ],
+        execFilePodman(
+          ["exec", "-u", CLAUDE_EXEC_USER, name, "/bin/sh", "-c", script],
           {
+            launcher,
+            policy: claudeExecPolicy(name),
             cwd: "/",
             timeout: 15_000,
             killSignal: "SIGKILL",
-            env: podmanEnv(),
           },
           (error, stdout) => (error ? reject(error) : resolve(`${stdout}`)),
         );
