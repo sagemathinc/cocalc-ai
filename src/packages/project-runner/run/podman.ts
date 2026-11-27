@@ -834,6 +834,22 @@ export function projectPoolPodmanLauncher(project_id: string) {
   ]);
 }
 
+/**
+ * The project pool launcher under the host's AppArmor "podman" profile
+ * (aa-exec), for the shared browser, whose Chromium sandbox needs a user
+ * namespace (see shared-browser-containers.ts).
+ */
+export function projectPoolPodmanLauncherUnderAppArmor(project_id: string) {
+  const pool = projectPoolPodmanLauncher(project_id);
+  return mintPodmanLauncher("aa-exec", [
+    "-p",
+    "podman",
+    "--",
+    pool.command,
+    ...pool.argsPrefix,
+  ]);
+}
+
 function projectCgroupPodmanLauncher(
   project_id: string,
   limits: ProjectCgroupLimits,
@@ -857,16 +873,13 @@ function projectCgroupPodmanLauncher(
   ]);
 }
 
-function projectStartupPodmanLauncher(project_id: string) {
-  return {
-    command: "bash",
-    argsPrefix: [
-      "-c",
-      PROJECT_STARTUP_LAUNCHER_SCRIPT,
-      "cocalc-project-podman-create",
-      project_id,
-    ],
-  };
+export function projectStartupPodmanLauncher(project_id: string) {
+  return mintPodmanLauncher("bash", [
+    "-c",
+    PROJECT_STARTUP_LAUNCHER_SCRIPT,
+    "cocalc-project-podman-create",
+    project_id,
+  ]);
 }
 
 export async function verifyProjectContainerInPool({

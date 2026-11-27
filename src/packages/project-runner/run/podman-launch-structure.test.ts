@@ -133,6 +133,10 @@ const PROCESS_INVENTORY: Record<string, number> = {
 // by file and why: each is a direct podman run (a non-launch verb, reviewed),
 // or not a command at all.
 const PODMAN_LITERALS: Record<string, { count: number; why: string }> = {
+  "project-runner/run/podman.ts": {
+    count: 1,
+    why: "the AppArmor profile named podman (the shared browser's launcher), not a command",
+  },
   "project-runner/run/pull-image.ts": {
     count: 1,
     why: "podman pull through a pty (progress); a non-launch verb",
@@ -166,8 +170,8 @@ const PODMAN_LITERALS: Record<string, { count: number; why: string }> = {
     why: "diagnostics (info, ps) routed to the wrappers by runDiagnosticCommand; a journal tag",
   },
   "project-host/rootfs-scan.ts": {
-    count: 3,
-    why: "the scanner's podman binary, run only through execFilePodman",
+    count: 4,
+    why: "the scanner's podman binary, run only through execFilePodman (anything else refused)",
   },
   "project-host/runtime-health.ts": {
     count: 3,
@@ -346,6 +350,20 @@ function scan(): {
           else if (first === "container" && GATED.has(second ?? ""))
             noteVerb(second!);
         }
+        // a launcher written as a plain object ({ command, argsPrefix })
+        // instead of minted: the wrappers would refuse it at run time
+        if (
+          ts.isObjectLiteralExpression(node) &&
+          node.properties.some(
+            (p) => p.name != null && p.name.getText(file) === "argsPrefix",
+          ) &&
+          !rel.startsWith("backend/podman/")
+        )
+          mint.push({
+            file: rel,
+            line: line(node),
+            what: "a launcher object that isn't minted",
+          });
         // only the gate mints policies
         if (
           ts.isImportDeclaration(node) &&

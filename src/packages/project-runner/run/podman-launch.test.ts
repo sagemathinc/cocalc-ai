@@ -227,3 +227,25 @@ describe("execLaunchPolicy", () => {
     ).not.toThrow();
   });
 });
+
+describe("the launchers podman.ts hands the wrappers", () => {
+  it("are all minted, so the wrappers accept them", () => {
+    const {
+      projectPoolPodmanLauncher,
+      projectPoolPodmanLauncherUnderAppArmor,
+      projectStartupPodmanLauncher,
+    } = require("./podman");
+    const {
+      checkPodmanLauncher,
+    } = require("@cocalc/backend/podman/launch-policy");
+    for (const launcher of [
+      projectPoolPodmanLauncher(PROJECT.slice("project-".length)),
+      projectPoolPodmanLauncherUnderAppArmor(PROJECT.slice("project-".length)),
+      projectStartupPodmanLauncher(PROJECT.slice("project-".length)),
+    ])
+      expect(() => checkPodmanLauncher(launcher)).not.toThrow();
+    expect(() =>
+      checkPodmanLauncher({ command: "bash", argsPrefix: ["-c", "x"] }),
+    ).toThrow();
+  });
+});

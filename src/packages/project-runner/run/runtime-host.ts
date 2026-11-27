@@ -331,16 +331,17 @@ class Cached<T> {
 const cachedProbe = new Cached<string | undefined>();
 const cachedMaps = new Cached<{ uidMap: string; gidMap: string }>();
 
-const cachedPodmanUserNs = new Cached<string>();
-
 /** The user namespace `podman unshare` joins (rootless Podman's parent),
- * read by the daemon itself and cached like the live maps; undefined if
- * unreadable. */
+ * read by the daemon itself for each scan (not cached: Podman makes a new one
+ * when its pause process is restarted); undefined if unreadable. */
 export async function podmanUserNamespace(): Promise<string | undefined> {
   try {
-    return await cachedPodmanUserNs.get(async () =>
-      `${(await podman(["unshare", "readlink", "/proc/self/ns/user"], { timeout: 30 })).stdout ?? ""}`.trim(),
+    const { stdout } = await podman(
+      ["unshare", "readlink", "/proc/self/ns/user"],
+      { timeout: 30 },
     );
+    const ns = `${stdout ?? ""}`.trim();
+    return /^user:\[\d+\]$/.test(ns) ? ns : undefined;
   } catch {
     return undefined;
   }
@@ -442,7 +443,6 @@ export async function gcProjectViews(keep: string[]): Promise<void> {
 export function clearRuntimeIdentityCache(): void {
   cachedProbe.clear();
   cachedMaps.clear();
-  cachedPodmanUserNs.clear();
 }
 
 // What a decision reads from the host (replaced in tests).

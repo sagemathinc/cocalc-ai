@@ -46,6 +46,7 @@ import {
   podmanRuntimeArgs,
   projectBrowserRunHostPath,
   projectPoolPodmanLauncher,
+  projectPoolPodmanLauncherUnderAppArmor,
   verifyProjectContainerInPool,
 } from "@cocalc/project-runner/run/podman";
 import {
@@ -245,10 +246,7 @@ async function browserLauncher(project_id: string) {
   const launcher = projectPoolPodmanLauncher(project_id);
   const prefix = await podmanAppArmorPrefix();
   if (prefix.length === 0) return launcher;
-  return {
-    command: prefix[0],
-    argsPrefix: [...prefix.slice(1), launcher.command, ...launcher.argsPrefix],
-  };
+  return projectPoolPodmanLauncherUnderAppArmor(project_id);
 }
 
 export async function startSharedBrowserContainer(

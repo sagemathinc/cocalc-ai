@@ -170,11 +170,16 @@ function defaultCommandRunner(
   args: string[],
   opts: Parameters<CommandRunner>[2],
 ): Promise<{ stdout: string; stderr: string }> {
+  // the wrappers run podman itself; another binary has no minted launcher
+  if (command !== "podman") {
+    return Promise.reject(
+      new Error("rootfs scan: only podman itself can run the scanner"),
+    );
+  }
   return new Promise((resolve, reject) => {
     execFilePodman(
       args,
       {
-        launcher: { command, argsPrefix: [] },
         policy: opts.policy,
         timeout: opts.timeout_ms,
         maxBuffer: 8 * 1024 * 1024,
