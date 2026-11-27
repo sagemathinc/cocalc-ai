@@ -348,5 +348,30 @@ describe("Jupyter hidden cell input", () => {
       expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
       expect(latestMarkdownInputProps.value).toBe("Notes: w1 x y z");
     });
+
+    it("merges a toolbar edit the editor reports before its debounced save", () => {
+      const { actions, view, rerender } = setup();
+      // e.g. bold from the toolbar: no input events, the editor marks itself
+      latestMarkdownInputProps.dirtyRef.current = true;
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: **w1**";
+      rerender(view("Collab. Notes: w1"));
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      expect(actions.set_cell_input.mock.calls[0][1]).toBe(
+        "Collab. Notes: **w1**",
+      );
+    });
+
+    it("stops merging once a merge of the edits is stored", () => {
+      const { actions, view, rerender } = setup();
+      fireEvent.keyDown(screen.getByTestId("markdown-input"), { key: "x" });
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: w1 x";
+      rerender(view("Collab. Notes: w1"));
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      // the editor is now behind / reformatted, and nobody types
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: w1 x\n";
+      rerender(view("Collab. Notes: w1 x more"));
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      expect(latestMarkdownInputProps.value).toBe("Collab. Notes: w1 x more");
+    });
   });
 });
