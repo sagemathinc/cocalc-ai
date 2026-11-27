@@ -110,21 +110,74 @@ const GLOBAL_OPTIONS_WITH_VALUE = new Set([
   "--volumepath",
 ]);
 
-/** The verb of a podman argv ("container run" counts as "run"), if gated. */
-export function podmanLaunchVerb(
-  args: readonly string[],
-): PodmanLaunchVerb | undefined {
+/** The verb word of a podman argv and its index (after global options and
+ * a "container"/"image" group word). */
+function verbAt(args: readonly string[]): { word?: string; index: number } {
   let i = 0;
   while (i < args.length && args[i].startsWith("-")) {
     const arg = args[i];
     i += !arg.includes("=") && GLOBAL_OPTIONS_WITH_VALUE.has(arg) ? 2 : 1;
   }
-  let verb = args[i];
-  if (verb === "container" || verb === "image") verb = args[i + 1];
+  if (args[i] === "container" || args[i] === "image") i += 1;
+  return { word: args[i], index: i };
+}
+
+/** The verb of a podman argv ("container run" counts as "run"), if gated. */
+export function podmanLaunchVerb(
+  args: readonly string[],
+): PodmanLaunchVerb | undefined {
+  let verb = verbAt(args).word;
   if (verb === "buildx") verb = "build";
   return (PODMAN_LAUNCH_VERBS as readonly string[]).includes(verb ?? "")
     ? (verb as PodmanLaunchVerb)
     : undefined;
+}
+
+// podman exec's options: those taking a value, and the boolean ones allowed.
+// Anything else (--latest, --privileged, an unknown option) has no target
+// the gate can bind, so it is refused.
+const EXEC_LONG_WITH_VALUE = new Set([
+  "--env",
+  "--env-file",
+  "--user",
+  "--workdir",
+  "--detach-keys",
+  "--preserve-fd",
+  "--preserve-fds",
+]);
+const EXEC_LONG_BOOLEAN = new Set(["--detach", "--interactive", "--tty"]);
+const EXEC_SHORT_WITH_VALUE = "euw";
+const EXEC_SHORT_BOOLEAN = "dit";
+
+/** The container operand of a podman exec argv, or undefined when it can't
+ * be determined exactly. */
+export function podmanExecTarget(args: readonly string[]): string | undefined {
+  const { word, index } = verbAt(args);
+  if (word !== "exec") return undefined;
+  for (let i = index + 1; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--") return args[i + 1];
+    if (!arg.startsWith("-") || arg === "-") return arg;
+    if (arg.startsWith("--")) {
+      const name = arg.split("=")[0];
+      if (EXEC_LONG_WITH_VALUE.has(name)) {
+        if (!arg.includes("=")) i += 1;
+      } else if (!EXEC_LONG_BOOLEAN.has(arg)) {
+        return undefined;
+      }
+      continue;
+    }
+    // a cluster of short options: -it, -e VALUE, -eVALUE, -u2001
+    const letters = arg.slice(1);
+    for (let k = 0; k < letters.length; k++) {
+      const c = letters[k];
+      if (EXEC_SHORT_BOOLEAN.includes(c)) continue;
+      if (!EXEC_SHORT_WITH_VALUE.includes(c)) return undefined;
+      if (k === letters.length - 1) i += 1; // the value is the next word
+      break; // the rest of the word is the value
+    }
+  }
+  return undefined;
 }
 
 const USERNS_FLAG =
@@ -192,7 +245,10 @@ export function checkPodmanLaunch(
     }
   }
   if (verb === "exec") {
-    if (policy.container == null || !args.includes(policy.container)) {
+    if (
+      policy.container == null ||
+      podmanExecTarget(args) !== policy.container
+    ) {
       throw new PodmanLaunchRefused(
         "exec-target",
         "podman exec must target the container its policy names",

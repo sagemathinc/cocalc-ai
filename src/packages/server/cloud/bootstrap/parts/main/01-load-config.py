@@ -258,7 +258,8 @@ def parse_project_runtime_uid_mode(value: Any) -> str:
     if isinstance(value, str) and value in PROJECT_RUNTIME_UID_MODES:
         return value
     print(
-        f"bootstrap: invalid project runtime uid mode {value!r} "
+        # never the value as set: it is environment content
+        "bootstrap: invalid project runtime uid mode "
         f"(expected one of {', '.join(PROJECT_RUNTIME_UID_MODES)}); keeping the "
         "separate uid block, and project-host refuses project starts",
         file=sys.stderr,

@@ -34,7 +34,8 @@ import type { RuntimeIdentity } from "./runtime-identity";
 
 export type HostRuntimeUidState = "keep-id" | "separate" | "invalid";
 
-/** The configured mode, exactly as set: whitespace or typos are invalid. */
+/** The configured mode, exactly as set: whitespace or typos are invalid.
+ * An invalid value is reported as "invalid", never as set. */
 export function hostRuntimeUidMode(env: NodeJS.ProcessEnv = process.env): {
   configured: string;
   state: HostRuntimeUidState;
@@ -44,7 +45,7 @@ export function hostRuntimeUidMode(env: NodeJS.ProcessEnv = process.env): {
     return { configured: "keep-id", state: "keep-id" };
   }
   if (value === "separate") return { configured: value, state: "separate" };
-  return { configured: value, state: "invalid" };
+  return { configured: "invalid", state: "invalid" };
 }
 
 // What a user sees when a side container is refused on a separate host.
@@ -204,8 +205,10 @@ export function execLaunchPolicy(
     }
   }
   const projectContainer = PROJECT_CONTAINER.test(container);
-  if (!projectContainer || feature != null) {
-    const { state } = hostRuntimeUidMode(env);
+  const { state } = hostRuntimeUidMode(env);
+  // An invalid mode refuses every exec (the strictest case); a separate host
+  // allows only a plain exec into a project's own container (its own map).
+  if (state === "invalid" || !projectContainer || feature != null) {
     if (state !== "keep-id") {
       throw new SideLaunchUnavailableError(
         feature ?? "exec-sidecar",

@@ -108,6 +108,24 @@ describe("sandboxExec", () => {
     }
   });
 
+  it("an invalid mode refuses even an exec into the project's own container, without any podman call", async () => {
+    const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    try {
+      process.env.COCALC_PROJECT_RUNTIME_UID_MODE = "Separate";
+      await expect(
+        sandboxExec({
+          project_id: "00000000-0000-4000-8000-000000000001",
+          script: "true",
+        }),
+      ).rejects.toThrow("not available on this host yet");
+      expect(execFileMock).not.toHaveBeenCalled();
+      expect(runContainedSandboxCommand).not.toHaveBeenCalled();
+    } finally {
+      if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+    }
+  });
+
   it("an exec into the project's own container is allowed on a separate host (its map)", async () => {
     const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
     execFileMock.mockImplementation((_command, _args, _options, callback) => {

@@ -61,10 +61,14 @@ describe("runtime identity", () => {
       configuredRuntimeUidMode({
         COCALC_PROJECT_RUNTIME_UID_MODE: " separate ",
       }),
-    ).toEqual({ configured: " separate " });
+    ).toEqual({ configured: "invalid" });
+    // never the value as set (it is environment content)
     expect(
-      configuredRuntimeUidMode({ COCALC_PROJECT_RUNTIME_UID_MODE: "sideways" }),
-    ).toEqual({ configured: "sideways" });
+      configuredRuntimeUidMode({
+        COCALC_PROJECT_RUNTIME_UID_MODE:
+          "sk-ant-SENTINEL-not-a-mode-0123456789",
+      }),
+    ).toEqual({ configured: "invalid" });
   });
 
   it("parses the helper's capabilities", () => {
@@ -191,6 +195,17 @@ describe("runtime identity", () => {
       expect(identity.usernsArgs).toEqual(keepIdUsernsArgs());
       expect(identity.status).toMatchObject({ effective: "keep-id", reason });
     }
+  });
+
+  it("never carries an invalid mode's value into its status", async () => {
+    const identity = await resolveRuntimeIdentity(
+      inputs({ mode: "sk-ant-SENTINEL-not-a-mode-0123456789" }),
+    );
+    expect(identity.status).toMatchObject({
+      configured: "invalid",
+      reason: "mode-invalid",
+    });
+    expect(JSON.stringify(identity)).not.toContain("SENTINEL");
   });
 
   it("doesn't look at the helper or the map when the mode is off", async () => {

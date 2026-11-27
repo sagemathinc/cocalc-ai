@@ -1,4 +1,8 @@
-import { checkPodmanLaunch, podmanLaunchVerb } from "./launch-policy";
+import {
+  checkPodmanLaunch,
+  podmanExecTarget,
+  podmanLaunchVerb,
+} from "./launch-policy";
 import { mintPodmanLaunchPolicy } from "./launch-policy-mint";
 import { PodmanLaunchPolicy } from "./launch-policy";
 
@@ -102,6 +106,47 @@ describe("checkPodmanLaunch", () => {
     expect(() =>
       checkPodmanLaunch(["exec", "-u", "2001:2001", "codex-2", "ls"], p),
     ).toThrow(/must target/);
+  });
+
+  it("binds the exec to its actual container operand, not any argument", () => {
+    const p = policy("exec", ["-u", "2001:2001"], "project-1");
+    // the allowed name later, as a command argument
+    expect(() =>
+      checkPodmanLaunch(
+        ["exec", "-u", "2001:2001", "other", "sh", "-c", "project-1"],
+        p,
+      ),
+    ).toThrow(/must target/);
+    // ... or as an option's value
+    expect(() =>
+      checkPodmanLaunch(
+        ["exec", "-e", "project-1", "-u", "2001:2001", "other", "ls"],
+        p,
+      ),
+    ).toThrow(/must target/);
+    // options whose target can't be bound are refused
+    for (const extra of [["--latest"], ["-l"], ["--privileged"], ["-x"]])
+      expect(() =>
+        checkPodmanLaunch(
+          ["exec", ...extra, "-u", "2001:2001", "project-1", "ls"],
+          p,
+        ),
+      ).toThrow(/must target/);
+  });
+
+  it("finds the exec target through every option form", () => {
+    const cases: [string[], string | undefined][] = [
+      [["exec", "c", "ls"], "c"],
+      [["container", "exec", "-it", "c", "sh"], "c"],
+      [["--root", "/r", "exec", "-e", "A=1", "--env=B=2", "c"], "c"],
+      [["exec", "-eA=1", "-u2001", "--workdir", "/w", "-d", "c"], "c"],
+      [["exec", "-ie", "A=1", "c"], "c"],
+      [["exec", "--interactive", "--user", "0:0", "--", "c", "x"], "c"],
+      [["exec", "-u"], undefined],
+      [["run", "c"], undefined],
+    ];
+    for (const [args, target] of cases)
+      expect([args, podmanExecTarget(args)]).toEqual([args, target]);
   });
 
   it("refuses user namespace flags on a verb it doesn't gate, without a policy", () => {

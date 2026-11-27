@@ -86,12 +86,13 @@ export function configuredRuntimeUidMode(
   configured: string;
   mode?: ProjectRuntimeUidMode;
 } {
-  // Exactly as set: a value with whitespace or a typo is invalid.
+  // Exactly as set: a value with whitespace or a typo is invalid. An invalid
+  // value is reported as "invalid", never as set (it is environment content).
   const configured = `${env.COCALC_PROJECT_RUNTIME_UID_MODE ?? ""}`;
   if (!configured) return { configured: "keep-id", mode: "keep-id" };
   return (PROJECT_RUNTIME_UID_MODES as readonly string[]).includes(configured)
     ? { configured, mode: configured as ProjectRuntimeUidMode }
-    : { configured };
+    : { configured: "invalid" };
 }
 
 // What separate mode needs from the root helper.

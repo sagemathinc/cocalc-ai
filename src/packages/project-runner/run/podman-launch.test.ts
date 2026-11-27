@@ -43,8 +43,9 @@ describe("hostRuntimeUidMode", () => {
     expect(hostRuntimeUidMode(env("keep-id")).state).toBe("keep-id");
     expect(hostRuntimeUidMode(env("separate")).state).toBe("separate");
     for (const value of [" separate", "separate ", "Separate", "keepid", "x"])
+      // reported as "invalid", never as set (environment content)
       expect(hostRuntimeUidMode(env(value))).toEqual({
-        configured: value,
+        configured: "invalid",
         state: "invalid",
       });
   });
@@ -202,9 +203,11 @@ describe("execLaunchPolicy", () => {
     expect(() =>
       execLaunchPolicy(PROJECT, { feature: "codex", env: env("separate") }),
     ).toThrow(SideLaunchUnavailableError);
-    expect(() =>
-      execLaunchPolicy(PROJECT, { env: env("bogus") }),
-    ).not.toThrow();
+    // an invalid mode refuses every exec, even a plain one into the
+    // project's own container
+    expect(() => execLaunchPolicy(PROJECT, { env: env("bogus") })).toThrow(
+      SideLaunchUnavailableError,
+    );
     expect(() =>
       execLaunchPolicy(PROJECT, { feature: "codex", env: env("bogus") }),
     ).toThrow(SideLaunchUnavailableError);

@@ -314,7 +314,48 @@ describe("parsing", () => {
 });
 
 describe("readProcessTable", () => {
-  it("reads a /proc tree; a process gone before its first read is skipped", async () => {
+  it("a process that vanishes on the retry stays unknown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "proc-"));
+    const dir = join(root, "20");
+    await mkdir(join(dir, "ns"), { recursive: true });
+    await writeFile(join(dir, "status"), "Uid:\t0\t0\t0\t0\nNSpid:\t20\n");
+    await writeFile(join(dir, "uid_map"), "0 0 4294967295\n");
+    await writeFile(join(dir, "cgroup"), "0::/x\n");
+    // the start time changes between the two reads of the first pass, then
+    // the process is gone before the retry
+    let reads = 0;
+    const { readFile: realRead } = jest.requireActual("node:fs/promises");
+    await writeFile(
+      join(dir, "stat"),
+      "20 (x) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 1 0 0",
+    );
+    const fs = require("node:fs/promises");
+    const spy = jest
+      .spyOn(fs, "readFile")
+      .mockImplementation(async (...args: any[]) => {
+        if (`${args[0]}`.endsWith("/20/stat")) {
+          reads += 1;
+          if (reads === 2)
+            return "20 (x) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 2 0 0";
+          if (reads >= 3)
+            throw Object.assign(Error("gone"), { code: "ENOENT" });
+        }
+        return realRead(...args);
+      });
+    try {
+      const table = await readProcessTable({
+        procRoot: root,
+        wantNs: () => false,
+      });
+      expect(table).toHaveLength(1);
+      expect(table[0]).toMatchObject({ pid: 20, unstable: true });
+      expect(reads).toBe(3);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("reads a /proc tree; a process gone before its first read is unknown", async () => {
     const root = await mkdtemp(join(tmpdir(), "proc-"));
     const pid = async (n: number, status: string) => {
       await mkdir(join(root, `${n}`, "ns"), { recursive: true });
@@ -334,7 +375,10 @@ describe("readProcessTable", () => {
       wantNs: (ruid) => ruid === 3000,
     });
     const byPid = Object.fromEntries(table.map((p) => [p.pid, p]));
-    expect(Object.keys(byPid).sort()).toEqual(["10", "11"]);
+    // a listed pid gone before its first read is unknown, not dropped
+    expect(Object.keys(byPid).sort()).toEqual(["10", "11", "12"]);
+    expect(byPid[12]).toMatchObject({ unstable: true });
+    expect(byPid[12].ruid).toBeNaN();
     // the namespace links of the fixture don't exist: an unexpected failure
     // marks the process unstable (unknown), not fine
     expect(byPid[10].unstable).toBe(true);

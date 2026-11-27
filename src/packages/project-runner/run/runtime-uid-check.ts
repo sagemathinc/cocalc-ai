@@ -307,13 +307,15 @@ async function readOne(
   procRoot: string,
   pid: number,
   wantNs: (ruid: number) => boolean,
-): Promise<ProcFacts | undefined> {
+): Promise<ProcFacts> {
   const dir = join(procRoot, `${pid}`);
   let start1: string | undefined;
   try {
     start1 = parseStartTime(await readFile(join(dir, "stat"), "utf8"));
   } catch {
-    return undefined; // gone before the first read: it no longer exists
+    // listed but gone before the first read: who it ran as can't be bound,
+    // so it is unknown (never assumed fine)
+    return { pid, ruid: Number.NaN, nspid: [], unstable: true };
   }
   try {
     const { ruid, nspid } = parseStatus(
@@ -363,14 +365,13 @@ export async function readProcessTable({
   const retry: number[] = [];
   for (const pid of pids) {
     const facts = await readOne(procRoot, pid, wantNs);
-    if (facts?.unstable) retry.push(pid);
-    else if (facts) out.push(facts);
+    if (facts.unstable) retry.push(pid);
+    else out.push(facts);
   }
   for (const pid of retry) {
-    // a process that exited meanwhile is gone (nothing to judge); one that
-    // stays unreadable or keeps changing is unknown
-    const facts = await readOne(procRoot, pid, wantNs);
-    if (facts) out.push(facts);
+    // every listed pid is judged: one that reads cleanly the second time
+    // counts as read, one that vanished or keeps changing stays unknown
+    out.push(await readOne(procRoot, pid, wantNs));
   }
   return out;
 }

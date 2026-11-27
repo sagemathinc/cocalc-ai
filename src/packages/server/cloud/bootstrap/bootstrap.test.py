@@ -14098,6 +14098,7 @@ class ProjectRuntimeUidBlockTest(unittest.TestCase):
                 bootstrap.parse_project_runtime_uid_mode("separate-per-project"), "invalid"
             )
         self.assertIn("invalid project runtime uid mode", err.getvalue())
+        self.assertNotIn("separate-per-project", err.getvalue())
 
     def test_invalid_mode_keeps_the_block(self) -> None:
         # project-host refuses starts on an invalid mode; the allocation stays

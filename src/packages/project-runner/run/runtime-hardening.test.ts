@@ -215,8 +215,10 @@ describe("runtimeUidModeHeartbeat", () => {
     });
   });
 
-  it("carries the latest self-check, and reports an invalid mode as set", () => {
-    process.env.COCALC_PROJECT_RUNTIME_UID_MODE = " separate";
+  it("carries the latest self-check, and reports an invalid mode as invalid, never as set", () => {
+    // credential-shaped: environment content must not reach the heartbeat
+    process.env.COCALC_PROJECT_RUNTIME_UID_MODE =
+      "sk-ant-SENTINEL-not-a-mode-0123456789";
     mockCheck = {
       invariant: "x",
       violations: 0,
@@ -225,10 +227,12 @@ describe("runtimeUidModeHeartbeat", () => {
       old_mode_containers: 0,
       checked_at: NOW.toISOString(),
     };
-    expect(runtimeUidModeHeartbeat(NOW)).toMatchObject({
-      configured: " separate",
+    const heartbeat = runtimeUidModeHeartbeat(NOW);
+    expect(heartbeat).toMatchObject({
+      configured: "invalid",
       runtime_uid_check: mockCheck,
     });
+    expect(JSON.stringify(heartbeat)).not.toContain("SENTINEL");
   });
 });
 
