@@ -249,18 +249,21 @@ def effective_project_runtime_uid_mode(desired_value: Any, env_file: Any) -> str
 
 
 def parse_project_runtime_uid_mode(value: Any) -> str:
-    """A valid mode, or keep-id: a typo must not stop a host's bootstrap.
-    project-host reports an invalid configured mode in its health."""
+    """A valid mode, or "invalid": a typo must not stop a host's bootstrap.
+    project-host refuses project starts on an invalid mode and reports it in
+    its health; here it keeps the separate block, the strictest allocation
+    (the block comes after the container ranges, so keep-id is unaffected)."""
     if value is None or value == "":
         return "keep-id"
     if isinstance(value, str) and value in PROJECT_RUNTIME_UID_MODES:
         return value
     print(
-        f"bootstrap: ignoring invalid project runtime uid mode {value!r} "
-        f"(expected one of {', '.join(PROJECT_RUNTIME_UID_MODES)}); using keep-id",
+        f"bootstrap: invalid project runtime uid mode {value!r} "
+        f"(expected one of {', '.join(PROJECT_RUNTIME_UID_MODES)}); keeping the "
+        "separate uid block, and project-host refuses project starts",
         file=sys.stderr,
     )
-    return "keep-id"
+    return "invalid"
 
 
 def parse_only(arg: str | None) -> set[str] | None:

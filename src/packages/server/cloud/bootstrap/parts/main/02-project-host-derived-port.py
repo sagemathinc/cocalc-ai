@@ -154,7 +154,8 @@ def resolve_runtime_user_identity(cfg: BootstrapConfig) -> tuple[int, int]:
 
 def runtime_subid_ranges(cfg: BootstrapConfig) -> tuple[tuple[int, int], ...]:
     """The runtime user's subuid/subgid allocation, in /etc/subuid order."""
-    if getattr(cfg, "project_runtime_uid_mode", "keep-id") == "separate":
+    # separate, or invalid (the strictest case): with the block
+    if getattr(cfg, "project_runtime_uid_mode", "keep-id") != "keep-id":
         return (*PROJECT_HOST_RUNTIME_SUBID_RANGES, PROJECT_RUNTIME_UID_BLOCK)
     return PROJECT_HOST_RUNTIME_SUBID_RANGES
 
