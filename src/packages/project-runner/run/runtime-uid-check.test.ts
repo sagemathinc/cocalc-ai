@@ -38,6 +38,8 @@ const ctx = (configured: CheckContext["configured"]): CheckContext => ({
   daemon: DAEMON,
   subuids: SUBUIDS,
   pasta: [PASTA],
+  // Podman's parent user namespace, as podman unshare reports it
+  podmanUserNs: "user:[2]",
   configured,
 });
 
@@ -232,28 +234,43 @@ describe("judgeProcesses", () => {
     ).toBe(1);
   });
 
-  it("recognizes Podman's live parent map when /etc/subuid changed before a reboot", () => {
-    // the live namespace still has a range that /etc/subuid no longer lists
-    const live = map(
-      "0 3000 1; 1 300000 65536; 65537 400000 4000000; 4065537 1073741824 65536",
-    );
-    const conmon = proc({
-      uidMap: live,
-      ns: { user: "user:[2]", mnt: "mnt:[2]", pid: DAEMON.pid },
-    });
-    expect(judgeProcesses([conmon], ctx("separate")).violations).toBe(1);
+  it("binds Podman's namespace by identity, not by the shape of its map", () => {
+    const conmon = (user: string, mnt = "mnt:[33]") =>
+      proc({
+        uidMap: PARENT,
+        ns: { user, mnt, pid: DAEMON.pid },
+      });
+    // conmon: Podman's user namespace, a mount namespace of its own, the
+    // host's pid namespace
     expect(
-      judgeProcesses([conmon], { ...ctx("separate"), parentMap: live })
-        .violations,
+      judgeProcesses([conmon("user:[2]")], ctx("separate")).violations,
     ).toBe(0);
-    // only a parent map whose line 0 is the runtime uid counts
-    const other = map("0 4000 1; 1 300000 65536");
+    // mutant: the same map in another user namespace (one minted with the
+    // same subordinate ranges)
     expect(
-      judgeProcesses([proc({ ...conmon, uidMap: other })], {
-        ...ctx("separate"),
-        parentMap: other,
-      }).violations,
+      judgeProcesses([conmon("user:[99]")], ctx("separate")).violations,
     ).toBe(1);
+    // mutant: the same map and user namespace, another mount namespace, but
+    // a pid namespace of its own: a container, not Podman's infrastructure
+    expect(
+      judgeProcesses(
+        [
+          proc({
+            uidMap: PARENT,
+            ns: { user: "user:[2]", mnt: "mnt:[34]", pid: "pid:[34]" },
+            nspid: [70, 1],
+            exe: { dev: 7, ino: 1 },
+          }),
+        ],
+        ctx("separate"),
+      ).violations,
+    ).toBe(1);
+    // Podman's namespace unreadable: its processes are unknown, not fine
+    const { podmanUserNs: _, ...unbound } = ctx("separate");
+    expect(judgeProcesses([conmon("user:[2]")], unbound)).toMatchObject({
+      violations: 0,
+      unknown: 1,
+    });
   });
 
   it("nothing is enrolled from what exists: a new namespace is not allowed", () => {

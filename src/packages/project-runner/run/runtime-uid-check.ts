@@ -24,22 +24,31 @@ How a process is judged (real uid only, never names, argv or environment):
   start time again: a process that changed in between is unknown;
 - a process of the runtime uid is allowed when it is:
   - in the daemon's own (user, mnt, pid) namespaces: the host services;
-  - in rootless Podman's parent user namespace (recognized by its uid_map:
-    line 0 maps to the runtime uid with length 1, the rest are exactly the
-    runtime user's subordinate ranges; or exactly the live map Podman
-    reports, since /etc/subuid can change before the next reboot applies it)
-    and the host's pid namespace: podman, conmon, catatonit;
+  - in rootless Podman's parent user namespace (bound by its identity, the
+    namespace `podman unshare` joins, read by the daemon itself) and the
+    host's pid namespace: podman, conmon, catatonit. Their mount namespaces
+    can't be bound to one identity (each conmon has its own); a launched
+    container can't be in the host's pid namespace, since the launch gate
+    refuses pid namespace (and pod) sharing;
   - in that parent user namespace and running the trusted pasta binary
     (the same device and inode), which sandboxes itself in a pid namespace
-    of its own;
+    of its own. A container launched without user namespace flags would have
+    the same namespace shape: the binary's identity tells them apart (it is
+    not mounted into any container; a compromised host-services uid could
+    replace it, which is outside what this check can prove);
   anything else of the runtime uid is a violation; a runtime-uid process in a
   container's pid namespace always is.
-- Processes that are not dumpable (the daemon's own workers, systemd --user,
-  sudo) don't let even the same uid read their namespace links. They are
-  judged by what stays readable: an identity uid_map (the initial user
-  namespace) and a single NSpid entry (the host's pid namespace) count as the
-  host services, reported as "partial" (no mount namespace); anything else
-  is unknown.
+- Processes that are not dumpable (the daemon's own workers, whose node
+  binary has a file capability; systemd --user; sudo) don't let even the
+  same uid read their namespace links. They are judged by what stays
+  readable: an identity uid_map (the initial user namespace) and a single
+  NSpid entry (the host's pid namespace) count as the host services,
+  reported as "partial"; anything else is unknown. This is a stated revision
+  of the invariant (approved Nov 2026): project code never runs in the
+  initial user namespace (containers always get their own, and separate
+  projects don't run as the runtime uid), and a non-root process there can't
+  make a mount namespace of its own, so the unread mount link hides nothing
+  project code could set up.
 - Unreadable is unknown, never fine. The allowed set is fixed by this rule:
   nothing that happens to exist when the daemon starts is enrolled.
 */
@@ -79,8 +88,9 @@ export interface CheckContext {
   daemon: NsTuple;
   // the runtime user's subordinate uid ranges ({start, length}), in order
   subuids: { start: number; length: number }[];
-  // rootless Podman's live parent map (podman unshare), when known
-  parentMap?: MapExtent[];
+  // rootless Podman's parent user namespace ("user:[N]", from podman
+  // unshare), when known
+  podmanUserNs?: string;
   // the trusted pasta executables (passt and its variants), by identity
   pasta: { dev: number; ino: number }[];
   configured: "keep-id" | "separate" | "invalid";
@@ -164,27 +174,6 @@ export function isRootlessParentMap(
   return true;
 }
 
-/** Exactly Podman's live parent map, whose line 0 is the runtime uid. */
-export function isLiveParentMap(
-  map: MapExtent[] | undefined,
-  runtimeUid: number,
-  parent: MapExtent[] | undefined,
-): boolean {
-  if (map == null || parent == null || parent.length < 2) return false;
-  const [first] = parent;
-  if (first.inside !== 0 || first.outside !== runtimeUid || first.length !== 1)
-    return false;
-  return (
-    map.length === parent.length &&
-    map.every(
-      (e, i) =>
-        e.inside === parent[i].inside &&
-        e.outside === parent[i].outside &&
-        e.length === parent[i].length,
-    )
-  );
-}
-
 function sameTuple(a: NsTuple, b: NsTuple): boolean {
   return a.user === b.user && a.mnt === b.mnt && a.pid === b.pid;
 }
@@ -222,9 +211,16 @@ export function judgeProcesses(
       else unknown++;
       continue;
     }
-    const inParent =
-      isRootlessParentMap(p.uidMap, ctx.runtimeUid, ctx.subuids) ||
-      isLiveParentMap(p.uidMap, ctx.runtimeUid, ctx.parentMap);
+    if (
+      ctx.podmanUserNs == null &&
+      !sameTuple(p.ns, ctx.daemon) &&
+      isRootlessParentMap(p.uidMap, ctx.runtimeUid, ctx.subuids)
+    ) {
+      // Podman's namespace couldn't be read: its processes can't be bound
+      unknown++;
+      continue;
+    }
+    const inParent = ctx.podmanUserNs != null && p.ns.user === ctx.podmanUserNs;
     const allowed =
       sameTuple(p.ns, ctx.daemon) ||
       (inParent && p.ns.pid === ctx.daemon.pid) ||
@@ -379,13 +375,13 @@ export async function readProcessTable({
 export async function runtimeUidCheckContext({
   configured,
   pastaBinaries = [],
-  liveUidMap,
+  podmanUserNs,
   procRoot = "/proc",
 }: {
   configured: CheckContext["configured"];
   pastaBinaries?: string[];
-  // the uid_map text `podman unshare` reads, when known
-  liveUidMap?: string;
+  // the user namespace `podman unshare` joins ("user:[N]"), when known
+  podmanUserNs?: string;
   procRoot?: string;
 }): Promise<CheckContext> {
   const runtimeUid = process.getuid?.() ?? -1;
@@ -414,7 +410,9 @@ export async function runtimeUidCheckContext({
     separateUid: PROJECT_RUNTIME_SEPARATE_UID,
     daemon,
     subuids,
-    ...(liveUidMap ? { parentMap: parseIdMap(liveUidMap) } : {}),
+    ...(podmanUserNs && /^user:\[\d+\]$/.test(podmanUserNs)
+      ? { podmanUserNs }
+      : {}),
     pasta,
     configured,
   };

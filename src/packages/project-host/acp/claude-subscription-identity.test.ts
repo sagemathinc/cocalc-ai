@@ -69,7 +69,8 @@ jest.mock("@cocalc/project-runner/run/mounts", () => ({
   getNodeRuntimeMounts: () => ({}),
 }));
 jest.mock("@cocalc/project-runner/run/podman", () => ({
-  projectPoolPodmanLauncher: () => ({ command: "podman", argsPrefix: [] }),
+  projectPoolPodmanLauncher: () =>
+    require("@cocalc/backend/podman/launcher-mint").mintPodmanLauncher("podman", []),
   podmanRuntimeArgs: async () => [],
   forceKillContainerProcesses: jest.fn(),
 }));

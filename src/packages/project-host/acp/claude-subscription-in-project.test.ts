@@ -88,7 +88,8 @@ jest.mock("@cocalc/project-runner/run/filesystem", () => ({
   localPath: jest.fn(),
 }));
 jest.mock("@cocalc/project-runner/run/podman", () => ({
-  projectPoolPodmanLauncher: () => ({ command: "podman", argsPrefix: [] }),
+  projectPoolPodmanLauncher: () =>
+    require("@cocalc/backend/podman/launcher-mint").mintPodmanLauncher("podman", []),
 }));
 jest.mock("@cocalc/backend/podman/env", () => ({
   podmanEnv: () => ({

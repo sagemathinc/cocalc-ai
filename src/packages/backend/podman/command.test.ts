@@ -1,5 +1,6 @@
-import podman from "./command";
+import podman, { execFilePodman } from "./command";
 import { mintPodmanLaunchPolicy } from "./launch-policy-mint";
+import { mintPodmanLauncher } from "./launcher-mint";
 
 // Tests of the wrapper itself: launches carry a policy, as from the gate.
 const policy = (verb: "run" | "create") =>
@@ -173,10 +174,11 @@ describe("podman command wrapper", () => {
     await podman(["run", "example"], {
       policy: policy("run"),
       timeout: 30,
-      launcher: {
-        command: "bash",
-        argsPrefix: ["-c", 'prepare; exec podman "$@"', "launcher"],
-      },
+      launcher: mintPodmanLauncher("bash", [
+        "-c",
+        'prepare; exec podman "$@"',
+        "launcher",
+      ]),
     });
 
     expect(executeCodeMock).toHaveBeenCalledWith(
@@ -185,5 +187,28 @@ describe("podman command wrapper", () => {
         args: ["-c", 'prepare; exec podman "$@"', "launcher", "run", "example"],
       }),
     );
+  });
+});
+
+describe("launchers and environment", () => {
+  it("refuses a launcher project-runner didn't make", async () => {
+    await expect(
+      podman(["ps"], {
+        launcher: { command: "bash", argsPrefix: ["-c", "evil"] } as any,
+      }),
+    ).rejects.toThrow(/only project-runner's launchers/);
+  });
+
+  it("refuses caller overrides of where podman finds its configuration", () => {
+    for (const key of [
+      "CONTAINERS_CONF",
+      "PODMAN_USERNS",
+      "HOME",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME",
+    ])
+      expect(() =>
+        execFilePodman(["ps"], { env: { [key]: "/elsewhere" } }, () => {}),
+      ).toThrow(/can't be set by the caller/);
   });
 });

@@ -120,6 +120,7 @@ import {
 import { checkDaemonStateAfterSeparateStart } from "./runtime-hardening";
 import { keepIdUsernsArgs, type RuntimeIdentity } from "./runtime-identity";
 import { projectLaunchPolicy } from "./podman-launch";
+import { mintPodmanLauncher } from "@cocalc/backend/podman/launcher-mint";
 import { scheduleRuntimeUidCheck } from "./runtime-uid-monitor";
 import { projectPoolCgroupPath } from "./project-pool-cgroup";
 import { projectSeccompProfilePath } from "./project-seccomp";
@@ -825,41 +826,35 @@ export function projectPoolPodmanLauncher(project_id: string) {
   if (!isValidUUID(project_id)) {
     throw Error("project pool launcher: project_id must be valid");
   }
-  return {
-    command: "bash",
-    argsPrefix: [
-      "-c",
-      PROJECT_POOL_LAUNCHER_SCRIPT,
-      "cocalc-project-podman",
-      project_id,
-    ],
-  };
+  return mintPodmanLauncher("bash", [
+    "-c",
+    PROJECT_POOL_LAUNCHER_SCRIPT,
+    "cocalc-project-podman",
+    project_id,
+  ]);
 }
 
 function projectCgroupPodmanLauncher(
   project_id: string,
   limits: ProjectCgroupLimits,
 ) {
-  return {
-    command: "bash",
-    argsPrefix: [
-      "-c",
-      PROJECT_CGROUP_LAUNCHER_SCRIPT,
-      "cocalc-project-podman",
-      project_id,
-      limits.memory_max,
-      limits.memory_high,
-      limits.memory_low,
-      limits.memory_swap_max,
-      limits.pids_max,
-      limits.cpu_max_quota,
-      limits.cpu_max_period,
-      limits.cpu_weight,
-      limits.io_weight,
-      limits.io_class,
-      PROJECT_STARTUP_IO_WEIGHT,
-    ],
-  };
+  return mintPodmanLauncher("bash", [
+    "-c",
+    PROJECT_CGROUP_LAUNCHER_SCRIPT,
+    "cocalc-project-podman",
+    project_id,
+    limits.memory_max,
+    limits.memory_high,
+    limits.memory_low,
+    limits.memory_swap_max,
+    limits.pids_max,
+    limits.cpu_max_quota,
+    limits.cpu_max_period,
+    limits.cpu_weight,
+    limits.io_weight,
+    limits.io_class,
+    PROJECT_STARTUP_IO_WEIGHT,
+  ]);
 }
 
 function projectStartupPodmanLauncher(project_id: string) {

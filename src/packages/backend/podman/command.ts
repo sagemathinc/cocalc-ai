@@ -11,8 +11,10 @@ import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "./env";
 import {
   checkPodmanLaunch,
+  checkPodmanLauncher,
   PODMAN_ENV_OVERRIDES_REFUSED,
   PodmanLaunchRefused,
+  type PodmanLauncher,
   type PodmanLaunchPolicy,
 } from "./launch-policy";
 
@@ -34,10 +36,7 @@ type PodmanOpts =
       // treated as milliseconds and converted to seconds.
       timeout?: number;
       sudo?: boolean;
-      launcher?: {
-        command: string;
-        argsPrefix: string[];
-      };
+      launcher?: PodmanLauncher;
       // required for create, run, exec and build (see ./launch-policy.ts)
       policy?: PodmanLaunchPolicy;
     };
@@ -80,6 +79,7 @@ export default async function podman(args: string[], opts: PodmanOpts = {}) {
   // Every podman invocation goes through here or spawnPodman: the place that
   // refuses a launch without the gate's decision.
   checkPodmanLaunch(args, policy);
+  checkPodmanLauncher(launcher);
   const timeout = normalizeTimeoutSeconds(rawTimeout);
   return await runPodman(args, timeout, Boolean(sudo), launcher, false);
 }
@@ -88,7 +88,7 @@ async function runPodman(
   args: string[],
   timeout: number,
   sudo: boolean,
-  launcher: { command: string; argsPrefix: string[] } | undefined,
+  launcher: PodmanLauncher | undefined,
   retried: boolean,
 ) {
   logger.debug(`${sudo ? "sudo " : ""}podman`, summarizePodmanInvocation(args));
@@ -132,12 +132,13 @@ async function runPodman(
 export function spawnPodman(
   args: string[],
   opts: SpawnOptions & {
-    launcher?: { command: string; argsPrefix: string[] };
+    launcher?: PodmanLauncher;
     policy?: PodmanLaunchPolicy;
   } = {},
 ): ChildProcess {
   const { launcher, policy, env, ...spawnOptions } = opts;
   checkPodmanLaunch(args, policy);
+  checkPodmanLauncher(launcher);
   refuseEnvOverrides(env);
   const command = launcher?.command ?? "podman";
   const cmdArgs = launcher ? [...launcher.argsPrefix, ...args] : args;
@@ -159,13 +160,14 @@ export async function executePodman(
     verbose?: boolean;
     cwd?: string;
     sudo?: boolean;
-    launcher?: { command: string; argsPrefix: string[] };
+    launcher?: PodmanLauncher;
     policy?: PodmanLaunchPolicy;
     env?: NodeJS.ProcessEnv;
   } = {},
 ) {
   const { sudo, launcher, policy, env, verbose = false, ...rest } = opts;
   checkPodmanLaunch(args, policy);
+  checkPodmanLauncher(launcher);
   refuseEnvOverrides(env);
   const command = launcher?.command ?? (sudo ? "sudo" : "podman");
   const cmdArgs = launcher
@@ -215,7 +217,7 @@ function refuseEnvOverrides(env: NodeJS.ProcessEnv | undefined): void {
 export function execFilePodman(
   args: string[],
   opts: ExecFileOptions & {
-    launcher?: { command: string; argsPrefix: string[] };
+    launcher?: PodmanLauncher;
     policy?: PodmanLaunchPolicy;
   },
   callback: (
@@ -228,6 +230,7 @@ export function execFilePodman(
 ): ChildProcess {
   const { launcher, policy, env, ...execOptions } = opts;
   checkPodmanLaunch(args, policy);
+  checkPodmanLauncher(launcher);
   refuseEnvOverrides(env);
   const command = launcher?.command ?? "podman";
   const cmdArgs = launcher ? [...launcher.argsPrefix, ...args] : args;

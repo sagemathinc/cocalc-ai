@@ -10,6 +10,8 @@ import podman, {
 export { executePodman, execFilePodman, podman, spawnPodman, spawnPodmanPiped };
 export {
   checkPodmanLaunch,
+  checkPodmanLauncher,
+  PodmanLauncher,
   PodmanLaunchPolicy,
   PodmanLaunchRefused,
   type PodmanLaunchKind,

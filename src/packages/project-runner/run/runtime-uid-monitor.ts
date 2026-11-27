@@ -23,8 +23,8 @@ import { podman } from "@cocalc/backend/podman";
 import { SHARED_BROWSER_APP_ID } from "@cocalc/util/shared-browser";
 import { hostRuntimeUidMode } from "./podman-launch";
 import {
-  liveRuntimeUidMap,
   noteRuntimeUidCheck,
+  podmanUserNamespace,
   RUNTIME_UID_CHECK_INTERVAL_MS,
   runtimeIdentityForStart,
 } from "./runtime-host";
@@ -78,7 +78,7 @@ export async function runRuntimeUidCheck(): Promise<
     const ctx = await runtimeUidCheckContext({
       configured: state,
       pastaBinaries: pastaBinaries(),
-      liveUidMap: await liveRuntimeUidMap(),
+      podmanUserNs: await podmanUserNamespace(),
     });
     const table = await readProcessTable({
       wantNs: (ruid) => ruid === ctx.runtimeUid,
@@ -147,19 +147,43 @@ export async function stopLeftoverSideContainers({
   return stopped;
 }
 
-let timer: ReturnType<typeof setInterval> | undefined;
-let pending: Promise<void> | undefined;
-
-async function tick(): Promise<void> {
-  await evaluateRuntimeUidMode();
-  await runRuntimeUidCheck();
+/**
+ * One run at a time: a request while a run is going asks for exactly one
+ * more run after it (the processes may have changed meanwhile), so an older
+ * scan can never finish after, and overwrite, a newer one.
+ */
+export function serialRunner(run: () => Promise<void>): () => Promise<void> {
+  let running: Promise<void> | undefined;
+  let next: Promise<void> | undefined;
+  const start = (): Promise<void> => {
+    running = run()
+      .catch(() => {})
+      .finally(() => {
+        running = undefined;
+      });
+    return running;
+  };
+  return () => {
+    if (running == null) return start();
+    next ??= running.then(() => {
+      next = undefined;
+      return start();
+    });
+    return next;
+  };
 }
 
-/** Run a check soon (after a project start or stop); coalesced. */
+let timer: ReturnType<typeof setInterval> | undefined;
+
+const tick = serialRunner(async () => {
+  await evaluateRuntimeUidMode();
+  await runRuntimeUidCheck();
+});
+
+/** Run a check soon (after a project start or stop); serialized with the
+ * minute timer's. */
 export function scheduleRuntimeUidCheck(): void {
-  pending ??= tick().finally(() => {
-    pending = undefined;
-  });
+  void tick();
 }
 
 /** At daemon startup: evaluate, clean up side containers, then every minute. */

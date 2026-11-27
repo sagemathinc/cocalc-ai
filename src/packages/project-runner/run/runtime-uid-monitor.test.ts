@@ -1,5 +1,6 @@
 import {
   isSideContainerName,
+  serialRunner,
   pastaBinaries,
   stopLeftoverSideContainers,
 } from "./runtime-uid-monitor";
@@ -47,5 +48,49 @@ describe("pasta's binaries", () => {
       "/r/bin/pasta.avx512",
     ]);
     expect(pastaBinaries("")).toEqual([]);
+  });
+});
+
+describe("serialRunner (the monitor's scans)", () => {
+  it("never overlaps runs, and a request during a run gets one run after it", async () => {
+    const order: string[] = [];
+    let active = 0;
+    let n = 0;
+    const releases: (() => void)[] = [];
+    const run = serialRunner(async () => {
+      const id = ++n;
+      active++;
+      expect(active).toBe(1);
+      order.push(`start ${id}`);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      order.push(`end ${id}`);
+      active--;
+    });
+    const first = run();
+    const second = run();
+    const third = run(); // coalesced with the second
+    expect(second).toBe(third);
+    await Promise.resolve();
+    releases.shift()!();
+    await first;
+    await new Promise((r) => setImmediate(r));
+    releases.shift()!();
+    await second;
+    expect(order).toEqual(["start 1", "end 1", "start 2", "end 2"]);
+    expect(n).toBe(2);
+  });
+
+  it("an older scan can't finish after a newer one", async () => {
+    // results land in the order the runs started, one at a time
+    const results: number[] = [];
+    let n = 0;
+    const delays = [30, 1];
+    const run = serialRunner(async () => {
+      const id = n++;
+      await new Promise((r) => setTimeout(r, delays[id] ?? 0));
+      results.push(id);
+    });
+    await Promise.all([run(), run()]);
+    expect(results).toEqual([0, 1]);
   });
 });

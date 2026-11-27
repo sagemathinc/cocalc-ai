@@ -68,10 +68,9 @@ jest.mock("@cocalc/project-runner/run/rootfs", () => ({
 jest.mock("@cocalc/project-runner/run/podman", () => ({
   networkArgument: jest.fn(() => "--network=pasta:--map-gw"),
   podmanRuntimeArgs: jest.fn(async () => []),
-  projectPoolPodmanLauncher: jest.fn(() => ({
-    command: "podman",
-    argsPrefix: [],
-  })),
+  projectPoolPodmanLauncher: jest.fn(() =>
+    require("@cocalc/backend/podman/launcher-mint").mintPodmanLauncher("podman", []),
+  ),
   resolveHostContainersInternalAddress: (...args: any[]) =>
     resolveHostContainersInternalAddressMock(...args),
   resolveSharedScratchMount: jest.fn(async () => undefined),

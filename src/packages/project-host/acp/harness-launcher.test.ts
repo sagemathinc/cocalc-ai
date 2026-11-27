@@ -94,10 +94,8 @@ jest.mock("@cocalc/project-runner/run/podman", () => ({
   podmanRuntimeArgs: async () => [],
   projectSecretsHostPath: () => "/project-secrets",
   forceKillContainerProcesses: (...args) => mockForceKill(...args),
-  projectPoolPodmanLauncher: () => ({
-    command: "pool-launcher",
-    argsPrefix: ["project-pool", "podman"],
-  }),
+  projectPoolPodmanLauncher: () =>
+    require("@cocalc/backend/podman/launcher-mint").mintPodmanLauncher("pool-launcher", ["project-pool", "podman"]),
 }));
 jest.mock("../codex/codex-project", () => ({
   ensureProjectContainerRunning: (...args) => mockStart(...args),

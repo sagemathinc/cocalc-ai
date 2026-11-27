@@ -51,7 +51,7 @@ const INVENTORY: Record<string, { verbs: string[]; why: string }> = {
   },
   "project-runner/run/sandbox-exec.ts": {
     verbs: ["run", "exec"],
-    why: "L5 sandbox exec: ephemeral run (sideLaunchPolicy) or exec (execLaunchPolicy, feature sandbox-exec)",
+    why: "L5 sandbox exec: ephemeral run (sideLaunchPolicy) or exec into the own container (execLaunchPolicy)",
   },
   "project-host/rootfs-scan.ts": {
     verbs: ["run"],
@@ -69,6 +69,123 @@ const INVENTORY: Record<string, { verbs: string[]; why: string }> = {
 
 // Argvs that start with a gated word but are not podman, by file.
 const NOT_PODMAN: Record<string, { verbs: string[]; why: string }> = {};
+
+// Every place that can start a process (a reference to child_process or
+// node-pty, however imported or aliased), by file: a new one fails here until
+// it is reviewed and counted, so a computed command or a helper that passes
+// podman can't appear unnoticed.
+const PROCESS_MODULES = new Set([
+  "child_process",
+  "node:child_process",
+  "node-pty",
+]);
+const PROCESS_INVENTORY: Record<string, number> = {
+  "backend/bash.ts": 2,
+  "backend/computers/exec.ts": 1,
+  "backend/conat/persist-durability.ts": 1,
+  "backend/conat/persist-maintenance/compact-worker.ts": 1,
+  "backend/conat/persist-verified-eviction.ts": 2,
+  "backend/execute-code.ts": 3,
+  "backend/frontend-build-fingerprint.ts": 3,
+  "backend/podman/command.ts": 2,
+  "backend/podman/conmon.ts": 1,
+  "backend/process-stats.ts": 1,
+  "backend/r2.ts": 1,
+  "backend/sandbox/exec.ts": 3,
+  "backend/sandbox/install.ts": 2,
+  "backend/sandbox/privileged-delete.ts": 1,
+  "project-runner/run/pull-image.ts": 1,
+  "project-runner/run/sandbox-command-containment.ts": 3,
+  "project-runner/run/sandbox-command-stream.ts": 1,
+  "project-runner/run/workspace.ts": 1,
+  "project-host/acp/claude-subscription-home.ts": 1,
+  "project-host/acp/claude-subscription-login.ts": 1,
+  "project-host/acp/claude-usage-probe.ts": 1,
+  "project-host/acp/qualified-harness-entry.ts": 1,
+  "project-host/app-supervisor.ts": 1,
+  "project-host/daemon.ts": 2,
+  "project-host/host-service-cgroup.ts": 3,
+  "project-host/host-sysctl.ts": 1,
+  "project-host/hub/acp/worker-manager.ts": 1,
+  "project-host/io-metrics.ts": 1,
+  "project-host/legacy-migration/project-archive.ts": 2,
+  "project-host/onprem-tunnel.ts": 1,
+  "project-host/runtime-conformance.ts": 1,
+  "project-host/runtime-posture.ts": 1,
+  "project-host/rustic-backup-browser.ts": 2,
+  "project-host/rustic-cache-maintenance.ts": 1,
+  "project-host/shared-browser-containers.ts": 2,
+  "project-host/storage-admission.ts": 1,
+  "project-host/upgrade.ts": 4,
+  "lite/http.ts": 1,
+  "lite/hub/acp/executor/local.ts": 2,
+  "lite/hub/acp/local-harness.ts": 3,
+  "lite/hub/acp/worker-manager.ts": 1,
+  "lite/hub/api.ts": 1,
+  "lite/hub/codex-auth.ts": 1,
+  "lite/hub/codex-runtime.ts": 1,
+  "lite/playwright/jupyter/global-setup.ts": 1,
+  "lite/playwright/jupyter/helpers.ts": 1,
+  "lite/static-apps.ts": 1,
+};
+
+// The literal "podman" (or a path ending in /podman) outside backend/podman,
+// by file and why: each is a direct podman run (a non-launch verb, reviewed),
+// or not a command at all.
+const PODMAN_LITERALS: Record<string, { count: number; why: string }> = {
+  "project-runner/run/pull-image.ts": {
+    count: 1,
+    why: "podman pull through a pty (progress); a non-launch verb",
+  },
+  "project-runner/run/runtime-backend.ts": {
+    count: 5,
+    why: "the runtime mode's name, not a command",
+  },
+  "project-runner/run/sandbox-exec.ts": {
+    count: 1,
+    why: "a log label, not a command",
+  },
+  "project-runner/runtime-mode.ts": {
+    count: 3,
+    why: "the runtime mode's name, not a command",
+  },
+  "project-host/codex/codex-project.ts": {
+    count: 2,
+    why: "the command name reported for a process the wrappers started",
+  },
+  "project-host/daemon.ts": {
+    count: 3,
+    why: "daemon preflight: podman ps -a and system migrate (non-launch verbs)",
+  },
+  "project-host/hub/projects.ts": {
+    count: 1,
+    why: "the runtime mode's name, not a command",
+  },
+  "project-host/master.ts": {
+    count: 6,
+    why: "diagnostics (info, ps) routed to the wrappers by runDiagnosticCommand; a journal tag",
+  },
+  "project-host/rootfs-scan.ts": {
+    count: 3,
+    why: "the scanner's podman binary, run only through execFilePodman",
+  },
+  "project-host/runtime-health.ts": {
+    count: 3,
+    why: "health probes (info, ps) routed to the wrappers",
+  },
+  "project-host/runtime-posture.ts": {
+    count: 1,
+    why: "podman --version",
+  },
+  "project-host/shared-browser-containers.ts": {
+    count: 2,
+    why: "the AppArmor profile named podman, not a command",
+  },
+  "project-host/upgrade.ts": {
+    count: 10,
+    why: "host upgrade: podman info, ps, stop --all, inspect (non-launch verbs) and the runtime bundle's binary list",
+  },
+};
 
 const GATED = new Set(["create", "run", "exec", "build"]);
 const CHILD_PROCESS_CALLS = new Set([
@@ -135,10 +252,14 @@ function scan(): {
   directPodman: Finding[];
   verbs: Map<string, string[]>;
   mint: Finding[];
+  processRefs: Record<string, number>;
+  podmanLiterals: Record<string, number>;
 } {
   const directPodman: Finding[] = [];
   const verbs = new Map<string, string[]>();
   const mint: Finding[] = [];
+  const processRefs: Record<string, number> = {};
+  const podmanLiterals: Record<string, number> = {};
   for (const pkg of SCANNED) {
     for (const path of sourceFiles(join(PACKAGES, pkg))) {
       const rel = relative(PACKAGES, path).split("\\").join("/");
@@ -233,28 +354,139 @@ function scan(): {
         )
           mint.push({ file: rel, line: line(node), what: "imports the mint" });
         if (
-          ts.isIdentifier(node) &&
-          node.text === "__mintToken" &&
-          rel !== "backend/podman/launch-policy.ts" &&
-          rel !== "backend/podman/launch-policy-mint.ts"
-        )
-          mint.push({ file: rel, line: line(node), what: "uses __mintToken" });
-        if (
-          ts.isNewExpression(node) &&
-          node.expression.getText(file) === "PodmanLaunchPolicy" &&
-          rel !== "backend/podman/launch-policy-mint.ts"
+          ts.isImportDeclaration(node) &&
+          /launcher-mint/.test(stringValue(node.moduleSpecifier) ?? "") &&
+          rel !== "project-runner/run/podman.ts"
         )
           mint.push({
             file: rel,
             line: line(node),
-            what: "constructs a policy",
+            what: "imports the launcher mint",
+          });
+        // the tokens, by name or as a string key (lp["__mintToken"])
+        const tokenName = ts.isIdentifier(node) ? node.text : stringValue(node);
+        if (
+          (tokenName === "__mintToken" || tokenName === "__launcherToken") &&
+          rel !== "backend/podman/launch-policy.ts" &&
+          rel !== "backend/podman/launch-policy-mint.ts" &&
+          rel !== "backend/podman/launcher-mint.ts"
+        )
+          mint.push({ file: rel, line: line(node), what: `uses ${tokenName}` });
+        if (
+          ts.isNewExpression(node) &&
+          (node.expression.getText(file) === "PodmanLaunchPolicy" ||
+            node.expression.getText(file) === "PodmanLauncher") &&
+          rel !== "backend/podman/launch-policy-mint.ts" &&
+          rel !== "backend/podman/launcher-mint.ts"
+        )
+          mint.push({
+            file: rel,
+            line: line(node),
+            what: "constructs a policy or launcher",
           });
         ts.forEachChild(node, visit);
       };
       visit(file);
+      const refs = processReferences(file);
+      if (refs > 0) processRefs[rel] = refs;
+      if (!rel.startsWith("backend/podman/")) {
+        const literals = countPodmanLiterals(file);
+        if (literals > 0) podmanLiterals[rel] = literals;
+      }
     }
   }
-  return { directPodman, verbs, mint };
+  return { directPodman, verbs, mint, processRefs, podmanLiterals };
+}
+
+/** References to child_process / node-pty bindings in a file: every use of an
+ * imported (or required) name, plus each dynamic import or bare require. */
+export function processReferences(file: ts.SourceFile): number {
+  const bound = new Set<string>();
+  let count = 0;
+  const isProcessModule = (node: ts.Node | undefined) =>
+    PROCESS_MODULES.has(stringValue(node) ?? "");
+  const collect = (node: ts.Node) => {
+    if (
+      ts.isImportDeclaration(node) &&
+      isProcessModule(node.moduleSpecifier) &&
+      node.importClause &&
+      !node.importClause.isTypeOnly
+    ) {
+      const clause = node.importClause;
+      if (clause.name) bound.add(clause.name.text);
+      const named = clause.namedBindings;
+      if (named && ts.isNamespaceImport(named)) bound.add(named.name.text);
+      if (named && ts.isNamedImports(named))
+        for (const el of named.elements)
+          if (!el.isTypeOnly) bound.add(el.name.text);
+    }
+    if (ts.isImportEqualsDeclaration(node)) {
+      const ref = node.moduleReference;
+      if (ts.isExternalModuleReference(ref) && isProcessModule(ref.expression))
+        bound.add(node.name.text);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) &&
+          node.expression.text === "require")) &&
+      isProcessModule(node.arguments[0])
+    ) {
+      const parent = node.parent;
+      if (ts.isVariableDeclaration(parent) && parent.initializer === node) {
+        const name = parent.name;
+        if (ts.isIdentifier(name)) bound.add(name.text);
+        else if (ts.isObjectBindingPattern(name))
+          for (const el of name.elements)
+            if (ts.isIdentifier(el.name)) bound.add(el.name.text);
+      } else {
+        count++; // used in place: require("child_process").spawn(...)
+      }
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(file);
+  if (bound.size === 0) return count;
+  const isDeclaration = (id: ts.Identifier) => {
+    const parent = id.parent;
+    return (
+      ts.isImportClause(parent) ||
+      ts.isNamespaceImport(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isImportEqualsDeclaration(parent) ||
+      (ts.isVariableDeclaration(parent) && parent.name === id) ||
+      ts.isBindingElement(parent) ||
+      // a type position: typeof cp, cp.ChildProcess as a type
+      ts.isTypeQueryNode(parent) ||
+      ts.isQualifiedName(parent)
+    );
+  };
+  const uses = (node: ts.Node) => {
+    if (ts.isIdentifier(node) && bound.has(node.text) && !isDeclaration(node))
+      count++;
+    ts.forEachChild(node, uses);
+  };
+  uses(file);
+  return count;
+}
+
+const PODMAN_LITERAL = /^(.*\/)?podman$/;
+
+/** String literals naming podman as a command. */
+export function countPodmanLiterals(file: ts.SourceFile): number {
+  let count = 0;
+  const visit = (node: ts.Node) => {
+    const value = stringValue(node);
+    const moduleName =
+      node.parent != null &&
+      (ts.isImportDeclaration(node.parent) ||
+        ts.isExportDeclaration(node.parent)) &&
+      node.parent.moduleSpecifier === node;
+    if (value != null && !moduleName && PODMAN_LITERAL.test(value)) count++;
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return count;
 }
 
 describe("podman launch gate: structure", () => {
@@ -280,8 +512,47 @@ describe("podman launch gate: structure", () => {
     expect(found).toEqual(expected);
   });
 
-  it("only the gate mints launch policies", () => {
+  it("only the gate mints launch policies (and only podman.ts launchers)", () => {
     expect(result.mint).toEqual([]);
+  });
+
+  it("every place that can start a process is counted (fail closed)", () => {
+    expect(result.processRefs).toEqual(PROCESS_INVENTORY);
+  });
+
+  it("every literal podman command outside the wrappers is reviewed", () => {
+    expect(result.podmanLiterals).toEqual(
+      Object.fromEntries(
+        Object.entries(PODMAN_LITERALS).map(([f, { count }]) => [f, count]),
+      ),
+    );
+  });
+
+  it("counts aliased, required and dynamically imported process APIs (self-test)", () => {
+    const count = (text: string) =>
+      processReferences(
+        ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true),
+      );
+    // a neutral alias with a computed command and a dynamic argv
+    expect(
+      count(`import { execFile as run } from "node:child_process";
+             const argv = build(); run(cmd, argv);`),
+    ).toBe(1);
+    expect(
+      count(`import * as cp from "child_process";
+             const rt = { go: cp.spawnSync }; rt.go(x, y);`),
+    ).toBe(1);
+    expect(
+      count(`const { spawn: s } = require("node:child_process"); s(a);`),
+    ).toBe(1);
+    expect(count(`require("child_process").execFile(a, b);`)).toBe(1);
+    expect(
+      count(`const m = await import("node:child_process"); m.spawn(a);`),
+    ).toBe(1);
+    expect(count(`import { spawn } from "node-pty"; spawn(c, a, {});`)).toBe(1);
+    expect(
+      count(`import type { ChildProcess } from "node:child_process";`),
+    ).toBe(0);
   });
 
   it("catches a direct call and an unlisted verb (self-test)", () => {

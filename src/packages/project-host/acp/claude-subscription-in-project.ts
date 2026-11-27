@@ -27,7 +27,11 @@ import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import getLogger from "@cocalc/backend/logger";
-import { execFilePodman, spawnPodmanPiped } from "@cocalc/backend/podman";
+import {
+  execFilePodman,
+  spawnPodmanPiped,
+  type PodmanLauncher,
+} from "@cocalc/backend/podman";
 import { execLaunchPolicy } from "@cocalc/project-runner/run/podman-launch";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import {
@@ -397,7 +401,7 @@ export function podmanExecFailureReason(
 
 /** Runs claudeManagedPolicyCheck in the project container. */
 async function checkNoManagedPolicy(
-  launcher: { command: string; argsPrefix: string[] },
+  launcher: PodmanLauncher,
   name: string,
 ): Promise<void> {
   const failure = await new Promise<

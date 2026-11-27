@@ -73,6 +73,43 @@ export class PodmanLaunchPolicy {
 /** @internal for ./launch-policy-mint.ts only */
 export const __mintToken = MINT;
 
+const LAUNCHER_MINT = Symbol("podman-launcher");
+const MINTED_LAUNCHERS = new WeakSet<object>();
+
+/**
+ * A command that runs podman for the wrappers (today: the project pool and
+ * project cgroup scripts, `bash -c SCRIPT ...`). Only project-runner's
+ * podman.ts makes them (./launcher-mint.ts; a structural test checks it), and
+ * the wrappers refuse any other.
+ */
+export class PodmanLauncher {
+  readonly command: string;
+  readonly argsPrefix: readonly string[];
+
+  constructor(token: symbol, command: string, argsPrefix: readonly string[]) {
+    if (token !== LAUNCHER_MINT) {
+      throw Error("podman launchers are made only by project-runner");
+    }
+    this.command = command;
+    this.argsPrefix = Object.freeze([...argsPrefix]);
+    Object.freeze(this);
+    MINTED_LAUNCHERS.add(this);
+  }
+}
+
+/** @internal for ./launcher-mint.ts only */
+export const __launcherToken = LAUNCHER_MINT;
+
+/** Throws unless launcher is one project-runner made (or absent). */
+export function checkPodmanLauncher(launcher: unknown): void {
+  if (launcher != null && !MINTED_LAUNCHERS.has(launcher as object)) {
+    throw new PodmanLaunchRefused(
+      "launcher",
+      "podman: only project-runner's launchers may run podman",
+    );
+  }
+}
+
 export class PodmanLaunchRefused extends Error {
   readonly reason: string;
   constructor(reason: string, message?: string) {
@@ -82,56 +119,199 @@ export class PodmanLaunchRefused extends Error {
   }
 }
 
-// Global options podman takes before its verb, with a separate value.
-const GLOBAL_OPTIONS_WITH_VALUE = new Set([
-  "--cgroup-manager",
-  "--config",
-  "--conmon",
-  "--connection",
-  "-c",
-  "--events-backend",
-  "--hooks-dir",
-  "--identity",
-  "--imagestore",
-  "--log-level",
-  "--module",
-  "--network-cmd-path",
-  "--network-config-dir",
-  "--root",
-  "--runroot",
-  "--runtime",
-  "--runtime-flag",
-  "--ssh",
-  "--storage-driver",
-  "--storage-opt",
-  "--tmpdir",
-  "--transient-store",
-  "--url",
-  "--volumepath",
+// The global options callers may pass before the verb (podman 5.8.6,
+// cmd/podman/root.go): an allow-list, since an unknown option's value would
+// be read as the verb, and several change what podman runs (--module,
+// --connection, --url, ...). Each takes a value, attached or as the next word.
+const GLOBAL_OPTIONS_ALLOWED = new Set(["--log-level"]);
+
+// Verbs grouped under a first word ("container run", "image build", ...).
+const VERB_GROUPS = new Set([
+  "container",
+  "image",
+  "system",
+  "pod",
+  "network",
+  "volume",
+  "manifest",
+  "secret",
+  "generate",
+  "machine",
+  "kube",
+  "play",
+  "buildx",
+  "farm",
+  "artifact",
+  "quadlet",
 ]);
 
-/** The verb word of a podman argv and its index (after global options and
- * a "container"/"image" group word). */
-function verbAt(args: readonly string[]): { word?: string; index: number } {
+// Verbs that start code in a container: they need a policy.
+const LAUNCH_VERBS: Record<string, PodmanLaunchVerb> = {
+  run: "run",
+  create: "create",
+  exec: "exec",
+  build: "build",
+  "container run": "run",
+  "container create": "create",
+  "container exec": "exec",
+  "image build": "build",
+  "buildx build": "build",
+};
+
+// The other verbs callers may use, none of which starts code in a container
+// (an allow-list: kube play, runlabel, clone, restore, system service and
+// anything new are refused).
+const NON_LAUNCH_VERBS = new Set([
+  "ps",
+  "inspect",
+  "rm",
+  "rmi",
+  "start",
+  "stop",
+  "kill",
+  "wait",
+  "logs",
+  "info",
+  "version",
+  "images",
+  "pull",
+  "top",
+  "stats",
+  "port",
+  "events",
+  "unshare",
+  "container exists",
+  "container inspect",
+  "container ps",
+  "container list",
+  "container ls",
+  "container rm",
+  "container start",
+  "container stop",
+  "container kill",
+  "container wait",
+  "container logs",
+  "container top",
+  "container stats",
+  "container port",
+  "image exists",
+  "image inspect",
+  "image ls",
+  "image list",
+  "image rm",
+  "image pull",
+  "system migrate",
+  "system info",
+  "system df",
+]);
+
+interface ParsedVerb {
+  // "run", "container run", ...: undefined when there is none
+  key?: string;
+  // index of the verb's last word
+  index: number;
+  // a leading option that isn't allowed
+  badOption?: string;
+}
+
+/** The verb of a podman argv, after the allowed global options. */
+export function parsePodmanVerb(args: readonly string[]): ParsedVerb {
   let i = 0;
   while (i < args.length && args[i].startsWith("-")) {
     const arg = args[i];
-    i += !arg.includes("=") && GLOBAL_OPTIONS_WITH_VALUE.has(arg) ? 2 : 1;
+    const name = arg.split("=")[0];
+    if (args.length === 1 && arg === "--version")
+      return { key: "version", index: 0 };
+    if (!GLOBAL_OPTIONS_ALLOWED.has(name)) return { index: i, badOption: name };
+    i += arg.includes("=") ? 1 : 2;
   }
-  if (args[i] === "container" || args[i] === "image") i += 1;
-  return { word: args[i], index: i };
+  const first = args[i];
+  if (first == null) return { index: i };
+  if (VERB_GROUPS.has(first)) {
+    const sub = args[i + 1];
+    return sub == null || sub.startsWith("-")
+      ? { key: first, index: i }
+      : { key: `${first} ${sub}`, index: i + 1 };
+  }
+  return { key: first, index: i };
 }
 
 /** The verb of a podman argv ("container run" counts as "run"), if gated. */
 export function podmanLaunchVerb(
   args: readonly string[],
 ): PodmanLaunchVerb | undefined {
-  let verb = verbAt(args).word;
-  if (verb === "buildx") verb = "build";
-  return (PODMAN_LAUNCH_VERBS as readonly string[]).includes(verb ?? "")
-    ? (verb as PodmanLaunchVerb)
-    : undefined;
+  const { key } = parsePodmanVerb(args);
+  return key == null ? undefined : LAUNCH_VERBS[key];
 }
+
+// Options allowed between a run/create verb and the policy's user namespace
+// flags (the ones the launchers put there): the flags must come before the
+// image operand, which only options may precede.
+const RUN_PREFIX: OptionSpec = {
+  longValue: new Set([
+    "--runtime",
+    "--name",
+    "--label",
+    "--cgroups",
+    "--security-opt",
+    "--cap-drop",
+    "--pids-limit",
+    "--network",
+  ]),
+  longBoolean: new Set([
+    "--interactive",
+    "--detach",
+    "--rm",
+    "--replace",
+    "--tty",
+    "--read-only",
+  ]),
+  shortValue: "",
+  shortBoolean: "dit",
+};
+
+interface OptionSpec {
+  longValue: Set<string>;
+  longBoolean: Set<string>;
+  shortValue: string;
+  shortBoolean: string;
+}
+
+/** Whether args[from..to) are options only, by spec (values included). */
+function optionsOnly(
+  args: readonly string[],
+  from: number,
+  to: number,
+  spec: OptionSpec,
+): boolean {
+  for (let i = from; i < to; i++) {
+    const arg = args[i];
+    if (!arg.startsWith("-") || arg === "-" || arg === "--") return false;
+    if (arg.startsWith("--")) {
+      const name = arg.split("=")[0];
+      if (spec.longValue.has(name)) {
+        if (!arg.includes("=")) i += 1;
+      } else if (arg.includes("=") || !spec.longBoolean.has(name)) {
+        return false;
+      }
+    } else {
+      const letters = arg.slice(1);
+      for (let k = 0; k < letters.length; k++) {
+        const c = letters[k];
+        if (spec.shortBoolean.includes(c)) continue;
+        if (!spec.shortValue.includes(c)) return false;
+        if (k === letters.length - 1) i += 1;
+        break;
+      }
+    }
+    if (i >= to) return false; // a value can't be the policy's first flag
+  }
+  return true;
+}
+
+// Sharing the host's or another container's pid namespace (or a pod's) would
+// put a container's processes where the self-check expects only Podman's own.
+const PID_SHARING = /^--(pid|pod|pidns)(=|$)/;
 
 // podman exec's options: those taking a value, and the boolean ones allowed.
 // Anything else (--latest, --privileged, an unknown option) has no target
@@ -149,11 +329,23 @@ const EXEC_LONG_BOOLEAN = new Set(["--detach", "--interactive", "--tty"]);
 const EXEC_SHORT_WITH_VALUE = "euw";
 const EXEC_SHORT_BOOLEAN = "dit";
 
+// Options allowed between exec and the policy's user flags (not -u/--user:
+// those are the policy's).
+const EXEC_PREFIX: OptionSpec = {
+  longValue: new Set(
+    [...EXEC_LONG_WITH_VALUE].filter((name) => name !== "--user"),
+  ),
+  longBoolean: EXEC_LONG_BOOLEAN,
+  shortValue: "ew",
+  shortBoolean: EXEC_SHORT_BOOLEAN,
+};
+
 /** The container operand of a podman exec argv, or undefined when it can't
  * be determined exactly. */
 export function podmanExecTarget(args: readonly string[]): string | undefined {
-  const { word, index } = verbAt(args);
-  if (word !== "exec") return undefined;
+  const { key, index, badOption } = parsePodmanVerb(args);
+  if (badOption != null || (key !== "exec" && key !== "container exec"))
+    return undefined;
   for (let i = index + 1; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--") return args[i + 1];
@@ -206,10 +398,24 @@ export function checkPodmanLaunch(
   args: readonly string[],
   policy: PodmanLaunchPolicy | undefined,
 ): void {
-  const verb = podmanLaunchVerb(args);
+  const parsed = parsePodmanVerb(args);
+  if (parsed.badOption != null) {
+    throw new PodmanLaunchRefused(
+      "global-option",
+      `podman: the global option ${parsed.badOption} is not allowed`,
+    );
+  }
+  const verb = parsed.key == null ? undefined : LAUNCH_VERBS[parsed.key];
   if (verb == null) {
-    if (args.some(isUsernsFlag) && policy == null) {
-      // e.g. a namespace flag on a verb we don't gate: refuse rather than guess
+    if (parsed.key == null || !NON_LAUNCH_VERBS.has(parsed.key)) {
+      throw new PodmanLaunchRefused(
+        "verb-not-allowed",
+        "podman: this verb is not allowed through the wrappers",
+      );
+    }
+    // unshare's own arguments are the command it runs (as the runtime uid,
+    // in Podman's namespace): no container options there
+    if (parsed.key !== "unshare" && args.some(isUsernsFlag)) {
       throw new PodmanLaunchRefused(
         "userns-flag-without-policy",
         "podman: user namespace flags need a launch policy",
@@ -254,6 +460,28 @@ export function checkPodmanLaunch(
       );
     }
   }
+  if (
+    (verb === "run" || verb === "create") &&
+    args.some((arg) => PID_SHARING.test(arg))
+  ) {
+    throw new PodmanLaunchRefused(
+      "pid-sharing",
+      "podman: a launched container can't share another pid namespace or a pod",
+    );
+  }
+  // The policy's flags come before the first operand (the image, or the
+  // exec's container): only options may stand between the verb and them.
+  if (expected.length > 0) {
+    const start = indexOfSequence(args, expected);
+    const spec =
+      verb === "exec" ? EXEC_PREFIX : verb === "build" ? undefined : RUN_PREFIX;
+    if (spec == null || !optionsOnly(args, parsed.index + 1, start, spec)) {
+      throw new PodmanLaunchRefused(
+        "userns-placement",
+        "podman: the launch policy's user namespace flags must come before the image or container",
+      );
+    }
+  }
   if (verb === "exec") {
     if (
       policy.container == null ||
@@ -289,4 +517,8 @@ export const PODMAN_ENV_OVERRIDES_REFUSED = [
   "CONTAINERS_CONF_OVERRIDE",
   "CONTAINERS_STORAGE_CONF",
   "PODMAN_USERNS",
+  // where rootless podman looks for containers.conf and storage
+  "HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
 ];

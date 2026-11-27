@@ -220,7 +220,7 @@ test("cancellation before admission needs no scope and does not spawn", async ()
   expect(
     await runContainedSandboxCommand({
       project_id: "fixture",
-      args: [],
+      args: ["exec", "x", "true"],
       policy: execPolicy("x"),
       signal: abort.signal,
       timeoutMs: 1000,
