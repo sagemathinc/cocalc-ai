@@ -62,10 +62,36 @@ describe("print image readiness", () => {
     expect(remove).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects broken cached images rather than silently omitting them", async () => {
-    await expect(
-      waitForPrintImages(doc({ complete: true, naturalWidth: 0 })),
-    ).rejects.toThrow("Unable to load an image");
+  it("prints a broken image as a visible placeholder naming it", async () => {
+    document.body.innerHTML =
+      '<p>before<img src="/blobs/paste-0.153%20a.png?uuid=11111111-1111-1111-1111-111111111111">after</p>' +
+      '<img src="/blobs/ok.png?uuid=2">';
+    const [broken, ok] = Array.from(document.images);
+    Object.defineProperty(broken, "naturalWidth", { value: 0 });
+    (broken as any).decode = () =>
+      Promise.reject(new DOMException("cannot decode", "EncodingError"));
+    Object.defineProperty(ok, "naturalWidth", { value: 640 });
+    (ok as any).decode = () => Promise.resolve();
+    await expect(waitForPrintImages(document)).resolves.toEqual([
+      "paste-0.153 a.png",
+    ]);
+    expect(document.images).toHaveLength(1);
+    expect(document.body.textContent).toContain(
+      "before[image could not be loaded: paste-0.153 a.png]after",
+    );
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it("also replaces a decoded image with no size", async () => {
+    document.body.innerHTML = '<img src="data:image/png;base64,AAAA">';
+    const [image] = Array.from(document.images);
+    Object.defineProperty(image, "naturalWidth", { value: 0 });
+    (image as any).decode = () => Promise.resolve();
+    await expect(waitForPrintImages(document)).resolves.toEqual([
+      "embedded image",
+    ]);
+    expect(
+      document.querySelector(".cocalc-print-missing-image"),
+    ).not.toBeNull();
   });
 });
