@@ -297,14 +297,11 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
     const settled = Promise.allSettled(pending);
     try {
       await until(() => blocked.length === 4);
-      // Over the cap, a read waits for a free slot (up to maxWait) and then
-      // fails as busy.
       const overflow = readFile({
         client: consumer,
         project_id,
         name,
         path: source,
-        maxWait: 50,
       });
       await expect(overflow.next()).rejects.toThrow("busy");
       // Bypass readFile's independent consumer cap to check producer admission
@@ -341,6 +338,46 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
     retryController.abort();
     await rejected;
     await until(() => blocked[4].destroyed);
+  });
+
+  it("with admissionWaitMs, a read over the cap starts when another finishes", async () => {
+    await close({ project_id, name });
+    const blocked: PassThrough[] = [];
+    await createServer({
+      client: producer,
+      project_id,
+      name,
+      maxActiveStreams: 128,
+      createReadStream: () => {
+        const stream = new PassThrough();
+        blocked.push(stream);
+        return stream;
+      },
+    });
+    const controllers = Array.from({ length: 5 }, () => new AbortController());
+    const read = (i: number, admissionWaitMs?: number) =>
+      readFile({
+        client: consumer,
+        project_id,
+        name,
+        path: source,
+        signal: controllers[i].signal,
+        admissionWaitMs,
+      }).next();
+    const pending = [0, 1, 2, 3].map((i) => read(i));
+    try {
+      await until(() => blocked.length === 4);
+      // like a copy: waits instead of failing as busy
+      pending.push(read(4, 5_000));
+      await sleep(100);
+      expect(blocked).toHaveLength(4);
+      controllers[0].abort();
+      await until(() => blocked.length === 5);
+    } finally {
+      controllers.forEach((controller) => controller.abort());
+      await Promise.allSettled(pending);
+      await until(() => blocked.every((stream) => stream.destroyed));
+    }
   });
 
   it.each([undefined, "legacy", "ack-v2"])(

@@ -18,6 +18,8 @@ export const READ_ADMISSION_WAIT_MS = limit(
   60_000,
 );
 const MAX_WAITING = limit("COCALC_FILE_READ_ADMISSION_MAX_WAITING", 256);
+// The producer's reply when the project serves as many reads as it allows.
+export const PRODUCER_BUSY = "project file read service is busy";
 
 // Keys are independent of service names, share IDs, sockets and connections.
 // Producers and consumers have separate pools because host HTTP uses both.
@@ -83,9 +85,7 @@ export class ReadAdmission {
     )) {
       if (current < maximum) continue;
       const error =
-        this.side === "producer"
-          ? "project file read service is busy"
-          : "file read consumer is busy";
+        this.side === "producer" ? PRODUCER_BUSY : "file read consumer is busy";
       recordServiceAdmissionDenial({
         surface: `project-file-read-${this.side}`,
         source: "project-service",

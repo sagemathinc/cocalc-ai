@@ -77,6 +77,7 @@ import { type Readable } from "node:stream";
 import { getLogger } from "@cocalc/conat/logger";
 import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 import { copyToWriteStream, type FileWriteStream } from "./write-stream";
+import { READ_ADMISSION_WAIT_MS } from "./read-admission";
 const logger = getLogger("conat:files:write");
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -209,8 +210,19 @@ async function handleMessage({ mesg, createWriteStream, project_id, client }) {
     logger.debug("handleMessage", { path, name, maxWait });
     const { bytes, chunks } = await copyToWriteStream({
       open: () => createWriteStream(path),
+      // A copy waits for a free read slot on the source project instead of
+      // failing when many copies run at once (e.g., a course copying to all
+      // of its students).
       source: (signal) =>
-        readFile({ project_id, name, path, maxWait, client, signal }),
+        readFile({
+          project_id,
+          name,
+          path,
+          maxWait,
+          client,
+          signal,
+          admissionWaitMs: READ_ADMISSION_WAIT_MS,
+        }),
       maxWait,
     });
     mesg.respondSync({ status: "success", bytes, chunks });
