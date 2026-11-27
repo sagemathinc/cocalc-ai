@@ -183,8 +183,18 @@ export function podmanExecTarget(args: readonly string[]): string | undefined {
 const USERNS_FLAG =
   /^(--userns|--uidmap|--gidmap|--user|-u|--subuidname|--subgidname)(=|$)/;
 
+// boolean short options podman run/create/exec accept in a cluster
+const SHORT_BOOLEAN = "ditP";
+
 function isUsernsFlag(arg: string): boolean {
-  return USERNS_FLAG.test(arg);
+  if (USERNS_FLAG.test(arg)) return true;
+  // the attached short form: -u0, or -u inside a cluster (-itu0)
+  if (!arg.startsWith("-") || arg.startsWith("--")) return false;
+  for (const c of arg.slice(1)) {
+    if (c === "u") return true;
+    if (!SHORT_BOOLEAN.includes(c)) return false; // the rest is a value
+  }
+  return false;
 }
 
 /**

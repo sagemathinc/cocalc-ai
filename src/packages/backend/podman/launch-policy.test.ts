@@ -134,6 +134,38 @@ describe("checkPodmanLaunch", () => {
       ).toThrow(/must target/);
   });
 
+  it("refuses an extra attached short user option (-u0, -itu0)", () => {
+    const p = policy("exec", ["-u", "2001:2001"], "project-1");
+    expect(() =>
+      checkPodmanLaunch(["exec", "-u", "2001:2001", "project-1", "id"], p),
+    ).not.toThrow();
+    expect(() =>
+      checkPodmanLaunch(
+        ["exec", "-it", "-u", "2001:2001", "project-1", "id"],
+        p,
+      ),
+    ).not.toThrow();
+    for (const extra of ["-u0", "-itu0", "-du0:0", "-u=0"])
+      expect(() =>
+        checkPodmanLaunch(
+          ["exec", "-u", "2001:2001", extra, "project-1", "id"],
+          p,
+        ),
+      ).toThrow(/didn't come from the launch policy/);
+    // and on run, against a keep-id policy
+    const r = policy("run");
+    expect(() =>
+      checkPodmanLaunch(["run", "--rm", ...KEEP_ID, "-itu0", "img"], r),
+    ).toThrow(/didn't come from the launch policy/);
+    // a value that merely contains a u is not a user option
+    expect(() =>
+      checkPodmanLaunch(
+        ["exec", "-u", "2001:2001", "-eUSER=x", "project-1", "id"],
+        p,
+      ),
+    ).not.toThrow();
+  });
+
   it("finds the exec target through every option form", () => {
     const cases: [string[], string | undefined][] = [
       [["exec", "c", "ls"], "c"],
