@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+data_dir="${DATA:-${COCALC_DATA:-/mnt/cocalc/data}}"
+pid_file="$data_dir/acp-worker.pid"
+log_file="$data_dir/logs/acp-worker.log"
+
+echo "ACP worker status"
+echo "================="
+echo "data dir: $data_dir"
+echo "pid file: $pid_file"
+echo "log file: $log_file"
+echo
+
+if [ -f "$pid_file" ]; then
+  pid="$(tr -d '[:space:]' < "$pid_file")"
+  echo "worker pid: $pid"
+  if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+    echo "worker state: running"
+    ps -fp "$pid" || true
+  else
+    echo "worker state: pid file exists but process is not running"
+  fi
+else
+  echo "worker state: pid file missing"
+fi
+
+echo
+if [ -f "$log_file" ]; then
+  echo "worker log: present"
+  ls -lh "$log_file"
+  echo
+  echo "recent worker log lines:"
+  tail -n 20 "$log_file" || true
+else
+  echo "worker log: missing"
+fi
+
+echo
+if command -v podman >/dev/null 2>&1; then
+  echo "codex containers:"
+  podman ps -a --format "table {{.Names}}\\t{{.Status}}" | awk 'NR == 1 || $1 ~ /^codex-/'
+else
+  echo "podman not installed"
+fi

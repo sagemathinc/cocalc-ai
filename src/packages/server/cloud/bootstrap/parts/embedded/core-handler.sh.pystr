@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+pid="${1:-}"
+uid="${2:-}"
+gid="${3:-}"
+signal="${4:-}"
+timestamp="${5:-}"
+executable="${6:-project-host}"
+runtime_user="__RUNTIME_USER__"
+pid_file="/mnt/cocalc/data/project-host-app.pid"
+# root's own dir: the data disk belongs to the runtime user, whose process
+# crash runs this handler as root
+core_dir="/var/lib/cocalc-project-host-core-dumps"
+max_bytes=$((1024 * 1024 * 1024))
+
+if ! [[ "${pid}" =~ ^[0-9]+$ ]] || ! [[ "${uid}" =~ ^[0-9]+$ ]]; then
+  exit 0
+fi
+expected_uid="$(id -u "${runtime_user}" 2>/dev/null || true)"
+expected_pid=""
+if [ -f "${pid_file}" ] && [ ! -L "${pid_file}" ]; then
+  expected_pid="$(head -c 32 -- "${pid_file}" 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+if [ -z "${expected_uid}" ] || [ "${uid}" != "${expected_uid}" ] || [ "${pid}" != "${expected_pid}" ]; then
+  exit 0
+fi
+supervisor_pid="$(tr '\\0' '\\n' < "/proc/${pid}/environ" 2>/dev/null | sed -n 's/^COCALC_PROJECT_HOST_SUPERVISOR_PID=//p' | tail -n1 || true)"
+parent_pid="$(sed -n 's/^PPid:[[:space:]]*//p' "/proc/${pid}/status" 2>/dev/null || true)"
+if ! [[ "${supervisor_pid}" =~ ^[0-9]+$ ]] || [ "${parent_pid}" != "${supervisor_pid}" ]; then
+  exit 0
+fi
+
+if [ -L "${core_dir}" ] || [ "$(stat -c %u /var/lib)" != "0" ]; then
+  exit 0
+fi
+# on the root filesystem now: never let crashes fill it
+reserve_bytes=$((5 * 1024 * 1024 * 1024))
+avail_bytes="$(df --output=avail -B1 /var/lib 2>/dev/null | tail -n1 | tr -d '[:space:]' || true)"
+if ! [[ "${avail_bytes}" =~ ^[0-9]+$ ]] || [ "${avail_bytes}" -lt $((max_bytes + reserve_bytes)) ]; then
+  exit 0
+fi
+install -d -o root -g root -m 0700 "${core_dir}"
+exec 9>"${core_dir}/capture.lock"
+flock -x 9
+safe_executable="$(printf '%s' "${executable}" | tr -cd 'A-Za-z0-9._:-' | cut -c1-48)"
+[ -n "${safe_executable}" ] || safe_executable="project-host"
+[[ "${timestamp}" =~ ^[0-9]+$ ]] || timestamp="$(date +%s)"
+base="core.${safe_executable}.${pid}.${timestamp}"
+tmp="$(mktemp "${core_dir}/.${base}.XXXXXX")"
+chmod 0600 "${tmp}"
+dd iflag=fullblock bs=1048576 count=1024 conv=sparse of="${tmp}" status=none || true
+if [ ! -s "${tmp}" ]; then
+  rm -f "${tmp}"
+  exit 0
+fi
+mv "${tmp}" "${core_dir}/${base}"
+cat > "${core_dir}/${base}.meta" <<META
+captured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+pid=${pid}
+uid=${uid}
+gid=${gid}
+signal=${signal}
+executable=${safe_executable}
+supervisor_pid=${supervisor_pid}
+max_bytes=${max_bytes}
+META
+chmod 0600 "${core_dir}/${base}" "${core_dir}/${base}.meta"
+
+kept=0
+while IFS= read -r name; do
+  kept=$((kept + 1))
+  if [ "${kept}" -gt 3 ]; then
+    rm -f -- "${core_dir}/${name}" "${core_dir}/${name}.meta"
+  fi
+done < <(find "${core_dir}" -maxdepth 1 -type f -name 'core.*' ! -name '*.meta' -printf '%T@ %f\\n' | sort -nr | cut -d' ' -f2-)
