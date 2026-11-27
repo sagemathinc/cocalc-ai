@@ -49,7 +49,11 @@ import {
   READ_CHUNK_BYTES,
   readIdleWait,
 } from "./read-flow";
-import { ReadAdmission, MAX_PROJECT_READS } from "./read-admission";
+import {
+  ReadAdmission,
+  MAX_PROJECT_READS,
+  READ_ADMISSION_WAIT_MS,
+} from "./read-admission";
 import {
   FILE_READ_PRINCIPAL_HEADER,
   fileReadPrincipal,
@@ -366,7 +370,13 @@ export async function* readFile({
   const principal =
     fileReadPrincipal(account_id ? { account_id } : cn.info?.user) ??
     (cn.info?.user?.hub_id ? `project:${project_id}` : "unattributed");
-  const release = consumers.acquire(project_id, principal, subject);
+  // Waits for a free slot rather than failing at once when this process
+  // already reads a lot from the project (e.g., a course copying to many
+  // students at the same time).
+  const release = await consumers.acquireWait(project_id, principal, subject, {
+    timeoutMs: Math.min(maxWait, READ_ADMISSION_WAIT_MS),
+    signal,
+  });
   let seq = 0;
   let control: Message | undefined;
   let sub: Subscription | undefined;

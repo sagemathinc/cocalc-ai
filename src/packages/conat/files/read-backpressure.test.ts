@@ -297,11 +297,14 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
     const settled = Promise.allSettled(pending);
     try {
       await until(() => blocked.length === 4);
+      // Over the cap, a read waits for a free slot (up to maxWait) and then
+      // fails as busy.
       const overflow = readFile({
         client: consumer,
         project_id,
         name,
         path: source,
+        maxWait: 50,
       });
       await expect(overflow.next()).rejects.toThrow("busy");
       // Bypass readFile's independent consumer cap to check producer admission
