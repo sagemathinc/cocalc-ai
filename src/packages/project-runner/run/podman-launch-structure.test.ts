@@ -815,6 +815,24 @@ export function processHelperCalls(
   const capableMembers = new Map<string, Set<string>>();
   const memberCapable = (rel: string, owner: string, name: string) =>
     capableMembers.get(`${rel}#${owner}`)?.has(name) ?? false;
+  // where a local name is declared: through local aliases (const a = b) and
+  // imports, cycle-bounded
+  const localOrigin = (
+    rel: string,
+    local: string,
+    seen: Set<string>,
+  ): { rel: string; local: string } | undefined => {
+    if (seen.has(`${rel}#local:${local}`)) return undefined;
+    seen.add(`${rel}#local:${local}`);
+    const m = modules.get(rel);
+    if (m == null) return undefined;
+    const aliased = m.aliases.get(local);
+    if (aliased != null) return localOrigin(rel, aliased, seen);
+    const imp = m.imports.get(local);
+    if (imp != null && imp.symbol !== "*")
+      return exportOrigin(imp.module, imp.symbol, seen);
+    return { rel, local };
+  };
   // where an exported symbol is declared (re-exports and imports followed)
   const exportOrigin = (
     rel: string | undefined,
@@ -826,15 +844,7 @@ export function processHelperCalls(
     const m = modules.get(rel);
     if (m == null) return undefined;
     const e = m.exports.get(symbol);
-    if (e?.local != null) {
-      const aliased = m.aliases.get(e.local);
-      if (aliased != null && aliased !== e.local)
-        return exportOrigin(rel, aliased, seen) ?? { rel, local: e.local };
-      const imp = m.imports.get(e.local);
-      if (imp != null && imp.symbol !== "*")
-        return exportOrigin(imp.module, imp.symbol, seen);
-      return { rel, local: e.local };
-    }
+    if (e?.local != null) return localOrigin(rel, e.local, seen);
     if (e?.module != null) return exportOrigin(e.module, e.symbol!, seen);
     for (const star of m.starExports) {
       const found = exportOrigin(star, symbol, seen);
@@ -1089,6 +1099,12 @@ describe("podman launch gate: structure", () => {
       // through a barrel that re-exports an imported binding
       src("x/k.ts", `import { runner } from "./g"; export { runner };`),
       src("x/l.ts", `import * as ns from "./k"; ns.runner.exec(cmd());`),
+      // an exported alias of an imported owner
+      src(
+        "x/n.ts",
+        `import { runner } from "./g"; const renamed = runner; export { renamed };`,
+      ),
+      src("x/o.ts", `import * as ns from "./n"; ns.renamed.exec(cmd());`),
       // not a process: no count
       src("x/i.ts", `export function pure() { return 1; } pure();`),
     ]);
@@ -1100,6 +1116,7 @@ describe("podman launch gate: structure", () => {
       "x/h.ts": 1,
       "x/j.ts": 1,
       "x/l.ts": 1,
+      "x/o.ts": 1,
     });
   });
 
