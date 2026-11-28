@@ -282,4 +282,96 @@ describe("Jupyter hidden cell input", () => {
       screen.queryByRole("button", { name: "Show hidden cell input" }),
     ).toBeNull();
   });
+
+  describe("a collaborator's changes while this editor is behind", () => {
+    const cell = (input: string) =>
+      fromJS({
+        id: "cell-1",
+        cell_type: "markdown",
+        input,
+        metadata: {},
+      }) as Map<string, any>;
+    const options = fromJS({ markdown: {}, options: {} }) as Map<string, any>;
+    const setup = () => {
+      const actions: any = {
+        set_cell_input: jest.fn((_id, value) => value),
+      };
+      const view = (input: string) => (
+        <CellInput
+          cell={cell(input)}
+          cm_options={options}
+          id="cell-1"
+          index={0}
+          is_markdown_edit={true}
+          is_focused={true}
+          is_current={true}
+          font_size={14}
+          is_readonly={false}
+          input_is_readonly={false}
+          actions={actions}
+        />
+      );
+      const result = render(view("Notes: w1"));
+      // The rich text editor is behind (and shows text in its own form).
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: w1\n";
+      return { actions, view, ...result };
+    };
+
+    it("never writes what the editor shows when nobody typed here", () => {
+      const { actions, view, rerender } = setup();
+      for (const input of ["Notes: w1 w2", "Notes: w1 w2 w3", "Notes: w1 w3"]) {
+        rerender(view(input));
+      }
+      expect(actions.set_cell_input).not.toHaveBeenCalled();
+      expect(latestMarkdownInputProps.value).toBe("Notes: w1 w3");
+    });
+
+    it("still merges edits typed here with a collaborator's change", () => {
+      const { actions, view, rerender } = setup();
+      fireEvent.keyDown(screen.getByTestId("markdown-input"), { key: "x" });
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: w1 x";
+      rerender(view("Collab. Notes: w1"));
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      expect(actions.set_cell_input.mock.calls[0][1]).toBe(
+        "Collab. Notes: w1 x",
+      );
+    });
+
+    it("stops merging once the edits are saved", () => {
+      const { actions, view, rerender } = setup();
+      fireEvent.keyDown(screen.getByTestId("markdown-input"), { key: "x" });
+      latestMarkdownInputProps.onChange("Notes: w1 x");
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: w1 x\n";
+      rerender(view("Notes: w1 x y"));
+      rerender(view("Notes: w1 x y z"));
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      expect(latestMarkdownInputProps.value).toBe("Notes: w1 x y z");
+    });
+
+    it("merges a toolbar edit the editor reports before its debounced save", () => {
+      const { actions, view, rerender } = setup();
+      // e.g. bold from the toolbar: no input events, the editor marks itself
+      latestMarkdownInputProps.dirtyRef.current = true;
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: **w1**";
+      rerender(view("Collab. Notes: w1"));
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      expect(actions.set_cell_input.mock.calls[0][1]).toBe(
+        "Collab. Notes: **w1**",
+      );
+    });
+
+    it("stops merging once a merge of the edits is stored", () => {
+      const { actions, view, rerender } = setup();
+      fireEvent.keyDown(screen.getByTestId("markdown-input"), { key: "x" });
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: w1 x";
+      rerender(view("Collab. Notes: w1"));
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      // the editor is now behind / reformatted, and nobody types
+      latestMarkdownInputProps.getValueRef.current = () => "Notes: w1 x\n";
+      rerender(view("Collab. Notes: w1 x more"));
+      expect(actions.set_cell_input).toHaveBeenCalledTimes(1);
+      expect(latestMarkdownInputProps.value).toBe("Collab. Notes: w1 x more");
+    });
+  });
 });

@@ -14,6 +14,7 @@ import { HiddenXS } from "@cocalc/frontend/components/hidden-visible";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import MostlyStaticMarkdown from "@cocalc/frontend/editors/slate/mostly-static-markdown";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
+import { watchLocalEdits } from "./cell-input-local-edits";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { AITools } from "@cocalc/jupyter/types";
@@ -112,6 +113,21 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
     );
     const getValueRef = useRef<any>(null);
     const setValueRef = useRef<((value: string) => void) | null>(null);
+    // Whether a markdown cell's editor may hold edits made in this browser
+    // that are not yet saved (see cell-input-local-edits.ts): set by editing
+    // input in the cell and by the editor (dirtyRef), cleared when a save is
+    // stored.
+    const locallyEditedRef = useRef<boolean>(false);
+    const stopWatchingRef = useRef<(() => void) | null>(null);
+    const editAreaRef = useCallback((element: HTMLDivElement | null) => {
+      stopWatchingRef.current?.();
+      stopWatchingRef.current =
+        element == null
+          ? null
+          : watchLocalEdits(element, () => {
+              locallyEditedRef.current = true;
+            });
+    }, []);
 
     // Saving a cell's input updates the synced document and the store
     // synchronously, so a value that was stored is the new baseline at once
@@ -141,6 +157,9 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
         const saved = written ?? input;
         if (saved !== input) setLocalValue(saved);
         noteSaved(saved, written != null);
+        // Stored: the editor's edits are saved (whether typed or merged), so
+        // it has none unsaved until the next editing input.
+        if (written != null) locallyEditedRef.current = false;
         return saved;
       },
       [props.input_is_readonly, props.id, props.actions],
@@ -298,12 +317,32 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
       const next = typeof input === "string" ? input : "";
       setLocalValue(next);
       mergeHelperRef.current.reset(next);
+      locallyEditedRef.current = false;
     }, [props.id]);
+
+    // A markdown editor's change: an edit until it is stored.
+    const saveMarkdownEdit = useCallback(
+      (value: string) => {
+        locallyEditedRef.current = true;
+        return setCellInput(value);
+      },
+      [setCellInput],
+    );
 
     // Merge incoming remote changes with the live buffer to preserve unsaved edits.
     useEffect(() => {
       const input = props.cell.get("input");
       const remote = typeof input === "string" ? input : "";
+      if (
+        props.cell.get("cell_type") === "markdown" &&
+        !locallyEditedRef.current
+      ) {
+        // Nothing was edited here: show the remote value, and never write
+        // what this editor shows (it may be behind, or reformatted).
+        mergeHelperRef.current.reset(remote);
+        if (localValueRef.current !== remote) setLocalValue(remote);
+        return;
+      }
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => getValueRef.current?.() ?? localValueRef.current,
@@ -332,10 +371,13 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
           value={localValue}
           height="auto"
           unboundedAutoGrow
-          onChange={setCellInput}
+          onChange={saveMarkdownEdit}
           getValueRef={getValueRef}
+          // Set by the editor on any local content change (typing, toolbar
+          // formatting, uploads), before its debounced onChange.
+          dirtyRef={locallyEditedRef}
           onShiftEnter={(value) => {
-            setCellInput(value);
+            saveMarkdownEdit(value);
             frameActions.current?.set_md_cell_not_editing(props.id);
           }}
           saveDebounceMs={SAVE_DEBOUNCE_MS}
@@ -522,7 +564,10 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
             cocalc-test="cell-input"
           >
             {render_input_prompt(cell_type)}
-            <div style={{ flex: 1, minWidth: 0, maxWidth: "100%" }}>
+            <div
+              ref={editAreaRef}
+              style={{ flex: 1, minWidth: 0, maxWidth: "100%" }}
+            >
               {render_input_value(cell_type)}
             </div>
           </div>
