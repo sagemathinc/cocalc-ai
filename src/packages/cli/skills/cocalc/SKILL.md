@@ -181,6 +181,7 @@ still working:
 cocalc sensor watch exit -- <command>           # e.g. a script that waits for CI
 cocalc sensor watch file --path build.log --match 'BUILD DONE'
 cocalc sensor watch at --at <ISO time> --note "<what to check>"
+cocalc sensor watch inbox --external-agent <profile>   # an external member's inbox
 ```
 
 For watching over time (a script that runs on a schedule), propose a script

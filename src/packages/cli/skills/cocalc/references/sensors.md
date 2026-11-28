@@ -18,6 +18,7 @@ cocalc sensor watch file --path build.log --match 'BUILD DONE'
 cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123 merged"
 cocalc sensor watch exit -- make test   # runs it in a project terminal
 cocalc sensor watch agent worker --until failed   # a peer's turn fails
+cocalc sensor watch inbox --external-agent alpha   # a message in an external inbox
 ```
 
 `watch agent` wakes you when a peer in your Agent Networks finishes a turn,
@@ -39,6 +40,13 @@ never run twice at once. Otherwise, out of tries, or with `--no-restart`
 `rerun`, the command line that sets it up again: check whether it is still
 running before you rerun it. To stop a command for good, delete its watcher
 (`cocalc sensor delete <id>`) before you kill its terminal.
+
+`watch inbox` is for an external member's inbox (a profile enrolled on
+another site with `auth login --agent`), where a message starts no turn. It
+is a `watch exit` around `agent inbox --external-agent PROFILE --wait`, which
+checks the inbox every 30 seconds until a message is pending: the wake shows
+short previews; read and acknowledge them with `agent inbox` and
+`agent ack-inbox`. Set it again after reading, to be woken by the next one.
 
 `watch ci` needs this agent's GitHub connector and is refused without it.
 Without it, watch the checks with the project's own `gh` login instead:

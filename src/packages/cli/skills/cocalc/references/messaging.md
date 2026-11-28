@@ -30,6 +30,10 @@ cocalc agent status [reviewer]                 # what peers are doing, how their
   in your inbox. A wake or notification shows only a preview. Read the full
   text with `agent inbox --external-agent PROFILE` (`data` is a list of
   `{message_id, created_at, source, body, ...}`), then `agent ack-inbox ID`.
+  A message there doesn't start a turn: to be woken when one arrives, run
+  `sensor watch inbox --external-agent PROFILE` and end your turn (it checks
+  every 30 seconds, for up to `--hours`, default 24; the wake shows short
+  previews and acknowledges nothing).
   Acknowledging hides the message from `agent inbox`; it also returns the
   message, and `agent inbox --include-acknowledged` lists read ones again
   until they expire. Read and acknowledge in separate steps, so that a failed
