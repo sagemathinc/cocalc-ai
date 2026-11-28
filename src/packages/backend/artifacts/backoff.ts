@@ -30,12 +30,21 @@ export class ArtifactCatalogBackoffError extends Error {
   }
 }
 
+// Wrappers that may sit around an owner's error message: callHub's suffix,
+// at most one inter-bay service client prefix for a catalog writer method,
+// and stringified Error prefixes. Nothing else is stripped.
+const CALL_HUB_SUFFIX =
+  / - callHub: subject='[^']*', name='[^']*', code='[^']*'$/;
+const REMOTE_PREFIX =
+  /^calling remote function '(?:writerState|registerSource|ingest|sourcePage)': /;
+const ERROR_PREFIX = /^(?:Error: )+/;
+
 function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : `${error}`;
-  // Hub errors arrive annotated by callHub, and hub replies may stringify them.
-  return message
-    .replace(/ - callHub: subject='[^']*', name='[^']*', code='[^']*'$/, "")
-    .replace(/^(Error: )+/, "");
+  return (error instanceof Error ? error.message : `${error}`)
+    .replace(CALL_HUB_SUFFIX, "")
+    .replace(ERROR_PREFIX, "")
+    .replace(REMOTE_PREFIX, "")
+    .replace(ERROR_PREFIX, "");
 }
 
 /** Exact-match classification; any other error keeps the journal's retry. */
@@ -146,12 +155,13 @@ export class ArtifactCatalogBackoff {
 }
 
 /**
- * Wraps a catalog adapter's transport: capacity errors back off per project
+ * Wraps a catalog adapter's transport (read, send, registration and writer
+ * lookups): capacity errors back off per project
  * (or per source for oversized chats) up to an hour, and failures are logged
  * as compact, rate-limited lines instead of whole snapshots.
  */
 export function withArtifactCatalogBackoff<
-  T extends Pick<ServiceOptions, "read" | "send" | "register">,
+  T extends Pick<ServiceOptions, "read" | "send" | "register" | "writerState">,
 >(
   options: T,
   logger: { warn: (...args: any[]) => void },
@@ -170,6 +180,13 @@ export function withArtifactCatalogBackoff<
       backoff.check(snapshot);
       await options.send(snapshot);
       backoff.success(snapshot, "all");
+    },
+    // Lookups only wait: a found writer is not proof the project recovered.
+    writerState: async (
+      source: Parameters<ServiceOptions["writerState"]>[0],
+    ) => {
+      backoff.check(source);
+      return await options.writerState(source);
     },
     register: async (request: Parameters<ServiceOptions["register"]>[0]) => {
       backoff.check(request);

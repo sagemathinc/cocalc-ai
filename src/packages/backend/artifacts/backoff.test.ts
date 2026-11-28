@@ -45,6 +45,22 @@ describe("artifactCatalogLimitScope", () => {
     );
   });
 
+  test.each(project)("%s from a remote owner bay still matches", (message) => {
+    const remote = `calling remote function 'ingest': ${message}`;
+    expect(artifactCatalogLimitScope(Error(remote))).toBe("project");
+    expect(artifactCatalogLimitScope(annotate(remote))).toBe("project");
+    expect(
+      artifactCatalogLimitScope(
+        annotate(`calling remote function 'registerSource': Error: ${message}`),
+      ),
+    ).toBe("project");
+    expect(
+      artifactCatalogLimitScope(
+        Error(`calling remote function 'writerState': Error: ${message}`),
+      ),
+    ).toBe("project");
+  });
+
   test("an oversized chat backs off only its source", () => {
     const message = ARTIFACT_CATALOG_LIMIT_ERRORS.sourceReadLimit;
     expect(artifactCatalogLimitScope(Error(message))).toBe("source");
@@ -57,6 +73,14 @@ describe("artifactCatalogLimitScope", () => {
     "stale artifact catalog writer epoch",
     `prefix ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}`,
     `${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata} suffix`,
+    `remote: ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}`,
+    `calling remote function 'ingest' ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}`,
+    `calling remote function 'a b': ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}`,
+    `calling remote function 'listProject': ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}`,
+    `x calling remote function 'ingest': ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}`,
+    `calling remote function 'ingest': calling remote function 'ingest': ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}`,
+    `calling remote function 'ingest': ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}!`,
+    `calling remote function 'ingest': x ${ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata}`,
   ])("%s keeps the journal's normal retry", (message) => {
     expect(artifactCatalogLimitScope(Error(message))).toBeUndefined();
     expect(artifactCatalogLimitScope(annotate(message))).toBeUndefined();
@@ -160,6 +184,7 @@ describe("withArtifactCatalogBackoff", () => {
       read: jest.fn(async () => snapshot.items),
       send: jest.fn(async () => {}),
       register: jest.fn(async () => ({ epoch: "epoch" })),
+      writerState: jest.fn(async () => null),
     };
     const wrapped = withArtifactCatalogBackoff(
       inner,
@@ -191,13 +216,49 @@ describe("withArtifactCatalogBackoff", () => {
     ).rejects.toThrow(ArtifactCatalogBackoffError);
     expect(inner.read).not.toHaveBeenCalled();
     expect(inner.send).not.toHaveBeenCalled();
+    await expect(wrapped.writerState(other)).rejects.toThrow(
+      ArtifactCatalogBackoffError,
+    );
     expect(inner.register).not.toHaveBeenCalled();
+    expect(inner.writerState).not.toHaveBeenCalled();
     await expect(
       wrapped.read({ ...elsewhere, epoch: "e", generation: 1 }),
     ).resolves.toEqual(snapshot.items);
     now += MINUTE;
     await wrapped.send(snapshot);
     expect(inner.send).toHaveBeenCalledTimes(1);
+  });
+
+  test("an owner-unavailable lookup stops further lookups and registrations", async () => {
+    const { inner, wrapped } = setup();
+    const registration = { ...source, registration_id: "r" };
+    wrapped.onError(
+      registration,
+      annotate(ARTIFACT_CATALOG_LIMIT_ERRORS.projectOwnerUnavailable),
+    );
+    await expect(wrapped.writerState(other)).rejects.toThrow(
+      ArtifactCatalogBackoffError,
+    );
+    await expect(
+      wrapped.register({
+        ...other,
+        registration_id: "r2",
+        expected_epoch: null,
+      }),
+    ).rejects.toThrow(ArtifactCatalogBackoffError);
+    expect(inner.writerState).not.toHaveBeenCalled();
+    expect(inner.register).not.toHaveBeenCalled();
+    // A successful lookup after the delay does not clear the project wait.
+    now += MINUTE;
+    await expect(wrapped.writerState(other)).resolves.toBeNull();
+    wrapped.onError(
+      registration,
+      annotate(ARTIFACT_CATALOG_LIMIT_ERRORS.projectOwnerUnavailable),
+    );
+    now += MINUTE;
+    await expect(wrapped.writerState(other)).rejects.toThrow(
+      ArtifactCatalogBackoffError,
+    );
   });
 
   test("other errors keep the existing retry path", async () => {
