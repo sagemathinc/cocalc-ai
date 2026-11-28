@@ -460,13 +460,17 @@ describe("local HTML and PDF delivery", () => {
       }),
     });
   });
-  it("reports decoding failures instead of printing without the image", async () => {
+  it("prints an image that can't be decoded as a visible placeholder", async () => {
+    // A real element, so the placeholder can replace it in the document.
+    document.body.innerHTML = '<p><img src="/blobs/paste-1.png?uuid=x"></p>';
+    const [image] = Array.from(document.images);
+    (image as any).decode = () => Promise.reject(Error("bad image"));
     const popup: any = {
       document: {
         open: jest.fn(),
         write: jest.fn(),
         close: jest.fn(),
-        images: [{ decode: () => Promise.reject(Error("bad image")) }],
+        images: [image],
       },
       close: jest.fn(),
       print: jest.fn(),
@@ -478,13 +482,12 @@ describe("local HTML and PDF delivery", () => {
     });
     await target.nbconvertToHtml("cocalc-pdf");
     await popup.onload();
-    expect(popup.print).not.toHaveBeenCalled();
-    expect(popup.close).toHaveBeenCalledTimes(1);
+    expect(popup.print).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain(
+      "[image could not be loaded: paste-1.png]",
+    );
     expect(target.setState).toHaveBeenLastCalledWith({
-      nbconvert: expect.objectContaining({
-        error: "Error: bad image",
-        state: "done",
-      }),
+      nbconvert: expect.objectContaining({ error: "", state: "done" }),
     });
   });
 });
