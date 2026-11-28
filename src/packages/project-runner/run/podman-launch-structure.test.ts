@@ -139,7 +139,7 @@ const HELPER_CALLS: Record<string, number> = {
   "backend/computers/connector-main.ts": 3,
   "backend/computers/connector.ts": 4,
   "backend/conat/persist-maintenance/inspect.ts": 2,
-  "backend/conat/persist-verified-eviction.ts": 4,
+  "backend/conat/persist-verified-eviction.ts": 7,
   "backend/execute-code.ts": 9,
   "backend/frontend-build-fingerprint.ts": 4,
   "backend/podman/conmon.ts": 2,
@@ -154,15 +154,16 @@ const HELPER_CALLS: Record<string, number> = {
   "backend/sandbox/ouch.ts": 1,
   "backend/sandbox/ripgrep.ts": 1,
   "backend/sandbox/rustic.ts": 19,
+  "lite/acp-worker.ts": 2,
   "lite/http.ts": 4,
-  "lite/hub/acp/index.ts": 1,
+  "lite/hub/acp/index.ts": 45,
   "lite/hub/acp/local-harness.ts": 4,
   "lite/hub/acp/worker-manager.ts": 1,
   "lite/hub/api.ts": 3,
   "lite/main.ts": 3,
   "lite/playwright/jupyter/global-setup.ts": 5,
   "lite/static-apps.ts": 2,
-  "project-host/acp-worker.ts": 3,
+  "project-host/acp-worker.ts": 4,
   "project-host/acp/claude-project-tool-bridge.ts": 1,
   "project-host/acp/claude-subscription-controller.ts": 8,
   "project-host/acp/claude-subscription-login.ts": 1,
@@ -170,13 +171,15 @@ const HELPER_CALLS: Record<string, number> = {
   "project-host/acp/harness-reaper.ts": 3,
   "project-host/acp/qualified-harness-entry.ts": 1,
   "project-host/app-supervisor.ts": 2,
+  "project-host/conat-persist-daemon.ts": 2,
+  "project-host/conat-persist.ts": 1,
   "project-host/exam/controller.ts": 2,
   "project-host/file-server.ts": 19,
   "project-host/host-agent.ts": 3,
   "project-host/hub/acp/worker-manager.ts": 7,
   "project-host/hub/projects.ts": 2,
   "project-host/legacy-migration/project-archive.ts": 13,
-  "project-host/main.ts": 27,
+  "project-host/main.ts": 28,
   "project-host/managed-component-rollout.ts": 2,
   "project-host/master.ts": 12,
   "project-host/onprem-tunnel.ts": 9,
@@ -615,6 +618,8 @@ interface ModuleFacts {
   // exported symbol -> a local name, or a re-export of another module's symbol
   exports: Map<string, { local?: string; module?: string; symbol?: string }>;
   starExports: string[];
+  // const go = low: a local name that is another local or imported name
+  aliases: Map<string, string>;
 }
 
 /** A module specifier as a scanned file (relative or @cocalc/<pkg>/...). */
@@ -677,6 +682,7 @@ function moduleFacts(
     imports: new Map(),
     exports: new Map(),
     starExports: [],
+    aliases: new Map(),
   };
   const addFunction = (name: string, node: ts.Node) =>
     facts.functions.set(name, [...(facts.functions.get(name) ?? []), node]);
@@ -706,6 +712,13 @@ function moduleFacts(
       isFunctionLike(node.initializer)
     ) {
       addFunction(node.name.text, node);
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer != null &&
+      ts.isIdentifier(node.initializer)
+    ) {
+      facts.aliases.set(node.name.text, node.initializer.text);
     } else if (
       (ts.isMethodDeclaration(node) ||
         (ts.isPropertyAssignment(node) && isFunctionLike(node.initializer))) &&
@@ -814,6 +827,9 @@ export function processHelperCalls(
     if (m == null) return undefined;
     const e = m.exports.get(symbol);
     if (e?.local != null) {
+      const aliased = m.aliases.get(e.local);
+      if (aliased != null && aliased !== e.local)
+        return exportOrigin(rel, aliased, seen) ?? { rel, local: e.local };
       const imp = m.imports.get(e.local);
       if (imp != null && imp.symbol !== "*")
         return exportOrigin(imp.module, imp.symbol, seen);
@@ -880,6 +896,11 @@ export function processHelperCalls(
     seen = new Set<string>(),
   ): boolean => {
     if (capable.has(`${m.rel}#${name}`)) return true;
+    const alias = m.aliases.get(name);
+    if (alias != null && !seen.has(`${m.rel}#alias:${name}`)) {
+      seen.add(`${m.rel}#alias:${name}`);
+      if (localCapable(m, alias, seen)) return true;
+    }
     const imp = m.imports.get(name);
     if (imp != null && imp.symbol !== "*")
       return exportCapable(imp.module, imp.symbol, seen);
@@ -1033,6 +1054,11 @@ describe("podman launch gate: structure", () => {
         "x/c.ts",
         `import { high } from "./b"; high(getCommand(), buildArgs());`,
       ),
+      // a local alias of an imported helper
+      src(
+        "x/m.ts",
+        `import { low } from "./a"; const go = low; go(getCommand(), buildArgs());`,
+      ),
       // a default export, and an export after the declaration, re-exported
       src(
         "x/d.ts",
@@ -1069,6 +1095,7 @@ describe("podman launch gate: structure", () => {
     expect(counts).toEqual({
       "x/b.ts": 1,
       "x/c.ts": 1,
+      "x/m.ts": 1,
       "x/f.ts": 4,
       "x/h.ts": 1,
       "x/j.ts": 1,
