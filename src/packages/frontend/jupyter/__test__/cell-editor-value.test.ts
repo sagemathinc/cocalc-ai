@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { showValueInEditor } from "../cell-editor-value";
+import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
+import { showRemoteValue, showValueInEditor } from "../cell-editor-value";
 
 // An editor whose change event saves synchronously, as the debounced save
 // does once its maximum wait has passed (a throttled background tab).
@@ -51,5 +52,36 @@ describe("showing a value in a code cell's editor", () => {
     showValueInEditor({ editor, lastRemote, shown: "same" });
     expect(set).not.toHaveBeenCalled();
     expect(saves).toEqual([]);
+  });
+
+  it("keeps the baseline a merge's own save moved on to", () => {
+    // The cell's stored input, which a save updates by a three-way merge.
+    let stored = "a\n";
+    let text = stored;
+    const lastRemote = { current: stored as string | null };
+    const editor = {
+      getValue: () => text,
+      setValueNoJump: (value: string) => {
+        text = value;
+        if (text !== lastRemote.current) {
+          stored = mergeText({
+            base: lastRemote.current!,
+            local: text,
+            remote: stored,
+          });
+          lastRemote.current = text;
+        }
+      },
+    };
+    text = "a\nmine"; // typed, not saved yet
+    stored = "a b\n"; // a collaborator's change arrives
+    expect(showRemoteValue({ editor, lastRemote, value: stored })).toEqual({
+      merged: "a b\nmine",
+    });
+    expect(stored).toBe("a b\nmine"); // saved right away
+    stored = "a b\nmine more"; // the collaborator types on
+    showRemoteValue({ editor, lastRemote, value: stored });
+    expect(text).toBe("a b\nmine more");
+    expect(stored).toBe("a b\nmine more");
   });
 });

@@ -32,8 +32,7 @@ import { Complete, Actions as CompleteActions } from "./complete";
 import { Cursors } from "./cursors";
 import { Position } from "./insert-cell/types";
 import { is_whitespace } from "@cocalc/util/misc";
-import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
-import { showValueInEditor } from "./cell-editor-value";
+import { showRemoteValue, showValueInEditor } from "./cell-editor-value";
 
 // Debugging aid (see SimpleInputMerge): set
 // globalThis.__simpleInputMergeDebug to a function to receive decisions.
@@ -274,29 +273,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     if (cm.current != null) {
       const local = cm.current.getValue();
       const base = cm_last_remote.current;
-      if (local !== value && base != null && local !== base) {
-        // The editor has edits not saved yet (the save is debounced): merge
-        // the new value into them rather than replacing them, which would
-        // lose what was just typed. They are saved from the new value.
-        if (value !== base) {
-          const merged = mergeText({ base, local, remote: value });
-          debug("cell:value-merge", { id, base, local, remote: value, merged });
-          // Unsaved local edits stay edits of the new value.
-          showValueInEditor({
-            editor: cm.current,
-            lastRemote: cm_last_remote,
-            shown: merged,
-            baseline: value,
-          });
-        }
-        cm_last_remote.current = value;
-      } else if (local !== value) {
+      const shown = showRemoteValue({
+        editor: cm.current,
+        lastRemote: cm_last_remote,
+        value,
+      });
+      if (shown != null && shown !== "set") {
+        debug("cell:value-merge", { id, base, local, remote: value, ...shown });
+      } else if (shown === "set") {
         debug("cell:value-set", { id, base, local, value });
-        showValueInEditor({
-          editor: cm.current,
-          lastRemote: cm_last_remote,
-          shown: value,
-        });
         cm.current.clearHistory();
         if (key.current != null) {
           const cached = cache.get(key.current);

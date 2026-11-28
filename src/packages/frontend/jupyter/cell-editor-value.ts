@@ -16,6 +16,8 @@ otherwise that save writes the new value as an edit of an old baseline, and
 the merge with the current input repeats everything since (duplicated text).
 */
 
+import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
+
 interface Editor {
   getValue(): string;
   setValueNoJump(value: string): void;
@@ -36,4 +38,31 @@ export function showValueInEditor({
 }): void {
   lastRemote.current = baseline;
   if (editor.getValue() !== shown) editor.setValueNoJump(shown);
+}
+
+// Shows a new value of the cell's input. Edits not saved yet (the save is
+// debounced) are merged into it rather than replaced, which would lose what
+// was just typed; they stay edits of the new value. Returns what it did.
+export function showRemoteValue({
+  editor,
+  lastRemote,
+  value,
+}: {
+  editor: Editor;
+  lastRemote: { current: string | null };
+  value: string;
+}): { merged: string } | "set" | undefined {
+  const local = editor.getValue();
+  const base = lastRemote.current;
+  if (local === value) return;
+  if (base != null && local !== base) {
+    if (value === base) return;
+    const merged = mergeText({ base, local, remote: value });
+    // Showing it may save it right away, which moves the baseline on to what
+    // was saved: so nothing may set the baseline after this.
+    showValueInEditor({ editor, lastRemote, shown: merged, baseline: value });
+    return { merged };
+  }
+  showValueInEditor({ editor, lastRemote, shown: value });
+  return "set";
 }
