@@ -311,7 +311,7 @@ function optionsOnly(
 
 // Sharing the host's or another container's pid namespace (or a pod's) would
 // put a container's processes where the self-check expects only Podman's own.
-const PID_SHARING = /^--(pid|pod|pidns)(=|$)/;
+const PID_SHARING = /^--(pid|pidns|pod|pod-id-file)(=|$)/;
 
 // podman exec's options: those taking a value, and the boolean ones allowed.
 // Anything else (--latest, --privileged, an unknown option) has no target
@@ -372,8 +372,9 @@ export function podmanExecTarget(args: readonly string[]): string | undefined {
   return undefined;
 }
 
+// every --userns* option (build's --userns-uid-map and friends included)
 const USERNS_FLAG =
-  /^(--userns|--uidmap|--gidmap|--user|-u|--subuidname|--subgidname)(=|$)/;
+  /^(--userns[a-z-]*|--uidmap|--gidmap|--user|-u|--subuidname|--subgidname)(=|$)/;
 
 // boolean short options podman run/create/exec accept in a cluster
 const SHORT_BOOLEAN = "ditP";
@@ -521,4 +522,7 @@ export const PODMAN_ENV_OVERRIDES_REFUSED = [
   "HOME",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
+  // a remote podman service instead of the local one
+  "CONTAINER_HOST",
+  "CONTAINER_CONNECTION",
 ];

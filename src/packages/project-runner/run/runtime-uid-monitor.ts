@@ -69,6 +69,27 @@ export function pastaBinaries(
 
 let lastViolations = 0;
 
+/**
+ * A scan in which every process could be judged, if one comes within a few
+ * tries. The daemon starts short-lived processes all the time (its own podman
+ * and helper calls); one that exits between the listing and its first read
+ * can't be judged and is unknown. Each try is a complete, independent scan:
+ * the first with violations is reported at once, else the first with nothing
+ * unknown, else the last.
+ */
+export async function completeScan(
+  scan: () => Promise<RuntimeUidCheck>,
+  { tries = 3, pauseMs = 1000 }: { tries?: number; pauseMs?: number } = {},
+): Promise<RuntimeUidCheck> {
+  let check = await scan();
+  for (let i = 1; i < tries; i++) {
+    if ((check.violations ?? 0) > 0 || check.unknown === 0) return check;
+    await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    check = await scan();
+  }
+  return check;
+}
+
 /** Read the host's processes and judge them; never throws. */
 export async function runRuntimeUidCheck(): Promise<
   RuntimeUidCheck | undefined
@@ -80,10 +101,12 @@ export async function runRuntimeUidCheck(): Promise<
       pastaBinaries: pastaBinaries(),
       podmanUserNs: await podmanUserNamespace(),
     });
-    const table = await readProcessTable({
-      wantNs: (ruid) => ruid === ctx.runtimeUid,
-    });
-    const check = judgeProcesses(table, ctx);
+    const check = await completeScan(async () =>
+      judgeProcesses(
+        await readProcessTable({ wantNs: (ruid) => ruid === ctx.runtimeUid }),
+        ctx,
+      ),
+    );
     noteRuntimeUidCheck(check);
     const violations = check.violations ?? 0;
     if (violations > 0 && violations !== lastViolations) {

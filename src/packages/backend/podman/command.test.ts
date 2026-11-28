@@ -206,6 +206,8 @@ describe("launchers and environment", () => {
       "HOME",
       "XDG_CONFIG_HOME",
       "XDG_DATA_HOME",
+      "CONTAINER_HOST",
+      "CONTAINER_CONNECTION",
     ])
       expect(() =>
         execFilePodman(["ps"], { env: { [key]: "/elsewhere" } }, () => {}),

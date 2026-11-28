@@ -44,7 +44,7 @@ How a process is judged (real uid only, never names, argv or environment):
   readable: an identity uid_map (the initial user namespace) and a single
   NSpid entry (the host's pid namespace) count as the host services,
   reported as "partial"; anything else is unknown. This is a stated revision
-  of the invariant (approved Nov 2026): project code never runs in the
+  of the invariant, and a documented weakness: project code never runs in the
   initial user namespace (containers always get their own, and separate
   projects don't run as the runtime uid), and a non-root process there can't
   make a mount namespace of its own, so the unread mount link hides nothing

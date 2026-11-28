@@ -272,13 +272,42 @@ describe("checkPodmanLaunch: allow-lists and placement (podman 5.8.6)", () => {
     for (const extra of [
       ["--pid=host"],
       ["--pid", "host"],
+      ["--pidns=host"],
       ["--pod=x"],
       ["--pod", "x"],
-    ])
+      ["--pod-id-file=/f"],
+      ["--pod-id-file", "/f"],
+    ]) {
+      // before or after the policy's flags
       refused(["run", ...KEEP_ID, ...extra, "img"], p);
+      refused(["run", "--rm", ...extra, ...KEEP_ID, "img"], p);
+    }
     // --pids-limit is not --pid
     expect(() =>
       checkPodmanLaunch(["run", ...KEEP_ID, "--pids-limit=10", "img"], p),
     ).not.toThrow();
+  });
+});
+
+describe("checkPodmanLaunch: every --userns* option is a user namespace flag", () => {
+  it("refuses build's --userns-uid-map and friends that the policy didn't give", () => {
+    const b = mintPodmanLaunchPolicy({
+      kind: "rootfs-build",
+      verb: "build",
+      usernsArgs: [],
+    });
+    for (const flag of [
+      "--userns-uid-map=0:1:1",
+      "--userns-gid-map=0:1:1",
+      "--userns-uid-map-user=u",
+      "--userns-gid-map-group=g",
+    ]) {
+      expect(() => checkPodmanLaunch(["build", flag, "."], b)).toThrow(
+        PodmanLaunchRefused,
+      );
+      expect(() =>
+        checkPodmanLaunch(["build", flag.split("=")[0], "x", "."], b),
+      ).toThrow(PodmanLaunchRefused);
+    }
   });
 });

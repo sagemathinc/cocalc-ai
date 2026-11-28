@@ -1,4 +1,5 @@
 import {
+  completeScan,
   isSideContainerName,
   serialRunner,
   pastaBinaries,
@@ -92,5 +93,45 @@ describe("serialRunner (the monitor's scans)", () => {
     });
     await Promise.all([run(), run()]);
     expect(results).toEqual([0, 1]);
+  });
+});
+
+describe("completeScan", () => {
+  const scanOf = (
+    results: { violations: number | null; unknown: number }[],
+  ) => {
+    let i = 0;
+    return jest.fn(async () => ({
+      invariant: "x",
+      partial: 0,
+      old_mode_containers: 0,
+      checked_at: `t${i}`,
+      ...results[Math.min(i++, results.length - 1)],
+    }));
+  };
+  it("rescans while processes vanished mid-scan, up to a limit", async () => {
+    const scan = scanOf([
+      { violations: 0, unknown: 2 },
+      { violations: 0, unknown: 0 },
+    ]);
+    expect(await completeScan(scan, { pauseMs: 0 })).toMatchObject({
+      unknown: 0,
+    });
+    expect(scan).toHaveBeenCalledTimes(2);
+    const stuck = scanOf([{ violations: 0, unknown: 1 }]);
+    expect(await completeScan(stuck, { pauseMs: 0 })).toMatchObject({
+      unknown: 1,
+    });
+    expect(stuck).toHaveBeenCalledTimes(3);
+  });
+  it("reports violations at once, never retrying them away", async () => {
+    const scan = scanOf([
+      { violations: 1, unknown: 1 },
+      { violations: 0, unknown: 0 },
+    ]);
+    expect(await completeScan(scan, { pauseMs: 0 })).toMatchObject({
+      violations: 1,
+    });
+    expect(scan).toHaveBeenCalledTimes(1);
   });
 });
