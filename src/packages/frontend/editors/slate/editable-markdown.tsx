@@ -2833,6 +2833,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       applyExternalValue();
     }
     noteExternalTree(pendingOperations);
+    if (directReplacementValue != null) {
+      // A direct replacement is given to onChange (and becomes the editor's
+      // children on the next render), not applied to editor.children now.
+      externalChildrenRef.current = directReplacementValue;
+    }
     clearSyncCausedUpdateAfterFlush();
     if (
       shouldPublishReadOnlyExternalSlateValue({
@@ -3036,7 +3041,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       editor._hasUnsavedChanges = {};
     }
 
-    if (!editor.syncCausedUpdate) {
+    if (!syncCausedUpdate) {
       lastLocalEditAtRef.current = Date.now();
     }
 
@@ -3044,7 +3049,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     setChange(change + 1);
     onSlateChange?.([...editor.children], {
       onlySelectionOps,
-      syncCausedUpdate: !!editor.syncCausedUpdate,
+      syncCausedUpdate,
     });
 
     if (
