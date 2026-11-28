@@ -9,7 +9,9 @@
 // deleting them: e.g. a merge of concurrent edits that leaves text after a
 // row's last pipe silently loses that text on the next rich-text save.
 // Instead the excess cells are kept as part of the row's last cell, which
-// is then written back as "| a | b \| extra |".
+// is then written back as "| a | b \| extra |".  Every parser from
+// createMarkdownParser uses this, so rendered markdown shows that text too
+// (where GitHub hides it): a deliberate difference from GFM.
 
 import type MarkdownIt from "markdown-it";
 

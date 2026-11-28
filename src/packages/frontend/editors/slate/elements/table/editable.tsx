@@ -10,10 +10,12 @@ import { padLeft, padRight, padCenter } from "../../util";
 import { serialize } from "../../slate-to-markdown";
 import getStyles from "./style";
 
-// A pipe in a cell's content would end the cell (even inside code), so it is
-// written as "\|", which the table parser turns back into "|".
+// A pipe in a cell's content would end the cell (even inside code). Splitting
+// a row into cells turns "\\|" into "|" by dropping the character before the
+// pipe, whatever it is, so every pipe gets one more backslash: a backslash
+// already in front of it is part of the cell's own markdown.
 function escapeCellPipes(markdown: string): string {
-  return markdown.replace(/\\?\|/g, (pipe) => (pipe === "|" ? "\\|" : pipe));
+  return markdown.replace(/\|/g, "\\|");
 }
 
 function fromSlate({ node, children, info, childInfo }) {
