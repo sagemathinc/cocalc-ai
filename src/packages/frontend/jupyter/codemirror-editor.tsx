@@ -33,6 +33,7 @@ import { Cursors } from "./cursors";
 import { Position } from "./insert-cell/types";
 import { is_whitespace } from "@cocalc/util/misc";
 import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
+import { showValueInEditor } from "./cell-editor-value";
 
 // Debugging aid (see SimpleInputMerge): set
 // globalThis.__simpleInputMergeDebug to a function to receive decisions.
@@ -280,14 +281,23 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         if (value !== base) {
           const merged = mergeText({ base, local, remote: value });
           debug("cell:value-merge", { id, base, local, remote: value, merged });
-          if (merged !== local) cm.current.setValueNoJump(merged);
+          // Unsaved local edits stay edits of the new value.
+          showValueInEditor({
+            editor: cm.current,
+            lastRemote: cm_last_remote,
+            shown: merged,
+            baseline: value,
+          });
         }
         cm_last_remote.current = value;
       } else if (local !== value) {
         debug("cell:value-set", { id, base, local, value });
-        cm.current.setValueNoJump(value);
+        showValueInEditor({
+          editor: cm.current,
+          lastRemote: cm_last_remote,
+          shown: value,
+        });
         cm.current.clearHistory();
-        cm_last_remote.current = value;
         if (key.current != null) {
           const cached = cache.get(key.current);
           if (cached != null) {
@@ -546,7 +556,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         // the cell takes it as the baseline at once, so if the editor still
         // showed the old text when the next change arrives, that change
         // would be merged as if the user had deleted the collaborator's.
-        cm.current.setValueNoJump(saved);
+        showValueInEditor({
+          editor: cm.current,
+          lastRemote: cm_last_remote,
+          shown: saved,
+        });
       }
       debug("cell:save", { id, base, value, written });
       cm_last_remote.current = saved;
@@ -784,8 +798,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       setValueRef.current = boundSetValue.current = (value: string) => {
         if (cm.current == null) return;
         debug("cell:set-now", { id, local: cm.current.getValue(), value });
-        if (cm.current.getValue() !== value) cm.current.setValueNoJump(value);
-        cm_last_remote.current = value;
+        showValueInEditor({
+          editor: cm.current,
+          lastRemote: cm_last_remote,
+          shown: value,
+        });
       };
     }
 
