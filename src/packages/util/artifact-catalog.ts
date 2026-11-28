@@ -44,6 +44,18 @@ export const ARTIFACT_CATALOG_MAX_PROJECT_BYTES = 16 * 1024 * 1024;
 // Counts rows touched by metadata-changing snapshots in a fixed one-hour window.
 export const ARTIFACT_CATALOG_MAX_PROJECT_WORK_PER_HOUR = 100_000;
 
+/**
+ * Exact messages of the capacity errors writers back off on. They cross the
+ * hub RPC as message text, so throwers and the classifier share these values.
+ */
+export const ARTIFACT_CATALOG_LIMIT_ERRORS = {
+  projectMetadata: "artifact catalog project metadata limit exceeded",
+  projectMutationBudget: "artifact catalog project mutation budget exceeded",
+  projectSources: "artifact catalog project source limit exceeded",
+  projectOwnerUnavailable: "artifact catalog project owner unavailable",
+  sourceReadLimit: "artifact source exceeds catalog read limit",
+} as const;
+
 export function artifactCatalogKey(
   source: ArtifactCatalogSource,
   item: Pick<ArtifactCatalogItem, "thread_id" | "artifact_id">,

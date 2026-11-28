@@ -4,6 +4,7 @@
  */
 import { chmodSync, mkdirSync } from "node:fs";
 import { join, posix } from "node:path";
+import { withArtifactCatalogBackoff } from "@cocalc/backend/artifacts/backoff";
 import { ArtifactCatalogService } from "@cocalc/backend/artifacts/service";
 import {
   journalArtifactFilesystem,
@@ -48,40 +49,43 @@ export function createLiteArtifactCatalog({
   let discoverFiles = false;
   let service: ArtifactCatalogService;
   try {
-    service = new ArtifactCatalogService({
-      filename: join(directory, "journal.sqlite"),
-      writerState: (source) => catalog.writerState(source),
-      register: (request) => catalog.registerSource(request),
-      send: async (snapshot) => {
-        await catalog.applySnapshot(snapshot);
-      },
-      read: async (source) =>
-        extractArtifactCatalog(
-          await readArtifactSource(reader, source.chat_path),
-        ),
-      discover: async () => {
-        // Alternate known sources (including deleted chats and files outside
-        // cwd touched through the service) with incremental historical backfill.
-        discoverFiles = !discoverFiles;
-        if (discoverFiles) {
-          const paths = await discovery.page();
-          return Promise.all(
-            paths.map(async (filename) => ({
-              project_id,
-              chat_path: posix.resolve(
-                home,
-                await reader.canonicalSyncIdentityPath(filename),
-              ),
-            })),
-          );
-        }
-        const sources = service.journal.sources(project_id, after, 100);
-        after = sources.length === 100 ? sources[99].chat_path : "";
-        return sources;
-      },
-      onError: (source, error) =>
-        logger.warn("catalog indexing deferred", { source, error: `${error}` }),
-    });
+    service = new ArtifactCatalogService(
+      withArtifactCatalogBackoff(
+        {
+          filename: join(directory, "journal.sqlite"),
+          writerState: (source) => catalog.writerState(source),
+          register: (request) => catalog.registerSource(request),
+          send: async (snapshot) => {
+            await catalog.applySnapshot(snapshot);
+          },
+          read: async (source) =>
+            extractArtifactCatalog(
+              await readArtifactSource(reader, source.chat_path),
+            ),
+          discover: async () => {
+            // Alternate known sources (including deleted chats and files outside
+            // cwd touched through the service) with incremental historical backfill.
+            discoverFiles = !discoverFiles;
+            if (discoverFiles) {
+              const paths = await discovery.page();
+              return Promise.all(
+                paths.map(async (filename) => ({
+                  project_id,
+                  chat_path: posix.resolve(
+                    home,
+                    await reader.canonicalSyncIdentityPath(filename),
+                  ),
+                })),
+              );
+            }
+            const sources = service.journal.sources(project_id, after, 100);
+            after = sources.length === 100 ? sources[99].chat_path : "";
+            return sources;
+          },
+        },
+        logger,
+      ),
+    );
   } catch (err) {
     reader.close();
     catalog.close();

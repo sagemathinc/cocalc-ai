@@ -27,7 +27,10 @@ import {
   readProjectArtifactCatalog,
   readArtifactCatalogEntry,
 } from "@cocalc/database/postgres/artifact-catalog";
-import { validateArtifactCatalogSnapshot } from "@cocalc/util/artifact-catalog";
+import {
+  ARTIFACT_CATALOG_LIMIT_ERRORS,
+  validateArtifactCatalogSnapshot,
+} from "@cocalc/util/artifact-catalog";
 import { assertActor } from "@cocalc/server/agents/access";
 import {
   ARTIFACT_CATALOG_NOT_PERMITTED,
@@ -75,7 +78,8 @@ async function route<T>(
 ): Promise<T> {
   const request = source(opts);
   const owner = await resolveProjectBay(request.project_id);
-  if (!owner) throw Error("artifact catalog project owner unavailable");
+  if (!owner)
+    throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.projectOwnerUnavailable);
   return invoke(
     owner.bay_id === getConfiguredBayId()
       ? catalogOwnerControl
@@ -110,7 +114,8 @@ async function readRoute<T>(
   requireUuid(opts.account_id, "account_id");
   requireUuid(opts.project_id, "project_id");
   const owner = await resolveProjectBay(opts.project_id);
-  if (!owner) throw Error("artifact catalog project owner unavailable");
+  if (!owner)
+    throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.projectOwnerUnavailable);
   const api =
     owner.bay_id === getConfiguredBayId()
       ? catalogOwnerControl

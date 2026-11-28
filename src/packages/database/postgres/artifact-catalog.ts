@@ -7,6 +7,7 @@ import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import type { CatalogEntry } from "@cocalc/conat/hub/api/artifact-catalog";
 import {
+  ARTIFACT_CATALOG_LIMIT_ERRORS,
   ARTIFACT_CATALOG_MAX_PROJECT_BYTES,
   ARTIFACT_CATALOG_MAX_PROJECT_ITEMS,
   ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES,
@@ -410,7 +411,7 @@ async function chargeProjectWork(
     [project_id, units],
   );
   if (Number(rows[0].work_units) > ARTIFACT_CATALOG_MAX_PROJECT_WORK_PER_HOUR)
-    throw Error("artifact catalog project mutation budget exceeded");
+    throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.projectMutationBudget);
 }
 
 async function assertProjectCatalogSize(db: PoolClient, project_id: string) {
@@ -423,7 +424,7 @@ async function assertProjectCatalogSize(db: PoolClient, project_id: string) {
     Number(rows[0].items) > ARTIFACT_CATALOG_MAX_PROJECT_ITEMS ||
     Number(rows[0].bytes) > ARTIFACT_CATALOG_MAX_PROJECT_BYTES
   )
-    throw Error("artifact catalog project metadata limit exceeded");
+    throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata);
 }
 
 export async function artifactCatalogSourcePage(
@@ -551,7 +552,7 @@ export async function registerArtifactCatalogSource(
         Number(rows[0].bytes) + Buffer.byteLength(source.chat_path) >
           ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES
       )
-        throw Error("artifact catalog project source limit exceeded");
+        throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.projectSources);
     }
     await chargeProjectWork(db, source.project_id, 1);
     const epoch = randomUUID();

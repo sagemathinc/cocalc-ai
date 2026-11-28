@@ -20,6 +20,7 @@ import type {
   CatalogWriterState,
 } from "@cocalc/conat/hub/api/artifact-catalog";
 import {
+  ARTIFACT_CATALOG_LIMIT_ERRORS,
   ARTIFACT_CATALOG_MAX_PROJECT_BYTES,
   ARTIFACT_CATALOG_MAX_PROJECT_ITEMS,
   ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES,
@@ -182,7 +183,7 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
         ? Number(current.work_units) + units
         : units;
     if (used > ARTIFACT_CATALOG_MAX_PROJECT_WORK_PER_HOUR)
-      throw Error("artifact catalog project mutation budget exceeded");
+      throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.projectMutationBudget);
     this.db
       .prepare(
         `INSERT INTO lite_artifact_budget(singleton,window_start,work_units) VALUES(1,?,?)
@@ -207,7 +208,7 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
       Number(row?.items) > ARTIFACT_CATALOG_MAX_PROJECT_ITEMS ||
       Number(row?.bytes) > ARTIFACT_CATALOG_MAX_PROJECT_BYTES
     )
-      throw Error("artifact catalog project metadata limit exceeded");
+      throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.projectMetadata);
   }
 
   async writerState(
@@ -250,7 +251,7 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
           Number(row?.bytes) + Buffer.byteLength(request.chat_path) >
             ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES
         )
-          throw Error("artifact catalog project source limit exceeded");
+          throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.projectSources);
       }
       this.chargeProjectWork(1);
       const epoch = randomUUID();

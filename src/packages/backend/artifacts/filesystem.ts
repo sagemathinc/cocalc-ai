@@ -4,6 +4,7 @@
  */
 import { posix } from "node:path";
 import type { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import { ARTIFACT_CATALOG_LIMIT_ERRORS } from "@cocalc/util/artifact-catalog";
 import type { ArtifactCatalogJournal } from "./journal";
 
 /** Install once on a service-owned sandbox, never on project-controlled code. */
@@ -99,7 +100,7 @@ export async function readArtifactSource(
     for await (const chunk of stream) {
       bytes += chunk.length;
       if (bytes > maxBytes)
-        throw Error("artifact source exceeds catalog read limit");
+        throw Error(ARTIFACT_CATALOG_LIMIT_ERRORS.sourceReadLimit);
       chunks.push(Buffer.from(chunk));
     }
   } finally {
