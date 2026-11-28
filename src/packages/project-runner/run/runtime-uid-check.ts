@@ -119,6 +119,10 @@ export interface RuntimeUidCheck {
   old_mode_containers: number;
   checked_at: string;
   detail?: ViolationDetail[];
+  // complete scans this check took (processes vanishing mid-scan make the
+  // monitor scan again), and the earlier scans' unknown counts
+  scans?: number;
+  unknown_before?: number[];
 }
 
 const MAX_DETAIL = 10;

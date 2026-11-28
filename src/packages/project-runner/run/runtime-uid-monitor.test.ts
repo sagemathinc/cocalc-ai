@@ -116,6 +116,8 @@ describe("completeScan", () => {
     ]);
     expect(await completeScan(scan, { pauseMs: 0 })).toMatchObject({
       unknown: 0,
+      scans: 2,
+      unknown_before: [2],
     });
     expect(scan).toHaveBeenCalledTimes(2);
     const stuck = scanOf([{ violations: 0, unknown: 1 }]);
@@ -131,6 +133,7 @@ describe("completeScan", () => {
     ]);
     expect(await completeScan(scan, { pauseMs: 0 })).toMatchObject({
       violations: 1,
+      scans: 1,
     });
     expect(scan).toHaveBeenCalledTimes(1);
   });

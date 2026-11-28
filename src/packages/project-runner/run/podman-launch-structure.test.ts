@@ -15,7 +15,7 @@ goes through the wrappers and is added to the inventory with a decision.
 */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, normalize, relative } from "node:path";
 import ts from "typescript";
 
 const PACKAGES = join(__dirname, "..", "..");
@@ -133,118 +133,67 @@ const PROCESS_INVENTORY: Record<string, number> = {
 // by file and why: each is a direct podman run (a non-launch verb, reviewed),
 // or not a command at all.
 // Calls of functions that can start a process (helpers around child_process,
-// node-pty, or other helpers), by file: a new call, with whatever command,
-// fails here until reviewed.
+// node-pty, or other helpers, across files: see processHelperCalls), by file:
+// a new call, with whatever command, fails here until reviewed.
 const HELPER_CALLS: Record<string, number> = {
-  "backend/artifacts/journal.ts": 5,
-  "backend/artifacts/service.ts": 1,
-  "backend/chat-store/migrate-parent-message-id.ts": 3,
-  "backend/chat-store/sqlite-offload.ts": 13,
-  "backend/computers/connector.ts": 2,
-  "backend/conat/persist-durability.ts": 2,
-  "backend/conat/persist-maintenance/catalog.ts": 13,
-  "backend/conat/persist-maintenance/inspect.ts": 1,
-  "backend/conat/persist-verified-eviction.ts": 5,
-  "backend/conat/persist-write-rate.ts": 2,
+  "backend/computers/connector-main.ts": 3,
+  "backend/computers/connector.ts": 4,
+  "backend/conat/persist-maintenance/inspect.ts": 2,
+  "backend/conat/persist-verified-eviction.ts": 4,
   "backend/execute-code.ts": 9,
   "backend/frontend-build-fingerprint.ts": 4,
   "backend/podman/conmon.ts": 2,
-  "backend/r2-multipart.ts": 1,
-  "backend/r2.ts": 2,
+  "backend/sandbox/cp.ts": 1,
+  "backend/sandbox/du.ts": 1,
+  "backend/sandbox/dust.ts": 4,
   "backend/sandbox/exec.ts": 1,
-  "backend/sandbox/index.ts": 3,
+  "backend/sandbox/fd.ts": 1,
+  "backend/sandbox/find.ts": 1,
+  "backend/sandbox/index.ts": 12,
   "backend/sandbox/install.ts": 2,
-  "backend/sandbox/rustic.ts": 1,
-  "backend/sandbox/sync-fs-watch.ts": 14,
-  "backend/sqlite-checkpoint.ts": 2,
-  "backend/sqlite.ts": 3,
-  "lite/artifacts/catalog.ts": 4,
-  "lite/artifacts/personal-library.ts": 4,
+  "backend/sandbox/ouch.ts": 1,
+  "backend/sandbox/ripgrep.ts": 1,
+  "backend/sandbox/rustic.ts": 19,
   "lite/http.ts": 4,
-  "lite/hub/acp/blob-materialization.ts": 2,
-  "lite/hub/acp/index.ts": 3,
-  "lite/hub/acp/inline-code-links.ts": 1,
-  "lite/hub/acp/local-harness.ts": 5,
-  "lite/hub/acp/worker-manager.ts": 2,
-  "lite/hub/api.ts": 2,
-  "lite/hub/codex-credentials.ts": 5,
-  "lite/hub/named-agents.ts": 4,
-  "lite/hub/sqlite/acp-attention.ts": 6,
-  "lite/hub/sqlite/acp-database.ts": 11,
-  "lite/hub/sqlite/acp-interrupts.ts": 5,
-  "lite/hub/sqlite/acp-jobs.ts": 53,
-  "lite/hub/sqlite/acp-queue.ts": 2,
-  "lite/hub/sqlite/acp-runtime-owners.ts": 6,
-  "lite/hub/sqlite/acp-session-instructions.ts": 1,
-  "lite/hub/sqlite/acp-sessions.ts": 14,
-  "lite/hub/sqlite/acp-steers.ts": 5,
-  "lite/hub/sqlite/acp-thread-successors.ts": 10,
-  "lite/hub/sqlite/acp-turn-ledger.ts": 19,
-  "lite/hub/sqlite/acp-turns.ts": 7,
-  "lite/hub/sqlite/acp-workers.ts": 6,
-  "lite/hub/sqlite/agent-rpc-reports.ts": 2,
-  "lite/hub/sqlite/agent-rpc-slow-receipts.ts": 8,
-  "lite/hub/sqlite/database.ts": 5,
-  "lite/main.ts": 1,
+  "lite/hub/acp/index.ts": 1,
+  "lite/hub/acp/local-harness.ts": 4,
+  "lite/hub/acp/worker-manager.ts": 1,
+  "lite/hub/api.ts": 3,
+  "lite/main.ts": 3,
   "lite/playwright/jupyter/global-setup.ts": 5,
-  "lite/plus-update-status.ts": 1,
   "lite/static-apps.ts": 2,
-  "project-host/abuse-filesystem-snapshot.ts": 1,
-  "project-host/abuse-process-snapshot.ts": 1,
-  "project-host/acp/claude-subscription-login.ts": 2,
-  "project-host/acp/claude-subscription-paths.ts": 1,
-  "project-host/acp/harness-reaper.ts": 1,
+  "project-host/acp-worker.ts": 3,
+  "project-host/acp/claude-project-tool-bridge.ts": 1,
+  "project-host/acp/claude-subscription-controller.ts": 8,
+  "project-host/acp/claude-subscription-login.ts": 1,
+  "project-host/acp/harness-launcher.ts": 4,
+  "project-host/acp/harness-reaper.ts": 3,
   "project-host/acp/qualified-harness-entry.ts": 1,
   "project-host/app-supervisor.ts": 2,
-  "project-host/board/service.ts": 2,
-  "project-host/codex/codex-site-metering.ts": 1,
-  "project-host/codex/site-funded-proxy.ts": 2,
-  "project-host/content-app-origin.ts": 2,
-  "project-host/exam/controller.ts": 4,
-  "project-host/file-server.ts": 1,
-  "project-host/host-agent.ts": 1,
-  "project-host/host-metrics.ts": 1,
-  "project-host/http-proxy-api-key.ts": 1,
+  "project-host/exam/controller.ts": 2,
+  "project-host/file-server.ts": 19,
+  "project-host/host-agent.ts": 3,
   "project-host/hub/acp/worker-manager.ts": 7,
+  "project-host/hub/projects.ts": 2,
   "project-host/legacy-migration/project-archive.ts": 13,
-  "project-host/main.ts": 16,
+  "project-host/main.ts": 27,
   "project-host/managed-component-rollout.ts": 2,
-  "project-host/master.ts": 2,
+  "project-host/master.ts": 12,
   "project-host/onprem-tunnel.ts": 9,
-  "project-host/persist-storage.ts": 1,
-  "project-host/reconcile.ts": 1,
-  "project-host/restricted-egress-proxy.ts": 2,
-  "project-host/rootfs-scan-db.ts": 1,
+  "project-host/reconcile.ts": 7,
+  "project-host/restore-backup-inventory.ts": 2,
   "project-host/runtime-conformance.ts": 10,
   "project-host/runtime-posture.ts": 7,
-  "project-host/rustic-backup-browser.ts": 4,
+  "project-host/rustic-backup-browser.ts": 16,
   "project-host/shared-browser-containers.ts": 5,
-  "project-host/snapshot-backup-maintenance.ts": 1,
-  "project-host/sqlite/account-revocations.ts": 4,
-  "project-host/sqlite/app-capability-replay.ts": 1,
-  "project-host/sqlite/computer-access.ts": 4,
-  "project-host/sqlite/filesystem-quota-state.ts": 1,
-  "project-host/sqlite/hosts.ts": 4,
-  "project-host/sqlite/maintenance-ledger.ts": 13,
-  "project-host/sqlite/port-leases.ts": 5,
-  "project-host/sqlite/pressure-policy.ts": 1,
-  "project-host/sqlite/project-secrets.ts": 8,
-  "project-host/sqlite/project-volumes.ts": 6,
-  "project-host/sqlite/projects.ts": 23,
-  "project-host/sqlite/provisioning.ts": 4,
-  "project-host/sqlite/stop-policy.ts": 10,
-  "project-host/sqlite/volume-quota-overrides.ts": 4,
-  "project-host/sqlite/volume-quotas.ts": 5,
+  "project-host/snapshot-backup-maintenance.ts": 22,
   "project-host/storage-admission.ts": 4,
-  "project-host/storage-info-service.ts": 1,
-  "project-host/storage-metrics.ts": 3,
-  "project-host/storage-reservations.ts": 3,
-  "project-host/upgrade.ts": 61,
-  "project-runner/run/podman.ts": 4,
-  "project-runner/run/pull-image.ts": 3,
-  "project-runner/run/runtime-identity.ts": 1,
-  "project-runner/run/sandbox-command-containment.ts": 4,
-  "project-runner/run/sandbox-exec.ts": 1,
+  "project-host/upgrade.ts": 60,
+  "project-runner/run/podman.ts": 36,
+  "project-runner/run/rootfs-base.ts": 1,
+  "project-runner/run/runtime-backend.ts": 1,
+  "project-runner/run/sandbox-command-containment.ts": 3,
+  "project-runner/run/sandbox-exec.ts": 2,
   "project-runner/run/workspace.ts": 1,
 };
 
@@ -557,21 +506,10 @@ function scan(): {
       }
     }
   }
-  // helpers that can start a process, then every call of one
-  const own = new Map<string, Map<string, { exported: boolean }>>();
-  const exported = new Set<string>();
-  for (const { rel, file } of parsed) {
-    if (rel === WRAPPER) continue;
-    const helpers = processHelpers(file);
-    own.set(rel, helpers);
-    for (const [name, { exported: e }] of helpers) if (e) exported.add(name);
-  }
-  const helperCallCounts: Record<string, number> = {};
-  for (const { rel, file } of parsed) {
-    if (rel === WRAPPER) continue;
-    const n = helperCalls(file, own.get(rel) ?? new Map(), exported);
-    if (n > 0) helperCallCounts[rel] = n;
-  }
+  // helpers that can start a process (across files), then every call of one
+  const helperCallCounts = processHelperCalls(
+    parsed.filter(({ rel }) => rel !== WRAPPER),
+  );
   return {
     directPodman,
     verbs,
@@ -660,137 +598,336 @@ function processReferenceNodes(file: ts.SourceFile): ts.Node[] {
   return refs;
 }
 
-// The wrappers themselves (their calls are gated) are not helpers here.
-const WRAPPER_FUNCTIONS = new Set([
-  "podman",
-  "spawnPodman",
-  "spawnPodmanPiped",
-  "execFilePodman",
-  "executePodman",
-  "runPodman",
-]);
+// The wrappers themselves (their calls are gated) are not helpers here: their
+// module is left out of the analysis.
 
-function functionName(node: ts.Node): string | undefined {
-  if (
-    (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
-    node.name
-  )
-    return node.name.getText();
-  if (
-    ts.isVariableDeclaration(node) &&
-    ts.isIdentifier(node.name) &&
-    node.initializer &&
-    (ts.isArrowFunction(node.initializer) ||
-      ts.isFunctionExpression(node.initializer))
-  )
-    return node.name.text;
-  if (
-    ts.isPropertyAssignment(node) &&
-    (ts.isArrowFunction(node.initializer) ||
-      ts.isFunctionExpression(node.initializer))
-  )
-    return node.name.getText();
+interface ModuleFacts {
+  rel: string;
+  file: ts.SourceFile;
+  refs: ts.Node[];
+  // local name -> function nodes (declarations, const arrows/functions)
+  functions: Map<string, ts.Node[]>;
+  // functions that are members (methods, object properties) of a named class
+  // or object (owner: the class or const name; "" when it has none)
+  members: { owner: string; name: string; node: ts.Node }[];
+  // local import name -> where it comes from ("default", "*" or a symbol)
+  imports: Map<string, { module?: string; symbol: string }>;
+  // exported symbol -> a local name, or a re-export of another module's symbol
+  exports: Map<string, { local?: string; module?: string; symbol?: string }>;
+  starExports: string[];
+}
+
+/** A module specifier as a scanned file (relative or @cocalc/<pkg>/...). */
+export function resolveModule(
+  fromRel: string,
+  spec: string,
+  known: Set<string>,
+): string | undefined {
+  let base: string | undefined;
+  if (spec.startsWith(".")) base = normalize(join(dirname(fromRel), spec));
+  else if (spec.startsWith("@cocalc/")) base = spec.slice("@cocalc/".length);
+  if (base == null) return undefined;
+  base = base
+    .split("\\")
+    .join("/")
+    .replace(/\.(js|ts)$/, "");
+  for (const candidate of [
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}/index.ts`,
+    `${base}/index.tsx`,
+  ])
+    if (known.has(candidate)) return candidate;
   return undefined;
 }
 
-/**
- * The functions of a file that can start a process: those that reference
- * child_process/node-pty, and (transitively) those that call one of them.
- * Returns each with whether it is exported.
- */
-export function processHelpers(
+function isFunctionLike(node: ts.Node | undefined): boolean {
+  return (
+    node != null && (ts.isArrowFunction(node) || ts.isFunctionExpression(node))
+  );
+}
+
+/** The class or const a member function belongs to ("" if unnamed). */
+function memberOwner(node: ts.Node): string {
+  const holder = node.parent;
+  if (holder != null && ts.isClassLike(holder)) return holder.name?.text ?? "";
+  if (holder != null && ts.isObjectLiteralExpression(holder)) {
+    const decl = holder.parent;
+    if (
+      decl != null &&
+      ts.isVariableDeclaration(decl) &&
+      ts.isIdentifier(decl.name)
+    )
+      return decl.name.text;
+  }
+  return "";
+}
+
+function moduleFacts(
+  rel: string,
   file: ts.SourceFile,
-): Map<string, { exported: boolean }> {
-  const refs = processReferenceNodes(file);
-  const functions: { name: string; node: ts.Node; exported: boolean }[] = [];
+  known: Set<string>,
+): ModuleFacts {
+  const facts: ModuleFacts = {
+    rel,
+    file,
+    refs: processReferenceNodes(file),
+    functions: new Map(),
+    members: [],
+    imports: new Map(),
+    exports: new Map(),
+    starExports: [],
+  };
+  const addFunction = (name: string, node: ts.Node) =>
+    facts.functions.set(name, [...(facts.functions.get(name) ?? []), node]);
+  const exported = (node: ts.Node) =>
+    ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node) ?? []).some(
+      (m) => m.kind === ts.SyntaxKind.ExportKeyword,
+    );
+  const isDefault = (node: ts.Node) =>
+    ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node) ?? []).some(
+      (m) => m.kind === ts.SyntaxKind.DefaultKeyword,
+    );
   const visit = (node: ts.Node) => {
-    const name = functionName(node);
-    if (name != null) {
-      const statement = ts.isVariableDeclaration(node)
-        ? node.parent?.parent
-        : node;
-      const exported =
-        statement != null &&
-        ts.canHaveModifiers(statement) &&
-        (ts.getModifiers(statement) ?? []).some(
-          (m) => m.kind === ts.SyntaxKind.ExportKeyword,
-        );
-      functions.push({ name, node, exported });
+    if (ts.isFunctionDeclaration(node)) {
+      const name = node.name?.text ?? "default";
+      addFunction(name, node);
+      if (exported(node))
+        facts.exports.set(isDefault(node) ? "default" : name, { local: name });
+    } else if (ts.isClassDeclaration(node) && node.name && exported(node)) {
+      facts.exports.set(isDefault(node) ? "default" : node.name.text, {
+        local: node.name.text,
+      });
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      isFunctionLike(node.initializer)
+    ) {
+      addFunction(node.name.text, node);
+    } else if (
+      (ts.isMethodDeclaration(node) ||
+        (ts.isPropertyAssignment(node) && isFunctionLike(node.initializer))) &&
+      node.name
+    ) {
+      facts.members.push({
+        owner: memberOwner(node),
+        name: node.name.getText(file),
+        node,
+      });
+    }
+    if (ts.isVariableStatement(node) && exported(node))
+      for (const decl of node.declarationList.declarations)
+        if (ts.isIdentifier(decl.name))
+          facts.exports.set(decl.name.text, { local: decl.name.text });
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      const e = node.expression;
+      if (ts.isIdentifier(e)) facts.exports.set("default", { local: e.text });
+      else {
+        addFunction("default", e);
+        facts.exports.set("default", { local: "default" });
+      }
+    }
+    if (ts.isExportDeclaration(node)) {
+      const from =
+        node.moduleSpecifier != null
+          ? resolveModule(rel, stringValue(node.moduleSpecifier) ?? "", known)
+          : undefined;
+      const clause = node.exportClause;
+      if (clause == null) {
+        if (from) facts.starExports.push(from);
+      } else if (ts.isNamedExports(clause)) {
+        for (const el of clause.elements) {
+          const local = (el.propertyName ?? el.name).text;
+          facts.exports.set(
+            el.name.text,
+            node.moduleSpecifier != null
+              ? { module: from, symbol: local }
+              : { local },
+          );
+        }
+      }
+    }
+    if (
+      ts.isImportDeclaration(node) &&
+      node.importClause &&
+      !node.importClause.isTypeOnly
+    ) {
+      const from = resolveModule(
+        rel,
+        stringValue(node.moduleSpecifier) ?? "",
+        known,
+      );
+      const clause = node.importClause;
+      if (clause.name)
+        facts.imports.set(clause.name.text, {
+          module: from,
+          symbol: "default",
+        });
+      const named = clause.namedBindings;
+      if (named && ts.isNamespaceImport(named))
+        facts.imports.set(named.name.text, { module: from, symbol: "*" });
+      if (named && ts.isNamedImports(named))
+        for (const el of named.elements)
+          if (!el.isTypeOnly)
+            facts.imports.set(el.name.text, {
+              module: from,
+              symbol: (el.propertyName ?? el.name).text,
+            });
     }
     ts.forEachChild(node, visit);
   };
   visit(file);
-  const helpers = new Map<string, { exported: boolean }>();
-  const inside = (outer: ts.Node, inner: ts.Node) =>
-    inner.pos >= outer.pos && inner.end <= outer.end;
-  for (const f of functions)
-    if (refs.some((r) => inside(f.node, r)))
-      helpers.set(f.name, { exported: f.exported });
-  // transitively: functions calling a helper of this file
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const f of functions) {
-      if (helpers.has(f.name)) continue;
-      let calls = false;
-      const find = (node: ts.Node) => {
-        if (ts.isCallExpression(node)) {
-          const name = callName(node);
-          if (name != null && helpers.has(name) && name !== f.name)
-            calls = true;
-        }
-        if (!calls) ts.forEachChild(node, find);
-      };
-      find(f.node);
-      if (calls) {
-        helpers.set(f.name, { exported: f.exported });
-        changed = true;
-      }
-    }
-  }
-  for (const name of WRAPPER_FUNCTIONS) helpers.delete(name);
-  return helpers;
+  return facts;
 }
 
 /**
- * Calls of process-capable helpers in a file: its own helpers, and the
- * exported helpers of other files (by imported name, aliases followed, or
- * as a method name).
+ * Every call of a function that can start a process, by file. A function can
+ * when it references child_process/node-pty, or calls such a function: in
+ * its own file, or imported from another (named, default, namespace,
+ * re-exported, aliases followed), to a fixed point. Member functions
+ * (methods, object properties) that can are matched by name wherever they
+ * are called, which can only over-count.
  */
-export function helperCalls(
-  file: ts.SourceFile,
-  own: Map<string, { exported: boolean }>,
-  exported: Set<string>,
-): number {
-  const aliases = new Set<string>();
-  const collect = (node: ts.Node) => {
-    if (ts.isImportSpecifier(node)) {
-      const imported = (node.propertyName ?? node.name).text;
-      if (exported.has(imported)) aliases.add(node.name.text);
+export function processHelperCalls(
+  files: { rel: string; file: ts.SourceFile }[],
+): Record<string, number> {
+  const known = new Set(files.map(({ rel }) => rel));
+  const modules = new Map(
+    files.map(({ rel, file }) => [rel, moduleFacts(rel, file, known)]),
+  );
+  const capable = new Set<string>(); // `${rel}#${local}`
+  // `${rel}#${owner}` -> the owner's member functions that can
+  const capableMembers = new Map<string, Set<string>>();
+  const memberCapable = (rel: string, owner: string, name: string) =>
+    capableMembers.get(`${rel}#${owner}`)?.has(name) ?? false;
+  // where an exported symbol is declared (re-exports and imports followed)
+  const exportOrigin = (
+    rel: string | undefined,
+    symbol: string,
+    seen = new Set<string>(),
+  ): { rel: string; local: string } | undefined => {
+    if (rel == null || seen.has(`${rel}#${symbol}`)) return undefined;
+    seen.add(`${rel}#${symbol}`);
+    const m = modules.get(rel);
+    if (m == null) return undefined;
+    const e = m.exports.get(symbol);
+    if (e?.local != null) {
+      const imp = m.imports.get(e.local);
+      if (imp != null && imp.symbol !== "*")
+        return exportOrigin(imp.module, imp.symbol, seen);
+      return { rel, local: e.local };
     }
-    ts.forEachChild(node, collect);
-  };
-  collect(file);
-  let count = 0;
-  const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node)) {
-      const e = node.expression;
-      const name = ts.isIdentifier(e)
-        ? e.text
-        : ts.isPropertyAccessExpression(e)
-          ? e.name.text
-          : undefined;
-      if (
-        name != null &&
-        (own.has(name) ||
-          aliases.has(name) ||
-          (ts.isPropertyAccessExpression(e) && exported.has(name)))
-      )
-        count++;
+    if (e?.module != null) return exportOrigin(e.module, e.symbol!, seen);
+    for (const star of m.starExports) {
+      const found = exportOrigin(star, symbol, seen);
+      if (found) return found;
     }
-    ts.forEachChild(node, visit);
+    return undefined;
   };
-  visit(file);
-  return count;
+  // the owners (classes, objects) a file can reach: its own and imported ones
+  const reachableOwners = (
+    m: ModuleFacts,
+  ): { rel: string; owner: string }[] => {
+    const out = m.members.map(({ owner }) => ({ rel: m.rel, owner }));
+    for (const imp of m.imports.values()) {
+      if (imp.symbol === "*") continue;
+      const origin = exportOrigin(imp.module, imp.symbol);
+      if (origin) out.push({ rel: origin.rel, owner: origin.local });
+    }
+    return out;
+  };
+  const inside = (outer: ts.Node, inner: ts.Node) =>
+    inner.pos >= outer.pos && inner.end <= outer.end;
+  const exportCapable = (
+    rel: string | undefined,
+    symbol: string,
+    seen = new Set<string>(),
+  ): boolean => {
+    if (rel == null || seen.has(`${rel}#${symbol}`)) return false;
+    seen.add(`${rel}#${symbol}`);
+    const m = modules.get(rel);
+    if (m == null) return false;
+    const e = m.exports.get(symbol);
+    if (e?.local != null) return localCapable(m, e.local, seen);
+    if (e?.module != null) return exportCapable(e.module, e.symbol!, seen);
+    return m.starExports.some((star) => exportCapable(star, symbol, seen));
+  };
+  const localCapable = (
+    m: ModuleFacts,
+    name: string,
+    seen = new Set<string>(),
+  ): boolean => {
+    if (capable.has(`${m.rel}#${name}`)) return true;
+    const imp = m.imports.get(name);
+    if (imp != null && imp.symbol !== "*")
+      return exportCapable(imp.module, imp.symbol, seen);
+    return false;
+  };
+  const callCapable = (m: ModuleFacts, call: ts.CallExpression): boolean => {
+    const e = call.expression;
+    if (ts.isIdentifier(e)) return localCapable(m, e.text);
+    if (ts.isPropertyAccessExpression(e)) {
+      const name = e.name.text;
+      if (ts.isIdentifier(e.expression)) {
+        const imp = m.imports.get(e.expression.text);
+        if (imp?.symbol === "*") return exportCapable(imp.module, name);
+      }
+      // a member of a class or object this file defines or imports (called
+      // through it, through this, or through an instance): matched by name
+      // among the reachable owners' capable members
+      return reachableOwners(m).some(({ rel, owner }) =>
+        memberCapable(rel, owner, name),
+      );
+    }
+    return false;
+  };
+  const bodyCapable = (m: ModuleFacts, node: ts.Node): boolean => {
+    if (m.refs.some((r) => inside(node, r))) return true;
+    let found = false;
+    const find = (n: ts.Node) => {
+      if (found) return;
+      if (ts.isCallExpression(n) && callCapable(m, n)) found = true;
+      else ts.forEachChild(n, find);
+    };
+    find(node);
+    return found;
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const m of modules.values()) {
+      for (const [name, nodes] of m.functions) {
+        if (capable.has(`${m.rel}#${name}`)) continue;
+        if (nodes.some((node) => bodyCapable(m, node))) {
+          capable.add(`${m.rel}#${name}`);
+          changed = true;
+        }
+      }
+      for (const { owner, name, node } of m.members) {
+        if (memberCapable(m.rel, owner, name)) continue;
+        if (bodyCapable(m, node)) {
+          const key = `${m.rel}#${owner}`;
+          capableMembers.set(
+            key,
+            new Set([...(capableMembers.get(key) ?? []), name]),
+          );
+          changed = true;
+        }
+      }
+    }
+  }
+  const counts: Record<string, number> = {};
+  for (const m of modules.values()) {
+    let n = 0;
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && callCapable(m, node)) n++;
+      ts.forEachChild(node, visit);
+    };
+    visit(m.file);
+    if (n > 0) counts[m.rel] = n;
+  }
+  return counts;
 }
 
 const PODMAN_LITERAL = /^(.*\/)?podman$/;
@@ -855,32 +992,61 @@ describe("podman launch gate: structure", () => {
     );
   });
 
-  it("counts calls through a helper with a computed command and argv (self-test)", () => {
-    const helperFile = ts.createSourceFile(
-      "h.ts",
-      `import { spawnSync } from "node:child_process";
-       export function runIt(c: string, a: string[]) { return spawnSync(c, a); }
-       function viaIt() { return runIt(getCommand(), buildArgs()); }
-       viaIt();`,
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    const helpers = processHelpers(helperFile);
-    expect([...helpers.keys()].sort()).toEqual(["runIt", "viaIt"]);
-    // the helper's own file: runIt via viaIt, and viaIt
-    expect(helperCalls(helperFile, helpers, new Set(["runIt"]))).toBe(2);
-    // another file: an aliased import, and executeCode as a method
-    const user = ts.createSourceFile(
-      "u.ts",
-      `import { runIt as go } from "./h";
-       go(getCommand(), buildArgs());
-       backend.executeCode({ command: getCommand(), args: buildArgs() });`,
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    expect(
-      helperCalls(user, new Map(), new Set(["runIt", "executeCode"])),
-    ).toBe(2);
+  it("counts calls through helpers across files (self-test)", () => {
+    const src = (rel: string, text: string) => ({
+      rel,
+      file: ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true),
+    });
+    const counts = processHelperCalls([
+      // a forwarding chain across three files, with a computed command
+      src(
+        "x/a.ts",
+        `import { spawn } from "node:child_process";
+         export function low(c: string, a: string[]) { return spawn(c, a); }`,
+      ),
+      src(
+        "x/b.ts",
+        `import { low } from "./a";
+         export function high(c: string, a: string[]) { return low(c, a); }`,
+      ),
+      src(
+        "x/c.ts",
+        `import { high } from "./b"; high(getCommand(), buildArgs());`,
+      ),
+      // a default export, and an export after the declaration, re-exported
+      src(
+        "x/d.ts",
+        `import { execFile as run } from "node:child_process";
+         export default (c: string) => run(c, []);
+         function later(c: string) { return run(c, ["x"]); }
+         export { later };`,
+      ),
+      src(
+        "x/e.ts",
+        `export { later as again } from "./d"; export * from "./b";`,
+      ),
+      src(
+        "x/f.ts",
+        `import go from "./d"; import { again, high as h2 } from "./e";
+         import * as ns from "./b";
+         go(cmd()); again(cmd()); h2(cmd(), argv()); ns.high(cmd(), argv());`,
+      ),
+      // a capable method, called by name elsewhere
+      src(
+        "x/g.ts",
+        `import { spawnSync } from "node:child_process";
+         export const runner = { exec(c: string) { return spawnSync(c, []); } };`,
+      ),
+      src("x/h.ts", `import { runner } from "./g"; runner.exec(cmd());`),
+      // not a process: no count
+      src("x/i.ts", `export function pure() { return 1; } pure();`),
+    ]);
+    expect(counts).toEqual({
+      "x/b.ts": 1,
+      "x/c.ts": 1,
+      "x/f.ts": 4,
+      "x/h.ts": 1,
+    });
   });
 
   it("every literal podman command outside the wrappers is reviewed", () => {

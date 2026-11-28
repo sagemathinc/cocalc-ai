@@ -81,13 +81,20 @@ export async function completeScan(
   scan: () => Promise<RuntimeUidCheck>,
   { tries = 3, pauseMs = 1000 }: { tries?: number; pauseMs?: number } = {},
 ): Promise<RuntimeUidCheck> {
+  const before: number[] = [];
   let check = await scan();
   for (let i = 1; i < tries; i++) {
-    if ((check.violations ?? 0) > 0 || check.unknown === 0) return check;
+    if ((check.violations ?? 0) > 0 || check.unknown === 0) break;
+    before.push(check.unknown);
     await new Promise((resolve) => setTimeout(resolve, pauseMs));
     check = await scan();
   }
-  return check;
+  // a host that keeps needing rescans shows it
+  return {
+    ...check,
+    scans: before.length + 1,
+    ...(before.length > 0 ? { unknown_before: before } : {}),
+  };
 }
 
 /** Read the host's processes and judge them; never throws. */
