@@ -832,7 +832,27 @@ export function processHelperCalls(
   ): { rel: string; owner: string }[] => {
     const out = m.members.map(({ owner }) => ({ rel: m.rel, owner }));
     for (const imp of m.imports.values()) {
-      if (imp.symbol === "*") continue;
+      if (imp.symbol === "*") {
+        // ns.owner.member(...): every owner the module (or its star
+        // exports) defines is reachable
+        const seen = new Set<string>();
+        const add = (rel: string | undefined) => {
+          if (rel == null || seen.has(rel)) return;
+          seen.add(rel);
+          const target = modules.get(rel);
+          if (target == null) return;
+          for (const { owner } of target.members) out.push({ rel, owner });
+          for (const e of target.exports.values()) {
+            if (e.module != null && e.symbol != null) {
+              const origin = exportOrigin(e.module, e.symbol);
+              if (origin) out.push({ rel: origin.rel, owner: origin.local });
+            }
+          }
+          target.starExports.forEach(add);
+        };
+        add(imp.module);
+        continue;
+      }
       const origin = exportOrigin(imp.module, imp.symbol);
       if (origin) out.push({ rel: origin.rel, owner: origin.local });
     }
@@ -1038,6 +1058,8 @@ describe("podman launch gate: structure", () => {
          export const runner = { exec(c: string) { return spawnSync(c, []); } };`,
       ),
       src("x/h.ts", `import { runner } from "./g"; runner.exec(cmd());`),
+      // the same method through a namespace import (nested receiver)
+      src("x/j.ts", `import * as ns from "./g"; ns.runner.exec(cmd());`),
       // not a process: no count
       src("x/i.ts", `export function pure() { return 1; } pure();`),
     ]);
@@ -1046,6 +1068,7 @@ describe("podman launch gate: structure", () => {
       "x/c.ts": 1,
       "x/f.ts": 4,
       "x/h.ts": 1,
+      "x/j.ts": 1,
     });
   });
 
