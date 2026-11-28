@@ -842,11 +842,11 @@ export function processHelperCalls(
           const target = modules.get(rel);
           if (target == null) return;
           for (const { owner } of target.members) out.push({ rel, owner });
-          for (const e of target.exports.values()) {
-            if (e.module != null && e.symbol != null) {
-              const origin = exportOrigin(e.module, e.symbol);
-              if (origin) out.push({ rel: origin.rel, owner: origin.local });
-            }
+          // every export, wherever it is declared (re-exports and exported
+          // imported bindings followed)
+          for (const symbol of target.exports.keys()) {
+            const origin = exportOrigin(rel, symbol);
+            if (origin) out.push({ rel: origin.rel, owner: origin.local });
           }
           target.starExports.forEach(add);
         };
@@ -1060,6 +1060,9 @@ describe("podman launch gate: structure", () => {
       src("x/h.ts", `import { runner } from "./g"; runner.exec(cmd());`),
       // the same method through a namespace import (nested receiver)
       src("x/j.ts", `import * as ns from "./g"; ns.runner.exec(cmd());`),
+      // through a barrel that re-exports an imported binding
+      src("x/k.ts", `import { runner } from "./g"; export { runner };`),
+      src("x/l.ts", `import * as ns from "./k"; ns.runner.exec(cmd());`),
       // not a process: no count
       src("x/i.ts", `export function pure() { return 1; } pure();`),
     ]);
@@ -1069,6 +1072,7 @@ describe("podman launch gate: structure", () => {
       "x/f.ts": 4,
       "x/h.ts": 1,
       "x/j.ts": 1,
+      "x/l.ts": 1,
     });
   });
 
