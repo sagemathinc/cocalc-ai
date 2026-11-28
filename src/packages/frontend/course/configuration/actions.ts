@@ -14,7 +14,11 @@ import { ensureProjectCourseInfo } from "@cocalc/frontend/project/use-project-co
 import { Datastore, EnvVars } from "@cocalc/frontend/projects/actions";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { CourseActions, primary_key } from "../actions";
-import { CourseSettingsRecord, PARALLEL_DEFAULT } from "../store";
+import {
+  COPY_PARALLEL_DEFAULT,
+  CourseSettingsRecord,
+  PARALLEL_DEFAULT,
+} from "../store";
 import { SyncDBRecord } from "../types";
 import {
   StudentProjectFunctionality,
@@ -193,7 +197,7 @@ export class ConfigurationActions {
     }
   };
 
-  set_copy_parallel = (copy_parallel: number = PARALLEL_DEFAULT): void => {
+  set_copy_parallel = (copy_parallel: number = COPY_PARALLEL_DEFAULT): void => {
     this.set({
       copy_parallel,
       table: "settings",

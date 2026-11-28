@@ -29,6 +29,10 @@ import type {
 } from "./configuration/configuration-copying";
 
 export const PARALLEL_DEFAULT = 5;
+// Copies to or from students read from one project; a project serves at most
+// 4 file reads at a time (conat/files/read-admission.ts), so more in
+// parallel only wait.
+export const COPY_PARALLEL_DEFAULT = 4;
 export const MAX_COPY_PARALLEL = 25;
 
 import {
@@ -976,7 +980,8 @@ export class CourseStore extends Store<CourseState> {
   }
 
   public get_copy_parallel(): number {
-    const n = this.getIn(["settings", "copy_parallel"]) ?? PARALLEL_DEFAULT;
+    const n =
+      this.getIn(["settings", "copy_parallel"]) ?? COPY_PARALLEL_DEFAULT;
     if (n < 1) return 1;
     if (n > MAX_COPY_PARALLEL) return MAX_COPY_PARALLEL;
     return n;

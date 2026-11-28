@@ -49,7 +49,11 @@ import {
   READ_CHUNK_BYTES,
   readIdleWait,
 } from "./read-flow";
-import { ReadAdmission, MAX_PROJECT_READS } from "./read-admission";
+import {
+  ReadAdmission,
+  MAX_PROJECT_READS,
+  PRODUCER_BUSY,
+} from "./read-admission";
 import {
   FILE_READ_PRINCIPAL_HEADER,
   fileReadPrincipal,
@@ -346,6 +350,10 @@ export interface ReadFileOptions {
   // Only trusted backend callers may forward an already-authenticated account.
   // The router overwrites this for ordinary account/project sockets.
   account_id?: string;
+  // When this process already reads as much as allowed from the project, how
+  // long to wait for a free slot before failing as busy (default 0: fail at
+  // once). For bulk work such as copies, not interactive requests.
+  admissionWaitMs?: number;
 }
 
 export async function* readFile({
@@ -358,6 +366,7 @@ export async function* readFile({
   end,
   signal,
   account_id,
+  admissionWaitMs = 0,
 }: ReadFileOptions) {
   logger.debug("readFile", { project_id, path });
   const subject = getSubject({ project_id, name });
@@ -366,7 +375,17 @@ export async function* readFile({
   const principal =
     fileReadPrincipal(account_id ? { account_id } : cn.info?.user) ??
     (cn.info?.user?.hub_id ? `project:${project_id}` : "unattributed");
-  const release = consumers.acquire(project_id, principal, subject);
+  // With admissionWaitMs, waits for a free slot rather than failing at once
+  // (see ReadAdmission.acquireWait), and retries a busy reader (below), both
+  // within one deadline.
+  const deadline = Date.now() + Math.min(maxWait, admissionWaitMs);
+  const release =
+    admissionWaitMs > 0
+      ? await consumers.acquireWait(project_id, principal, subject, {
+          timeoutMs: Math.max(0, deadline - Date.now()),
+          signal,
+        })
+      : consumers.acquire(project_id, principal, subject);
   let seq = 0;
   let control: Message | undefined;
   let sub: Subscription | undefined;
@@ -380,69 +399,103 @@ export async function* readFile({
     sub?.cancel(signal?.reason);
   };
   signal?.addEventListener("abort", cancel, { once: true });
+  // A waiting read also retries while the project's reader answers busy
+  // before sending anything: the reader frees its slot slightly after this
+  // side does, and other processes may be reading from the project too.
+  let backoff = 50;
   try {
-    sub = await cn.requestMany(
-      subject,
-      {
-        path,
-        fileReadProtocol: READ_PROTOCOL,
-        maxWait,
-        ...(start != null ? { start } : {}),
-        ...(end != null ? { end } : {}),
-      },
-      {
-        // waitForInterest is extremely important because of the timing
-        // of how readFile gets used by writeFile in write.ts.
-        waitForInterest: true,
-        maxWait,
-        maxQueue: 4,
-        maxQueueBytes: 2 * READ_CHUNK_BYTES,
-        signal,
-        ...(account_id
-          ? {
-              headers: {
-                [FILE_READ_PRINCIPAL_HEADER]: `account:${account_id}`,
-              },
-            }
-          : {}),
-      },
-    );
-    for await (const resp of sub) {
-      signal?.throwIfAborted();
-      if (resp.headers == null) {
-        continue;
-      }
-      if (resp.headers.error) {
-        const err = Error(`${resp.headers.error}`) as NodeJS.ErrnoException;
-        if (typeof resp.headers.code === "string") {
-          err.code = resp.headers.code;
+    for (;;) {
+      let retry = false;
+      sub = await cn.requestMany(
+        subject,
+        {
+          path,
+          fileReadProtocol: READ_PROTOCOL,
+          maxWait,
+          ...(start != null ? { start } : {}),
+          ...(end != null ? { end } : {}),
+        },
+        {
+          // waitForInterest is extremely important because of the timing
+          // of how readFile gets used by writeFile in write.ts.
+          waitForInterest: true,
+          maxWait,
+          maxQueue: 4,
+          maxQueueBytes: 2 * READ_CHUNK_BYTES,
+          signal,
+          ...(account_id
+            ? {
+                headers: {
+                  [FILE_READ_PRINCIPAL_HEADER]: `account:${account_id}`,
+                },
+              }
+            : {}),
+        },
+      );
+      for await (const resp of sub) {
+        signal?.throwIfAborted();
+        if (resp.headers == null) {
+          continue;
         }
-        throw err;
-      }
-      if (resp.headers.fileReadProtocol === READ_PROTOCOL) {
-        if (control || seq !== 0 || !resp.isRequest()) {
-          throw Error("invalid file read handshake");
+        if (resp.headers.error) {
+          if (
+            resp.headers.error === PRODUCER_BUSY &&
+            seq === 0 &&
+            control == null &&
+            Date.now() < deadline
+          ) {
+            retry = true;
+            break;
+          }
+          const err = Error(`${resp.headers.error}`) as NodeJS.ErrnoException;
+          if (typeof resp.headers.code === "string") {
+            err.code = resp.headers.code;
+          }
+          throw err;
         }
-        control = resp;
-        await control.respond({ seq: 0 }, { signal });
-        continue;
+        if (resp.headers.fileReadProtocol === READ_PROTOCOL) {
+          if (control || seq !== 0 || !resp.isRequest()) {
+            throw Error("invalid file read handshake");
+          }
+          control = resp;
+          await control.respond({ seq: 0 }, { signal });
+          continue;
+        }
+        if (resp.headers.done) {
+          completed = true;
+          return;
+        }
+        const next = resp.headers.seq as number;
+        if (!Number.isSafeInteger(next) || next !== seq + 1) {
+          throw Error(`lost data: seq=${seq}, next=${next}`);
+        }
+        seq = next;
+        yield resp.data;
+        // Only acknowledge after the caller asks for the next chunk. In an HTTP
+        // download that is after write/drain, not when the message was received.
+        signal?.throwIfAborted();
+        if (control) await control.respond({ seq }, { signal });
       }
-      if (resp.headers.done) {
-        completed = true;
-        return;
-      }
-      const next = resp.headers.seq as number;
-      if (!Number.isSafeInteger(next) || next !== seq + 1) {
-        throw Error(`lost data: seq=${seq}, next=${next}`);
-      }
-      seq = next;
-      yield resp.data;
-      // Only acknowledge after the caller asks for the next chunk. In an HTTP
-      // download that is after write/drain, not when the message was received.
+      if (!retry) throw Error("truncated file read (missing completion)");
+      sub.cancel();
+      sub = undefined;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(
+          done,
+          Math.min(backoff, deadline - Date.now()),
+        );
+        function done() {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", done);
+          resolve();
+        }
+        signal?.addEventListener("abort", done, { once: true });
+      });
       signal?.throwIfAborted();
-      if (control) await control.respond({ seq }, { signal });
+      // Never start a request after the deadline.
+      if (Date.now() >= deadline) throw Error(PRODUCER_BUSY);
+      backoff = Math.min(2 * backoff, 1000);
     }
-    throw Error("truncated file read (missing completion)");
   } finally {
     release();
     signal?.removeEventListener("abort", cancel);
