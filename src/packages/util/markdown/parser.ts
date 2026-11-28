@@ -9,6 +9,7 @@ import { checkboxPlugin } from "./checkbox-plugin";
 import { hashtagPlugin } from "./hashtag-plugin";
 import { mentionPlugin } from "./mentions-plugin";
 import { blankLinesPlugin } from "./blank-lines-plugin";
+import { tableExcessCellsPlugin } from "./table-excess-cells-plugin";
 import { peopleReferencePlugin } from "../people-references";
 
 export const OPTIONS: MarkdownIt.Options = {
@@ -36,6 +37,7 @@ export function createMarkdownParser({
   parser.use(mentionPlugin);
   parser.use(peopleReferencePlugin);
   parser.use(blankLinesPlugin);
+  parser.use(tableExcessCellsPlugin);
   parser.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
   if (renderBlankLines) {
     parser.renderer.rules.blank_line = (tokens, idx) => {

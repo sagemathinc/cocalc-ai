@@ -10,6 +10,12 @@ import { padLeft, padRight, padCenter } from "../../util";
 import { serialize } from "../../slate-to-markdown";
 import getStyles from "./style";
 
+// A pipe in a cell's content would end the cell (even inside code), so it is
+// written as "\|", which the table parser turns back into "|".
+function escapeCellPipes(markdown: string): string {
+  return markdown.replace(/\\?\|/g, (pipe) => (pipe === "|" ? "\\|" : pipe));
+}
+
 function fromSlate({ node, children, info, childInfo }) {
   switch (node.type) {
     case "table": // a table
@@ -54,6 +60,7 @@ function fromSlate({ node, children, info, childInfo }) {
 
     case "th": // a heading entry in a row in the thead
     case "td": // a data entry in a row
+      children = escapeCellPipes(children);
       if (info.index != null) {
         const data = info.table?.[info.index];
         if (data != null) {
