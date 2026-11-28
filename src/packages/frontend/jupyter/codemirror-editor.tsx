@@ -32,7 +32,7 @@ import { Complete, Actions as CompleteActions } from "./complete";
 import { Cursors } from "./cursors";
 import { Position } from "./insert-cell/types";
 import { is_whitespace } from "@cocalc/util/misc";
-import { mergeText } from "@cocalc/sync/editor/generic/string-merge3";
+import { showRemoteValue, showValueInEditor } from "./cell-editor-value";
 
 // Debugging aid (see SimpleInputMerge): set
 // globalThis.__simpleInputMergeDebug to a function to receive decisions.
@@ -273,21 +273,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     if (cm.current != null) {
       const local = cm.current.getValue();
       const base = cm_last_remote.current;
-      if (local !== value && base != null && local !== base) {
-        // The editor has edits not saved yet (the save is debounced): merge
-        // the new value into them rather than replacing them, which would
-        // lose what was just typed. They are saved from the new value.
-        if (value !== base) {
-          const merged = mergeText({ base, local, remote: value });
-          debug("cell:value-merge", { id, base, local, remote: value, merged });
-          if (merged !== local) cm.current.setValueNoJump(merged);
-        }
-        cm_last_remote.current = value;
-      } else if (local !== value) {
+      const shown = showRemoteValue({
+        editor: cm.current,
+        lastRemote: cm_last_remote,
+        value,
+      });
+      if (shown != null && shown !== "set") {
+        debug("cell:value-merge", { id, base, local, remote: value, ...shown });
+      } else if (shown === "set") {
         debug("cell:value-set", { id, base, local, value });
-        cm.current.setValueNoJump(value);
         cm.current.clearHistory();
-        cm_last_remote.current = value;
         if (key.current != null) {
           const cached = cache.get(key.current);
           if (cached != null) {
@@ -546,7 +541,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         // the cell takes it as the baseline at once, so if the editor still
         // showed the old text when the next change arrives, that change
         // would be merged as if the user had deleted the collaborator's.
-        cm.current.setValueNoJump(saved);
+        showValueInEditor({
+          editor: cm.current,
+          lastRemote: cm_last_remote,
+          shown: saved,
+        });
       }
       debug("cell:save", { id, base, value, written });
       cm_last_remote.current = saved;
@@ -784,8 +783,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       setValueRef.current = boundSetValue.current = (value: string) => {
         if (cm.current == null) return;
         debug("cell:set-now", { id, local: cm.current.getValue(), value });
-        if (cm.current.getValue() !== value) cm.current.setValueNoJump(value);
-        cm_last_remote.current = value;
+        showValueInEditor({
+          editor: cm.current,
+          lastRemote: cm_last_remote,
+          shown: value,
+        });
       };
     }
 
