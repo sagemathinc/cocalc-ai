@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ArtifactCatalogSource } from "@cocalc/util/artifact-catalog";
+import { ArtifactCatalogBackoffError } from "./backoff";
 import { ArtifactCatalogService } from "./service";
 
 const source = {
@@ -391,4 +392,23 @@ test("stop during authority recovery retains the old journal for the successor",
   expect(successor.journal.deliveries(16, Date.now() + 60000)[0].epoch).toBe(
     "old-epoch",
   );
+});
+
+test("a backoff refusal never triggers writer recovery", async () => {
+  const opts = options();
+  const recoverWriter = jest.fn(async () => undefined);
+  opts.send.mockRejectedValue(new ArtifactCatalogBackoffError());
+  const register = jest
+    .fn()
+    .mockRejectedValue(new ArtifactCatalogBackoffError());
+  const service = create({ ...opts, register, recoverWriter });
+  service.journal.register(source, "epoch");
+  service.journal.finishWrite(
+    service.journal.beginWrite({ ...source, chat_path: "/home/user/b.chat" }),
+  );
+  service.start();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(opts.send).toHaveBeenCalledTimes(1);
+  expect(register).toHaveBeenCalledTimes(1);
+  expect(recoverWriter).not.toHaveBeenCalled();
 });

@@ -8,6 +8,7 @@ import type {
   ArtifactCatalogSnapshot,
   ArtifactCatalogSource,
 } from "@cocalc/util/artifact-catalog";
+import { ArtifactCatalogBackoffError } from "./backoff";
 import { ArtifactCatalogJournal, type CatalogRegistration } from "./journal";
 import { ArtifactCatalogRegistrar } from "./registrar";
 import { ArtifactCatalogProjector } from "./projector";
@@ -68,7 +69,8 @@ export class ArtifactCatalogService {
         try {
           return await options.register(request);
         } catch (err) {
-          await this.recoverWriter(request, request.expected_epoch);
+          if (!(err instanceof ArtifactCatalogBackoffError))
+            await this.recoverWriter(request, request.expected_epoch);
           throw err;
         }
       },
@@ -81,7 +83,8 @@ export class ArtifactCatalogService {
         try {
           await options.send(snapshot);
         } catch (err) {
-          await this.recoverWriter(snapshot, snapshot.epoch);
+          if (!(err instanceof ArtifactCatalogBackoffError))
+            await this.recoverWriter(snapshot, snapshot.epoch);
           throw err;
         }
       },

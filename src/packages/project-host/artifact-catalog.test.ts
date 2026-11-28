@@ -641,15 +641,73 @@ test("returns the service lifecycle unchanged and keeps filesystem journaling at
   expect(instance.start).toHaveBeenCalledTimes(1);
 });
 
-test("reports both source-specific and discovery failures through the host logger", () => {
+test("reports source-specific and discovery failures as compact host log lines", () => {
   start();
   options.onError(source, Error("read failed"));
   options.onError(undefined, Error("discovery failed"));
   expect(warn.mock.calls).toEqual([
-    ["catalog indexing deferred", { source, error: "Error: read failed" }],
+    ["catalog indexing deferred", { ...source, error: "read failed" }],
     [
       "catalog indexing deferred",
-      { source: undefined, error: "Error: discovery failed" },
+      {
+        project_id: undefined,
+        chat_path: undefined,
+        error: "discovery failed",
+      },
     ],
   ]);
+});
+
+test("a project over its catalog cap stops ingesting for a minute and logs no snapshot content", async () => {
+  start();
+  const canary = "CANARY-host-secret-42";
+  const full: ArtifactCatalogSnapshot = {
+    ...snapshot,
+    items: [
+      {
+        thread_id: "thread",
+        artifact_id: "artifact",
+        kind: "markdown",
+        title: canary,
+        description: canary,
+        created_at: 1,
+        publication: { operation_id: "op", message_id: "msg" },
+      },
+    ],
+  };
+  callHub.mockRejectedValueOnce(
+    Error(
+      "artifact catalog project metadata limit exceeded - callHub: subject='hub.host.authenticated-host.api', name='artifactCatalog.ingest', code='unknown'",
+    ),
+  );
+  const failure = await options.send(full).catch((err) => err);
+  options.onError(full, failure);
+  const calls = callHub.mock.calls.length;
+  await expect(options.send(full)).rejects.toThrow("backing off");
+  await expect(
+    options.read({
+      ...source,
+      chat_path: "/home/user/b.chat",
+      epoch: "e",
+      generation: 1,
+    }),
+  ).rejects.toThrow("backing off");
+  expect(callHub).toHaveBeenCalledTimes(calls);
+  expect(getFilesystem).not.toHaveBeenCalled();
+  expect(warn.mock.calls).toEqual([
+    [
+      "catalog indexing backed off",
+      {
+        ...source,
+        error: "artifact catalog project metadata limit exceeded",
+        scope: "project",
+        failures: 1,
+        retry_in_ms: 60_000,
+      },
+    ],
+  ]);
+  expect(JSON.stringify(warn.mock.calls)).not.toContain(canary);
+  now += 60_000;
+  callHub.mockResolvedValueOnce({ revision: 1, replayed: false });
+  await expect(options.send(full)).resolves.toBeUndefined();
 });

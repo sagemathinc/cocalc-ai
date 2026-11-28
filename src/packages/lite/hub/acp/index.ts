@@ -32,6 +32,7 @@ import {
 import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-reports";
 import { SENSOR_WAKE_CLAIM_LEASE_MS } from "@cocalc/conat/agents/sensors";
 import { toolUseTracker } from "./tool-use";
+import { logStaleWorkerTreatedAsLive } from "./stale-worker-log";
 import { sweepAgentStatus } from "./agent-status-report";
 import { reportAgentModelFromEvent } from "./agent-runtime-report";
 import {
@@ -1252,15 +1253,12 @@ function workerRowStillLikelyOwnsTurns({
     referenceAt > 0 &&
     now - referenceAt < ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS
   ) {
-    logger.debug(
-      "treating stale ACP worker as still live because its pid exists",
-      {
-        worker_id,
-        pid,
-        age_ms: now - referenceAt,
-        grace_ms: ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS,
-      },
-    );
+    logStaleWorkerTreatedAsLive(logger, {
+      worker_id,
+      pid,
+      age_ms: now - referenceAt,
+      grace_ms: ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS,
+    });
     return true;
   }
   return false;
@@ -14763,6 +14761,7 @@ export const acpTestInternals = {
   failureRecoveryDirective,
   recoverPendingFailureRecoveryIntents,
   hasOtherWorkerRunningAcpTurn,
+  workerRowStillLikelyOwnsTurns,
   nextQueuedAcpJobForThread,
   noteDetachedWorkerQueuePoll,
   setDetachedWorkerContextForTests: (

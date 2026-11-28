@@ -5,6 +5,7 @@
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { extractArtifactCatalog } from "@cocalc/chat";
+import { withArtifactCatalogBackoff } from "@cocalc/backend/artifacts/backoff";
 import { ArtifactCatalogService } from "@cocalc/backend/artifacts/service";
 import {
   journalArtifactFilesystem,
@@ -71,84 +72,90 @@ export function startArtifactCatalog(
   let after: string | undefined;
   let completedRound = false;
   let nextRoundAt = 0;
-  service = new ArtifactCatalogService({
-    filename: join(directory, "journal.sqlite"),
-    discoveryIntervalMs: 2000,
-    writerState: (source) => call("writerState", source),
-    recoverWriter: async (source, expectedEpoch) => {
-      const current = await call("writerState", source);
-      if (
-        (current?.epoch ?? null) === expectedEpoch ||
-        (current != null && current.writer_host_id === getLocalHostId())
-      )
-        return undefined;
-      return { epoch: current?.epoch ?? null };
-    },
-    register: (request) => call("registerSource", request),
-    send: async (snapshot) => {
-      await call("ingest", { ...snapshot, snapshot });
-    },
-    read: async (source) =>
-      withProjectVolumeLifecycleLock(source.project_id, async () => {
-        // A deleted/archived project can still have dirty journal entries.
-        // Defer them rather than recreating storage or publishing removals.
-        assertLocalProject(source.project_id);
-        const generation = currentProjectVolumeLifecycleGeneration(
-          source.project_id,
-        );
-        const fs = await getFilesystem(source.project_id);
-        try {
-          const rows = await readArtifactSource(fs, source.chat_path);
-          assertProjectVolumeLifecycleGeneration(source.project_id, generation);
-          assertLocalProject(source.project_id);
-          return extractArtifactCatalog(rows);
-        } finally {
-          fs.close();
-        }
-      }),
-    discover: async () => {
-      if (Date.now() < nextRoundAt) return [];
-      if (completedRound) {
-        completedRound = false;
-        afterProject = "";
-        nextRoundAt = Date.now() + 30_000;
-        return [];
-      }
-      if (!currentProject) {
-        const projects = listProjects()
-          .filter((p) => !p.local_only)
-          .map((p) => p.project_id)
-          .sort();
-        currentProject = projects.find((id) => id > afterProject);
-        if (!currentProject) {
-          afterProject = "";
-          nextRoundAt = Date.now() + 30_000;
-          return [];
-        }
-        if (!currentProject) return [];
-      }
-      const project_id = currentProject;
-      try {
-        const page = await call("sourcePage", { project_id, after });
-        after = page.next;
-        if (!after) {
-          afterProject = project_id;
-          currentProject = undefined;
-          completedRound = !listProjects().some(
-            (p) => !p.local_only && p.project_id > project_id,
-          );
-        }
-        return page.paths.map((chat_path) => ({ project_id, chat_path }));
-      } catch (err) {
-        afterProject = project_id;
-        currentProject = undefined;
-        after = undefined;
-        throw err;
-      }
-    },
-    onError: (source, err) =>
-      logger.warn("catalog indexing deferred", { source, error: `${err}` }),
-  });
+  service = new ArtifactCatalogService(
+    withArtifactCatalogBackoff(
+      {
+        filename: join(directory, "journal.sqlite"),
+        discoveryIntervalMs: 2000,
+        writerState: (source) => call("writerState", source),
+        recoverWriter: async (source, expectedEpoch) => {
+          const current = await call("writerState", source);
+          if (
+            (current?.epoch ?? null) === expectedEpoch ||
+            (current != null && current.writer_host_id === getLocalHostId())
+          )
+            return undefined;
+          return { epoch: current?.epoch ?? null };
+        },
+        register: (request) => call("registerSource", request),
+        send: async (snapshot) => {
+          await call("ingest", { ...snapshot, snapshot });
+        },
+        read: async (source) =>
+          withProjectVolumeLifecycleLock(source.project_id, async () => {
+            // A deleted/archived project can still have dirty journal entries.
+            // Defer them rather than recreating storage or publishing removals.
+            assertLocalProject(source.project_id);
+            const generation = currentProjectVolumeLifecycleGeneration(
+              source.project_id,
+            );
+            const fs = await getFilesystem(source.project_id);
+            try {
+              const rows = await readArtifactSource(fs, source.chat_path);
+              assertProjectVolumeLifecycleGeneration(
+                source.project_id,
+                generation,
+              );
+              assertLocalProject(source.project_id);
+              return extractArtifactCatalog(rows);
+            } finally {
+              fs.close();
+            }
+          }),
+        discover: async () => {
+          if (Date.now() < nextRoundAt) return [];
+          if (completedRound) {
+            completedRound = false;
+            afterProject = "";
+            nextRoundAt = Date.now() + 30_000;
+            return [];
+          }
+          if (!currentProject) {
+            const projects = listProjects()
+              .filter((p) => !p.local_only)
+              .map((p) => p.project_id)
+              .sort();
+            currentProject = projects.find((id) => id > afterProject);
+            if (!currentProject) {
+              afterProject = "";
+              nextRoundAt = Date.now() + 30_000;
+              return [];
+            }
+            if (!currentProject) return [];
+          }
+          const project_id = currentProject;
+          try {
+            const page = await call("sourcePage", { project_id, after });
+            after = page.next;
+            if (!after) {
+              afterProject = project_id;
+              currentProject = undefined;
+              completedRound = !listProjects().some(
+                (p) => !p.local_only && p.project_id > project_id,
+              );
+            }
+            return page.paths.map((chat_path) => ({ project_id, chat_path }));
+          } catch (err) {
+            afterProject = project_id;
+            currentProject = undefined;
+            after = undefined;
+            throw err;
+          }
+        },
+      },
+      logger,
+    ),
+  );
   service.start();
   return service;
 }
