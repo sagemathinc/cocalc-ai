@@ -38,6 +38,18 @@ import {
 import { sendIdentityMessage } from "../core/agent-message";
 import type { ProjectCommandDeps } from "./project";
 import { spawnProjectTerminalSession } from "./project/terminal";
+import { externalAgentProfilePath } from "../core/external-agent-profile";
+
+// This CLI, as a project terminal can run it again.
+function cliInvocation(): string[] {
+  return [process.execPath, process.argv[1]];
+}
+
+function shellWord(word: string): string {
+  return /^[A-Za-z0-9_./:=@-]+$/.test(word)
+    ? word
+    : `'${word.replace(/'/g, `'\\''`)}'`;
+}
 
 const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. Three kinds:
 
@@ -380,6 +392,81 @@ export function registerSensorCommand(
         await testSpec(await readSpec(opts)),
       ),
     );
+
+  // An exit watcher: the watcher first, then the command in a project
+  // terminal.
+  async function startExitWatch(
+    cmd: Command,
+    ctx: any,
+    command: string,
+    opts: {
+      cwd?: string;
+      restart?: boolean;
+      hours?: string;
+      delivery?: string;
+    },
+  ) {
+    const id = randomUUID();
+    const api = globalsFrom(cmd).api;
+    const cwd = `${opts.cwd ?? ""}`.trim() || undefined;
+    // Only a command the watcher keeps whole can be started again.
+    let restart = opts.restart !== false && exitWatchKeepsWhole(command, cwd);
+    // The watcher first: nothing runs if it cannot be set.
+    const short = { type: "exit", id, command: command.slice(0, 200) };
+    const setWatch = (watch: object) =>
+      sendIdentityMessage(
+        { action: "sensor", op: "watch", watch, ...extra(opts) },
+        api,
+      );
+    let set: any;
+    if (restart) {
+      try {
+        set = await setWatch({
+          ...short,
+          command,
+          ...(cwd ? { cwd } : {}),
+          restart: true,
+        });
+      } catch (err) {
+        // A hub from before restarts: a watcher that only wakes.
+        if (
+          !/unknown sensor spec field|command must be at most/.test(
+            `${(err as any)?.message ?? err}`,
+          )
+        )
+          throw err;
+        restart = false;
+      }
+    }
+    if (!restart) set = await setWatch(short);
+    const terminal_id = exitTerminalId(id);
+    try {
+      await spawnProjectTerminalSession({
+        ctx,
+        resolveProjectFromArgOrContext: deps.resolveProjectFromArgOrContext,
+        resolveProjectConatClient: deps.resolveProjectConatClient,
+        id: terminal_id,
+        command: "bash",
+        args: exitWatcherArgs(command, id),
+        cwd,
+      });
+    } catch (err) {
+      // It never started, so nothing will exit: remove the watcher.
+      const sensor_id = set?.sensor?.sensor_id;
+      if (sensor_id)
+        await sendIdentityMessage(
+          { action: "sensor", op: "delete", sensor_id },
+          api,
+        ).catch(() => undefined);
+      throw err;
+    }
+    return {
+      ...set,
+      terminal_id,
+      output_file: sensorExitPaths(id).log,
+      message: `Running in project terminal ${terminal_id}. You will get one [Sensor wake] turn when it exits, with its exit code and the end of its output.${restart ? ` If the terminal ends first, the command is started again in a new terminal (up to ${SENSOR_LIMITS.exitMaxRestarts} times) only when the earlier run is certainly gone (the project restarted); otherwise you get a wake saying its state is unknown.` : " If the terminal ends first, you get a wake saying it has no exit code and its state is unknown."} You can end your turn now.`,
+    };
+  }
   const watch = sensor
     .command("watch")
     .description(
@@ -574,67 +661,53 @@ export function registerSensorCommand(
       deps.withContext(cmd, "sensor watch exit", async (ctx: any) => {
         const command = commandParts.join(" ").trim();
         if (!command) throw new Error("give the command after --");
-        const id = randomUUID();
-        const api = globalsFrom(cmd).api;
-        const cwd = `${opts.cwd ?? ""}`.trim() || undefined;
-        // Only a command the watcher keeps whole can be started again.
-        let restart =
-          opts.restart !== false && exitWatchKeepsWhole(command, cwd);
-        // The watcher first: nothing runs if it cannot be set.
-        const short = { type: "exit", id, command: command.slice(0, 200) };
-        const setWatch = (watch: object) =>
-          sendIdentityMessage(
-            { action: "sensor", op: "watch", watch, ...extra(opts) },
-            api,
+        return await startExitWatch(cmd, ctx, command, opts);
+      }),
+    );
+  watch
+    .command("inbox")
+    .description(
+      "when a message arrives in an enrolled external-agent profile's inbox (an exit watcher around agent inbox --wait; it shows short previews and acknowledges nothing)",
+    )
+    .requiredOption(
+      "--external-agent <profile>",
+      "enrolled external-agent profile",
+    )
+    .option("--hours <n>", "give up after this many hours (default 24)")
+    .option(
+      "--delivery <mode>",
+      "guidance (default): into your running turn if one is running, else a new turn; queued: a turn of its own after the running one",
+    )
+    .action(async (opts, cmd) =>
+      deps.withContext(cmd, "sensor watch inbox", async (ctx: any) => {
+        // checks the profile name before it goes into a command line
+        externalAgentProfilePath(opts.externalAgent);
+        const hours =
+          opts.hours == null
+            ? SENSOR_LIMITS.defaultWatchHours
+            : Number(opts.hours);
+        if (
+          !Number.isInteger(hours) ||
+          hours < 1 ||
+          hours > SENSOR_LIMITS.maxWatchHours
+        )
+          throw new Error(
+            `--hours must be a whole number from 1 to ${SENSOR_LIMITS.maxWatchHours}`,
           );
-        let set: any;
-        if (restart) {
-          try {
-            set = await setWatch({
-              ...short,
-              command,
-              ...(cwd ? { cwd } : {}),
-              restart: true,
-            });
-          } catch (err) {
-            // A hub from before restarts: a watcher that only wakes.
-            if (
-              !/unknown sensor spec field|command must be at most/.test(
-                `${(err as any)?.message ?? err}`,
-              )
-            )
-              throw err;
-            restart = false;
-          }
-        }
-        if (!restart) set = await setWatch(short);
-        const terminal_id = exitTerminalId(id);
-        try {
-          await spawnProjectTerminalSession({
-            ctx,
-            resolveProjectFromArgOrContext: deps.resolveProjectFromArgOrContext,
-            resolveProjectConatClient: deps.resolveProjectConatClient,
-            id: terminal_id,
-            command: "bash",
-            args: exitWatcherArgs(command, id),
-            cwd,
-          });
-        } catch (err) {
-          // It never started, so nothing will exit: remove the watcher.
-          const sensor_id = set?.sensor?.sensor_id;
-          if (sensor_id)
-            await sendIdentityMessage(
-              { action: "sensor", op: "delete", sensor_id },
-              api,
-            ).catch(() => undefined);
-          throw err;
-        }
-        return {
-          ...set,
-          terminal_id,
-          output_file: sensorExitPaths(id).log,
-          message: `Running in project terminal ${terminal_id}. You will get one [Sensor wake] turn when it exits, with its exit code and the end of its output.${restart ? ` If the terminal ends first, the command is started again in a new terminal (up to ${SENSOR_LIMITS.exitMaxRestarts} times) only when the earlier run is certainly gone (the project restarted); otherwise you get a wake saying its state is unknown.` : " If the terminal ends first, you get a wake saying it has no exit code and its state is unknown."} You can end your turn now.`,
-        };
+        const command = [
+          ...cliInvocation(),
+          "--json",
+          "agent",
+          "inbox",
+          "--external-agent",
+          opts.externalAgent,
+          "--wait",
+          "--wait-hours",
+          `${hours}`,
+        ]
+          .map(shellWord)
+          .join(" ");
+        return await startExitWatch(cmd, ctx, command, opts);
       }),
     );
   // What an exit watcher's check runs to start its command again after the

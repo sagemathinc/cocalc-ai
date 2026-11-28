@@ -10,6 +10,12 @@ import { open, writeFile } from "node:fs/promises";
 import { sendIdentityMessage } from "../../core/agent-message";
 import { sendExternalAgentMessage } from "../../core/external-agent-message";
 import {
+  INBOX_WAIT_DEFAULT_POLL_SECONDS,
+  inboxWakeSummary,
+  waitForExternalInbox,
+  type ExternalInboxMessage,
+} from "../../core/external-inbox-wait";
+import {
   resolveAgentName,
   resolveBroadcastTargets,
 } from "../../core/agent-destination";
@@ -316,12 +322,48 @@ export function registerAgentCommands(
       "--include-acknowledged",
       "also list acknowledged messages (until they expire), each with its state",
     )
+    .option(
+      "--wait",
+      "wait until a pending message is there (checking every --poll seconds), then print short previews; nothing is acknowledged. sensor watch inbox runs this to wake you",
+    )
+    .option(
+      "--wait-hours <n>",
+      "with --wait: give up after this many hours",
+      "24",
+    )
+    .option(
+      "--poll <seconds>",
+      "with --wait: how often to check (at least 10)",
+      `${INBOX_WAIT_DEFAULT_POLL_SECONDS}`,
+    )
     .description(
       "list pending messages for an external network member, with their full text (data is a list of {message_id, created_at, source, body, ...}); read them here before ack-inbox, which hides a message from this list",
     )
     .action(async (opts, cmd) => {
       const globals = globalsFrom(cmd);
       const limit = Number(opts.limit);
+      if (opts.wait) {
+        const { messages, timed_out } = await waitForExternalInbox({
+          fetch: async () =>
+            (await sendExternalAgentMessage(opts.externalAgent, {
+              version: 3,
+              action: "inbox",
+              limit,
+            })) as unknown as ExternalInboxMessage[],
+          hours: Number(opts.waitHours),
+          pollSeconds: Number(opts.poll),
+          onError: (err) =>
+            console.error(
+              `inbox check failed (will retry): ${(err as Error)?.message ?? err}`,
+            ),
+        });
+        emitSuccess(
+          { globals },
+          `${prefix} inbox`,
+          inboxWakeSummary(messages, opts.externalAgent, timed_out),
+        );
+        return;
+      }
       emitSuccess(
         { globals },
         `${prefix} inbox`,
