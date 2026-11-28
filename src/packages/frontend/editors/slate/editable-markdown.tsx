@@ -140,6 +140,7 @@ import type { CodeBlock } from "./elements/code-block/types";
 import type { JupyterGapCursor } from "./jupyter-cell-context";
 import {
   hasOnlySelectionOperations,
+  isExternalTreeChange,
   isLocalContentChange,
 } from "./change-origin";
 
@@ -1510,6 +1511,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   ]);
 
   const lastSetValueRef = useRef<string | null>(null);
+  // The tree an external value (a collaborator's change, a merge) left the
+  // editor in. onChange reports that same tree as sync-caused even when it is
+  // delivered after editor.syncCausedUpdate was cleared: React may deliver it
+  // a render later, which happens in bursts of external updates (e.g., a
+  // background tab catching up). Counting it as a local edit marks the editor
+  // dirty and saves its contents over the collaborator's newer text. A local
+  // edit adds an operation of its own (and normally makes a new tree; Slate
+  // can mutate the tree in place, so the operations are checked too).
+  const externalChildrenRef = useRef<Descendant[] | null>(null);
+  const externalOperationsRef = useRef<Set<unknown>>(new Set());
+  // `since`: how many operations were pending (local, not yet delivered to
+  // onChange) before the external value was applied; only the ones the
+  // external value added are its own.
+  const noteExternalTree = (since: number) => {
+    externalChildrenRef.current = editor.children;
+    externalOperationsRef.current = new Set(editor.operations.slice(since));
+  };
 
   // A save commits through actions.syncstring_commit, which (for the markdown
   // editor) saves the active Slate editor again; do not re-enter.
@@ -2433,6 +2451,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       preserveBlankLines,
     });
     editor.syncCausedUpdate = true;
+    noteExternalTree(editor.operations.length);
+    externalChildrenRef.current = nextEditorValue;
     onChange(nextEditorValue);
     editor.resetHasUnsavedChanges();
     editor.markdownValue = normalizedValue;
@@ -2473,6 +2493,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     Editor.withoutNormalizing(editor, () => {
       editor.children = nextEditorValue;
     });
+    noteExternalTree(editor.operations.length);
     editor.resetHasUnsavedChanges();
     editor.markdownValue = cleanMarkdownValue;
     setEditorValue(nextEditorValue);
@@ -2802,6 +2823,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       });
     };
 
+    const pendingOperations = editor.operations.length;
     if (localHistory) {
       SlateHistoryEditor.withoutSaving(
         editor as unknown as SlateHistoryEditor,
@@ -2809,6 +2831,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       );
     } else {
       applyExternalValue();
+    }
+    noteExternalTree(pendingOperations);
+    if (directReplacementValue != null) {
+      // A direct replacement is given to onChange (and becomes the editor's
+      // children on the next render), not applied to editor.children now.
+      externalChildrenRef.current = directReplacementValue;
     }
     clearSyncCausedUpdateAfterFlush();
     if (
@@ -2938,7 +2966,24 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   // way for checking if the state of the editor has changed.  Instead
   // check editor.children itself explicitly.
   const onChange = (newEditorValue) => {
-    const syncCausedUpdate = editor.syncCausedUpdate === true;
+    // Only for an editor given its value (e.g., a notebook cell): a
+    // syncstring-backed editor reconciles through its own merges.
+    const lateExternalChange =
+      actions._syncstring == null &&
+      editor.syncCausedUpdate !== true &&
+      isExternalTreeChange({
+        value: newEditorValue,
+        operations: editor.operations,
+        externalValue: externalChildrenRef.current,
+        externalOperations: externalOperationsRef.current,
+      });
+    if (lateExternalChange) {
+      // Not an edit, but recompute the markdown from the tree rather than
+      // trusting the value cached when the external value was set.
+      delete editor.markdownValue;
+    }
+    const syncCausedUpdate =
+      editor.syncCausedUpdate === true || lateExternalChange;
     const onlySelectionOps = hasOnlySelectionOperations(editor.operations);
     const localContentChange = isLocalContentChange({
       operations: editor.operations,
@@ -2996,7 +3041,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       editor._hasUnsavedChanges = {};
     }
 
-    if (!editor.syncCausedUpdate) {
+    if (!syncCausedUpdate) {
       lastLocalEditAtRef.current = Date.now();
     }
 
@@ -3004,7 +3049,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     setChange(change + 1);
     onSlateChange?.([...editor.children], {
       onlySelectionOps,
-      syncCausedUpdate: !!editor.syncCausedUpdate,
+      syncCausedUpdate,
     });
 
     if (
