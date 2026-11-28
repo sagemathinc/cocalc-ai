@@ -14095,9 +14095,19 @@ class ProjectRuntimeUidBlockTest(unittest.TestCase):
         self.assertEqual(bootstrap.parse_project_runtime_uid_mode("separate"), "separate")
         with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
             self.assertEqual(
-                bootstrap.parse_project_runtime_uid_mode("separate-per-project"), "keep-id"
+                bootstrap.parse_project_runtime_uid_mode("separate-per-project"), "invalid"
             )
-        self.assertIn("ignoring invalid project runtime uid mode", err.getvalue())
+        self.assertIn("invalid project runtime uid mode", err.getvalue())
+        self.assertNotIn("separate-per-project", err.getvalue())
+
+    def test_invalid_mode_keeps_the_block(self) -> None:
+        # project-host refuses starts on an invalid mode; the allocation stays
+        # the strictest one, so fixing the typo needs no reboot
+        invalid_cfg = replace(self.cfg, project_runtime_uid_mode="invalid")
+        self.assertEqual(
+            bootstrap.runtime_subid_ranges(invalid_cfg),
+            (*bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES, bootstrap.PROJECT_RUNTIME_UID_BLOCK),
+        )
 
     def test_local_env_file_sets_the_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -14112,7 +14122,7 @@ class ProjectRuntimeUidBlockTest(unittest.TestCase):
             self.assertEqual(mode("separate", str(env_file)), "keep-id")
             local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=sideways\n", encoding="utf-8")
             with mock.patch("sys.stderr", new_callable=io.StringIO):
-                self.assertEqual(mode("separate", str(env_file)), "keep-id")
+                self.assertEqual(mode("separate", str(env_file)), "invalid")
 
     def check_contract(self, cfg, live_ranges) -> None:
         desired = bootstrap.expected_runtime_user_contract(cfg)
@@ -14158,6 +14168,37 @@ class ProjectRuntimeUidBlockTest(unittest.TestCase):
                 bootstrap.project_uid_block_overlaps(path, "cocalc-host"),
                 ["later:1073770000:65536"],
             )
+
+    def test_appending_the_block_keeps_both_existing_lines(self) -> None:
+        separate_cfg = replace(self.cfg, project_runtime_uid_mode="separate")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "subuid"
+            path.write_text(
+                "ubuntu:100000:65536\n"
+                "cocalc-host:231072:65536\n"
+                "cocalc-host:327680:4128768\n"
+                "other:5000000:65536\n",
+                encoding="utf-8",
+            )
+            ranges = bootstrap.runtime_subid_ranges(separate_cfg)
+            self.assertTrue(bootstrap.ensure_exact_subid_file(path, "cocalc-host", ranges))
+            # other users kept, both runtime lines kept in order, block last
+            self.assertEqual(
+                path.read_text(encoding="utf-8").splitlines(),
+                [
+                    "ubuntu:100000:65536",
+                    "other:5000000:65536",
+                    "cocalc-host:231072:65536",
+                    "cocalc-host:327680:4128768",
+                    "cocalc-host:1073741824:65536",
+                ],
+            )
+            _raw, entries = bootstrap.parse_subid_entries(path)
+            self.assertEqual(
+                [(start, length) for name, start, length in entries if name == "cocalc-host"],
+                list(ranges),
+            )
+            self.assertFalse(bootstrap.ensure_exact_subid_file(path, "cocalc-host", ranges))
 
     def test_login_defs_pins_subid_max_below_the_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

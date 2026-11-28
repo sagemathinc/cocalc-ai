@@ -240,6 +240,8 @@ describe("Claude transcript lookup after reconnect", () => {
 });
 
 jest.mock("@cocalc/backend/podman", () => ({
+  // the real wrappers, over this test's child_process mocks
+  ...jest.requireActual("@cocalc/backend/podman"),
   mountArg: jest.fn(
     ({ source, target, readOnly }) =>
       `mount:${source}:${target}:${readOnly === true}`,

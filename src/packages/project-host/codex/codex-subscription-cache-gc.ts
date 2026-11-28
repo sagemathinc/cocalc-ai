@@ -1,10 +1,9 @@
-import { execFile } from "node:child_process";
+import { execFilePodman } from "@cocalc/backend/podman";
 import type { Dirent } from "node:fs";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
-import { podmanEnv } from "@cocalc/backend/podman/env";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { isValidUUID } from "@cocalc/util/misc";
 import { PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME } from "./codex-runtime-paths";
@@ -33,15 +32,10 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 
 function execPodman(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(
-      "podman",
-      args,
-      { encoding: "utf8", env: podmanEnv() },
-      (err, stdout) => {
-        if (err) reject(err);
-        else resolve(stdout ?? "");
-      },
-    );
+    execFilePodman(args, {}, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout ?? "");
+    });
   });
 }
 

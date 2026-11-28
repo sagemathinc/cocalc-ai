@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   cliConnectorTurnContext,
   type CliConnectorTurnToken,
@@ -11,13 +11,21 @@ import {
   writeCliConnectorTools,
 } from "./cli-connector-files";
 import { agentNetworkSelfContext } from "./agent-network-self";
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, join, isAbsolute } from "node:path";
 import { URL } from "node:url";
 import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
+import {
+  execFilePodman,
+  spawnPodmanPiped,
+  type PodmanLaunchPolicy,
+} from "@cocalc/backend/podman";
+import {
+  execLaunchPolicy,
+  sideLaunchPolicy,
+} from "@cocalc/project-runner/run/podman-launch";
 import { argsJoin } from "@cocalc/util/args";
 import { CODEX_APP_SERVER_FEATURE_ARGS } from "@cocalc/util/ai/codex";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
@@ -347,6 +355,17 @@ export function resolveProjectRuntimeApiUrl(explicit?: string): string {
     `http://host.containers.internal:${`${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`.trim() || "9100"}`
   );
 }
+
+// Throws on a host not on keep-id (SideLaunchUnavailableError).
+function refuseCodexOffKeepId(projectId: string): void {
+  execLaunchPolicy(projectContainerName(projectId), {
+    userArgs: ["-u", CODEX_EXEC_USER],
+    feature: "codex",
+  });
+}
+
+// The user Codex execs run as (inside the container's own map).
+const CODEX_EXEC_USER = `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`;
 
 function projectContainerName(projectId: string): string {
   return `project-${projectId}`;
@@ -1665,19 +1684,22 @@ async function podman(
     timeoutMs = PODMAN_TIMEOUT_MS,
     label,
     launcher,
-    env = podmanEnv(),
+    env,
+    policy,
   }: {
     timeoutMs?: number;
     label?: string;
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>;
     env?: NodeJS.ProcessEnv;
+    policy?: PodmanLaunchPolicy;
   } = {},
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    execFile(
-      launcher?.command ?? "podman",
-      launcher ? [...launcher.argsPrefix, ...args] : args,
+    execFilePodman(
+      args,
       {
+        launcher,
+        policy,
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
         env,
@@ -1712,13 +1734,11 @@ async function podmanOutput(
   }: { timeoutMs?: number; label?: string } = {},
 ): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
-    execFile(
-      "podman",
+    execFilePodman(
       args,
       {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
-        env: podmanEnv(),
       },
       (err, stdout, stderr) => {
         if (!err) {
@@ -1944,6 +1964,8 @@ async function ensureContainer({
     home,
     config: { image },
   });
+  // The launch gate: refused on a separate host (no podman call at all).
+  const launchPolicy = sideLaunchPolicy("codex", "run");
   const name = codexContainerName(projectId, authRuntime.contextId);
   const { containerPath, mount } = await resolveCodexBinary();
   const codexHome =
@@ -2009,13 +2031,7 @@ async function ensureContainer({
     "--rm",
   );
   // Codex should see the same sudo-capable project environment as terminals.
-  args.push(
-    `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
-  );
-  args.push(
-    "--user",
-    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
-  );
+  args.push(...launchPolicy.usernsArgs);
   const selectedNetwork = networkArgument();
   args.push(selectedNetwork);
   const hostAliasAddress =
@@ -2201,6 +2217,7 @@ async function ensureContainer({
     label: "container run",
     launcher: projectPoolPodmanLauncher(projectId),
     env: spawnEnv,
+    policy: launchPolicy,
   });
   try {
     await verifyProjectContainerInPool({ project_id: projectId, name });
@@ -2247,7 +2264,7 @@ export type SpawnCodexInProjectContainerOptions = {
 };
 
 export type SpawnCodexInProjectContainerResult = {
-  proc: ReturnType<typeof spawn>;
+  proc: ChildProcessWithoutNullStreams;
   cmd: string;
   args: string[];
   cwd?: string;
@@ -2271,6 +2288,9 @@ export async function spawnCodexInProjectContainer({
   credentialId,
   syncSubscriptionAuthOnExit = true,
 }: SpawnCodexInProjectContainerOptions): Promise<SpawnCodexInProjectContainerResult> {
+  // The launch gate, before anything else: Codex is refused on a separate
+  // host for now (no podman call at all).
+  refuseCodexOffKeepId(projectId);
   const authRuntime =
     explicitAuthRuntime ??
     (await resolveCodexAuthRuntime({
@@ -2326,7 +2346,7 @@ export async function spawnCodexInProjectContainer({
     "exec",
     "-i",
     "-u",
-    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+    CODEX_EXEC_USER,
     "--workdir",
     normalizeProjectRuntimeCwd(cwd),
     "-e",
@@ -2375,11 +2395,15 @@ export async function spawnCodexInProjectContainer({
   execArgs.push(info.name, info.codexPath, ...codexArgs);
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
   const launcher = projectPoolPodmanLauncher(projectId);
-  let proc: ReturnType<typeof spawn>;
+  let proc: ChildProcessWithoutNullStreams;
   try {
-    proc = spawn(launcher.command, [...launcher.argsPrefix, ...execArgs], {
-      stdio: ["pipe", "pipe", "pipe"],
+    proc = spawnPodmanPiped(execArgs, {
+      launcher,
       env: spawnEnv,
+      policy: execLaunchPolicy(info.name, {
+        userArgs: ["-u", CODEX_EXEC_USER],
+        feature: "codex",
+      }),
     });
   } catch (err) {
     restrictedEgress?.close();
@@ -2447,7 +2471,7 @@ type SpawnCodexAppServerInProjectRuntimeOptions = {
 };
 
 type SpawnCodexAppServerInProjectRuntimeResult = {
-  proc: ReturnType<typeof spawn>;
+  proc: ChildProcessWithoutNullStreams;
   cmd: string;
   args: string[];
   logArgs: string;
@@ -2499,6 +2523,7 @@ async function spawnCodexAppServerInProjectRuntime({
   credentialId,
   codexHome,
 }: SpawnCodexAppServerInProjectRuntimeOptions): Promise<SpawnCodexAppServerInProjectRuntimeResult> {
+  refuseCodexOffKeepId(projectId);
   const authRuntime =
     codexHome && accountId
       ? subscriptionRuntime({
@@ -2580,7 +2605,7 @@ async function spawnCodexAppServerInProjectRuntime({
     "exec",
     "-i",
     "-u",
-    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+    CODEX_EXEC_USER,
     "--workdir",
     normalizeProjectRuntimeCwd(cwd),
     "-e",
@@ -2747,11 +2772,15 @@ async function spawnCodexAppServerInProjectRuntime({
     cmd: redactPodmanArgs(execArgs),
   });
   const launcher = projectPoolPodmanLauncher(projectId);
-  let proc: ReturnType<typeof spawn>;
+  let proc: ChildProcessWithoutNullStreams;
   try {
-    proc = spawn(launcher.command, [...launcher.argsPrefix, ...execArgs], {
-      stdio: ["pipe", "pipe", "pipe"],
+    proc = spawnPodmanPiped(execArgs, {
+      launcher,
       env: spawnEnv,
+      policy: execLaunchPolicy(name, {
+        userArgs: ["-u", CODEX_EXEC_USER],
+        feature: "codex",
+      }),
     });
   } catch (err) {
     restrictedEgress?.close();

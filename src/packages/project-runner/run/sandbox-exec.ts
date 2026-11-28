@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
@@ -16,8 +15,8 @@ import {
   podmanRuntimeArgs,
   projectPoolPodmanLauncher,
 } from "./podman";
-import { mountArg } from "@cocalc/backend/podman";
-import { podmanEnv } from "@cocalc/backend/podman/env";
+import { execFilePodman, mountArg } from "@cocalc/backend/podman";
+import { execLaunchPolicy, sideLaunchPolicy } from "./podman-launch";
 import { getEnvironment } from "./env";
 import { join } from "node:path";
 import { getCoCalcMounts } from "./mounts";
@@ -162,6 +161,18 @@ export async function sandboxExec({
   if (extraEnv?.COCALC_MANAGED_JOB_SCOPE !== undefined)
     throw Error("Managed job scope is reserved for the trusted runtime");
   const script = sandboxShellScript(requestedScript, extraEnv);
+  // The launch gate: the ephemeral sidecar is refused on a separate host
+  // until it runs under the project's ids (no podman call at all). An exec
+  // into the project's own container runs under that container's map (on a
+  // separate host, the separate one), so it is allowed in every valid mode.
+  const launchPolicy = useEphemeral
+    ? sideLaunchPolicy("sandbox-exec", "run")
+    : execLaunchPolicy(`project-${project_id}`, {
+        userArgs: [
+          "-u",
+          `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+        ],
+      });
   if (onOutput && signal?.aborted)
     return { stdout: "", stderr: "", code: 130, cleanupConfirmed: true };
   signal?.throwIfAborted();
@@ -202,6 +213,7 @@ export async function sandboxExec({
       return runContainedSandboxCommand({
         project_id,
         args,
+        policy: launchPolicy,
         signal,
         timeoutMs: timeoutMs ?? 3_600_000,
         onOutput,
@@ -212,10 +224,11 @@ export async function sandboxExec({
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       let deadline: ReturnType<typeof setTimeout> | undefined;
       const stop = () => child.stdin?.end();
-      const child = execFile(
-        launcher?.command ?? "podman",
-        launcher ? [...launcher.argsPrefix, ...args] : args,
+      const child = execFilePodman(
+        args,
         {
+          launcher,
+          policy: launchPolicy,
           // OCI runtimes call getcwd before entering the container.  Never
           // inherit a deployment or project directory that may have been
           // replaced, unmounted, or made inaccessible while the host stays up.
@@ -223,7 +236,6 @@ export async function sandboxExec({
           timeout: signal ? (timeoutMs ?? 120_000) + 10_000 : timeoutMs,
           maxBuffer: Math.max(1024, maxOutputBytes ?? 10 * 1024 * 1024),
           killSignal: "SIGKILL",
-          env: podmanEnv(),
         },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (error: any, stdout?: string, stderr?: string) => {
@@ -291,13 +303,7 @@ export async function sandboxExec({
       );
       // Match the main project runtime so sudo and setuid helpers behave the
       // same way in ephemeral sidecars.
-      args.push(
-        `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
-      );
-      args.push(
-        "--user",
-        `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
-      );
+      args.push(...launchPolicy.usernsArgs);
       // execFile timeout still applies; podman itself doesn't have a timeout flag.
       if (!noNetwork) {
         const network = networkArgument();
@@ -420,10 +426,9 @@ export async function sandboxExec({
 /** Best effort: a killed run's container is removed, never left behind. */
 async function removeContainer(name: string): Promise<void> {
   await new Promise<void>((resolve) =>
-    execFile(
-      "podman",
+    execFilePodman(
       ["rm", "--force", "--time", "0", name],
-      { cwd: "/", timeout: 30_000, env: podmanEnv() },
+      { cwd: "/", timeout: 30_000 },
       (error) => {
         if (error)
           logger.warn("could not remove a killed sandbox container", {

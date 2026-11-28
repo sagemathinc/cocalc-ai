@@ -10,7 +10,9 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
-import { runtimeUidModeReport } from "./runtime-host";
+import { hostRuntimeUidMode } from "./podman-launch";
+import { lastRuntimeUidCheck, runtimeUidModeReport } from "./runtime-host";
+import type { RuntimeUidCheck } from "./runtime-uid-check";
 
 const logger = getLogger("project-runner:runtime-hardening");
 
@@ -169,19 +171,22 @@ export interface RuntimeUidModeHeartbeat {
   // a build without it) must be recognizable
   reported_at: string;
   daemon_state?: DaemonStateCheck;
+  // the self-check over the host's processes (runtime-uid-check.ts)
+  runtime_uid_check?: RuntimeUidCheck;
 }
 
 export function configuredRuntimeUidMode(): string {
-  return (
-    `${process.env.COCALC_PROJECT_RUNTIME_UID_MODE ?? ""}`.trim() || "keep-id"
-  );
+  // exactly as set (an invalid value is reported as it is)
+  return hostRuntimeUidMode().configured;
 }
 
 export function runtimeUidModeHeartbeat(
   now = new Date(),
 ): RuntimeUidModeHeartbeat {
-  const report = runtimeUidModeReport();
+  const report = runtimeUidModeReport(now);
   const daemon_state = lastDaemonState;
+  const check = lastRuntimeUidCheck();
+  const runtime_uid_check = check ? { runtime_uid_check: check } : {};
   if (report == null) {
     return {
       configured: configuredRuntimeUidMode(),
@@ -189,6 +194,7 @@ export function runtimeUidModeHeartbeat(
       label: "undecided",
       reported_at: now.toISOString(),
       ...(daemon_state ? { daemon_state } : {}),
+      ...runtime_uid_check,
     };
   }
   return {
@@ -199,5 +205,6 @@ export function runtimeUidModeHeartbeat(
     label: report.label,
     reported_at: now.toISOString(),
     ...(daemon_state ? { daemon_state } : {}),
+    ...runtime_uid_check,
   };
 }

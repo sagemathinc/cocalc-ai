@@ -259,23 +259,45 @@ describe("runtime host", () => {
     ]);
   });
 
-  it("never shows a partial or fallen-back host as plainly separate or keep-id", () => {
+  it("labels: plainly separate only when verified, fresh and drained", () => {
+    const now = new Date("2026-11-27T12:00:00.000Z");
+    const ago = (s: number) => new Date(now.getTime() - s * 1000).toISOString();
+    const check = (o: any = {}) => ({
+      invariant: "x",
+      violations: 0,
+      unknown: 0,
+      partial: 3,
+      old_mode_containers: 0,
+      checked_at: ago(40),
+      ...o,
+    });
+    const sep = { configured: "separate", effective: "separate" as const };
+    const label = (status: any, c?: any) =>
+      runtimeUidModeLabel(status, { check: c, now, intervalMs: 60_000 });
+    expect(label(sep, check())).toBe("separate (verified 40 s ago)");
+    expect(label(sep)).toBe("separate (unverified)");
+    expect(label(sep, check({ checked_at: ago(121) }))).toBe(
+      "separate (unverified)",
+    );
+    expect(label(sep, check({ unknown: 1 }))).toBe("separate (unverified)");
+    expect(label(sep, check({ violations: 2 }))).toBe("separate (violation)");
+    expect(label(sep, check({ old_mode_containers: 2, violations: 5 }))).toBe(
+      "transition (2 old-mode containers running)",
+    );
     expect(
-      runtimeUidModeLabel({ configured: "separate", effective: "separate" }),
-    ).toBe("separate (partial)");
+      label(
+        { configured: "separate", effective: "keep-id", reason: "host-unsafe" },
+        check(),
+      ),
+    ).toBe("refused (host-unsafe)");
+    expect(label({ configured: "seperate", effective: "keep-id" })).toBe(
+      "refused (mode-invalid)",
+    );
+    const keep = { configured: "keep-id", effective: "keep-id" as const };
+    expect(label(keep, check({ violations: null }))).toBe("keep-id");
     expect(
-      runtimeUidModeLabel({
-        configured: "separate",
-        effective: "keep-id",
-        reason: "host-unsafe",
-      }),
-    ).toBe("keep-id (fallback: host-unsafe)");
-    expect(
-      runtimeUidModeLabel({ configured: "seperate", effective: "keep-id" }),
-    ).toBe("keep-id (fallback: unknown)");
-    expect(
-      runtimeUidModeLabel({ configured: "keep-id", effective: "keep-id" }),
-    ).toBe("keep-id");
+      label(keep, check({ violations: null, old_mode_containers: 1 })),
+    ).toBe("mixed (1 separate container running)");
   });
 });
 
@@ -323,7 +345,7 @@ describe("runtime identity for a start", () => {
     const { inputs, counts } = startInputs(state);
     const first = await runtimeIdentityForStart({ inputs });
     expect(first.mode).toBe("separate");
-    expect(runtimeUidModeReport()?.label).toBe("separate (partial)");
+    expect(runtimeUidModeReport()?.label).toBe("separate (unverified)");
 
     // /mnt/cocalc loses nosuid between two starts; nothing clears the cache
     state.mountinfo = MOUNTINFO.replace(
@@ -338,9 +360,7 @@ describe("runtime identity for a start", () => {
       reason: "host-unsafe",
       detail: expect.stringContaining("/mnt/cocalc is not mounted nosuid"),
     });
-    expect(runtimeUidModeReport()?.label).toBe(
-      "keep-id (fallback: host-unsafe)",
-    );
+    expect(runtimeUidModeReport()?.label).toBe("refused (host-unsafe)");
     expect(counts).toEqual({ probe: 1, maps: 1, harden: 2 });
   });
 

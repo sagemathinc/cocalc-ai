@@ -87,6 +87,66 @@ describe("sandboxExec", () => {
     );
   });
 
+  it("the ephemeral sidecar is refused on a separate or invalid host, without any podman call", async () => {
+    const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    try {
+      for (const mode of ["separate", "x"]) {
+        process.env.COCALC_PROJECT_RUNTIME_UID_MODE = mode;
+        await expect(
+          sandboxExec({
+            project_id: "00000000-0000-4000-8000-000000000001",
+            script: "true",
+            useEphemeral: true,
+          }),
+        ).rejects.toThrow("not available on this host yet");
+      }
+      expect(execFileMock).not.toHaveBeenCalled();
+      expect(runContainedSandboxCommand).not.toHaveBeenCalled();
+    } finally {
+      if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+    }
+  });
+
+  it("an invalid mode refuses even an exec into the project's own container, without any podman call", async () => {
+    const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    try {
+      process.env.COCALC_PROJECT_RUNTIME_UID_MODE = "Separate";
+      await expect(
+        sandboxExec({
+          project_id: "00000000-0000-4000-8000-000000000001",
+          script: "true",
+        }),
+      ).rejects.toThrow("not available on this host yet");
+      expect(execFileMock).not.toHaveBeenCalled();
+      expect(runContainedSandboxCommand).not.toHaveBeenCalled();
+    } finally {
+      if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+    }
+  });
+
+  it("an exec into the project's own container is allowed on a separate host (its map)", async () => {
+    const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      callback(undefined, "ok", "");
+    });
+    try {
+      process.env.COCALC_PROJECT_RUNTIME_UID_MODE = "separate";
+      await sandboxExec({
+        project_id: "00000000-0000-4000-8000-000000000001",
+        script: "true",
+      });
+      const args = execFileMock.mock.calls[0][1] as string[];
+      expect(args).toContain("exec");
+      expect(args).toContain("project-00000000-0000-4000-8000-000000000001");
+      expect(args.some((x) => x.startsWith("--userns"))).toBe(false);
+    } finally {
+      if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+    }
+  });
+
   it("passes scoped CLI file paths only to the project exec", async () => {
     execFileMock.mockImplementation((_command, _args, _options, callback) => {
       callback(undefined, "", "");

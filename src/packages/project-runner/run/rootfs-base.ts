@@ -1,9 +1,8 @@
 import { join } from "node:path";
+import { executePodman, spawnPodman } from "@cocalc/backend/podman";
 import { data } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { executeCode } from "@cocalc/backend/execute-code";
-import { podmanEnv } from "@cocalc/backend/podman/env";
-import { spawn } from "node:child_process";
 import { readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
@@ -228,13 +227,13 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         progress: 59,
         desc: `collecting OCI image metadata for ${image}...`,
       });
-      const { stdout: inspect } = await executeCode({
-        err_on_exit: true,
-        verbose: true,
-        command: "podman",
-        args: ["image", "inspect", image, "--format", "{{json .}}"],
-        env: podmanEnv(),
-      });
+      const { stdout: inspect } = await executePodman(
+        ["image", "inspect", image, "--format", "{{json .}}"],
+        {
+          err_on_exit: true,
+          verbose: true,
+        },
+      );
 
       reportProgress({ progress: 60, desc: `extracting ${image}...` });
 
@@ -258,7 +257,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
 `,
       ];
       logger.debug(`extracting ${image}...`);
-      const child = spawn("podman", args, { env: podmanEnv() });
+      const child = spawnPodman(args);
       await rsyncProgressReporter({
         child,
         progress: ({ progress, speed, eta }) => {
@@ -301,11 +300,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         // remove pulled registry images to save space. Local
         // containers-storage images are packaging artifacts and must remain
         // available so stale cache refreshes do not try to pull them.
-        await executeCode({
-          command: "podman",
-          args: ["image", "rm", image],
-          env: podmanEnv(),
-        });
+        await executePodman(["image", "rm", image]);
       }
       reportProgress({ progress: 100, desc: `pulled and extracted ${image}` });
       return baseImagePath;
@@ -321,11 +316,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
           preflightPath,
         ]);
         if (!isContainersStorageImage(image)) {
-          await executeCode({
-            command: "podman",
-            args: ["image", "rm", image],
-            env: podmanEnv(),
-          });
+          await executePodman(["image", "rm", image]);
         }
       } catch {}
       reportProgress({

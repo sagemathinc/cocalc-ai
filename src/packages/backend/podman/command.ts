@@ -1,8 +1,33 @@
-import { executeCode } from "@cocalc/backend/execute-code";
+import {
+  execFile,
+  spawn,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+  type ExecFileOptions,
+  type SpawnOptions,
+} from "node:child_process";
+import type { executeCode as ExecuteCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "./env";
+import {
+  checkPodmanLaunch,
+  checkPodmanLauncher,
+  PODMAN_ENV_OVERRIDES_REFUSED,
+  PodmanLaunchRefused,
+  type PodmanLauncher,
+  type PodmanLaunchPolicy,
+} from "./launch-policy";
 
 const logger = getLogger("podman");
+
+// Loaded on first use: modules that only spawn podman (and tests that mock
+// child_process) don't load execute-code and its process monitoring.
+async function executeCode(
+  opts: Parameters<typeof ExecuteCode>[0],
+): ReturnType<typeof ExecuteCode> {
+  const { executeCode } = await import("@cocalc/backend/execute-code");
+  return await executeCode(opts);
+}
 
 type PodmanOpts =
   | number
@@ -11,10 +36,9 @@ type PodmanOpts =
       // treated as milliseconds and converted to seconds.
       timeout?: number;
       sudo?: boolean;
-      launcher?: {
-        command: string;
-        argsPrefix: string[];
-      };
+      launcher?: PodmanLauncher;
+      // required for create, run, exec and build (see ./launch-policy.ts)
+      policy?: PodmanLaunchPolicy;
     };
 
 const DEFAULT_PODMAN_TIMEOUT_S = 30 * 60;
@@ -48,9 +72,14 @@ export default async function podman(args: string[], opts: PodmanOpts = {}) {
     timeout: rawTimeout,
     sudo,
     launcher,
+    policy,
   } = typeof opts === "number"
-    ? { timeout: opts, sudo: false, launcher: undefined }
+    ? { timeout: opts, sudo: false, launcher: undefined, policy: undefined }
     : opts;
+  // Every podman invocation goes through here or spawnPodman: the place that
+  // refuses a launch without the gate's decision.
+  checkPodmanLaunch(args, policy);
+  checkPodmanLauncher(launcher);
   const timeout = normalizeTimeoutSeconds(rawTimeout);
   return await runPodman(args, timeout, Boolean(sudo), launcher, false);
 }
@@ -59,7 +88,7 @@ async function runPodman(
   args: string[],
   timeout: number,
   sudo: boolean,
-  launcher: { command: string; argsPrefix: string[] } | undefined,
+  launcher: PodmanLauncher | undefined,
   retried: boolean,
 ) {
   logger.debug(`${sudo ? "sudo " : ""}podman`, summarizePodmanInvocation(args));
@@ -94,6 +123,128 @@ async function runPodman(
     logger.debug("podman run error", { err: `${err}` });
     throw err;
   }
+}
+
+/**
+ * Spawn podman (streaming callers). Like podman(): create, run, exec and
+ * build need the launch gate's policy. env is merged over podmanEnv().
+ */
+export function spawnPodman(
+  args: string[],
+  opts: SpawnOptions & {
+    launcher?: PodmanLauncher;
+    policy?: PodmanLaunchPolicy;
+  } = {},
+): ChildProcess {
+  const { launcher, policy, env, ...spawnOptions } = opts;
+  checkPodmanLaunch(args, policy);
+  checkPodmanLauncher(launcher);
+  refuseEnvOverrides(env);
+  const command = launcher?.command ?? "podman";
+  const cmdArgs = launcher ? [...launcher.argsPrefix, ...args] : args;
+  return spawn(command, cmdArgs, {
+    ...spawnOptions,
+    env: { ...podmanEnv(), ...(env ?? {}) },
+  });
+}
+
+/**
+ * executeCode for podman: the same options (timeout in seconds, err_on_exit,
+ * ...) and result, with podman's environment and the launch rules.
+ */
+export async function executePodman(
+  args: string[],
+  opts: {
+    timeout?: number;
+    err_on_exit?: boolean;
+    verbose?: boolean;
+    cwd?: string;
+    sudo?: boolean;
+    launcher?: PodmanLauncher;
+    policy?: PodmanLaunchPolicy;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+) {
+  const { sudo, launcher, policy, env, verbose = false, ...rest } = opts;
+  checkPodmanLaunch(args, policy);
+  checkPodmanLauncher(launcher);
+  refuseEnvOverrides(env);
+  const command = launcher?.command ?? (sudo ? "sudo" : "podman");
+  const cmdArgs = launcher
+    ? [...launcher.argsPrefix, ...args]
+    : sudo
+      ? ["podman", ...args]
+      : args;
+  return await executeCode({
+    ...rest,
+    verbose,
+    command,
+    args: cmdArgs,
+    env: { ...podmanEnv(), ...(env ?? {}) },
+  });
+}
+
+/** spawnPodman with all three stdio streams piped. */
+export function spawnPodmanPiped(
+  args: string[],
+  opts: Omit<Parameters<typeof spawnPodman>[1], "stdio"> = {},
+): ChildProcessWithoutNullStreams {
+  return spawnPodman(args, {
+    ...opts,
+    stdio: ["pipe", "pipe", "pipe"],
+  }) as ChildProcessWithoutNullStreams;
+}
+
+// containers.conf and friends can set the user namespace: not from callers
+function refuseEnvOverrides(env: NodeJS.ProcessEnv | undefined): void {
+  if (env == null) return;
+  const own = podmanEnv();
+  for (const key of PODMAN_ENV_OVERRIDES_REFUSED) {
+    if (env[key] !== undefined && env[key] !== own[key]) {
+      throw new PodmanLaunchRefused(
+        "env-override",
+        `podman: ${key} can't be set by the caller`,
+      );
+    }
+  }
+}
+
+/**
+ * execFile for podman, for callers whose arguments must not be logged (they
+ * carry secrets): nothing about args is logged here. Same launch rules as
+ * podman(); env is merged over podmanEnv().
+ */
+export function execFilePodman(
+  args: string[],
+  opts: ExecFileOptions & {
+    launcher?: PodmanLauncher;
+    policy?: PodmanLaunchPolicy;
+  },
+  callback: (
+    error:
+      | (Error & { code?: unknown; killed?: boolean; signal?: unknown })
+      | null,
+    stdout: string,
+    stderr: string,
+  ) => void,
+): ChildProcess {
+  const { launcher, policy, env, ...execOptions } = opts;
+  checkPodmanLaunch(args, policy);
+  checkPodmanLauncher(launcher);
+  refuseEnvOverrides(env);
+  const command = launcher?.command ?? "podman";
+  const cmdArgs = launcher ? [...launcher.argsPrefix, ...args] : args;
+  return execFile(
+    command,
+    cmdArgs,
+    {
+      ...execOptions,
+      encoding: "utf8",
+      env: { ...podmanEnv(), ...(env ?? {}) },
+    },
+    (error, stdout, stderr) =>
+      callback(error as any, `${stdout ?? ""}`, `${stderr ?? ""}`),
+  );
 }
 
 function summarizePodmanInvocation(args: string[]) {

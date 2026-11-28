@@ -65,6 +65,8 @@ jest.mock("@cocalc/backend/podman/env", () => ({
   podmanEnv: () => ({ ONLY_PODMAN: "yes" }),
 }));
 jest.mock("@cocalc/backend/podman", () => ({
+  // the real wrappers, over this test's child_process mocks
+  ...jest.requireActual("@cocalc/backend/podman"),
   mountArg: ({ source, target, readOnly }) =>
     `mount:${source}:${target}:${readOnly}`,
 }));
@@ -92,10 +94,8 @@ jest.mock("@cocalc/project-runner/run/podman", () => ({
   podmanRuntimeArgs: async () => [],
   projectSecretsHostPath: () => "/project-secrets",
   forceKillContainerProcesses: (...args) => mockForceKill(...args),
-  projectPoolPodmanLauncher: () => ({
-    command: "pool-launcher",
-    argsPrefix: ["project-pool", "podman"],
-  }),
+  projectPoolPodmanLauncher: () =>
+    require("@cocalc/backend/podman/launcher-mint").mintPodmanLauncher("pool-launcher", ["project-pool", "podman"]),
 }));
 jest.mock("../codex/codex-project", () => ({
   ensureProjectContainerRunning: (...args) => mockStart(...args),
@@ -235,6 +235,24 @@ test("account credentials are exposed only through a revocable relay mount", asy
     recursive: true,
     force: true,
   });
+});
+
+test("the sidecar is refused on a separate or invalid host, without any podman call", async () => {
+  const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+  try {
+    for (const mode of ["separate", "keep id"]) {
+      process.env.COCALC_PROJECT_RUNTIME_UID_MODE = mode;
+      await expect(launchHarnessInProject(binding)).rejects.toThrow(
+        "not available on this host yet",
+      );
+    }
+    expect(mockExec).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
+  } finally {
+    if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+  }
 });
 
 test("sidecar preserves structured argv, project networking and pool containment", async () => {

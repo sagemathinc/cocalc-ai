@@ -5,6 +5,7 @@
 
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { mintPodmanLaunchPolicy } from "@cocalc/backend/podman/launch-policy-mint";
 import { runContainedSandboxCommand } from "@cocalc/project-runner/run/sandbox-command-containment";
 import {
   createRenewableCliLease,
@@ -27,6 +28,14 @@ jest.mock("@cocalc/backend/podman/env", () => ({
 }));
 
 const PROJECT = "00000000-0000-4000-8000-000000000001";
+
+// a policy as the launch gate makes it for an exec into the container
+const execPolicy = mintPodmanLaunchPolicy({
+  kind: "exec-sidecar",
+  verb: "exec",
+  usernsArgs: [],
+  container: "fixture",
+});
 
 // Alpha host1, 2026-10-28 15:38Z: a cancelled job's helper could not take
 // the lifecycle lock for its cleanup, so it exited without a cleanup proof;
@@ -73,6 +82,7 @@ test("a cancel while maintenance holds the lock reopens tools on the late proof"
         runContainedSandboxCommand({
           project_id: PROJECT,
           args: ["exec", "fixture"],
+          policy: execPolicy,
           signal,
           ...options,
         }),

@@ -7,7 +7,6 @@ Run: python3 assemble.test.py   (stdlib only; run in CI by `pnpm test:checks`)
 from __future__ import annotations
 
 import ast
-import hashlib
 import os
 import re
 import sys
@@ -21,12 +20,6 @@ sys.path.insert(0, str(HERE))
 import assemble  # noqa: E402
 import lint  # noqa: E402
 
-# One-time gate for the change that split bootstrap.py into parts: the parts
-# must assemble to exactly the bytes bootstrap.py had before the split. The
-# first change that intentionally alters bootstrap.py removes this pin; from
-# then on test_committed_matches_parts keeps bootstrap.py and parts/ in step.
-BASELINE_SHA256 = "f19f7696551b27efe1402a6ab108230e570a72c32620f6fc47e6637ba6e303a5"
-BASELINE_SIZE = 830981
 
 DELIMITER = re.compile(rb"([rRuU]?)('''|\"\"\")$")
 
@@ -47,11 +40,6 @@ def string_constants(source: bytes) -> set[str]:
 class Identity(unittest.TestCase):
     def test_committed_matches_parts(self):
         self.assertEqual(assemble.assemble(), committed())
-
-    def test_baseline_bytes(self):
-        data = assemble.assemble()
-        self.assertEqual(len(data), BASELINE_SIZE)
-        self.assertEqual(hashlib.sha256(data).hexdigest(), BASELINE_SHA256)
 
     def test_check_mode_is_read_only(self):
         before = os.stat(HERE / "bootstrap.py")

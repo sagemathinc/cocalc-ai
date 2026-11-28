@@ -196,6 +196,7 @@ import { runPrivilegedRmHelper } from "./privileged-rm-helper";
 import { initProjectTouchService } from "./touch-service";
 import { initProjectStorageInfoService } from "./storage-info-service";
 import { initSharedBrowserService } from "./shared-browser-containers";
+import { startRuntimeUidMonitor } from "@cocalc/project-runner/run/runtime-uid-monitor";
 import { initProjectDocumentActivityService } from "./document-activity-service";
 import { initProjectChatSessionService } from "./project-chat-session-service";
 import { initProjectEditJournalService } from "./edit-journal-service";
@@ -561,6 +562,12 @@ export async function main(
   const projectArchiveInfoService =
     await initProjectArchiveInfoService(conatClient);
   const sharedBrowserService = await initSharedBrowserService(conatClient);
+  // The host's runtime uid state, reported without waiting for a project
+  // start; on a host not on keep-id it also stops side containers left from
+  // an earlier mode (never projects).
+  void startRuntimeUidMonitor().catch((err) =>
+    logger.warn("runtime uid monitor failed to start", { err: `${err}` }),
+  );
 
   // ACP runs inside project-host in container mode (no env flag needed).
   setPreferContainerExecutor(true);

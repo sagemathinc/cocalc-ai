@@ -3,11 +3,39 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+const mockPodman = jest.fn();
+jest.mock("@cocalc/backend/podman", () => ({
+  ...jest.requireActual("@cocalc/backend/podman"),
+  podman: (...args: any[]) => mockPodman(...args),
+}));
+
+import { SHARED_BROWSER_APP_ID } from "@cocalc/util/shared-browser";
 import {
   oneAtATime,
   ownNetworkArgument,
+  startSharedBrowserContainer,
   validateStartRequest,
 } from "./shared-browser-containers";
+
+describe("on a separate or invalid host", () => {
+  it("is refused, without any podman call", async () => {
+    const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    try {
+      for (const mode of ["separate", "nonsense"]) {
+        process.env.COCALC_PROJECT_RUNTIME_UID_MODE = mode;
+        await expect(
+          startSharedBrowserContainer("33333333-3333-4333-8333-333333333333", {
+            appId: SHARED_BROWSER_APP_ID,
+          } as any),
+        ).rejects.toThrow("not available on this host yet");
+      }
+      expect(mockPodman).not.toHaveBeenCalled();
+    } finally {
+      if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
+    }
+  });
+});
 
 describe("a project's browser containers", () => {
   it("start and stop one at a time, past failures", async () => {

@@ -1,7 +1,7 @@
 import { executeCode } from "@cocalc/backend/execute-code";
+import { executePodman } from "@cocalc/backend/podman";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import getLogger from "@cocalc/backend/logger";
-import { podmanEnv } from "@cocalc/backend/podman/env";
 import type { HostCurrentMetrics } from "@cocalc/conat/hub/api/hosts";
 import { getDatabase, initDatabase } from "@cocalc/lite/hub/sqlite/database";
 import {
@@ -209,18 +209,18 @@ export function clearActiveStorageReservations(): number {
 
 async function hostHasProjectContainers(): Promise<boolean> {
   try {
-    const result = await executeCode({
-      command: "podman",
-      args: ["ps", "-aq", "--filter", "name=project-"],
-      timeout: 15,
-      err_on_exit: false,
-      verbose: false,
-      env: {
-        ...podmanEnv(),
-        LC_ALL: "C.UTF-8",
-        LANG: "C.UTF-8",
+    const result = await executePodman(
+      ["ps", "-aq", "--filter", "name=project-"],
+      {
+        timeout: 15,
+        err_on_exit: false,
+        verbose: false,
+        env: {
+          LC_ALL: "C.UTF-8",
+          LANG: "C.UTF-8",
+        },
       },
-    });
+    );
     if (result.exit_code !== 0) {
       logger.debug("unable to inspect project containers for reservation gc", {
         exit_code: result.exit_code,

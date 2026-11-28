@@ -26,6 +26,7 @@ import {
 } from "@cocalc/server/hosts/condition-alert";
 import { runtimeUidModeLabel } from "@cocalc/project-runner/run/runtime-host";
 import type { RuntimeUidModeStatus } from "@cocalc/project-runner/run/runtime-identity";
+import type { RuntimeUidCheck } from "@cocalc/project-runner/run/runtime-uid-check";
 
 const logger = getLogger("server:hosts:host-integrity-health");
 
@@ -58,6 +59,7 @@ export type HostIntegrityCondition = {
     | "watcher"
     | "reboot"
     | "runtime-uid-fallback"
+    | "runtime-uid-violation"
     | "daemon-state"
     | "watcher-mode"
     | "hardening"
@@ -78,8 +80,9 @@ export interface HostIntegritySummary {
   conditions: HostIntegrityCondition[];
   // every alert subject of the hosts that report (whether raised or not)
   reporting_subjects: string[];
-  // hosts per runtime uid mode label ("keep-id", "separate (partial)",
-  // "keep-id (fallback: ...)", "undecided", "unreported")
+  // hosts per runtime uid mode label, without its counts and ages ("keep-id",
+  // "separate (verified)", "separate (unverified)", "separate (violation)",
+  // "transition", "mixed", "refused (reason)", "undecided", "unreported")
   runtime_uid_modes: Record<string, number>;
   // hosts per exec monitor state ("available", "off", ...; "unreported" for
   // watchers that predate it), and hosts with project data layout mismatches
@@ -95,6 +98,7 @@ const SUBJECTS: Record<HostIntegrityCondition["kind"], string> = {
   config: "host configuration changed",
   reboot: "reboot pending for updates",
   "runtime-uid-fallback": "separate runtime uid not in effect",
+  "runtime-uid-violation": "runtime uid self-check violation",
   "daemon-state": "daemon state not private",
   "watcher-mode": "integrity watcher mode differs",
   hardening: "project data layout",
@@ -111,6 +115,7 @@ const WATCHER_KINDS: HostIntegrityCondition["kind"][] = [
 ];
 const RUNTIME_UID_KINDS: HostIntegrityCondition["kind"][] = [
   "runtime-uid-fallback",
+  "runtime-uid-violation",
   "daemon-state",
 ];
 const MAX_REPORT_TEXT = 200;
@@ -123,6 +128,43 @@ export interface RuntimeUidModeView {
   label: string;
   reported_at: string;
   daemon_state?: { ok: boolean; problem?: string; restored?: boolean };
+  // the host's self-check over its processes (runtime-uid-check.ts)
+  check?: RuntimeUidCheck;
+}
+
+function count(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+/** The self-check's counts, if well-formed (its detail is not kept). */
+function normalizeRuntimeUidCheck(raw: unknown): RuntimeUidCheck | undefined {
+  if (raw == null || typeof raw !== "object") return undefined;
+  const value = raw as Record<string, unknown>;
+  const violations = value.violations === null ? null : count(value.violations);
+  const unknown = count(value.unknown);
+  const partial = count(value.partial);
+  const old_mode_containers = count(value.old_mode_containers);
+  const checked_at = text(value.checked_at);
+  if (
+    violations === undefined ||
+    unknown == null ||
+    partial == null ||
+    old_mode_containers == null ||
+    checked_at == null ||
+    ms(checked_at) == null
+  ) {
+    return undefined;
+  }
+  return {
+    invariant: text(value.invariant) ?? "",
+    violations,
+    unknown,
+    partial,
+    old_mode_containers,
+    checked_at,
+  };
 }
 
 function text(value: unknown): string | undefined {
@@ -150,7 +192,9 @@ export function normalizeRuntimeUidMode(
   const reported_at = text(value.reported_at);
   if (!configured || !label || !reported_at) return undefined;
   const state = value.daemon_state as Record<string, unknown> | undefined;
+  const check = normalizeRuntimeUidCheck(value.runtime_uid_check);
   return {
+    ...(check ? { check } : {}),
     configured,
     effective,
     ...(text(value.reason) ? { reason: text(value.reason) } : {}),
@@ -173,20 +217,32 @@ export function normalizeRuntimeUidMode(
   };
 }
 
-/** The label shown for a host: partial is never shown as separate, and an
- * undecided host never as either mode. Derived here from the reported fields
- * with project-runner's own labelling, never taken from the host's label. */
+/** The label shown for a host: separate is verified only by a fresh
+ * self-check with nothing wrong or unknown, and an undecided host is never
+ * shown as either mode. Derived here from the reported fields with
+ * project-runner's own labelling, never taken from the host's label. The
+ * check's age is measured from the report (the host's clock), and counts and
+ * ages are left out so hosts in the same state count together. */
 function runtimeUidLabel(mode: RuntimeUidModeView): string {
   if (mode.effective === "undecided") {
     return mode.configured === "keep-id"
       ? "undecided"
       : `undecided (configured ${mode.configured})`;
   }
-  return runtimeUidModeLabel({
-    configured: mode.configured,
-    effective: mode.effective,
-    reason: mode.reason as RuntimeUidModeStatus["reason"],
-  });
+  const label = runtimeUidModeLabel(
+    {
+      configured: mode.configured,
+      effective: mode.effective,
+      reason: mode.reason as RuntimeUidModeStatus["reason"],
+    },
+    {
+      check: mode.check,
+      now: new Date(ms(mode.reported_at) ?? Date.now()),
+    },
+  );
+  return label
+    .replace(/^separate \(verified .*\)$/, "separate (verified)")
+    .replace(/^(transition|mixed) \(.*\)$/, "$1");
 }
 
 // How long an exec monitor may still be "starting" after the watcher started
@@ -356,19 +412,40 @@ function runtimeUidConditions(
   const label = hostLabel(row);
   const base = { host_id: row.id, host_name: row.name };
   const conditions: HostIntegrityCondition[] = [];
-  // Configured separate but projects start as keep-id: never only a label.
+  // Configured separate (or invalid) but the separate identity isn't
+  // available: project starts are refused, never only a label.
   if (mode.configured !== "keep-id" && mode.effective === "keep-id") {
-    const reason = mode.reason ?? "unknown";
+    const reason =
+      mode.configured === "separate"
+        ? (mode.reason ?? "unknown")
+        : "mode-invalid";
     conditions.push({
       ...base,
       kind: "runtime-uid-fallback",
-      level: "warning",
+      level: "critical",
       subject: subject(row, "runtime-uid-fallback"),
       facts: [
-        `${label}: runtime uid mode ${mode.configured} is configured, but projects start as keep-id (reason: ${reason})`,
+        `${label}: runtime uid mode ${mode.configured} is configured, but the separate identity is not available, so project starts are refused (reason: ${reason})`,
       ],
       details: [
-        `${label}: runtime uid mode ${mode.configured} configured, keep-id in effect (reason: ${reason}${mode.detail ? `; ${mode.detail}` : ""})`,
+        `${label}: runtime uid mode ${mode.configured} configured, project starts refused (reason: ${reason}${mode.detail ? `; ${mode.detail}` : ""})`,
+      ],
+    });
+  }
+  // Processes of the runtime uid outside the allowed set: project code may
+  // run as the host-services uid. The facts stay stable while it lasts.
+  const violations = mode.check?.violations ?? 0;
+  if (mode.configured !== "keep-id" && violations > 0) {
+    conditions.push({
+      ...base,
+      kind: "runtime-uid-violation",
+      level: "critical",
+      subject: subject(row, "runtime-uid-violation"),
+      facts: [
+        `${label}: the runtime uid self-check found processes of the host-services uid outside the allowed set`,
+      ],
+      details: [
+        `${label}: runtime uid self-check: ${violations} violation${violations === 1 ? "" : "s"}, ${mode.check!.unknown} unknown, ${mode.check!.old_mode_containers} old-mode container${mode.check!.old_mode_containers === 1 ? "" : "s"} (checked ${mode.check!.checked_at})`,
       ],
     });
   }
@@ -738,9 +815,14 @@ function runtimeUidModeLine(
   if (entries.length === 0) return [];
   return [
     `Runtime uid mode: ${entries.map(([label, n]) => `${n} ${label}`).join(", ")}`,
-    ...(entries.some(([label]) => label.startsWith("separate (partial)"))
+    ...(entries.some(([label]) => label === "separate (unverified)")
       ? [
-          "separate (partial): sidecar processes still run as the shared runtime uid, so the project user is not yet fully separated",
+          "separate (unverified): the host's runtime uid self-check is missing, stale, or could not judge every process",
+        ]
+      : []),
+    ...(entries.some(([label]) => label === "transition")
+      ? [
+          "transition: projects started before the switch to separate still run as the shared runtime uid until they are restarted",
         ]
       : []),
   ];

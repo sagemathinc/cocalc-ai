@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
+import { execFilePodman } from "@cocalc/backend/podman";
 import { lstat, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { podmanEnv } from "@cocalc/backend/podman/env";
 import getLogger from "@cocalc/backend/logger";
 import { reapManagedSandboxCommands } from "@cocalc/project-runner/run/sandbox-command-containment";
 import {
@@ -39,10 +38,9 @@ export async function harnessOwner(pid = process.pid): Promise<string> {
 
 function podman(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(
-      "podman",
+    execFilePodman(
       args,
-      { env: podmanEnv(), timeout: 30_000, maxBuffer: 1024 * 1024 },
+      { timeout: 30_000, maxBuffer: 1024 * 1024 },
       (error, stdout) => (error ? reject(error) : resolve(`${stdout}`)),
     );
   });

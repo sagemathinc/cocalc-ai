@@ -2124,6 +2124,9 @@ importers:
       '@types/node':
         specifier: ^22.10.10
         version: 22.20.1
+      typescript:
+        specifier: npm:@typescript/typescript6@^6.0.2
+        version: '@typescript/typescript6@6.0.2'
 
   rocket:
     dependencies:

@@ -4,8 +4,10 @@
  */
 
 let mockReport: any = null;
+let mockCheck: any = undefined;
 jest.mock("./runtime-host", () => ({
   runtimeUidModeReport: () => mockReport,
+  lastRuntimeUidCheck: () => mockCheck,
 }));
 
 import {
@@ -178,6 +180,7 @@ describe("runtimeUidModeHeartbeat", () => {
   const saved = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
   afterEach(() => {
     mockReport = null;
+    mockCheck = undefined;
     if (saved == null) delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
     else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = saved;
   });
@@ -200,16 +203,36 @@ describe("runtimeUidModeHeartbeat", () => {
       effective: "keep-id",
       reason: "map-missing-block",
       detail: "reboot pending",
-      label: "keep-id (fallback: map-missing-block)",
+      label: "refused (map-missing-block)",
     };
     expect(runtimeUidModeHeartbeat(NOW)).toEqual({
       configured: "separate",
       effective: "keep-id",
       reason: "map-missing-block",
       detail: "reboot pending",
-      label: "keep-id (fallback: map-missing-block)",
+      label: "refused (map-missing-block)",
       reported_at: NOW.toISOString(),
     });
+  });
+
+  it("carries the latest self-check, and reports an invalid mode as invalid, never as set", () => {
+    // credential-shaped: environment content must not reach the heartbeat
+    process.env.COCALC_PROJECT_RUNTIME_UID_MODE =
+      "sk-ant-SENTINEL-not-a-mode-0123456789";
+    mockCheck = {
+      invariant: "x",
+      violations: 0,
+      unknown: 0,
+      partial: 2,
+      old_mode_containers: 0,
+      checked_at: NOW.toISOString(),
+    };
+    const heartbeat = runtimeUidModeHeartbeat(NOW);
+    expect(heartbeat).toMatchObject({
+      configured: "invalid",
+      runtime_uid_check: mockCheck,
+    });
+    expect(JSON.stringify(heartbeat)).not.toContain("SENTINEL");
   });
 });
 

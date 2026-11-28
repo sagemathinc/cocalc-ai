@@ -5,6 +5,7 @@
 
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { mintPodmanLaunchPolicy } from "@cocalc/backend/podman/launch-policy-mint";
 import { runContainedSandboxCommand } from "@cocalc/project-runner/run/sandbox-command-containment";
 import { ClaudeProjectJobs } from "./claude-project-jobs";
 
@@ -17,6 +18,14 @@ jest.mock("node:child_process", () => ({
 jest.mock("@cocalc/backend/podman/env", () => ({
   podmanEnv: () => ({ PATH: "/usr/bin" }),
 }));
+
+// a policy as the launch gate makes it for an exec into the container
+const execPolicy = mintPodmanLaunchPolicy({
+  kind: "exec-sidecar",
+  verb: "exec",
+  usernsArgs: [],
+  container: "fixture",
+});
 
 test("64 abandoned bridges recover only exact confirmed reservations after close", async () => {
   jest.useFakeTimers();
@@ -57,6 +66,7 @@ test("64 abandoned bridges recover only exact confirmed reservations after close
       runContainedSandboxCommand({
         project_id,
         args: ["exec", "fixture"],
+        policy: execPolicy,
         signal,
         ...options,
       }),

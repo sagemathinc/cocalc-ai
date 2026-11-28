@@ -38,6 +38,9 @@ jest.mock("@cocalc/backend/logger", () => {
 jest.mock("@cocalc/backend/podman", () => ({
   mountArg: jest.fn(() => ""),
   podman: (...args: any[]) => mockPodman(...args),
+  // the wrapper runs podman through executeCode
+  executePodman: (args: string[], opts: any = {}) =>
+    mockExecuteCode({ command: "podman", args, ...opts }),
 }));
 
 jest.mock("@cocalc/backend/execute-code", () => ({
@@ -110,6 +113,11 @@ const mockMountProjectView = jest.fn();
 const mockHardenProjectDataRoot = jest.fn(async () => {});
 const mockProjectHasViews = jest.fn(async () => false);
 const mockUmountProjectViews = jest.fn(async () => {});
+
+// the runtime uid monitor reads the real /proc: not in these tests
+jest.mock("./runtime-uid-monitor", () => ({
+  scheduleRuntimeUidCheck: jest.fn(),
+}));
 
 jest.mock("./runtime-host", () => {
   const actual = jest.requireActual("./runtime-host");
@@ -1557,6 +1565,16 @@ describe("project-runner podman orphan fallback", () => {
   });
 
   describe("with a separate runtime uid", () => {
+    // the host is configured for separate: the launch gate allows the start
+    const previousMode = process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+    beforeEach(() => {
+      process.env.COCALC_PROJECT_RUNTIME_UID_MODE = "separate";
+    });
+    afterEach(() => {
+      if (previousMode == null)
+        delete process.env.COCALC_PROJECT_RUNTIME_UID_MODE;
+      else process.env.COCALC_PROJECT_RUNTIME_UID_MODE = previousMode;
+    });
     const P = 1073741824;
     const SEPARATE_ARGS = ["--uidmap=0:1:2001", "--uidmap=2001:4194305:1"];
     const separate = {
@@ -1650,37 +1668,39 @@ describe("project-runner podman orphan fallback", () => {
       );
     });
 
-    it("falls back to keep-id, visibly, when a source is not where the helper takes it", async () => {
-      mockViewSources!.home = "/mnt/cocalc/elsewhere";
-      await startProject();
-
+    // A host configured for separate never starts a project as keep-id: the
+    // launch gate refuses, before any view, rootfs mount or podman create.
+    const expectRefused = async (detail: RegExp) => {
+      let err: any;
+      try {
+        await startProject();
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.name).toBe("RuntimeUidModeUnavailableError");
+      expect(err.reason).toBe("host-unsafe");
+      expect(err.detail).toMatch(detail);
+      expect(err.message).toBe(
+        "This host can't start projects right now. Please try again later or contact support.",
+      );
       expect(mockMountProjectView).not.toHaveBeenCalled();
-      expect(sources()).toContain(home);
-      expect(mountRootFs).toHaveBeenCalledWith(
-        expect.objectContaining({ idmapUid: undefined }),
-      );
-      const args = createArgs();
-      expect(args.some((a) => `${a}`.startsWith("--userns=keep-id"))).toBe(
-        true,
-      );
-      expect(args).not.toEqual(expect.arrayContaining(SEPARATE_ARGS));
-      expect(runtimeUidModeReport()?.label).toBe(
-        "keep-id (fallback: host-unsafe)",
-      );
+      expect(mountRootFs).not.toHaveBeenCalled();
+      expect(
+        mockPodman.mock.calls.some(([args]) =>
+          ["create", "run"].includes((args as string[])[0]),
+        ),
+      ).toBe(false);
+      expect(runtimeUidModeReport()).toMatchObject({ reason: "host-unsafe" });
+    };
+
+    it("refuses the start when a source is not where the helper takes it", async () => {
+      mockViewSources!.home = "/mnt/cocalc/elsewhere";
+      await expectRefused(/is not/);
     });
 
-    it("falls back to keep-id when a view source's mount allows setuid", async () => {
+    it("refuses the start when a view source's mount allows setuid", async () => {
       mockMountinfo = SAFE.replace("rw,nosuid,nodev,relatime", "rw,relatime");
-      await startProject();
-
-      expect(mockMountProjectView).not.toHaveBeenCalled();
-      expect(
-        createArgs().some((a) => `${a}`.startsWith("--userns=keep-id")),
-      ).toBe(true);
-      expect(runtimeUidModeReport()).toMatchObject({
-        reason: "host-unsafe",
-        detail: expect.stringContaining("not mounted nosuid"),
-      });
+      await expectRefused(/not mounted nosuid/);
     });
 
     it("proves the rootfs unused only when none of the project's containers is alive", async () => {

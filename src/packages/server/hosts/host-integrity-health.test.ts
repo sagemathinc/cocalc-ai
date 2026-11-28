@@ -333,11 +333,13 @@ describe("project runtime uid mode health", () => {
         (c) => c.kind === "runtime-uid-fallback",
       );
       expect(fallback).toHaveLength(1);
-      expect(fallback[0].level).toBe("warning");
+      // project starts are refused on this host
+      expect(fallback[0].level).toBe("critical");
       // alerted (current facts), with the reason
       expect(fallback[0].facts.join("\n")).toContain(`reason: ${reason}`);
+      expect(fallback[0].facts.join("\n")).toContain("refused");
       expect(summary.runtime_uid_modes).toEqual({
-        [`keep-id (fallback: ${reason})`]: 1,
+        [`refused (${reason})`]: 1,
       });
     }
   });
@@ -358,7 +360,7 @@ describe("project runtime uid mode health", () => {
     ).toEqual([]);
   });
 
-  it("shows partial as partial (never plain separate), and undecided as undecided", () => {
+  it("shows separate without a self-check as unverified (never plain separate), and undecided as undecided", () => {
     const summary = summarizeHostIntegrity(
       [
         withMode(
@@ -382,7 +384,7 @@ describe("project runtime uid mode health", () => {
       NOW,
     );
     expect(summary.runtime_uid_modes).toEqual({
-      "separate (partial)": 1,
+      "separate (unverified)": 1,
       "undecided (configured separate)": 1,
       undecided: 1,
     });
@@ -390,10 +392,10 @@ describe("project runtime uid mode health", () => {
     expect(summary.conditions).toEqual([]);
     const health = hostIntegrityHealth({ status: "fulfilled", value: summary });
     expect(health.details.join("\n")).toContain(
-      "Runtime uid mode: 1 separate (partial), 1 undecided, 1 undecided (configured separate)",
+      "Runtime uid mode: 1 separate (unverified), 1 undecided, 1 undecided (configured separate)",
     );
     expect(health.details.join("\n")).toContain(
-      "the project user is not yet fully separated",
+      "self-check is missing, stale, or could not judge every process",
     );
   });
 
@@ -416,7 +418,7 @@ describe("project runtime uid mode health", () => {
       "runtime-uid-fallback",
     ]);
     expect(summary.runtime_uid_modes).toEqual({
-      "keep-id (fallback: host-unsafe)": 1,
+      "refused (host-unsafe)": 1,
     });
   });
 
@@ -468,7 +470,7 @@ describe("project runtime uid mode health", () => {
     expect(summary.runtime_uid_modes).toEqual({ unreported: 4 });
   });
 
-  it("never takes the host's label: a host claiming plain separate is shown as partial", () => {
+  it("never takes the host's label: a host claiming verified separate without a check is unverified", () => {
     const summary = summarizeHostIntegrity(
       [
         withMode(
@@ -476,7 +478,7 @@ describe("project runtime uid mode health", () => {
           report({
             configured: "separate",
             effective: "separate",
-            label: "separate",
+            label: "separate (verified 1 s ago)",
           }),
         ),
         withMode(
@@ -491,8 +493,8 @@ describe("project runtime uid mode health", () => {
       NOW,
     );
     expect(summary.runtime_uid_modes).toEqual({
-      "separate (partial)": 1,
-      "keep-id (fallback: helper-old)": 1,
+      "separate (unverified)": 1,
+      "refused (helper-old)": 1,
     });
   });
 
@@ -564,6 +566,111 @@ describe("project runtime uid mode health", () => {
     expect(skew.conditions.map((c) => c.kind)).toEqual([
       "runtime-uid-fallback",
     ]);
+  });
+
+  const check = (extra: any = {}) => ({
+    invariant: "x",
+    violations: 0,
+    unknown: 0,
+    partial: 2,
+    old_mode_containers: 0,
+    checked_at: ago(30_000),
+    ...extra,
+  });
+  const separateWith = (id: string, runtime_uid_check: any) =>
+    withMode(
+      id,
+      report({
+        configured: "separate",
+        effective: "separate",
+        label: "separate (verified 1 s ago)",
+        runtime_uid_check,
+      }),
+    );
+
+  it("labels separate hosts by their self-check, without counts or ages", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        separateWith("a", check()),
+        separateWith("b", check({ checked_at: ago(20_000) })),
+        // stale (older than two intervals before the report)
+        separateWith("c", check({ checked_at: ago(10 * 60_000) })),
+        // could not judge every process
+        separateWith("d", check({ unknown: 1 })),
+        separateWith("e", check({ old_mode_containers: 3, violations: 3 })),
+        // malformed: ignored, so unverified
+        separateWith("f", check({ violations: -1 })),
+        withMode(
+          "g",
+          report({
+            runtime_uid_check: check({
+              violations: null,
+              old_mode_containers: 1,
+            }),
+          }),
+        ),
+      ],
+      NOW,
+    );
+    expect(summary.runtime_uid_modes).toEqual({
+      "separate (verified)": 2,
+      "separate (unverified)": 3,
+      transition: 1,
+      mixed: 1,
+    });
+    expect(
+      hostIntegrityHealth({ status: "fulfilled", value: summary }).details.join(
+        "\n",
+      ),
+    ).toContain("transition: projects started before the switch");
+  });
+
+  it("raises a critical condition for self-check violations, with stable facts", () => {
+    const one = summarizeHostIntegrity(
+      [separateWith("a", check({ violations: 2, unknown: 1 }))],
+      NOW,
+    );
+    const violation = one.conditions.filter(
+      (c) => c.kind === "runtime-uid-violation",
+    );
+    expect(violation).toHaveLength(1);
+    expect(violation[0].level).toBe("critical");
+    expect(violation[0].subject).toBe(
+      "Host integrity: a: runtime uid self-check violation",
+    );
+    expect(violation[0].details[0]).toContain("2 violations, 1 unknown");
+    expect(one.runtime_uid_modes).toEqual({ "separate (violation)": 1 });
+    expect(hostIntegrityHealth({ status: "fulfilled", value: one }).level).toBe(
+      "critical",
+    );
+    // the alert dedupes on the facts: other counts, same facts
+    const other = summarizeHostIntegrity(
+      [separateWith("a", check({ violations: 5 }))],
+      NOW,
+    );
+    expect(
+      other.conditions.find((c) => c.kind === "runtime-uid-violation")!.facts,
+    ).toEqual(violation[0].facts);
+    // (control) none without violations, and none on a keep-id host
+    expect(kinds([separateWith("b", check())])).toEqual([]);
+    expect(
+      kinds([
+        withMode(
+          "c",
+          report({
+            runtime_uid_check: check({
+              violations: null,
+              old_mode_containers: 2,
+            }),
+          }),
+        ),
+      ]),
+    ).toEqual([]);
+    // reported, so a violation alert from before can clear
+    expect(
+      summarizeHostIntegrity([separateWith("b", check())], NOW)
+        .reporting_subjects,
+    ).toContain("Host integrity: b: runtime uid self-check violation");
   });
 
   it("clears a fallback alert once the host reports separate in effect", async () => {

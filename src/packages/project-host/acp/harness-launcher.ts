@@ -1,4 +1,3 @@
-import { spawn, execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,8 +9,12 @@ import {
   isQualifiedClaudeCodeProfile,
 } from "@cocalc/util/ai/qualified-harnesses";
 import { isValidUUID } from "@cocalc/util/misc";
-import { podmanEnv } from "@cocalc/backend/podman/env";
-import { mountArg } from "@cocalc/backend/podman";
+import {
+  execFilePodman,
+  mountArg,
+  spawnPodmanPiped,
+} from "@cocalc/backend/podman";
+import { sideLaunchPolicy } from "@cocalc/project-runner/run/podman-launch";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import {
   getImageNamePath,
@@ -26,11 +29,7 @@ import {
   projectSecretsHostPath,
   forceKillContainerProcesses,
 } from "@cocalc/project-runner/run/podman";
-import {
-  DEFAULT_PROJECT_RUNTIME_HOME,
-  DEFAULT_PROJECT_RUNTIME_UID,
-  DEFAULT_PROJECT_RUNTIME_GID,
-} from "@cocalc/util/project-runtime";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import {
   ensureProjectContainerRunning,
   createProjectCliTokenLease,
@@ -156,18 +155,20 @@ export async function launchHarnessInProject(
   // /opt/cocalc/bin2); say so plainly instead of failing inside Podman.
   if (profile.version === 2 && profile.id === "claude-code")
     await claudeCodeToolsDir();
+  // The launch gate: refused on a separate host (no podman call at all).
+  const launchPolicy = sideLaunchPolicy("acp-harness", "create");
   await ensureProjectContainerRunning({ projectId, accountId });
   const owner = await harnessOwner();
   const launcher = projectPoolPodmanLauncher(projectId);
   // Never log arguments: image/project-managed configuration may contain secrets.
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
-      execFile(
-        launcher.command,
-        [...launcher.argsPrefix, ...args],
+      execFilePodman(
+        args,
         {
+          launcher,
+          policy: args[0] === "create" ? launchPolicy : undefined,
           cwd: "/",
-          env: podmanEnv(),
           timeout: 30_000,
           maxBuffer: 1024 * 1024,
         },
@@ -362,9 +363,7 @@ export async function launchHarnessInProject(
       `${HARNESS_OWNER_LABEL}=${owner}`,
       "--label",
       `cocalc.project=${projectId}`,
-      `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
-      "--user",
-      `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+      ...launchPolicy.usernsArgs,
       // Preserve the project's existing network policy, not a new unrestricted network.
       `--network=container:project-${projectId}`,
       "--workdir",
@@ -412,14 +411,9 @@ export async function launchHarnessInProject(
     // Mark before awaiting: timeout/disconnect can leave a successfully created container.
     created = true;
     await command(args);
-    const proc = spawn(
-      launcher.command,
-      [...launcher.argsPrefix, "start", "--attach", "--interactive", name],
-      {
-        cwd: "/",
-        env: podmanEnv(),
-        stdio: ["pipe", "pipe", "pipe"],
-      },
+    const proc = spawnPodmanPiped(
+      ["start", "--attach", "--interactive", name],
+      { launcher, cwd: "/" },
     );
     const closed = new Promise<void>((resolve) => {
       proc.once("close", resolve);

@@ -8,6 +8,10 @@ import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
+import {
+  checkPodmanLaunch,
+  type PodmanLaunchPolicy,
+} from "@cocalc/backend/podman/launch-policy";
 import type { SandboxExecResult } from "./sandbox-exec";
 
 const logger = getLogger("project-runner:sandbox-command-containment");
@@ -211,6 +215,7 @@ export function reapManagedSandboxCommands(): Promise<void> {
 export function runContainedSandboxCommand({
   project_id,
   args,
+  policy,
   signal,
   timeoutMs,
   onOutput,
@@ -218,11 +223,15 @@ export function runContainedSandboxCommand({
 }: {
   project_id: string;
   args: string[];
+  // the launch gate's decision for this podman command (run by the helper)
+  policy: PodmanLaunchPolicy;
   signal: AbortSignal;
   timeoutMs: number;
   onOutput: (stream: "stdout" | "stderr", data: string) => void;
   onCleanupConfirmed?: () => void;
 }): Promise<SandboxExecResult> {
+  // The root helper runs these podman args: the same launch rules apply.
+  checkPodmanLaunch(args, policy);
   if (signal.aborted)
     return Promise.resolve({
       stdout: "",

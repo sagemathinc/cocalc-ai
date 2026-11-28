@@ -3,9 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { executePodman } from "@cocalc/backend/podman";
 import { createHash } from "node:crypto";
-import { executeCode } from "@cocalc/backend/execute-code";
-import { podmanEnv } from "@cocalc/backend/podman/env";
 import {
   projectRuntimeRootfsContractLabels,
   rootfsLabelsSatisfyCurrentProjectRuntimeContract,
@@ -37,19 +36,11 @@ export function projectRuntimeUsernsMapFingerprint({
 
 export async function readCurrentProjectRuntimeUsernsMapFingerprint(): Promise<string> {
   const [{ stdout: uidMap }, { stdout: gidMap }] = await Promise.all([
-    executeCode({
-      command: "podman",
-      args: ["unshare", "cat", "/proc/self/uid_map"],
+    executePodman(["unshare", "cat", "/proc/self/uid_map"], {
       err_on_exit: true,
-      verbose: false,
-      env: podmanEnv(),
     }),
-    executeCode({
-      command: "podman",
-      args: ["unshare", "cat", "/proc/self/gid_map"],
+    executePodman(["unshare", "cat", "/proc/self/gid_map"], {
       err_on_exit: true,
-      verbose: false,
-      env: podmanEnv(),
     }),
   ]);
   return projectRuntimeUsernsMapFingerprint({
